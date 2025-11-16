@@ -25,6 +25,20 @@
 
 ---
 
+## QUICK START
+
+```bash
+cd rust_tauri_svelte
+cargo tauri dev  # live reload dev mode
+```
+
+Or build:
+```bash
+cargo tauri build  # production binary in src-tauri/target/release/
+```
+
+---
+
 ## SETUP
 
 ```bash
@@ -48,25 +62,34 @@ cargo tauri build
 
 ---
 
+## CURRENT STATUS
+
+- [x] Tauri initialized
+- [x] DuckDB Rust binding integrated (backend/db_manager.rs)
+- [x] Basic Svelte UI
+- [x] Tauri commands (load_database, get_table_data, get_row_count)
+- [x] Feature 1: Load and display table
+- [ ] Search functionality
+- [ ] Multi-DB operations
+- [ ] Diff engine
+
+---
+
 ## PROJECT STRUCTURE
 
 ```
 rust_tauri_svelte/
 ├── src/                    # Rust backend
-│   ├── main.rs            # entry point
-│   ├── db/                # DuckDB interface
-│   ├── search/            # search engine
-│   ├── diff/              # comparison engine
-│   └── commands.rs        # Tauri commands exposed to frontend
+│   ├── main.rs            # Tauri entry point with commands
+│   └── backend/           # Business logic
+│       ├── mod.rs
+│       └── db_manager.rs  # DuckDB connection manager
 ├── ui/                    # Svelte frontend
 │   ├── src/
-│   │   ├── App.svelte
-│   │   ├── lib/           # components
-│   │   └── stores/        # state management
-│   └── package.json
-├── config/                # schemas, mappings
-├── data/                  # converted DuckDB files
-├── importacao/            # original MDB files
+│   │   ├── App.svelte     # Main component with table viewer
+│   │   └── main.js        # Svelte entry
+│   └── package.json       # pnpm dependencies
+├── build.rs               # Tauri build script
 ├── Cargo.toml             # Rust dependencies
 └── tauri.conf.json        # Tauri configuration
 ```
@@ -80,50 +103,49 @@ Rust functions exposed to JavaScript via `#[tauri::command]`
 
 ```rust
 #[tauri::command]
-fn search_term(term: String) -> Result<Vec<Row>, String> {
-    // Rust implementation
+fn load_database(db_path: String, state: State<AppState>) -> Result<Vec<String>, String> {
+    let manager = state.db_manager.lock().unwrap();
+    manager.connect(&db_path)?;
+    manager.list_tables()
 }
 ```
 
 Called from Svelte:
 ```javascript
 import { invoke } from '@tauri-apps/api/tauri';
-const results = await invoke('search_term', { term: 'example' });
+const tables = await invoke('load_database', { dbPath: '' });
 ```
 
 ### DuckDB Rust
 ```rust
 use duckdb::{Connection, Result};
 
-let conn = Connection::open("data/202511_db1.duckdb")?;
-let mut stmt = conn.prepare("SELECT * FROM table1")?;
-let rows = stmt.query_map([], |row| {
-    // map row to struct
-})?;
+let conn_str = format!("{}?access_mode=read_only", db_path);
+let conn = Connection::open(&conn_str)?;
+let mut stmt = conn.prepare("SHOW TABLES")?;
+let tables = stmt.query_map([], |row| row.get(0))?;
 ```
 
 ### Svelte Reactivity
 ```svelte
 <script>
-  let searchTerm = '';
-  $: results = searchDatabase(searchTerm); // auto-updates when searchTerm changes
+  let tables = [];
+  let selectedTable = '';
+
+  // Reactive statement: auto-updates when tableData changes
+  $: columns = tableData.length > 0 ? Object.keys(tableData[0]) : [];
+
+  async function loadDatabase() {
+    tables = await invoke('load_database', { dbPath: '' });
+  }
 </script>
 
-<input bind:value={searchTerm} />
-{#each results as row}
-  <div>{row.field}</div>
-{/each}
+<select bind:value={selectedTable}>
+  {#each tables as table}
+    <option value={table}>{table}</option>
+  {/each}
+</select>
 ```
-
----
-
-## CURRENT STATUS
-
-- [ ] Tauri initialized
-- [ ] DuckDB Rust binding integrated
-- [ ] Basic UI scaffold
-- [ ] Load last database
-- [ ] Display table
 
 ---
 

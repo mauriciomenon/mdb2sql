@@ -4,10 +4,11 @@
 
 ## STACK
 
-- **Backend**: Go (simplicity, concurrency, fast compilation)
-- **Frontend**: React (flexible, mature ecosystem)
-- **Bridge**: Wails (Go alternative to Electron/Tauri)
-- **Database**: DuckDB (embedded analytics)
+- **Backend**: Go 1.21+ (fast, concurrent, compiled)
+- **Frontend**: React + TypeScript + Vite (modern web stack)
+- **Framework**: Wails v2 (native desktop without Electron overhead)
+- **Database**: DuckDB via go-duckdb (embedded analytics)
+- **Distribution**: Single native binary per platform
 
 ---
 
@@ -15,43 +16,46 @@
 
 ### System
 - Go 1.21+ (`go version`)
-- Node.js 18+ (`node --version`)
-- pnpm 10+ (`pnpm --version`)
+- Wails CLI (`wails doctor`)
+- Node.js 18+ and pnpm (`pnpm --version`)
 
 ### Platform Specific
 - **macOS**: Xcode Command Line Tools
-- **Linux**: build-essential, gtk+3, webkit2gtk
-- **Windows**: WebView2 runtime, gcc (mingw-w64)
+- **Linux**: gcc, gtk3-devel, webkit2gtk3-devel
+- **Windows**: gcc via mingw-w64 or TDM-GCC
+
+### Install Wails
+```bash
+go install github.com/wailsapp/wails/v2/cmd/wails@latest
+wails doctor  # check dependencies
+```
 
 ---
 
-## SETUP
+## QUICK START
 
 ```bash
-# Install Wails CLI (optional, manual setup works)
-go install github.com/wailsapp/wails/v2/cmd/wails@latest
-
-# Install pnpm (if not installed)
-npm install -g pnpm
-
-# Install Go dependencies
-go mod tidy
-
-# Install frontend dependencies
-cd frontend
-pnpm install
-cd ..
-
-# Run dev mode (if wails CLI available)
-wails dev
-
-# Or manual dev (without wails CLI)
-cd frontend && pnpm run dev &
-go run .
-
-# Build production
-wails build
+cd go_wails_react
+wails dev  # live reload dev mode
 ```
+
+Or build:
+```bash
+wails build  # production binary in build/bin/
+```
+
+---
+
+## CURRENT STATUS
+
+- [x] Project structure created
+- [x] Go backend with DuckDB (backend/db_manager.go)
+- [x] Wails bindings (app.go)
+- [x] React frontend with TypeScript
+- [x] Feature 1: Load and display table
+- [ ] Search functionality
+- [ ] Multi-DB operations
+- [ ] Diff engine
 
 ---
 
@@ -59,23 +63,43 @@ wails build
 
 ```
 go_wails_react/
-├── backend/                # Go backend
-│   ├── app.go             # main app struct
-│   ├── db/                # DuckDB interface
-│   ├── search/            # search engine
-│   └── diff/              # comparison engine
-├── frontend/              # React frontend
+├── main.go              # Wails entry point
+├── app.go               # App struct with exposed methods
+├── backend/             # Go business logic
+│   └── db_manager.go    # DuckDB connection manager
+├── frontend/            # React + Vite
 │   ├── src/
-│   │   ├── App.tsx
-│   │   ├── components/
-│   │   └── hooks/
-│   └── package.json
-├── config/                # schemas, mappings
-├── data/                  # converted DuckDB files
-├── importacao/            # original MDB files
-├── go.mod                 # Go dependencies
-├── main.go                # entry point
-└── wails.json             # Wails configuration
+│   │   ├── App.tsx      # Main React component
+│   │   ├── App.css      # Styles
+│   │   └── main.tsx     # React entry
+│   └── package.json     # pnpm dependencies
+└── wails.json           # Wails configuration
+```
+
+---
+
+## DEVELOPMENT
+
+### Live Development Mode
+```bash
+wails dev
+```
+- Hot reload frontend (Vite HMR)
+- Auto-restart backend on Go changes
+- DevTools available at http://localhost:34115
+
+### Build for Production
+```bash
+wails build -clean
+# Output: build/bin/mdb2sql (or .exe on Windows)
+```
+
+### Cross-Platform Builds
+```bash
+wails build -platform darwin/amd64  # macOS Intel
+wails build -platform darwin/arm64  # macOS Apple Silicon
+wails build -platform windows/amd64 # Windows x64
+wails build -platform linux/amd64   # Linux x64
 ```
 
 ---
@@ -83,84 +107,49 @@ go_wails_react/
 ## KEY CONCEPTS
 
 ### Wails Bindings
-Go methods exposed to JavaScript via struct binding
+Go methods on App struct are automatically exposed to React:
 
 ```go
-type App struct {
-    ctx context.Context
-}
-
-func (a *App) SearchTerm(term string) ([]Row, error) {
-    // Go implementation
-    return results, nil
+// app.go
+func (a *App) LoadDatabase(dbPath string) ([]string, error) {
+    return a.dbManager.ListTables()
 }
 ```
 
-Called from React:
 ```typescript
-import { SearchTerm } from '../wailsjs/go/backend/App';
-
-const results = await SearchTerm('example');
+// React
+const tables = await window.go.main.App.LoadDatabase('')
 ```
 
-### DuckDB Go
+### DuckDB in Go
 ```go
-import (
-    "database/sql"
-    _ "github.com/marcboeker/go-duckdb"
-)
+import _ "github.com/marcboeker/go-duckdb"
 
-db, err := sql.Open("duckdb", "data/202511_db1.duckdb")
-defer db.Close()
-
-rows, err := db.Query("SELECT * FROM table1")
+dsn := "data/sample.duckdb?access_mode=read_only"
+conn, _ := sql.Open("duckdb", dsn)
+rows, _ := conn.Query("SELECT * FROM table1 LIMIT 100")
 ```
-
-### React Hooks
-```typescript
-const [searchTerm, setSearchTerm] = useState('');
-const [results, setResults] = useState([]);
-
-useEffect(() => {
-  SearchTerm(searchTerm).then(setResults);
-}, [searchTerm]);
-
-return (
-  <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-  {results.map(row => <div key={row.id}>{row.field}</div>)}
-);
-```
-
----
-
-## CURRENT STATUS
-
-- [ ] Wails initialized
-- [ ] DuckDB Go binding integrated
-- [ ] Basic UI scaffold
-- [ ] Load last database
-- [ ] Display table
 
 ---
 
 ## LEARNING RESOURCES
 
 ### Go Basics
-- Goroutines: lightweight threads (`go myFunction()`)
-- Channels: comunicacao entre goroutines (`ch <- value`, `value := <-ch`)
-- Defer: executa funcao ao final do scope (cleanup)
-- Error handling: retornar `error` como ultimo valor
+- Goroutines: `go functionName()` (concurrent execution)
+- Channels: `ch := make(chan int)` (thread-safe communication)
+- Defer: `defer file.Close()` (cleanup)
+- Error handling: explicit return values
 
 ### Wails
-- Bindings: metodos Go automaticamente disponiveis no frontend
-- Events: emit/on para comunicacao bidirecional
-- Native dialogs: file picker, message boxes via Go
+- Runtime: `runtime.EventsEmit()`, `runtime.WindowSetTitle()`
+- Bindings: Exported methods auto-bound to frontend
+- Events: Pub/sub between Go and JavaScript
 
-### React
-- Hooks: useState (state), useEffect (side effects), useMemo (cache)
-- Components: funcoes que retornam JSX
-- Props: parametros passados para componentes
+### React + TypeScript
+- Hooks: `useState`, `useEffect` for state management
+- TypeScript: type-safe props and state
+- Vite: fast dev server with HMR
 
 ---
 
-**Next**: Initialize Wails project structure
+**Next**: Run `wails dev` to start development

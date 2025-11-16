@@ -137,14 +137,24 @@ worker.start()
 
 ---
 
+## QUICK START
+
+```bash
+cd py_qt6
+poetry install
+poetry run python src/main.py
+```
+
 ## CURRENT STATUS
 
-- [ ] Project structure created
-- [ ] requirements.txt with dependencies
-- [ ] Basic QMainWindow
-- [ ] DuckDB connection manager
-- [ ] Load last database
-- [ ] Display table in QTableWidget
+- [x] Project structure created
+- [x] Poetry dependencies configured
+- [x] Basic QMainWindow
+- [x] DuckDB connection manager (backend/db_manager.py)
+- [x] Feature 1: Load and display table in QTableWidget
+- [ ] Search functionality
+- [ ] Multi-DB operations
+- [ ] Diff engine
 
 ---
 
