@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"mdb2sql/backend"
+	"os"
 	"path/filepath"
 )
 
@@ -32,10 +33,15 @@ func (a *App) startup(ctx context.Context) {
 //
 // NIVEL TECNICO: Wails automatically exposes this to frontend
 func (a *App) LoadDatabase(dbPath string) ([]string, error) {
-	// NIVEL BASICO: Se path vazio, usa sample.duckdb
+	// NIVEL BASICO: Se path vazio, tenta env var ou usa default
 	if dbPath == "" {
-		// NIVEL TECNICO: Relative path from executable location
-		dbPath = filepath.Join("data", "sample.duckdb")
+		// NIVEL TECNICO: Check MDB2SQL_DB_PATH env var first
+		if envPath := os.Getenv("MDB2SQL_DB_PATH"); envPath != "" {
+			dbPath = envPath
+		} else {
+			// NIVEL TECNICO: Fallback to default relative path
+			dbPath = filepath.Join("data", "sample.duckdb")
+		}
 	}
 
 	// NIVEL BASICO: Conecta ao banco

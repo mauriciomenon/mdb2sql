@@ -81,11 +81,18 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.info_label)
 
     def load_database(self):
-        # NIVEL BASICO: Carrega banco sample.duckdb
-        # NIVEL TECNICO: Hardcoded path for Feature 1, will be file dialog later
+        # NIVEL BASICO: Carrega banco DuckDB
+        # NIVEL TECNICO: Check env var or use default path
 
-        # NIVEL BASICO: Caminho do banco sample (relativo ao projeto)
-        db_path = Path(__file__).parent.parent.parent.parent / "data" / "sample.duckdb"
+        # NIVEL BASICO: Tenta variavel de ambiente primeiro
+        import os
+        env_path = os.getenv("MDB2SQL_DB_PATH")
+
+        if env_path:
+            db_path = Path(env_path)
+        else:
+            # NIVEL BASICO: Caminho do banco sample (relativo ao projeto)
+            db_path = Path(__file__).parent.parent.parent.parent / "data" / "sample.duckdb"
 
         if not db_path.exists():
             self.status_label.setText("Error: sample.duckdb not found")

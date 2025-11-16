@@ -91,8 +91,10 @@
           </tr>
         </thead>
         <tbody>
-          {#each tableData as row}
-            <tr>
+          {#each tableData as row, idx}
+            <!-- NIVEL BASICO: Key unica para evitar re-render incorreto -->
+            <!-- NIVEL TECNICO: Prefer stable unique field over index -->
+            <tr key={row.UNIQID || row.id || `${selectedTable}_${idx}`}>
               {#each columns as col}
                 <td>{row[col] ?? ''}</td>
               {/each}

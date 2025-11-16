@@ -29,12 +29,18 @@ struct AppState {
 fn load_database(db_path: String, state: State<AppState>) -> Result<Vec<String>, String> {
     let manager = state.db_manager.lock().unwrap();
 
-    // NIVEL BASICO: Se path vazio, usa sample.duckdb
+    // NIVEL BASICO: Se path vazio, tenta env var ou usa default
     let path = if db_path.is_empty() {
-        // NIVEL TECNICO: Relative path from app directory
-        let mut p = PathBuf::from("data");
-        p.push("sample.duckdb");
-        p.to_string_lossy().to_string()
+        // NIVEL TECNICO: Check MDB2SQL_DB_PATH env var first
+        match std::env::var("MDB2SQL_DB_PATH") {
+            Ok(env_path) if !env_path.is_empty() => env_path,
+            _ => {
+                // NIVEL TECNICO: Fallback to default relative path
+                let mut p = PathBuf::from("data");
+                p.push("sample.duckdb");
+                p.to_string_lossy().to_string()
+            }
+        }
     } else {
         db_path
     };

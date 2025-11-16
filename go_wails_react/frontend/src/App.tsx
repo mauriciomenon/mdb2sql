@@ -115,13 +115,18 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {tableData.map((row, idx) => (
-                <tr key={idx}>
-                  {columns.map((col) => (
-                    <td key={col}>{String(row[col] ?? '')}</td>
-                  ))}
-                </tr>
-              ))}
+              {tableData.map((row, idx) => {
+                // NIVEL BASICO: Cria key unica combinando valores da row
+                // NIVEL TECNICO: Stable key prevents re-render issues
+                const rowKey = row.UNIQID || row.id || `${selectedTable}_${idx}`;
+                return (
+                  <tr key={rowKey}>
+                    {columns.map((col) => (
+                      <td key={col}>{String(row[col] ?? '')}</td>
+                    ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

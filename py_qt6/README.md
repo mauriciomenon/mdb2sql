@@ -41,6 +41,13 @@ python src/main.py
 
 # Or run directly with Poetry
 poetry run python src/main.py
+```
+
+**Database Path Configuration:**
+- Default: `data/sample.duckdb` (relative to project root)
+- Custom: Set environment variable `MDB2SQL_DB_PATH=/path/to/your.duckdb`
+
+```bash
 
 # Install build tools (optional)
 poetry install --with build

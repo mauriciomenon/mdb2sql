@@ -37,6 +37,10 @@ Or build:
 cargo tauri build  # production binary in src-tauri/target/release/
 ```
 
+**Database Path Configuration:**
+- Default: `data/sample.duckdb` (relative to binary)
+- Custom: Set environment variable `MDB2SQL_DB_PATH=/path/to/your.duckdb`
+
 ---
 
 ## SETUP

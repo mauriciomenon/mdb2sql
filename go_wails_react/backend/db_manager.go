@@ -107,26 +107,65 @@ func (m *DBManager) GetTableSchema(tableName string) ([]ColumnSchema, error) {
 		return nil, fmt.Errorf("no database connected")
 	}
 
-	// NIVEL BASICO: DESCRIBE retorna info das colunas
-	// NIVEL TECNICO: Parameterized query to prevent SQL injection
-	query := fmt.Sprintf(`DESCRIBE SELECT * FROM "%s"`, tableName)
+	// NIVEL BASICO: Valida tableName contra lista de tabelas
+	// NIVEL TECNICO: Prevent SQL injection by validating input
+	if err := m.validateTableName(tableName); err != nil {
+		return nil, err
+	}
+
+	// NIVEL BASICO: PRAGMA table_info retorna metadata sem varrer dados
+	// NIVEL TECNICO: More efficient than DESCRIBE SELECT *
+	query := fmt.Sprintf(`PRAGMA table_info("%s")`, tableName)
 	rows, err := m.conn.Query(query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe table: %w", err)
+		return nil, fmt.Errorf("failed to get table info: %w", err)
 	}
 	defer rows.Close()
 
 	// NIVEL BASICO: Le metadata de cada coluna
+	// NIVEL TECNICO: PRAGMA returns: cid, name, type, notnull, dflt_value, pk
 	var schema []ColumnSchema
 	for rows.Next() {
-		var col ColumnSchema
-		if err := rows.Scan(&col.Name, &col.Type, &col.Null); err != nil {
+		var cid int
+		var name, colType string
+		var notNull int
+		var dfltValue interface{}
+		var pk int
+
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
 			return nil, fmt.Errorf("failed to scan column: %w", err)
 		}
-		schema = append(schema, col)
+
+		nullStr := "YES"
+		if notNull == 1 {
+			nullStr = "NO"
+		}
+
+		schema = append(schema, ColumnSchema{
+			Name: name,
+			Type: colType,
+			Null: nullStr,
+		})
 	}
 
 	return schema, rows.Err()
+}
+
+// NIVEL BASICO: Valida se tableName existe no banco
+// NIVEL TECNICO: Prevents SQL injection by checking against known tables
+func (m *DBManager) validateTableName(tableName string) error {
+	tables, err := m.ListTables()
+	if err != nil {
+		return fmt.Errorf("failed to validate table: %w", err)
+	}
+
+	for _, t := range tables {
+		if t == tableName {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("table not found: %s", tableName)
 }
 
 // NIVEL BASICO: Executa SELECT na tabela e retorna resultados
@@ -143,10 +182,16 @@ func (m *DBManager) QueryTable(tableName string, limit int) ([]map[string]interf
 		return nil, fmt.Errorf("no database connected")
 	}
 
-	// NIVEL BASICO: SELECT com LIMIT para nao carregar tabela inteira
-	// NIVEL TECNICO: Quote table name to handle special characters
-	query := fmt.Sprintf(`SELECT * FROM "%s" LIMIT %d`, tableName, limit)
-	rows, err := m.conn.Query(query)
+	// NIVEL BASICO: Valida tableName contra lista de tabelas
+	// NIVEL TECNICO: Prevent SQL injection by validating input
+	if err := m.validateTableName(tableName); err != nil {
+		return nil, err
+	}
+
+	// NIVEL BASICO: SELECT com LIMIT parametrizado
+	// NIVEL TECNICO: Only limit is parameterized, table name is validated
+	query := fmt.Sprintf(`SELECT * FROM "%s" LIMIT ?`, tableName)
+	rows, err := m.conn.Query(query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query table: %w", err)
 	}
@@ -196,7 +241,14 @@ func (m *DBManager) GetRowCount(tableName string) (int, error) {
 		return 0, fmt.Errorf("no database connected")
 	}
 
+	// NIVEL BASICO: Valida tableName contra lista de tabelas
+	// NIVEL TECNICO: Prevent SQL injection by validating input
+	if err := m.validateTableName(tableName); err != nil {
+		return 0, err
+	}
+
 	// NIVEL BASICO: COUNT(*) retorna total de linhas
+	// NIVEL TECNICO: Table name validated, safe to use in query
 	query := fmt.Sprintf(`SELECT COUNT(*) FROM "%s"`, tableName)
 	var count int
 	err := m.conn.QueryRow(query).Scan(&count)
