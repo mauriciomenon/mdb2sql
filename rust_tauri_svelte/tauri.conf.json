@@ -1,0 +1,44 @@
+{
+  "build": {
+    "beforeDevCommand": "cd ui && pnpm run dev",
+    "beforeBuildCommand": "cd ui && pnpm run build",
+    "devPath": "http://localhost:1420",
+    "distDir": "../ui/dist"
+  },
+  "package": {
+    "productName": "MDB2SQL",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "shell": {
+        "open": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "identifier": "com.mdb2sql.app",
+      "targets": "all",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ]
+    },
+    "security": {
+      "csp": null
+    },
+    "windows": [
+      {
+        "title": "MDB2SQL",
+        "width": 1200,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  }
+}
