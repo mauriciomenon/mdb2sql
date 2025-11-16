@@ -1,16 +1,21 @@
 # NIVEL BASICO: Janela principal da aplicacao
 # QMainWindow e o template padrao para apps com menu, toolbar, status bar
 
+from pathlib import Path
 from PyQt6.QtWidgets import (
     QMainWindow,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QLineEdit,
+    QComboBox,
     QPushButton,
     QLabel,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
 )
 from PyQt6.QtCore import Qt
+from backend.db_manager import DBManager
 
 # NIVEL TECNICO: QMainWindow provides standard app structure
 # Slots/signals pattern for event handling
@@ -19,63 +24,135 @@ from PyQt6.QtCore import Qt
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        # NIVEL BASICO: Inicializa manager de banco de dados
+        self.db_manager = DBManager()
         self.init_ui()
 
     def init_ui(self):
         # NIVEL BASICO: Configura janela principal
-        self.setWindowTitle("MDB2SQL")
+        self.setWindowTitle("MDB2SQL - Database Viewer")
         self.setGeometry(100, 100, 1200, 800)
 
-        # NIVEL BASICO: Widget central (obrigatorio em QMainWindow)
+        # NIVEL BASICO: Widget central
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
-        # NIVEL BASICO: Layout vertical organiza widgets de cima para baixo
         main_layout = QVBoxLayout(central_widget)
 
         # NIVEL BASICO: Titulo
-        title = QLabel("MDB2SQL")
+        title = QLabel("MDB2SQL - Feature 1: Load and Display Table")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # NIVEL TECNICO: Inline style, preparando para theme system futuro
-        title.setStyleSheet("font-size: 24px; font-weight: bold; margin: 20px;")
+        title.setStyleSheet("font-size: 18px; font-weight: bold; margin: 10px;")
         main_layout.addWidget(title)
 
-        # NIVEL BASICO: Layout horizontal para input e botao lado a lado
-        input_layout = QHBoxLayout()
+        # NIVEL BASICO: Layout horizontal para controles
+        controls_layout = QHBoxLayout()
 
-        # NIVEL BASICO: Campo de texto
-        self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Enter your name")
-        # NIVEL TECNICO: returnPressed signal emitido quando user aperta Enter
-        self.name_input.returnPressed.connect(self.greet)
+        # NIVEL BASICO: ComboBox para selecionar tabela
+        controls_layout.addWidget(QLabel("Table:"))
+        self.table_combo = QComboBox()
+        self.table_combo.setMinimumWidth(300)
+        # NIVEL TECNICO: Signal emitido quando usuario seleciona outra tabela
+        self.table_combo.currentTextChanged.connect(self.on_table_selected)
+        controls_layout.addWidget(self.table_combo)
 
-        # NIVEL BASICO: Botao
-        self.greet_button = QPushButton("Greet")
-        # NIVEL TECNICO: clicked signal conectado ao slot (metodo) greet
-        self.greet_button.clicked.connect(self.greet)
+        # NIVEL BASICO: Botao para carregar banco
+        self.load_button = QPushButton("Load Database")
+        self.load_button.clicked.connect(self.load_database)
+        controls_layout.addWidget(self.load_button)
 
-        input_layout.addWidget(self.name_input)
-        input_layout.addWidget(self.greet_button)
+        # NIVEL BASICO: Label status
+        self.status_label = QLabel("No database loaded")
+        controls_layout.addWidget(self.status_label)
 
-        main_layout.addLayout(input_layout)
+        controls_layout.addStretch()
+        main_layout.addLayout(controls_layout)
 
-        # NIVEL BASICO: Label para mostrar resultado
-        self.result_label = QLabel("")
-        self.result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.result_label.setStyleSheet(
-            "font-weight: bold; color: #0066cc; margin-top: 20px;"
+        # NIVEL BASICO: Tabela para exibir dados
+        self.data_table = QTableWidget()
+        # NIVEL TECNICO: Stretch columns to fill width
+        self.data_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch
         )
-        main_layout.addWidget(self.result_label)
+        main_layout.addWidget(self.data_table)
 
-        # NIVEL TECNICO: Stretch para empurrar conteudo para o topo
-        main_layout.addStretch()
+        # NIVEL BASICO: Label rodape com info
+        self.info_label = QLabel("Ready")
+        main_layout.addWidget(self.info_label)
 
-    def greet(self):
-        # NIVEL BASICO: Slot que responde ao click do botao
-        # Pega texto do input e exibe mensagem
-        name = self.name_input.text()
-        if name:
-            message = f"Hello {name}! Welcome to MDB2SQL (Python backend)"
-            self.result_label.setText(message)
-        else:
-            self.result_label.setText("")
+    def load_database(self):
+        # NIVEL BASICO: Carrega banco sample.duckdb
+        # NIVEL TECNICO: Hardcoded path for Feature 1, will be file dialog later
+
+        # NIVEL BASICO: Caminho do banco sample (relativo ao projeto)
+        db_path = Path(__file__).parent.parent.parent.parent / "data" / "sample.duckdb"
+
+        if not db_path.exists():
+            self.status_label.setText("Error: sample.duckdb not found")
+            self.status_label.setStyleSheet("color: red;")
+            return
+
+        try:
+            # NIVEL BASICO: Conecta ao banco
+            self.db_manager.connect(str(db_path))
+
+            # NIVEL BASICO: Lista tabelas disponiveis
+            tables = self.db_manager.list_tables()
+
+            # NIVEL BASICO: Popula ComboBox com nomes das tabelas
+            self.table_combo.clear()
+            self.table_combo.addItems(tables)
+
+            self.status_label.setText(f"Loaded: {db_path.name} ({len(tables)} tables)")
+            self.status_label.setStyleSheet("color: green;")
+
+            # NIVEL BASICO: Carrega primeira tabela automaticamente
+            if tables:
+                self.on_table_selected(tables[0])
+
+        except Exception as e:
+            self.status_label.setText(f"Error: {str(e)}")
+            self.status_label.setStyleSheet("color: red;")
+
+    def on_table_selected(self, table_name: str):
+        # NIVEL BASICO: Chamado quando usuario seleciona tabela no ComboBox
+        # Carrega dados da tabela e exibe na QTableWidget
+
+        if not table_name or not self.db_manager.conn:
+            return
+
+        try:
+            # NIVEL BASICO: Busca dados da tabela (limit 100 linhas)
+            rows = self.db_manager.query_table(table_name, limit=100)
+
+            if not rows:
+                self.info_label.setText(f"{table_name}: 0 rows")
+                self.data_table.setRowCount(0)
+                self.data_table.setColumnCount(0)
+                return
+
+            # NIVEL BASICO: Pega nomes das colunas do primeiro row
+            columns = list(rows[0].keys())
+
+            # NIVEL BASICO: Configura tabela
+            self.data_table.setRowCount(len(rows))
+            self.data_table.setColumnCount(len(columns))
+            self.data_table.setHorizontalHeaderLabels(columns)
+
+            # NIVEL BASICO: Preenche celulas com dados
+            for row_idx, row_data in enumerate(rows):
+                for col_idx, col_name in enumerate(columns):
+                    value = row_data[col_name]
+                    # NIVEL TECNICO: Convert to string, handle None
+                    item = QTableWidgetItem(str(value) if value is not None else "")
+                    self.data_table.setItem(row_idx, col_idx, item)
+
+            # NIVEL BASICO: Atualiza info rodape
+            total_rows = self.db_manager.get_row_count(table_name)
+            self.info_label.setText(
+                f"{table_name}: Showing {len(rows)} of {total_rows} rows"
+            )
+
+        except Exception as e:
+            self.info_label.setText(f"Error loading table: {str(e)}")
+            self.info_label.setStyleSheet("color: red;")
