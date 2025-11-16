@@ -8,13 +8,78 @@
     windows_subsystem = "windows"
 )]
 
-use tauri::Manager;
+mod backend;
 
-// NIVEL BASICO: Este comando pode ser chamado do JavaScript/Svelte
-// usando invoke('greet', { name: 'User' })
+use backend::db_manager::{ColumnSchema, DBManager};
+use std::path::PathBuf;
+use std::sync::Mutex;
+use tauri::{Manager, State};
+
+// NIVEL BASICO: Estado global da aplicacao com DBManager
+// NIVEL TECNICO: Tauri State manages app-wide shared state
+struct AppState {
+    db_manager: Mutex<DBManager>,
+}
+
+// NIVEL BASICO: LoadDatabase conecta ao banco DuckDB
+// Retorna lista de tabelas ou erro
+//
+// NIVEL TECNICO: Tauri command automatically exposed to frontend
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! Welcome to MDB2SQL", name)
+fn load_database(db_path: String, state: State<AppState>) -> Result<Vec<String>, String> {
+    let manager = state.db_manager.lock().unwrap();
+
+    // NIVEL BASICO: Se path vazio, usa sample.duckdb
+    let path = if db_path.is_empty() {
+        // NIVEL TECNICO: Relative path from app directory
+        let mut p = PathBuf::from("data");
+        p.push("sample.duckdb");
+        p.to_string_lossy().to_string()
+    } else {
+        db_path
+    };
+
+    // NIVEL BASICO: Conecta ao banco
+    manager.connect(&path)?;
+
+    // NIVEL BASICO: Lista tabelas disponiveis
+    manager.list_tables()
+}
+
+// NIVEL BASICO: GetTableData retorna linhas de uma tabela
+//
+// Args:
+//   - table_name: Nome da tabela
+//   - limit: Numero maximo de linhas (default 100)
+//
+// Returns:
+//   - Vec<serde_json::Value>: Dados da tabela como JSON
+#[tauri::command]
+fn get_table_data(
+    table_name: String,
+    limit: i32,
+    state: State<AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let manager = state.db_manager.lock().unwrap();
+    let limit = if limit <= 0 { 100 } else { limit };
+    manager.query_table(&table_name, limit)
+}
+
+// NIVEL BASICO: GetRowCount retorna total de linhas em tabela
+#[tauri::command]
+fn get_row_count(table_name: String, state: State<AppState>) -> Result<i64, String> {
+    let manager = state.db_manager.lock().unwrap();
+    manager.get_row_count(&table_name)
+}
+
+// NIVEL BASICO: GetTableSchema retorna schema da tabela
+#[tauri::command]
+fn get_table_schema(
+    table_name: String,
+    state: State<AppState>,
+) -> Result<Vec<ColumnSchema>, String> {
+    let manager = state.db_manager.lock().unwrap();
+    manager.get_table_schema(&table_name)
 }
 
 fn main() {
@@ -23,7 +88,15 @@ fn main() {
     // run() inicia event loop (janela fica aberta ate fechar)
 
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![greet])
+        .manage(AppState {
+            db_manager: Mutex::new(DBManager::new()),
+        })
+        .invoke_handler(tauri::generate_handler![
+            load_database,
+            get_table_data,
+            get_row_count,
+            get_table_schema
+        ])
         .setup(|app| {
             // NIVEL TECNICO: Setup hook, executa antes de mostrar janela
             #[cfg(debug_assertions)]

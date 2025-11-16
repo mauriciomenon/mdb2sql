@@ -18,3 +18,7 @@ duckdb = { version = "1.1", features = ["bundled"] }
 
 # NIVEL TECNICO: Tauri runtime, shell-open permite abrir URLs/arquivos externos
 # NIVEL TECNICO: duckdb bundled inclui biblioteca C estatica (no external deps)
+
+[build-dependencies]
+# NIVEL BASICO: Tauri build script gera contexto em compile time
+tauri-build = { version = "1.5" }
