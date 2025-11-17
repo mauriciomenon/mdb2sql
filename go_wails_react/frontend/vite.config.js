@@ -1,19 +1,7 @@
-// NIVEL BASICO: Configuracao Vite para React
-// Build tool que compila JSX/TSX em JavaScript otimizado
+import {defineConfig} from 'vite'
+import react from '@vitejs/plugin-react'
 
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-
-// NIVEL TECNICO: Vite config with React plugin and optimizations
+// https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react()],
-  build: {
-    outDir: 'dist',
-    assetsDir: 'assets',
-    minify: 'esbuild',
-    target: 'es2021',
-  },
-  server: {
-    port: 3000,
-  },
-});
+  plugins: [react()]
+})

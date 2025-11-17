@@ -32,6 +32,32 @@ impl DBManager {
         }
     }
 
+    // NIVEL BASICO: Valida caminho do banco de dados
+    // NIVEL TECNICO: Prevents path traversal and validates file extension
+    fn validate_database_path(&self, db_path: &str) -> Result<String, String> {
+        // NIVEL BASICO: Converte para caminho absoluto canonico
+        let path = Path::new(db_path);
+        let abs_path = path.canonicalize()
+            .map_err(|e| format!("Invalid database path: {}", e))?;
+
+        // NIVEL BASICO: Valida extensao do arquivo
+        // NIVEL TECNICO: Only .duckdb and .db files allowed
+        let ext = abs_path.extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+
+        if ext != "duckdb" && ext != "db" {
+            return Err(format!("Only .duckdb and .db files are supported, got: .{}", ext));
+        }
+
+        // NIVEL BASICO: Verifica se arquivo existe
+        if !abs_path.exists() {
+            return Err(format!("Database file not found: {}", abs_path.display()));
+        }
+
+        Ok(abs_path.to_string_lossy().to_string())
+    }
+
     // NIVEL BASICO: Conecta ao banco DuckDB especificado
     // Se ja existe conexao, fecha antes de abrir nova
     //
@@ -41,10 +67,9 @@ impl DBManager {
     // Returns:
     //   - Result<()>: Ok se sucesso, Err com mensagem caso contrario
     pub fn connect(&self, db_path: &str) -> Result<(), String> {
-        // NIVEL BASICO: Verifica se arquivo existe
-        if !Path::new(db_path).exists() {
-            return Err(format!("Database not found: {}", db_path));
-        }
+        // NIVEL BASICO: Valida caminho do banco
+        // NIVEL TECNICO: Prevent path traversal and validate file extension
+        let validated_path = self.validate_database_path(db_path)?;
 
         // NIVEL BASICO: Fecha conexao anterior se existir
         let mut conn_guard = self.conn.lock().unwrap();
@@ -52,12 +77,12 @@ impl DBManager {
 
         // NIVEL BASICO: Abre conexao DuckDB read-only
         // NIVEL TECNICO: read_only flag prevents accidental writes
-        let conn_str = format!("{}?access_mode=read_only", db_path);
+        let conn_str = format!("{}?access_mode=read_only", validated_path);
         match Connection::open(&conn_str) {
             Ok(conn) => {
                 *conn_guard = Some(conn);
                 let mut db_guard = self.current_db.lock().unwrap();
-                *db_guard = Some(db_path.to_string());
+                *db_guard = Some(validated_path);
                 Ok(())
             }
             Err(e) => Err(format!("Failed to connect: {}", e)),

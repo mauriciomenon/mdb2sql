@@ -41,14 +41,43 @@ class DBManager:
         if self.conn:
             self.conn.close()
 
-        # NIVEL BASICO: Verifica se arquivo existe
-        if not Path(db_path).exists():
-            raise FileNotFoundError(f"Database not found: {db_path}")
+        # NIVEL BASICO: Valida caminho do banco
+        # NIVEL TECNICO: Prevent path traversal and validate file extension
+        validated_path = self._validate_database_path(db_path)
 
         # NIVEL BASICO: Abre conexao read-only (nao modifica dados)
         # NIVEL TECNICO: read_only=True prevents accidental writes
-        self.conn = duckdb.connect(db_path, read_only=True)
-        self.current_db = db_path
+        self.conn = duckdb.connect(validated_path, read_only=True)
+        self.current_db = validated_path
+
+    def _validate_database_path(self, db_path: str) -> str:
+        """
+        NIVEL BASICO: Valida caminho do banco de dados.
+        NIVEL TECNICO: Prevents path traversal and validates file extension.
+
+        Args:
+            db_path: Caminho para validar
+
+        Returns:
+            Caminho absoluto validado
+
+        Raises:
+            ValueError: Se caminho invalido
+            FileNotFoundError: Se arquivo nao existe
+        """
+        # NIVEL BASICO: Converte para caminho absoluto
+        abs_path = Path(db_path).resolve()
+
+        # NIVEL BASICO: Valida extensao do arquivo
+        # NIVEL TECNICO: Only .duckdb and .db files allowed
+        if abs_path.suffix not in [".duckdb", ".db"]:
+            raise ValueError(f"Only .duckdb and .db files are supported, got: {abs_path.suffix}")
+
+        # NIVEL BASICO: Verifica se arquivo existe
+        if not abs_path.exists():
+            raise FileNotFoundError(f"Database not found: {abs_path}")
+
+        return str(abs_path)
 
     def list_tables(self) -> List[str]:
         """

@@ -28,6 +28,30 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 }
 
+// NIVEL BASICO: Valida caminho do banco de dados
+// NIVEL TECNICO: Prevents path traversal and validates file extension
+func (a *App) validateDatabasePath(dbPath string) (string, error) {
+	// NIVEL BASICO: Converte para caminho absoluto
+	absPath, err := filepath.Abs(dbPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid database path: %w", err)
+	}
+
+	// NIVEL BASICO: Valida extensao do arquivo
+	// NIVEL TECNICO: Only .duckdb files allowed
+	ext := filepath.Ext(absPath)
+	if ext != ".duckdb" && ext != ".db" {
+		return "", fmt.Errorf("only .duckdb and .db files are supported, got: %s", ext)
+	}
+
+	// NIVEL BASICO: Verifica se arquivo existe
+	if _, err := os.Stat(absPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("database file not found: %s", absPath)
+	}
+
+	return absPath, nil
+}
+
 // NIVEL BASICO: LoadDatabase conecta ao banco DuckDB
 // Retorna lista de tabelas ou erro
 //
@@ -44,8 +68,15 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 		}
 	}
 
+	// NIVEL BASICO: Valida caminho do banco
+	// NIVEL TECNICO: Prevent path traversal and validate file extension
+	validatedPath, err := a.validateDatabasePath(dbPath)
+	if err != nil {
+		return nil, err
+	}
+
 	// NIVEL BASICO: Conecta ao banco
-	if err := a.dbManager.Connect(dbPath); err != nil {
+	if err := a.dbManager.Connect(validatedPath); err != nil {
 		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
 
