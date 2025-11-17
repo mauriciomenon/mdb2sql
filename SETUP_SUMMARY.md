@@ -20,8 +20,8 @@ All synchronized via XP methodology with incremental features.
 mdb2sql/
 ├── PROJECT_SPEC.md              # immutable requirements and decisions
 ├── SETUP_SUMMARY.md             # this file
-├── README.md                    # user documentation
-├── ROADMAP_v0.3.0.md           # phase planning
+├── SETUP_WINDOWS11.md           # Windows 11 setup guide
+├── SETUP_DEBIAN.md              # Debian Trixie setup guide
 │
 ├── temp/                        # logs, diaries, analysis
 │   └── diario_20251116.md      # detailed session log

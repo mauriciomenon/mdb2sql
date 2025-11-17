@@ -154,36 +154,25 @@ func (m *DBManager) GetTableSchema(tableName string) ([]ColumnSchema, error) {
 }
 
 // NIVEL BASICO: Valida se tableName existe no banco
-// NIVEL TECNICO: Prevents SQL injection by checking against known tables
-// Returns validated table name to mitigate TOCTOU race condition
+// NIVEL TECNICO: Prevents SQL injection using parameterized query against information_schema
 func (m *DBManager) validateTableName(tableName string) (string, error) {
 	if m.conn == nil {
 		return "", fmt.Errorf("no database connected")
 	}
 
-	// NIVEL BASICO: Query inline para evitar race condition
-	// NIVEL TECNICO: TOCTOU mitigation - validate and return in single operation
-	rows, err := m.conn.Query("SHOW TABLES")
+	// NIVEL BASICO: Query parametrizada contra information_schema
+	// NIVEL TECNICO: Parameterized query is safer and more efficient than fetching all tables
+	var validatedName string
+	err := m.conn.QueryRow(`SELECT table_name FROM information_schema.tables WHERE table_name = ?`, tableName).Scan(&validatedName)
+
 	if err != nil {
-		return "", fmt.Errorf("failed to validate table: %w", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var t string
-		if err := rows.Scan(&t); err != nil {
-			return "", fmt.Errorf("failed to scan table name: %w", err)
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("table not found: %s", tableName)
 		}
-		if t == tableName {
-			return tableName, nil
-		}
+		return "", fmt.Errorf("failed to validate table name: %w", err)
 	}
 
-	if err := rows.Err(); err != nil {
-		return "", fmt.Errorf("failed to validate table: %w", err)
-	}
-
-	return "", fmt.Errorf("table not found: %s", tableName)
+	return validatedName, nil
 }
 
 // NIVEL BASICO: Executa SELECT na tabela e retorna resultados

@@ -3,22 +3,24 @@
   "build": {
     "beforeDevCommand": "cd ui && npm run dev",
     "beforeBuildCommand": "cd ui && npm run build",
-    "devUrl": "http://localhost:1420",
-    "frontendDist": "../ui/dist"
+    "devPath": "http://localhost:1420",
+    "distDir": "../ui/dist"
   },
-  "bundle": {
-    "active": false,
-    "identifier": "com.mdb2sql.app",
-    "targets": "all"
+  "package": {
+    "productName": "MDB2SQL",
+    "version": "0.1.0"
   },
-  "productName": "MDB2SQL",
-  "version": "0.1.0",
   "tauri": {
     "allowlist": {
       "all": false,
       "shell": {
         "open": true
       }
+    },
+    "bundle": {
+      "active": false,
+      "identifier": "com.mdb2sql.app",
+      "targets": "all"
     },
     "security": {
       "csp": null

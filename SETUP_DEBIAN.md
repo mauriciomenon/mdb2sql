@@ -26,10 +26,12 @@ sudo apt install -y build-essential curl wget git pkg-config libssl-dev
 
 #### Install Go 1.21+
 ```bash
-# Download latest Go
-wget https://go.dev/dl/go1.23.4.linux-amd64.tar.gz
+# Download latest Go (dynamic version fetch)
+GO_LATEST_FILENAME=$(curl -sS https://go.dev/dl/?mode=json | grep -o 'go[0-9.]*\.linux-amd64\.tar\.gz' | head -n 1)
+wget "https://go.dev/dl/${GO_LATEST_FILENAME}"
 sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf go1.23.4.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf "${GO_LATEST_FILENAME}"
+rm "${GO_LATEST_FILENAME}"
 
 # Add to PATH
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc

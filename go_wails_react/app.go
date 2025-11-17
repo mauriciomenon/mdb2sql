@@ -29,7 +29,7 @@ func (a *App) startup(ctx context.Context) {
 }
 
 // NIVEL BASICO: Valida caminho do banco de dados
-// NIVEL TECNICO: Prevents path traversal and validates file extension
+// NIVEL TECNICO: Prevents path traversal via symlinks and validates file extension
 func (a *App) validateDatabasePath(dbPath string) (string, error) {
 	// NIVEL BASICO: Converte para caminho absoluto
 	absPath, err := filepath.Abs(dbPath)
@@ -37,19 +37,29 @@ func (a *App) validateDatabasePath(dbPath string) (string, error) {
 		return "", fmt.Errorf("invalid database path: %w", err)
 	}
 
-	// NIVEL BASICO: Valida extensao do arquivo
-	// NIVEL TECNICO: Only .duckdb files allowed
-	ext := filepath.Ext(absPath)
+	// NIVEL BASICO: Resolve symlinks para prevenir path traversal
+	// NIVEL TECNICO: EvalSymlinks prevents attacks via malicious.db -> /etc/passwd
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return "", fmt.Errorf("database file not found or path is invalid: %w", err)
+	}
+
+	// NIVEL BASICO: Valida extensao do arquivo no caminho final
+	ext := filepath.Ext(resolvedPath)
 	if ext != ".duckdb" && ext != ".db" {
 		return "", fmt.Errorf("only .duckdb and .db files are supported, got: %s", ext)
 	}
 
-	// NIVEL BASICO: Verifica se arquivo existe
-	if _, err := os.Stat(absPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("database file not found: %s", absPath)
+	// NIVEL BASICO: Garante que o caminho é um arquivo, não diretório
+	info, err := os.Stat(resolvedPath)
+	if err != nil {
+		return "", fmt.Errorf("could not access file info: %w", err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("database path points to a directory, not a file: %s", resolvedPath)
 	}
 
-	return absPath, nil
+	return resolvedPath, nil
 }
 
 // NIVEL BASICO: LoadDatabase conecta ao banco DuckDB
