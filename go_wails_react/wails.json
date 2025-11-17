@@ -1,0 +1,28 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "mdb2sql",
+  "outputfilename": "mdb2sql",
+  "frontend": {
+    "dir": "./frontend",
+    "install": "npm install",
+    "build": "npm run build",
+    "dev": "npm run dev",
+    "package": {
+      "manager": "npm"
+    }
+  },
+  "backend": {
+    "dir": ".",
+    "go:build": "-tags=no_duckdb_arrow"
+  },
+  "author": {
+    "name": "Author",
+    "email": "author@example.com"
+  },
+  "info": {
+    "productName": "MDB2SQL",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright © 2025 Author",
+    "comments": "MDB to SQL converter"
+  }
+}

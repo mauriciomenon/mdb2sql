@@ -1,0 +1,11 @@
+/Users/menon/git/mdb2sql/rust_tauri_svelte/target/debug/deps/wry-fea2e52a3171d9df.d: /Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/lib.rs /Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/application.rs /Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/webview/mod.rs /Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/webview/web_context.rs /Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/webview/wkwebview/mod.rs /Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/webview/wkwebview/download.rs /Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/webview/wkwebview/file_drop.rs
+
+/Users/menon/git/mdb2sql/rust_tauri_svelte/target/debug/deps/libwry-fea2e52a3171d9df.rmeta: /Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/lib.rs /Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/application.rs /Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/webview/mod.rs /Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/webview/web_context.rs /Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/webview/wkwebview/mod.rs /Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/webview/wkwebview/download.rs /Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/webview/wkwebview/file_drop.rs
+
+/Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/lib.rs:
+/Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/application.rs:
+/Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/webview/mod.rs:
+/Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/webview/web_context.rs:
+/Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/webview/wkwebview/mod.rs:
+/Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/webview/wkwebview/download.rs:
+/Users/menon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.24.11/src/webview/wkwebview/file_drop.rs:

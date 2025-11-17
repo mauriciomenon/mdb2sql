@@ -1,0 +1,127 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"mdb2sql/backend"
+	"os"
+	"path/filepath"
+)
+
+// NIVEL BASICO: App struct principal do Wails
+// Contem contexto e DB manager
+type App struct {
+	ctx       context.Context
+	dbManager *backend.DBManager
+}
+
+// NIVEL BASICO: Cria nova instancia App
+func NewApp() *App {
+	return &App{
+		dbManager: backend.NewDBManager(),
+	}
+}
+
+// NIVEL BASICO: startup chamado quando app inicia
+// Contexto salvo para usar runtime methods
+func (a *App) startup(ctx context.Context) {
+	a.ctx = ctx
+}
+
+// NIVEL BASICO: Valida caminho do banco de dados
+// NIVEL TECNICO: Prevents path traversal via symlinks and validates file extension
+func (a *App) validateDatabasePath(dbPath string) (string, error) {
+	// NIVEL BASICO: Converte para caminho absoluto
+	absPath, err := filepath.Abs(dbPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid database path: %w", err)
+	}
+
+	// NIVEL BASICO: Resolve symlinks para prevenir path traversal
+	// NIVEL TECNICO: EvalSymlinks prevents attacks via malicious.db -> /etc/passwd
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return "", fmt.Errorf("database file not found or path is invalid: %w", err)
+	}
+
+	// NIVEL BASICO: Valida extensao do arquivo no caminho final
+	ext := filepath.Ext(resolvedPath)
+	if ext != ".duckdb" && ext != ".db" {
+		return "", fmt.Errorf("only .duckdb and .db files are supported, got: %s", ext)
+	}
+
+	// NIVEL BASICO: Garante que o caminho é um arquivo, não diretório
+	info, err := os.Stat(resolvedPath)
+	if err != nil {
+		return "", fmt.Errorf("could not access file info: %w", err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("database path points to a directory, not a file: %s", resolvedPath)
+	}
+
+	return resolvedPath, nil
+}
+
+// NIVEL BASICO: LoadDatabase conecta ao banco DuckDB
+// Retorna lista de tabelas ou erro
+//
+// NIVEL TECNICO: Wails automatically exposes this to frontend
+func (a *App) LoadDatabase(dbPath string) ([]string, error) {
+	// NIVEL BASICO: Se path vazio, tenta env var ou usa default
+	if dbPath == "" {
+		// NIVEL TECNICO: Check MDB2SQL_DB_PATH env var first
+		if envPath := os.Getenv("MDB2SQL_DB_PATH"); envPath != "" {
+			dbPath = envPath
+		} else {
+			// NIVEL TECNICO: Fallback to default relative path
+			dbPath = filepath.Join("data", "sample.duckdb")
+		}
+	}
+
+	// NIVEL BASICO: Valida caminho do banco
+	// NIVEL TECNICO: Prevent path traversal and validate file extension
+	validatedPath, err := a.validateDatabasePath(dbPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// NIVEL BASICO: Conecta ao banco
+	if err := a.dbManager.Connect(validatedPath); err != nil {
+		return nil, fmt.Errorf("failed to connect: %w", err)
+	}
+
+	// NIVEL BASICO: Lista tabelas disponiveis
+	tables, err := a.dbManager.ListTables()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list tables: %w", err)
+	}
+
+	return tables, nil
+}
+
+// NIVEL BASICO: GetTableData retorna linhas de uma tabela
+//
+// Args:
+//   - tableName: Nome da tabela
+//   - limit: Numero maximo de linhas (default 100)
+//
+// Returns:
+//   - []map[string]interface{}: Dados da tabela
+//   - error: nil se sucesso
+func (a *App) GetTableData(tableName string, limit int) ([]map[string]interface{}, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	return a.dbManager.QueryTable(tableName, limit)
+}
+
+// NIVEL BASICO: GetRowCount retorna total de linhas em tabela
+func (a *App) GetRowCount(tableName string) (int, error) {
+	return a.dbManager.GetRowCount(tableName)
+}
+
+// NIVEL BASICO: GetTableSchema retorna schema da tabela
+func (a *App) GetTableSchema(tableName string) ([]backend.ColumnSchema, error) {
+	return a.dbManager.GetTableSchema(tableName)
+}
