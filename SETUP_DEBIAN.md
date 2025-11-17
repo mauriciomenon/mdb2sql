@@ -87,6 +87,16 @@ cd ..
 wails dev
 ```
 
+**CRITICAL**: If you get Arrow linker errors:
+```bash
+# Option 1: Build without Arrow (recommended - Arrow not needed)
+wails dev -tags no_duckdb_arrow
+wails build -tags no_duckdb_arrow
+
+# Option 2: Install Arrow libraries (only if you need Arrow)
+sudo apt install -y libarrow-dev
+```
+
 **Expected**: Window opens with database viewer showing sample data.
 
 ---

@@ -12,7 +12,8 @@
     }
   },
   "backend": {
-    "dir": "."
+    "dir": ".",
+    "go:build": "-tags=no_duckdb_arrow"
   },
   "author": {
     "name": "Author",

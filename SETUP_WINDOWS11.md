@@ -78,6 +78,13 @@ cd ..
 wails dev
 ```
 
+**CRITICAL**: If you get Arrow linker errors:
+```powershell
+# Build without Arrow (recommended - Arrow not needed)
+wails dev -tags no_duckdb_arrow
+wails build -tags no_duckdb_arrow
+```
+
 **Expected**: Window opens with database viewer showing sample data.
 
 ---
