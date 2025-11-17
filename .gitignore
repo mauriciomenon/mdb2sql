@@ -44,5 +44,6 @@ venv.bak/
 logs/
 *.log
 
-temp/
+# temp/ pode ter diarios importantes, permitir controle manual
+# temp/
 benchmark_results_*.json
