@@ -67,6 +67,21 @@ class DBManager:
         # NIVEL BASICO: Converte coluna 'name' para lista Python
         return result["name"].tolist()
 
+    def _validate_table_name(self, table_name: str) -> None:
+        """
+        NIVEL BASICO: Valida se tableName existe no banco.
+        NIVEL TECNICO: Prevents SQL injection by checking against known tables.
+
+        Args:
+            table_name: Nome da tabela para validar
+
+        Raises:
+            ValueError: Se tabela nao existir
+        """
+        tables = self.list_tables()
+        if table_name not in tables:
+            raise ValueError(f"Table not found: {table_name}")
+
     def get_table_schema(self, table_name: str) -> List[Dict[str, Any]]:
         """
         NIVEL BASICO: Retorna schema (colunas e tipos) de uma tabela.
@@ -80,18 +95,23 @@ class DBManager:
         if not self.conn:
             return []
 
-        # NIVEL BASICO: DESCRIBE retorna info das colunas
-        # NIVEL TECNICO: Returns column metadata (name, type, nullable)
+        # NIVEL BASICO: Valida tableName contra lista de tabelas
+        # NIVEL TECNICO: Prevent SQL injection by validating input
+        self._validate_table_name(table_name)
+
+        # NIVEL BASICO: PRAGMA table_info retorna metadata sem varrer dados
+        # NIVEL TECNICO: More efficient than DESCRIBE SELECT *
         result = self.conn.execute(
-            f'DESCRIBE SELECT * FROM "{table_name}"'
+            f'PRAGMA table_info("{table_name}")'
         ).fetchall()
 
         # NIVEL BASICO: Converte tuplas em lista de dicts
+        # NIVEL TECNICO: PRAGMA returns: cid, name, type, notnull, dflt_value, pk
         return [
             {
-                "column_name": row[0],
-                "column_type": row[1],
-                "null": row[2],
+                "column_name": row[1],  # name
+                "column_type": row[2],  # type
+                "null": "NO" if row[3] == 1 else "YES",  # notnull
             }
             for row in result
         ]
@@ -112,8 +132,12 @@ class DBManager:
         if not self.conn:
             return []
 
+        # NIVEL BASICO: Valida tableName contra lista de tabelas
+        # NIVEL TECNICO: Prevent SQL injection by validating input
+        self._validate_table_name(table_name)
+
         # NIVEL BASICO: SELECT com LIMIT para nao carregar tabela inteira
-        # NIVEL TECNICO: Parameterized table name via quotes to prevent SQL injection
+        # NIVEL TECNICO: Table name validated, safe to use in query
         query = f'SELECT * FROM "{table_name}" LIMIT {limit}'
         result = self.conn.execute(query).df()
 
@@ -151,7 +175,12 @@ class DBManager:
         if not self.conn:
             return 0
 
+        # NIVEL BASICO: Valida tableName contra lista de tabelas
+        # NIVEL TECNICO: Prevent SQL injection by validating input
+        self._validate_table_name(table_name)
+
         # NIVEL BASICO: COUNT(*) retorna total de linhas
+        # NIVEL TECNICO: Table name validated, safe to use in query
         query = f'SELECT COUNT(*) as count FROM "{table_name}"'
         result = self.conn.execute(query).fetchone()
 
@@ -168,15 +197,11 @@ class DBManager:
             self.conn = None
             self.current_db = None
 
-    def __del__(self):
-        # NIVEL BASICO: Destrutor garante que conexao seja fechada
-        # NIVEL TECNICO: Cleanup on garbage collection
-        self.close()
-
     def __enter__(self):
         # NIVEL BASICO: Suporte a context manager (with statement)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         # NIVEL BASICO: Fecha conexao automaticamente ao sair do with
+        # NIVEL TECNICO: Context manager is the reliable way to manage resources
         self.close()

@@ -97,6 +97,17 @@ impl DBManager {
         }
     }
 
+    // NIVEL BASICO: Valida se tableName existe no banco
+    // NIVEL TECNICO: Prevents SQL injection by checking against known tables
+    fn validate_table_name(&self, table_name: &str) -> Result<(), String> {
+        let tables = self.list_tables()?;
+        if tables.contains(&table_name.to_string()) {
+            Ok(())
+        } else {
+            Err(format!("Table not found: {}", table_name))
+        }
+    }
+
     // NIVEL BASICO: Retorna schema (colunas e tipos) de uma tabela
     //
     // Args:
@@ -105,25 +116,31 @@ impl DBManager {
     // Returns:
     //   - Result<Vec<ColumnSchema>>: Lista de colunas com metadata
     pub fn get_table_schema(&self, table_name: &str) -> Result<Vec<ColumnSchema>, String> {
+        // NIVEL BASICO: Valida tableName contra lista de tabelas
+        // NIVEL TECNICO: Prevent SQL injection by validating input
+        self.validate_table_name(table_name)?;
+
         let conn_guard = self.conn.lock().unwrap();
 
         match conn_guard.as_ref() {
             None => Err("No database connected".to_string()),
             Some(conn) => {
-                // NIVEL BASICO: DESCRIBE retorna info das colunas
-                // NIVEL TECNICO: Quote table name to handle special characters
-                let query = format!("DESCRIBE SELECT * FROM \"{}\"", table_name);
+                // NIVEL BASICO: PRAGMA table_info retorna metadata sem varrer dados
+                // NIVEL TECNICO: More efficient than DESCRIBE SELECT *
+                let query = format!("PRAGMA table_info(\"{}\")", table_name);
                 let mut stmt = conn
                     .prepare(&query)
-                    .map_err(|e| format!("Failed to describe table: {}", e))?;
+                    .map_err(|e| format!("Failed to get table info: {}", e))?;
 
                 // NIVEL BASICO: Le metadata de cada coluna
+                // NIVEL TECNICO: PRAGMA returns: cid, name, type, notnull, dflt_value, pk
                 let schema_iter = stmt
                     .query_map([], |row| {
+                        let not_null: i32 = row.get(3)?;
                         Ok(ColumnSchema {
-                            name: row.get(0)?,
-                            col_type: row.get(1)?,
-                            null: row.get(2)?,
+                            name: row.get(1)?,     // name
+                            col_type: row.get(2)?, // type
+                            null: if not_null == 1 { "NO".to_string() } else { "YES".to_string() },
                         })
                     })
                     .map_err(|e| format!("Failed to query schema: {}", e))?;
@@ -151,13 +168,17 @@ impl DBManager {
         table_name: &str,
         limit: i32,
     ) -> Result<Vec<serde_json::Value>, String> {
+        // NIVEL BASICO: Valida tableName contra lista de tabelas
+        // NIVEL TECNICO: Prevent SQL injection by validating input
+        self.validate_table_name(table_name)?;
+
         let conn_guard = self.conn.lock().unwrap();
 
         match conn_guard.as_ref() {
             None => Err("No database connected".to_string()),
             Some(conn) => {
                 // NIVEL BASICO: SELECT com LIMIT para nao carregar tabela inteira
-                // NIVEL TECNICO: Quote table name to handle special characters
+                // NIVEL TECNICO: Table name validated, safe to use in query
                 let query = format!("SELECT * FROM \"{}\" LIMIT {}", table_name, limit);
                 let mut stmt = conn
                     .prepare(&query)
@@ -225,12 +246,17 @@ impl DBManager {
     // Returns:
     //   - Result<i64>: Numero de linhas
     pub fn get_row_count(&self, table_name: &str) -> Result<i64, String> {
+        // NIVEL BASICO: Valida tableName contra lista de tabelas
+        // NIVEL TECNICO: Prevent SQL injection by validating input
+        self.validate_table_name(table_name)?;
+
         let conn_guard = self.conn.lock().unwrap();
 
         match conn_guard.as_ref() {
             None => Err("No database connected".to_string()),
             Some(conn) => {
                 // NIVEL BASICO: COUNT(*) retorna total de linhas
+                // NIVEL TECNICO: Table name validated, safe to use in query
                 let query = format!("SELECT COUNT(*) FROM \"{}\"", table_name);
                 let count: i64 = conn
                     .query_row(&query, [], |row| row.get(0))

@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 # NIVEL BASICO: Tauri permite criar apps desktop com Rust backend + web frontend
 # sem precisar do peso do Electron (usa webview nativo do sistema)
-tauri = { version = "2", features = ["shell-open"] }
+tauri = { version = "1.8", features = ["shell-open"] }
 
 # NIVEL BASICO: serde faz serializacao/deserializacao de dados entre Rust e JSON
 # necessario para comunicar com frontend JavaScript
