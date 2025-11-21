@@ -1,8 +1,8 @@
 # PROJECT SPECIFICATION - MDB2SQL
 
-**Version:** 0.3.0
-**Date:** 2025-11-16
-**Status:** Active Development
+**Version:** 0.1.0
+**Date:** 2025-11-21
+**Status:** POC Phase Complete, Active Development
 
 ---
 
@@ -98,32 +98,36 @@ Sistema multi-plataforma para gestao, pesquisa e comparacao de bancos de dados M
 
 ### IMPLEMENTACOES PARALELAS
 
-Projeto mantem 4 implementacoes sincronizadas:
+Projeto mantem 3 implementacoes + POC arquivado:
 
-#### POC (Proof of Concept)
+#### PYTHON + PYQT6 (Funcional - Producao)
+- Backend: Python 3.14 + Poetry
+- Frontend: PyQt6
+- DB: DuckDB (read-only mode)
+- Status: Feature complete, security hardened
+- Package Manager: Poetry (pyproject.toml)
+
+#### GO + WAILS + REACT (Funcional - Producao)
+- Backend: Go 1.23 + go-duckdb
+- Frontend: React 19 + Vite
+- Bridge: Wails v2.11
+- DB: DuckDB embedded
+- Status: Feature complete, security hardened
+- Package Manager: pnpm 10.x (frontend), Go modules (backend)
+
+#### RUST + TAURI + SVELTE (POC - Em Desenvolvimento)
+- Backend: Rust 1.83
+- Frontend: Svelte + Vite
+- Bridge: Tauri v2
+- DB: duckdb-rs
+- Status: Known compatibility issues, linker errors
+- Package Manager: Cargo (backend), pnpm (frontend)
+- Issues: Arrow Flight dependency, Tauri v1/v2 migration
+
+#### POC (Arquivado)
 - Codigo original pre-refactor
 - Referencia historica
-
-#### RUST + TAURI + SVELTE
-- Backend: Rust
-- Frontend: Svelte
-- Bridge: Tauri
-- DB: DuckDB embedded
-- Target: performance maxima, binario minimo
-
-#### GO + WAILS + REACT
-- Backend: Go
-- Frontend: React
-- Bridge: Wails
-- DB: DuckDB embedded
-- Target: balance performance/produtividade
-
-#### PYTHON + PYQT6
-- Backend: Python (modulos criticos podem ser Rust/Go via FFI)
-- Frontend: PyQt6
-- DB: DuckDB
-- Distribuicao: Nuitka ou PyInstaller
-- Target: rapidez desenvolvimento, familiaridade
+- Localizacao: poc/
 
 ### DATABASE ENGINE
 - DuckDB escolhido por:
@@ -168,10 +172,12 @@ Projeto mantem 4 implementacoes sincronizadas:
 ```
 
 ### NAMING CONVENTIONS
-- Arquivos/diretorios: `snake_case`
+- Arquivos/diretorios: `snake_case` (codigo) e `PascalCase` (documentacao)
+- Arquivos MD de documentacao: PascalCase (SetupWindows.md, ProjectSpec.md, etc)
 - Sem acentos, cedilhas, espacos, emojis
 - Ingles tecnico em codigo
-- Portugues em comentarios nivel basico
+- Dual-level comments: portugues basico + `!T:` ingles tecnico
+- Package managers: pnpm (JS), Poetry (Python), Cargo (Rust), Go modules (Go)
 
 ---
 
@@ -207,9 +213,11 @@ Projeto mantem 4 implementacoes sincronizadas:
 - Diario de bordo trackeia estado de cada implementacao
 
 ### DOCUMENTATION
-- Nivel 1: basico para aprendizado (verbose, explicativo)
-- Nivel 2: comentario tecnico direto (padrao profissional)
-- Diarios em `temp/diario_YYYYMMDD.md`
+- Dual-level comments: Portuguese (basic) + `// !T:` English (technical)
+- Documentation files: PascalCase (SetupWindows.md, ProjectSpec.md)
+- Comprehensive setup guides for Windows 11, Debian 13.2, macOS
+- Concept guides per implementation in temp/ folders
+- Security documentation: path traversal, SQL injection prevention
 
 ---
 
