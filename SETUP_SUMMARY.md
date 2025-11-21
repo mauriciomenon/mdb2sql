@@ -20,8 +20,8 @@ All synchronized via XP methodology with incremental features.
 mdb2sql/
 ├── PROJECT_SPEC.md              # immutable requirements and decisions
 ├── SETUP_SUMMARY.md             # this file
-├── SETUP_WINDOWS11.md           # Windows 11 setup guide
-├── SETUP_DEBIAN.md              # Debian Trixie setup guide
+├── SETUP_WINDOWS11.md           # Windows 11 setup guide (desktop)
+├── SETUP_DEBIAN.md              # Debian Trixie setup guide (desktop)
 │
 ├── temp/                        # logs, diaries, analysis
 │   └── diario_20251116.md      # detailed session log

@@ -5,6 +5,7 @@
   "identifier": "com.mdb2sql.app",
   "build": {
     "frontendDist": "../ui/dist",
+    "devUrl": "http://localhost:1420",
     "beforeDevCommand": "cd ../ui && pnpm install && pnpm run dev",
     "beforeBuildCommand": "cd ../ui && pnpm install && pnpm run build"
   },

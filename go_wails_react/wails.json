@@ -6,14 +6,16 @@
     "dir": "./frontend",
     "install": "npm install",
     "build": "npm run build",
-    "dev": "npm run dev",
+    "dev:watcher": {
+      "enabled": true
+    },
     "package": {
       "manager": "npm"
     }
   },
   "backend": {
     "dir": ".",
-    "go:build": "-tags=no_duckdb_arrow"
+    "go:build": "-tags no_duckdb_arrow"
   },
   "author": {
     "name": "Author",

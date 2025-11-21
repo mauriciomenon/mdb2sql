@@ -47,3 +47,9 @@ logs/
 # temp/ pode ter diarios importantes, permitir controle manual
 # temp/
 benchmark_results_*.json
+
+# Frontend dependencies (should never be committed)
+node_modules/
+
+# Rust build output
+rust_tauri_svelte/target/

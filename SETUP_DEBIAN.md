@@ -46,7 +46,10 @@ go version  # Should show 1.21+
 
 #### Install Node.js 20+ via nvm
 ```bash
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
+# Download installer locally so you can inspect it before running
+curl -o install_nvm.sh https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh
+bash install_nvm.sh
+rm install_nvm.sh
 source ~/.bashrc
 
 nvm install 20
