@@ -6,6 +6,7 @@ import (
 	"mdb2sql/backend"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // App struct principal do Wails - contem contexto e DB manager
@@ -46,9 +47,15 @@ func (a *App) validateDatabasePath(dbPath string) (string, error) {
 	}
 
 	// Valida extensao do arquivo no caminho final
-	ext := filepath.Ext(resolvedPath)
-	if ext != ".duckdb" && ext != ".db" {
-		return "", fmt.Errorf("only .duckdb and .db files are supported, got: %s", ext)
+	allowedExts := map[string]struct{}{
+		".duckdb":  {},
+		".db":      {},
+		".sqlite":  {},
+		".sqlite3": {},
+	}
+	ext := strings.ToLower(filepath.Ext(resolvedPath))
+	if _, ok := allowedExts[ext]; !ok {
+		return "", fmt.Errorf("unsupported database format: %s", ext)
 	}
 
 	// Garante que o caminho e um arquivo, nao diretorio

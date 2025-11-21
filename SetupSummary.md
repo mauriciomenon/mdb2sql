@@ -18,65 +18,44 @@ All synchronized via XP methodology with incremental features.
 
 ```
 mdb2sql/
-├── PROJECT_SPEC.md              # immutable requirements and decisions
-├── SETUP_SUMMARY.md             # this file
-├── SETUP_WINDOWS11.md           # Windows 11 setup guide (desktop)
-├── SETUP_DEBIAN.md              # Debian Trixie setup guide (desktop)
+├── ProjectSpec.md              # requirements and decisions
+├── README.md                   # main documentation
+├── SetupWindows.md             # Windows 11 setup guide
+├── SetupWindows11.md           # Windows 11 setup guide (alt)
+├── SetupDebian.md              # Debian Trixie setup guide
+├── SetupSummary.md             # this file
 │
-├── temp/                        # logs, diaries, analysis
-│   └── diario_20251116.md      # detailed session log
+├── temp/                       # logs, diaries, analysis
+│   ├── Diario20251116.md       # detailed session log
+│   ├── AnaliseMdbEstrutura.md
+│   └── ErrosEProblemasPoc.md
 │
-├── poc/                         # original code (archived)
+├── poc/                        # original code (archived)
 │   ├── convert_mdbtools.py
 │   ├── convert_jackcess.py
 │   ├── convert_pyaccess_parser.py
 │   ├── convert_pyodbc.py       # to be removed
 │   ├── benchmark.py
-│   ├── requirements.txt
-│   ├── venv/
 │   └── importacao/             # MDB files (2025-05 to 2025-11)
 │
 ├── rust_tauri_svelte/          # implementation A
 │   ├── Cargo.toml              # Rust deps: tauri, serde, duckdb
 │   ├── tauri.conf.json
 │   ├── src/
-│   │   └── main.rs             # Tauri backend with greet command
-│   ├── ui/
-│   │   ├── package.json
-│   │   ├── vite.config.js
-│   │   ├── index.html
-│   │   └── src/
-│   │       ├── main.js
-│   │       └── App.svelte      # Svelte frontend
-│   └── README.md               # learning guide
+│   │   └── main.rs             # Tauri backend with commands
+│   ├── ui/                     # Svelte frontend
+│   └── temp/                   # docs
 │
 ├── go_wails_react/             # implementation C
 │   ├── go.mod                  # Go deps: wails, go-duckdb
-│   ├── main.go                 # Wails app with Greet method
-│   ├── frontend/
-│   │   ├── package.json
-│   │   ├── vite.config.js
-│   │   ├── index.html
-│   │   └── src/
-│   │       ├── main.tsx
-│   │       ├── App.tsx         # React frontend
-│   │       ├── App.css
-│   │       └── index.css
-│   └── README.md               # learning guide
+│   ├── main.go                 # Wails bootstrap
+│   ├── frontend/               # React + Vite
+│   └── temp/                   # docs
 │
 └── py_qt6/                     # implementation D
-    ├── requirements.txt        # PyQt6, duckdb, pandas
-    ├── venv/                   # Python virtual environment
-    ├── src/
-    │   ├── main.py             # entry point
-    │   ├── ui/
-    │   │   ├── __init__.py
-    │   │   └── main_window.py  # PyQt6 MainWindow
-    │   ├── backend/
-    │   │   └── __init__.py
-    │   └── shared/
-    │       └── __init__.py
-    └── README.md               # learning guide
+    ├── pyproject.toml          # Python deps (uv)
+    ├── src/                    # app code
+    └── temp/                   # docs
 ```
 
 ---
@@ -90,25 +69,33 @@ mdb2sql/
 - Action required: remove convert_pyodbc.py
 
 ### rust_tauri_svelte
-- Basic scaffold complete
-- Tauri backend with IPC example
+- Basic scaffold in place
+- Tauri backend with IPC example (v1)
 - Svelte frontend with reactive binding
-- Dependencies installed (npm)
-- Ready for: DuckDB integration
+- Ready for: DuckDB integration; keep tauri = 1.8 / tauri-build = 1.5 until v2 migration plan
+- Sanity: `scripts/run_sanity.sh` roda cargo test (backend)
 
 ### go_wails_react
-- Basic scaffold complete
+- Basic scaffold in place
 - Go backend with bindings example
 - React frontend with hooks
-- Dependencies declared (go.mod)
 - Ready for: go mod tidy, DuckDB integration
+- Sanity: `scripts/run_sanity.sh` inclui go test/vet/build + build frontend (OUT_DIR)
 
 ### py_qt6
-- Basic scaffold complete
+- Basic scaffold in place
 - PyQt6 window with signals/slots
-- Virtual environment created
-- Dependencies listed (requirements.txt)
-- Ready for: pip install, DuckDB manager
+- Dependencies via uv (pyproject.toml)
+- Ready for: DuckDB manager and feature build-out
+- Sanity: `scripts/run_sanity.sh` roda uv pytest
+
+## Build Outputs (per OS/arch)
+- Go/Wails: Wails binaries em `build/bin/<os>-<arch>`. Frontend Vite suporta `OUT_DIR` (padrao `dist/<platform>-<arch>`).
+- Rust/Tauri: Binarios em `src-tauri/target/<triple>`. UI Vite suporta `OUT_DIR` (padrao `dist/<platform>-<arch>`).
+- Python/PyQt6: PyInstaller/Nuitka devem ser colocados em `build/<os>-<arch>/`.
+- Packaging minimo: `scripts/package_minimal.sh` cria `build/minimal/minimal_<os>_<arch>.zip` com binarios e READMEs.
+- Release helpers: `scripts/build_release.sh` / `.ps1` movem binarios para pastas corretas; use antes do package minimo.
+- Clean: `scripts/clean.sh` / `.ps1` removem dist/target/build/minimal por OS/arch.
 
 ---
 
@@ -118,12 +105,12 @@ mdb2sql/
 
 1. **Install remaining dependencies**
    - Go: `cd go_wails_react && go mod tidy`
-   - Python: `cd py_qt6 && source venv/bin/activate && pip install -r requirements.txt`
+   - Python: `cd py_qt6 && uv sync`
 
 2. **Test hello world apps**
    - Rust: `cd rust_tauri_svelte && cargo tauri dev`
    - Go: `cd go_wails_react && wails dev` (requires wails CLI)
-   - Python: `cd py_qt6 && python src/main.py`
+   - Python: `cd py_qt6 && uv run python src/main.py`
 
 3. **Implement Feature 1 (synchronized)**
    - Load last MDB from poc/importacao/
@@ -136,6 +123,7 @@ mdb2sql/
 5. Document MDB schema structure
 6. Remove convert_pyodbc.py from POC
 7. Add theme scaffolding (gruvbox, tokyonight, nord, darkmodern)
+8. Validar toolchain PDF (pandoc + xelatex) para scripts de conversao de docs
 
 ---
 
@@ -186,13 +174,13 @@ Each implementation has README.md with:
 
 ---
 
-## TOOLS VERIFIED
+## TOOLS VERIFIED (versoes alvo)
 
-- Rust: cargo 1.91.1 (installed)
-- Node: v25.2.0 + npm 11.6.2 (installed)
-- Go: 1.25.4 (installed)
-- Python: 3.x (installed)
-- Wails CLI: not installed (optional, manual setup works)
+- Rust: 1.83.x (cargo mesmo numero)
+- Node: 23.3.x + npm 10.9.x + pnpm 10.18.x
+- Go: 1.23.3
+- Python: 3.12.x + uv
+- Wails CLI: opcional (usar versao que combine com Go 1.23.x e WebView2)
 
 ---
 
@@ -205,16 +193,16 @@ Each implementation has README.md with:
 2. **npm audit warnings**
    - 5 moderate vulnerabilities in Svelte deps
    - Non-blocking for development
-   - Will address during production hardening
+   - Will address during release hardening
 
 ---
 
 ## FILES CREATED
 
 ### Root Level
-- PROJECT_SPEC.md (immutable spec)
-- SETUP_SUMMARY.md (this file)
-- temp/diario_20251116.md (detailed log)
+- ProjectSpec.md (spec)
+- SetupSummary.md (this file)
+- temp/Diario20251116.md (detailed log)
 
 ### rust_tauri_svelte
 - Cargo.toml, tauri.conf.json
@@ -230,7 +218,7 @@ Each implementation has README.md with:
 - README.md
 
 ### py_qt6
-- requirements.txt
+- pyproject.toml (uv/hatch backend)
 - src/main.py
 - src/ui/__init__.py, main_window.py
 - src/backend/__init__.py
@@ -251,4 +239,4 @@ Documentation approach:
 
 ---
 
-**Session complete. Ready for Feature 1 implementation.**
+**Session encerrada. Proximo passo: implementar Feature 1.**

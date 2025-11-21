@@ -2,9 +2,9 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MDB2SQL",
   "version": "0.1.0",
-  "identifier": "com.mdb2sql.app",
+  "identifier": "com.mdb2sql",
   "build": {
-    "frontendDist": "../ui/dist",
+    "frontendDist": "../ui/dist/darwin-arm64",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "cd ../ui && pnpm install && pnpm run dev",
     "beforeBuildCommand": "cd ../ui && pnpm install && pnpm run build"

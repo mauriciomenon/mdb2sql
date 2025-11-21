@@ -42,7 +42,11 @@ echo "--- Checking Go/Wails Implementation ---"
 
 if command -v go &> /dev/null; then
     GO_VERSION=$(go version | awk '{print $3}')
-    check_pass "Go installed: $GO_VERSION"
+    if [[ "$GO_VERSION" != go1.23.* ]]; then
+        check_warn "Go version $GO_VERSION (pin go1.23.x recomendado)"
+    else
+        check_pass "Go version $GO_VERSION"
+    fi
 
     cd "$PROJECT_ROOT/go_wails_react"
 
@@ -79,11 +83,11 @@ if command -v go &> /dev/null; then
         check_fail "Missing EvalSymlinks in validateDatabasePath"
     fi
 
-    # Check validateTableName uses information_schema
-    if grep -q "information_schema.tables" backend/db_manager.go; then
-        check_pass "Table validation uses information_schema (parameterized)"
+    # Check table validation function exists (cache or information_schema)
+    if grep -q "validateTableName" backend/db_manager.go; then
+        check_pass "Table validation present (cache/info_schema)"
     else
-        check_fail "Table validation not using information_schema"
+        check_fail "Table validation not detected"
     fi
 
     cd "$PROJECT_ROOT"
@@ -100,7 +104,11 @@ echo "--- Checking Rust/Tauri Implementation ---"
 
 if command -v cargo &> /dev/null; then
     RUST_VERSION=$(rustc --version | awk '{print $2}')
-    check_pass "Rust installed: $RUST_VERSION"
+    if [[ "$RUST_VERSION" != 1.83.* ]]; then
+        check_warn "Rust version $RUST_VERSION detected (pin: 1.83.x recommended)"
+    else
+        check_pass "Rust installed: $RUST_VERSION"
+    fi
 
     cd "$PROJECT_ROOT/rust_tauri_svelte"
 
@@ -154,26 +162,29 @@ echo "--- Checking Python/PyQt6 Implementation ---"
 
 if command -v python3 &> /dev/null; then
     PYTHON_VERSION=$(python3 --version | awk '{print $2}')
-    check_pass "Python installed: $PYTHON_VERSION"
+    if [[ "$PYTHON_VERSION" != 3.12.* ]]; then
+        check_warn "Python version $PYTHON_VERSION detected (pin: 3.12.x recommended)"
+    else
+        check_pass "Python installed: $PYTHON_VERSION"
+    fi
 
     cd "$PROJECT_ROOT/py_qt6"
 
-    # Check for Poetry or venv
-    if command -v poetry &> /dev/null; then
-        check_pass "Poetry installed"
+    # Check for uv (preferred) or venv
+    if command -v uv &> /dev/null; then
+        check_pass "uv installed"
 
-        # Test Python imports
         echo "  Testing Python imports..."
-        if poetry run python -c "from src.backend.db_manager import DBManager; print('OK')" 2>&1 | grep -q "OK"; then
+        if uv run python -c "from src.backend.db_manager import DBManager; print('OK')" 2>&1 | grep -q "OK"; then
             check_pass "Python imports successful"
         else
             check_fail "Python imports failed"
         fi
-    elif [[ -d "venv" ]]; then
-        check_pass "venv exists"
+    elif [[ -d ".venv" ]]; then
+        check_pass ".venv exists"
 
         # Activate and test
-        source venv/bin/activate 2>/dev/null || source venv/Scripts/activate 2>/dev/null
+        source .venv/bin/activate 2>/dev/null || source .venv/Scripts/activate 2>/dev/null
         if python -c "from src.backend.db_manager import DBManager; print('OK')" 2>&1 | grep -q "OK"; then
             check_pass "Python imports successful"
         else
@@ -181,7 +192,7 @@ if command -v python3 &> /dev/null; then
         fi
         deactivate 2>/dev/null || true
     else
-        check_warn "No Poetry or venv found - cannot test Python imports"
+        check_warn "No uv or .venv found - cannot test Python imports"
     fi
 
     # Check _validate_database_path uses resolve
@@ -203,31 +214,24 @@ echo ""
 # ========================================
 echo "--- Checking Documentation ---"
 
-# Check setup guides exist
-if [[ -f "SETUP_WINDOWS11.md" ]]; then
-    check_pass "SETUP_WINDOWS11.md exists"
+# Check setup guides exist (case-sensitive)
+if [[ -f "SetupWindows11.md" ]]; then
+    check_pass "SetupWindows11.md exists"
 else
-    check_fail "SETUP_WINDOWS11.md missing"
+    check_fail "SetupWindows11.md missing"
 fi
 
-if [[ -f "SETUP_DEBIAN.md" ]]; then
-    check_pass "SETUP_DEBIAN.md exists"
-
-    # Check for hardcoded Go version
-    if grep -q "go1\.[0-9]*\.[0-9]*\.linux-amd64\.tar\.gz" SETUP_DEBIAN.md && ! grep -q "GO_LATEST_FILENAME" SETUP_DEBIAN.md; then
-        check_fail "Hardcoded Go version in SETUP_DEBIAN.md"
-    else
-        check_pass "Dynamic Go version fetch in SETUP_DEBIAN.md"
-    fi
+if [[ -f "SetupDebian.md" ]]; then
+    check_pass "SetupDebian.md exists"
 else
-    check_fail "SETUP_DEBIAN.md missing"
+    check_fail "SetupDebian.md missing"
 fi
 
-# Check SETUP_SUMMARY doesn't reference deleted files
-if grep -q "ROADMAP_v0.3.0.md" SETUP_SUMMARY.md 2>/dev/null; then
-    check_fail "SETUP_SUMMARY.md references deleted ROADMAP_v0.3.0.md"
+# Check SetupSummary doesn't reference deleted files
+if grep -q "ROADMAP_v0.3.0.md" SetupSummary.md 2>/dev/null; then
+    check_fail "SetupSummary.md references deleted ROADMAP_v0.3.0.md"
 else
-    check_pass "SETUP_SUMMARY.md has no broken references"
+    check_pass "SetupSummary.md has no broken references"
 fi
 
 echo ""
@@ -260,11 +264,11 @@ else
     check_fail "No path validation found in any implementation"
 fi
 
-# Check for SQL injection protection
-if grep -q "information_schema" go_wails_react/backend/db_manager.go 2>/dev/null; then
-    check_pass "Go uses parameterized table validation (information_schema)"
+# Check for SQL injection protection (cache or information_schema)
+if grep -q "validateTableName" go_wails_react/backend/db_manager.go 2>/dev/null; then
+    check_pass "Go table validation present (validateTableName)"
 else
-    check_warn "Go table validation may not use information_schema"
+    check_warn "Go table validation not detected"
 fi
 
 echo ""

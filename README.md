@@ -4,25 +4,26 @@ Multi-platform desktop application for converting Microsoft Access databases (.m
 
 ## Project Overview
 
-MDB2SQL provides three independent GUI implementations showcasing different technology stacks, each demonstrating the same core functionality: loading, viewing, and querying DuckDB databases converted from Microsoft Access.
+MDB2SQL provides three independent GUI implementations showcasing different technology stacks, each demoing the same core functionality: loading, viewing, and querying DuckDB databases converted from Microsoft Access.
 
 ### Technology Stacks
 
-1. **Python + PyQt6** - Feature complete
-   - Backend: Python 3.14 + DuckDB
+1. **Python + PyQt6**
+   - Backend: Python 3.12 + DuckDB
    - UI: PyQt6 native widgets
-   - Status: Fully functional, production-ready
+   - Status: Active development; core flows work but still under review for release
 
-2. **Go + Wails + React** - Feature complete
+2. **Go + Wails + React**
    - Backend: Go 1.23 + go-duckdb
    - Frontend: React 19 + Vite
    - Bridge: Wails v2.11
-   - Status: Fully functional, production-ready
+   - Notes: stick to Go 1.23.x and Node 23.3.x + pnpm 10.18.x to avoid dependency breakage
+   - Status: Active development; core flows work but still under review for release
 
 3. **Rust + Tauri + Svelte** - POC stage
    - Backend: Rust 1.83 + duckdb-rs
    - Frontend: Svelte + Vite
-   - Bridge: Tauri v2
+   - Bridge: Tauri v1 (v2 upgrade deferred; keep tauri = 1.8, tauri-build = 1.5 config v1)
    - Status: Known compatibility issues, under development
 
 ## Quick Start
@@ -31,7 +32,9 @@ MDB2SQL provides three independent GUI implementations showcasing different tech
 
 All platforms require:
 - Git
-- Node.js 23.x with pnpm 10.x
+- Node.js 23.x with pnpm 10.x (pinned to avoid dependency breakage)
+- Go 1.23.x
+- Python 3.12.x + uv
 - Platform-specific toolchains (see setup guides)
 
 ### Installation
@@ -55,8 +58,8 @@ git checkout dev
 #### Python + PyQt6
 ```bash
 cd py_qt6
-poetry install
-poetry run python src/main.py
+uv sync
+uv run python src/main.py
 ```
 
 #### Go + Wails + React
@@ -84,6 +87,14 @@ cargo tauri dev
 ### Project Documentation
 - [ProjectSpec.md](ProjectSpec.md) - Complete project specification
 - [temp/ErrosEProblemasPoc.md](temp/ErrosEProblemasPoc.md) - Known issues and solutions
+- `scripts/generate_md_pdfs.sh` - requires pandoc + xelatex (MiKTeX/texlive-xetex) to export docs as PDF
+- Build outputs: Vite defaults to `dist/<platform>-<arch>` (override with `OUT_DIR`), Wails binaries in `build/bin/<os>-<arch>`, Tauri in `src-tauri/target/<triple>`, Python builds under `build/<os>-<arch>/`.
+- Sanity: `scripts/run_sanity.sh` runs go test/vet/build (+ frontend build), cargo test, and uv pytest using pinned tools.
+- Packaging: `scripts/package_minimal.sh` gera `build/minimal/minimal_<os>_<arch>.zip` apenas com binarios e READMEs.
+- Windows equivalents: `scripts/run_sanity.ps1`, `scripts/package_minimal.ps1`, `scripts/validate_build.ps1` para o mesmo fluxo em PowerShell.
+- Release build helpers: `scripts/build_release.sh` / `scripts/build_release.ps1` geram binarios em `build/bin/<os>-<arch>`, `src-tauri/target/**/release`, `py_qt6/build/<os>-<arch>` antes do pacote minimo.
+- Clean: `scripts/clean.sh` / `scripts/clean.ps1` removem dist/target/build/minimal por OS/arch.
+- POC note: frontend Go/Wails `App.jsx` e um hello local sem IPC; para demo real exporte metodo no backend e ajuste o frontend.
 
 ### Implementation Guides
 - [py_qt6/temp/PythonConceptsGuide.md](py_qt6/temp/PythonConceptsGuide.md)
@@ -152,7 +163,7 @@ All code uses dual-level comments:
 ```
 
 ### Package Managers
-- Python: Poetry (pyproject.toml)
+- Python: uv (pyproject.toml)
 - JavaScript/TypeScript: pnpm (packageManager field in package.json)
 - Go: Go modules (go.mod)
 - Rust: Cargo (Cargo.toml)
@@ -162,7 +173,7 @@ All code uses dual-level comments:
 #### Python
 ```bash
 cd py_qt6
-poetry run pytest tests/
+uv run pytest tests/
 ```
 
 #### Go
@@ -180,7 +191,7 @@ cargo test
 ## Known Issues
 
 ### Rust + Tauri + Svelte
-- Tauri v1/v2 compatibility issues
+- Tauri v1 config; v2 upgrade deferred
 - Arrow Flight dependency linker errors on some platforms
 - See [temp/ErrosEProblemasPoc.md](temp/ErrosEProblemasPoc.md) for workarounds
 
@@ -191,14 +202,14 @@ cargo test
 ## Version History
 
 ### v0.4.0 (Current - Documentation Standardization)
-- ✅ Python implementation complete
-- ✅ Go implementation complete
-- 🔄 Rust implementation in progress
-- ✅ Dual-level code documentation
-- ✅ Security hardening (path traversal, SQL injection)
-- ✅ Platform setup guides (Windows 11, Debian 13.2)
-- ✅ All documentation files standardized to PascalCase
-- ✅ Comprehensive README and ProjectSpec
+- Python implementation: core features working; release readiness under review
+- Go implementation: core features working; release readiness under review
+- Rust implementation: in progress, not release ready
+- Dual-level code documentation in place
+- Security hardening: path traversal and SQL injection mitigations
+- Platform setup guides: Windows 11 and Debian 13.2
+- Documentation files standardized to PascalCase
+- README and ProjectSpec consolidated
 
 ## Contributing
 

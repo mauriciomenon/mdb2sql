@@ -34,20 +34,22 @@ impl DBManager {
 
     // NIVEL BASICO: Valida caminho do banco de dados
     // NIVEL TECNICO: Prevents path traversal and validates file extension
-    fn validate_database_path(&self, db_path: &str) -> Result<String, String> {
+    pub(crate) fn validate_database_path(&self, db_path: &str) -> Result<String, String> {
         // NIVEL BASICO: Converte para caminho absoluto canonico
         let path = Path::new(db_path);
-        let abs_path = path.canonicalize()
+        let abs_path = path
+            .canonicalize()
             .map_err(|e| format!("Invalid database path: {}", e))?;
 
         // NIVEL BASICO: Valida extensao do arquivo
         // NIVEL TECNICO: Only .duckdb and .db files allowed
-        let ext = abs_path.extension()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
+        let ext = abs_path.extension().and_then(|s| s.to_str()).unwrap_or("");
 
         if ext != "duckdb" && ext != "db" {
-            return Err(format!("Only .duckdb and .db files are supported, got: .{}", ext));
+            return Err(format!(
+                "Only .duckdb and .db files are supported, got: .{}",
+                ext
+            ));
         }
 
         // NIVEL BASICO: Verifica se arquivo existe
@@ -165,7 +167,11 @@ impl DBManager {
                         Ok(ColumnSchema {
                             name: row.get(1)?,     // name
                             col_type: row.get(2)?, // type
-                            null: if not_null == 1 { "NO".to_string() } else { "YES".to_string() },
+                            null: if not_null == 1 {
+                                "NO".to_string()
+                            } else {
+                                "YES".to_string()
+                            },
                         })
                     })
                     .map_err(|e| format!("Failed to query schema: {}", e))?;
@@ -223,9 +229,7 @@ impl DBManager {
                             // NIVEL TECNICO: Handle multiple DuckDB types
                             let value: serde_json::Value = match row.get_ref(i).unwrap() {
                                 duckdb::types::ValueRef::Null => serde_json::Value::Null,
-                                duckdb::types::ValueRef::Boolean(b) => {
-                                    serde_json::Value::Bool(b)
-                                }
+                                duckdb::types::ValueRef::Boolean(b) => serde_json::Value::Bool(b),
                                 duckdb::types::ValueRef::TinyInt(i) => {
                                     serde_json::Value::Number(i.into())
                                 }
@@ -240,11 +244,9 @@ impl DBManager {
                                 }
                                 duckdb::types::ValueRef::Float(f) => serde_json::json!(f),
                                 duckdb::types::ValueRef::Double(f) => serde_json::json!(f),
-                                duckdb::types::ValueRef::Text(s) => {
-                                    serde_json::Value::String(
-                                        String::from_utf8_lossy(s).to_string(),
-                                    )
-                                }
+                                duckdb::types::ValueRef::Text(s) => serde_json::Value::String(
+                                    String::from_utf8_lossy(s).to_string(),
+                                ),
                                 _ => serde_json::Value::String(format!("{:?}", row.get_ref(i))),
                             };
                             map.insert(col_name.clone(), value);

@@ -28,7 +28,7 @@
         "@modelcontextprotocol/server-github"
       ],
       "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "<YOUR_TOKEN>"
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
       }
     },
     "fetch": {
@@ -45,7 +45,7 @@
         "@modelcontextprotocol/server-postgres"
       ],
       "env": {
-        "POSTGRES_CONNECTION_STRING": "postgresql://user:password@localhost:5432/dbname"
+        "POSTGRES_CONNECTION_STRING": "${POSTGRES_CONNECTION_STRING}"
       }
     },
     "filesystem": {
@@ -53,7 +53,7 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "/path/to/allowed/files"
+        "${MCP_FILESYSTEM_ROOT}"
       ]
     },
     "browser-server": {
@@ -68,7 +68,7 @@
         "9000"
       ],
       "env": {
-        "OPENAI_API_KEY": "your-api-key"
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}"
       }
     },
     "supabase": {
@@ -77,10 +77,10 @@
         "-y",
         "@supabase/mcp-server-supabase@latest",
         "--read-only",
-        "--project-ref=<project-ref>"
+        "--project-ref=${SUPABASE_PROJECT_REF}"
       ],
       "env": {
-        "SUPABASE_ACCESS_TOKEN": "<personal-access-token>"
+        "SUPABASE_ACCESS_TOKEN": "${SUPABASE_ACCESS_TOKEN}"
       }
     },
     "playwright-server": {
@@ -110,7 +110,7 @@
         "mcp-server-mysql"
       ],
       "env": {
-        "MYSQL_CONNECTION_STRING": "mysql://user:password@localhost:3306/dbname"
+        "MYSQL_CONNECTION_STRING": "${MYSQL_CONNECTION_STRING}"
       }
     },
     "DeepGraph React MCP": {
@@ -178,15 +178,15 @@
         "@browserbasehq/mcp-server-browserbase"
       ],
       "env": {
-        "BROWSERBASE_API_KEY": "",
-        "BROWSERBASE_PROJECT_ID": "",
-        "GEMINI_API_KEY": ""
+        "BROWSERBASE_API_KEY": "${BROWSERBASE_API_KEY}",
+        "BROWSERBASE_PROJECT_ID": "${BROWSERBASE_PROJECT_ID}",
+        "GEMINI_API_KEY": "${GEMINI_API_KEY}"
       }
     },
     "huggingface": {
       "url": "https://huggingface.co/mcp",
       "headers": {
-        "Authorization": "Bearer <YOUR_HF_TOKEN>"
+        "Authorization": "Bearer ${HF_TOKEN}"
       }
     },
     "bitbucket": {
@@ -209,7 +209,7 @@
         "firecrawl-mcp"
       ],
       "env": {
-        "FIRECRAWL_API_KEY": "YOUR-API-KEY"
+        "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"
       }
     },
     "postman-api-http-server": {
@@ -264,10 +264,10 @@
       "command": "mcp-grafana",
       "args": [],
       "env": {
-        "GRAFANA_URL": "http://localhost:3000",
-        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>",
-        "GRAFANA_USERNAME": "<your username>",
-        "GRAFANA_PASSWORD": "<your password>"
+        "GRAFANA_URL": "${GRAFANA_URL}",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "${GRAFANA_SERVICE_ACCOUNT_TOKEN}",
+        "GRAFANA_USERNAME": "${GRAFANA_USERNAME}",
+        "GRAFANA_PASSWORD": "${GRAFANA_PASSWORD}"
       }
     },
     "firefly": {
@@ -295,12 +295,12 @@
         "stdio"
       ],
       "env": {
-        "ES_URL": "<elasticsearch-cluster-url>",
-        "ES_API_KEY": "<elasticsearch-API-key>"
+        "ES_URL": "${ES_URL}",
+        "ES_API_KEY": "${ES_API_KEY}"
       }
     },
     "mcp-server-nia": {
-      "descrption": "Nia is a context-augmentation layer for agents, primarily designed for coding agents.",
+      "description": "Nia is a context-augmentation layer for agents, primarily designed for coding agents.",
       "command": "pipx",
       "args": [
         "run",
@@ -308,8 +308,8 @@
         "nia-mcp-server"
       ],
       "env": {
-        "NIA_API_KEY": "YOUR_API_KEY",
-        "NIA_API_URL": "https://apigcp.trynia.ai/"
+        "NIA_API_KEY": "${NIA_API_KEY}",
+        "NIA_API_URL": "${NIA_API_URL}"
       }
     },
     "DevBox": {
@@ -320,7 +320,11 @@
       ]
     },
     "webflow": {
-      "command": "npx mcp-remote https://mcp.webflow.com/sse"
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.webflow.com/sse"
+      ]
     },
     "elevenlabs": {
       "command": "uvx",
@@ -328,16 +332,16 @@
         "elevenlabs-mcp"
       ],
       "env": {
-        "ELEVENLABS_API_KEY": "<your-api-key>",
-        "ELEVENLABS_MCP_BASE_PATH": "~/Desktop",
-        "ELEVENLABS_MCP_OUTPUT_MODE": "files"
+        "ELEVENLABS_API_KEY": "${ELEVENLABS_API_KEY}",
+        "ELEVENLABS_MCP_BASE_PATH": "${ELEVENLABS_MCP_BASE_PATH}",
+        "ELEVENLABS_MCP_OUTPUT_MODE": "${ELEVENLABS_MCP_OUTPUT_MODE}"
       }
     },
     "logfire": {
       "command": "uvx",
       "args": [
         "logfire-mcp@latest",
-        "--read-token=YOUR-TOKEN"
+        "--read-token=${LOGFIRE_READ_TOKEN}"
       ]
     },
     "mcp-server-box": {
@@ -356,7 +360,7 @@
         "@codacy/codacy-mcp"
       ],
       "env": {
-        "CODACY_ACCOUNT_TOKEN": "<YOUR_TOKEN>"
+        "CODACY_ACCOUNT_TOKEN": "${CODACY_ACCOUNT_TOKEN}"
       }
     }
   }

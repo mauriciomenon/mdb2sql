@@ -4,13 +4,13 @@
   "outputfilename": "mdb2sql",
   "frontend": {
     "dir": "./frontend",
-    "install": "npm install",
-    "build": "npm run build",
+    "install": "pnpm install",
+    "build": "pnpm run build",
     "dev:watcher": {
       "enabled": true
     },
     "package": {
-      "manager": "npm"
+      "manager": "pnpm"
     }
   },
   "backend": {

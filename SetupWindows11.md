@@ -62,6 +62,16 @@ Verify:
 wails version  # Should show v2.11+
 ```
 
+#### PDF Toolchain (pandoc + MiKTeX) - opcional para gerar PDFs de docs
+```powershell
+winget install Pandoc.Pandoc
+winget install MiKTeX.MiKTeX
+pandoc --version
+xelatex --version
+```
+
+Usado por `scripts/generate_md_pdfs.sh`.
+
 #### Install WebView2 Runtime (Required for Wails)
 Usually pre-installed on Windows 11. If missing:
 ```powershell
@@ -128,7 +138,7 @@ During install, select:
 cd rust_tauri_svelte
 cargo check  # Download deps and verify build
 cd ui
-npm install
+pnpm install
 cd ..
 cargo tauri dev
 ```
@@ -139,40 +149,44 @@ cargo tauri dev
 
 ### PYTHON + PYQT6
 
-#### Install Python 3.11+
+#### Install Python 3.12
 ```powershell
 winget install Python.Python.3.12
 ```
 
 Verify:
 ```powershell
-python --version  # Should show 3.11+
+python --version  # Should show 3.12.x
 pip --version
 ```
 
-#### Install Poetry (Python dependency manager)
+#### Install uv (Python dependency manager)
 ```powershell
-pip install poetry
+irm https://astral.sh/uv/install.ps1 | iex
 ```
 
 Verify:
 ```powershell
-poetry --version
+uv --version
 ```
 
 #### Build Python/PyQt6 Implementation
 ```powershell
 cd py_qt6
-poetry install
-poetry run python -m src.main
+uv sync
+uv run python -m src.main
+```
+**Build binario (dist em build\windows-<arch>):**
+```powershell
+uv run pyinstaller --onefile --windowed --distpath build\windows-$env:PROCESSOR_ARCHITECTURE src\main.py
 ```
 
-**Alternative without Poetry**:
+**Alternative sem uv**:
 ```powershell
 cd py_qt6
 python -m venv venv
 .\venv\Scripts\activate
-pip install -r requirements.txt
+pip install .
 python -m src.main
 ```
 
@@ -209,7 +223,7 @@ copy path\to\sample.duckdb data\sample.duckdb
 **Fix**: Install Visual Studio Build Tools with C++ workload
 
 ### Python: "No module named 'PyQt6'"
-**Fix**: Run `poetry install` or `pip install -r requirements.txt`
+**Fix**: Run `uv sync` (ou `pip install .` se não usar uv)
 
 ### Wails: "Failed to detect webview2"
 **Fix**: Install WebView2 Runtime (see Wails section)
@@ -236,7 +250,7 @@ cargo test
 ### Python/PyQt6
 ```powershell
 cd py_qt6
-poetry run pytest  # If tests implemented
+uv run pytest  # If tests implemented
 ```
 
 ---
@@ -260,8 +274,8 @@ cargo tauri build
 ### Python/PyQt6 (using PyInstaller)
 ```powershell
 cd py_qt6
-poetry add --group dev pyinstaller
-poetry run pyinstaller --onefile --windowed src/main.py
+uv add --dev pyinstaller
+uv run pyinstaller --onefile --windowed src/main.py
 # Output: dist/main.exe
 ```
 
@@ -284,7 +298,7 @@ cd go_wails_react && wails dev
 cd rust_tauri_svelte && cargo tauri dev
 
 # Python/PyQt6
-cd py_qt6 && poetry run python -m src.main
+cd py_qt6 && uv run python -m src.main
 ```
 
 ---
@@ -299,4 +313,4 @@ cd py_qt6 && poetry run python -m src.main
 
 ---
 
-**Setup complete. Choose your preferred stack and start development.**
+**Setup finalizado. Prosseguir para a stack desejada conforme os guias.**

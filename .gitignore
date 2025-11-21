@@ -4,6 +4,13 @@ __pycache__/
 *.so
 .Python
 build/
+dist/
+go_wails_react/build/
+rust_tauri_svelte/target/
+rust_tauri_svelte/ui/dist/
+py_qt6/build/
+# allow distributing final archives
+!*.zip
 develop-eggs/
 dist/
 downloads/
@@ -27,6 +34,8 @@ wheels/
 *.sqlite3
 
 .env
+.mcp.json
+*.pdf
 .venv
 env/
 venv/
@@ -43,6 +52,7 @@ venv.bak/
 
 logs/
 *.log
+*.pdf
 
 # temp/ pode ter diarios importantes, permitir controle manual
 # temp/

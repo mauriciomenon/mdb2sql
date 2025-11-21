@@ -5,7 +5,7 @@
 
 ## Sumario
 - 01. Fundamentos de Python Moderno
-- 02. Ambiente, Virtualenvs e Poetry
+- 02. Ambiente, Virtualenvs e uv
 - 03. Tipagem Estatica Pratica (mypy, pyright)
 - 04. Estruturas de Dados Essenciais
 - 05. Funcoes, Closures e Decorators
@@ -33,10 +33,10 @@
 - Mutabilidade: listas/dicts mutaveis; tuplas/frozenset imutaveis; usar `dataclasses` ou `pydantic` para dados estruturados.
 - Imutabilidade defensiva para configs carregadas de JSON.
 
-## 02. Ambiente, Virtualenvs e Poetry
-- Separar deps via venv (`python -m venv .venv`) ou Poetry (`poetry env use python3.11`).
-- Poetry.lock garante reproducao; usar grupos opcionais para build (`--with build`).
-- Scripts em `[tool.poetry.scripts]` para comandos customizados.
+## 02. Ambiente, Virtualenvs e uv
+- Separar deps via venv (`python -m venv .venv`) ou usar uv (`uv sync` cria/usa .venv).
+- `uv.lock` garante reproducao; usar grupos opcionais via `[project.optional-dependencies]`.
+- Scripts em `[project.scripts]` ou `[tool.uv]` conforme necessidade.
 - Variaveis de ambiente em `.env`; carregar com `python-dotenv` quando necessario sem hardcode.
 - Estrutura de pastas recomendada: `src/` com pacote raiz, `tests/` paralelo.
 
@@ -181,4 +181,3 @@ class Worker(QThread):
   - DuckDB: `ATTACH 'file.duckdb' (READ_ONLY); SHOW TABLES;`.
   - PyQt6 modelos: implementar `rowCount`, `columnCount`, `data`, `headerData`.
   - Typing: `type Alias = dict[str, str]`; usar `TypedDict` para records.
-

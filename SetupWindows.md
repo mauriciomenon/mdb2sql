@@ -75,11 +75,11 @@ pnpm --version
 
 ---
 
-### 3. Install Python 3.14
+### 3. Install Python 3.12 (stable)
 
 **Direct download (recommended):**
 - URL: https://www.python.org/downloads/windows/
-- Download Python 3.14.0 (64-bit)
+- Download Python 3.12.x (64-bit)
 - **CRITICAL**: Check "Add Python to PATH" during installation
 - Select "Install for all users" if prompted
 
@@ -89,20 +89,20 @@ python --version
 pip --version
 ```
 
-**Install Poetry:**
+**Install uv (Python package manager):**
 ```powershell
-(Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
+irm https://astral.sh/uv/install.ps1 | iex
 ```
 
-**Add Poetry to PATH:**
+**Add uv to PATH (if needed):**
 ```powershell
-$env:Path += ";$env:APPDATA\Python\Scripts"
+$env:Path += ";$env:USERPROFILE\.cargo\bin"
 [Environment]::SetEnvironmentVariable("Path", $env:Path, [System.EnvironmentVariableTarget]::User)
 ```
 
-**Verify Poetry:**
+**Verify uv:**
 ```powershell
-poetry --version
+uv --version
 ```
 
 ---
@@ -152,7 +152,27 @@ go version
 
 ---
 
-### 6. Install Wails v2.11.0
+### 6. Install Pandoc + MiKTeX (PDF toolchain para scripts)
+
+**Uso:** Necessario para `scripts/generate_pdfs_and_rename.sh` (pandoc + xelatex). Instalacao pode demorar por causa do MiKTeX.
+
+**Using winget (recomendado):**
+```powershell
+winget install Pandoc.Pandoc
+winget install MiKTeX.MiKTeX
+```
+
+**Alternativa:** Downloads diretos pelos instaladores oficiais (sem choco para evitar dependencia adicional).
+
+**Verificar:**
+```powershell
+pandoc --version
+xelatex --version
+```
+
+---
+
+### 7. Install Wails v2.11.0
 
 **Prerequisites:** Go must be installed first
 
@@ -162,8 +182,15 @@ go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
 **Add to PATH:**
 ```powershell
-$env:Path += ";$env:USERPROFILE\go\bin"
-[Environment]::SetEnvironmentVariable("Path", $env:Path, [System.EnvironmentVariableTarget]::User)
+# Adiciona Go/bin ao PATH do usuario se ainda nao estiver presente
+$userPath   = [System.Environment]::GetEnvironmentVariable('Path', 'User')
+$goBinPath  = "$env:USERPROFILE\go\bin"
+if (-not ($userPath -split ';' | Where-Object { $_ -eq $goBinPath })) {
+    [System.Environment]::SetEnvironmentVariable('Path', "$userPath;$goBinPath", 'User')
+    Write-Host "Go/bin adicionado ao PATH do usuario. Reinicie o terminal para aplicar."
+} else {
+    Write-Host "Go/bin ja esta no PATH do usuario."
+}
 ```
 
 **Verify installation:**
@@ -173,7 +200,7 @@ wails version
 
 ---
 
-### 7. Install Tauri Prerequisites
+### 8. Install Tauri Prerequisites
 
 **WebView2 Runtime:**
 
@@ -233,12 +260,12 @@ cd C:\Users\$env:USERNAME\Documents\mdb2sql\py_qt6
 
 **Install dependencies:**
 ```powershell
-poetry install
+uv sync
 ```
 
 **Verify installation:**
 ```powershell
-poetry run python --version
+uv run python --version
 ```
 
 **Create data directory:**
@@ -253,12 +280,7 @@ Copy-Item -Path ..\data\sample.duckdb -Destination .\data\sample.duckdb
 
 **Run application:**
 ```powershell
-poetry run python src\main.py
-```
-
-**Alternative execution (if Poetry has issues):**
-```powershell
-.\.venv\Scripts\python.exe src\main.py
+uv run python src\main.py
 ```
 
 ---
@@ -285,26 +307,38 @@ Copy-Item -Path ..\data\sample.duckdb -Destination .\data\sample.duckdb
 go mod tidy
 ```
 
+**Install frontend dependencies:**
+```powershell
+pnpm install
+```
+
+**Build frontend (outDir separado por OS/arch):**
+```powershell
+$env:OUT_DIR = "dist/windows-$env:PROCESSOR_ARCHITECTURE"
+pnpm run build
+```
+
 **Run in development mode:**
 ```powershell
 wails dev
 ```
 
-**Build for production:**
+**Build em modo release (binario em `build\bin\windows-amd64`):**
 ```powershell
-wails build
+wails build -clean -platform windows/amd64
+New-Item -ItemType Directory -Force -Path build\bin\windows-amd64 | Out-Null
+Move-Item -Force -Path build\bin\mdb2sql.exe -Destination build\bin\windows-amd64\mdb2sql.exe
 ```
-
-**Executable location:**
-```
-C:\Users\$env:USERNAME\Documents\mdb2sql\go_wails_react\build\bin\MDB2SQL.exe
-```
+**Build offline para pacote minimo:**
+- Frontend: `OUT_DIR="dist/windows-$env:PROCESSOR_ARCHITECTURE" pnpm run build`
+- Python: `uv run pyinstaller --onefile --windowed --distpath build\windows-$env:PROCESSOR_ARCHITECTURE src\main.py`
+- Rust/Tauri release: `cargo tauri build` (binarios em `src-tauri\target\**\release\`)
 
 ---
 
 ### 3. Rust + Tauri + Svelte
 
-**WARNING:** This implementation has known compatibility issues between Tauri v1 and v2.
+**WARNING:** This implementation usa Tauri v1; upgrade para v2 esta em avaliacao.
 
 **Navigate to directory:**
 ```powershell
@@ -325,7 +359,7 @@ cargo build
 ```
 
 **On version incompatibility errors:**
-- Refer to temp\ERROS_E_PROBLEMAS_POC.md for details
+- Refer to `temp/ErrosEProblemasPoc.md` for details
 - This is a known POC limitation
 
 ---
@@ -348,7 +382,7 @@ $ProjectRoot = "C:\Users\$env:USERNAME\Documents\mdb2sql"
 
 # Launch Python + PyQt6
 Write-Host "[1/3] Launching Python + PyQt6..." -ForegroundColor Cyan
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd $ProjectRoot\py_qt6; poetry run python src\main.py"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd $ProjectRoot\py_qt6; uv run python src\main.py"
 Start-Sleep -Seconds 2
 
 # Launch Go + Wails + React
@@ -374,14 +408,15 @@ Write-Host "Close each window individually to terminate" -ForegroundColor Yellow
 
 ## Troubleshooting
 
-### Poetry Version Conflicts
+### uv nao encontrado
 
-**Symptom:** Poetry installed with Python 3.11 but system uses 3.14
+**Symptom:** `uv` nao resolve no terminal
 
 **Solution:**
 ```powershell
-# Execute directly via venv
-.\.venv\Scripts\python.exe src\main.py
+$env:Path += ";$env:USERPROFILE\.cargo\bin"
+[Environment]::SetEnvironmentVariable("Path", $env:Path, [System.EnvironmentVariableTarget]::User)
+uv --version
 ```
 
 ---
@@ -441,7 +476,7 @@ New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
 **Solution:**
 1. Open Windows Defender Firewall
 2. Allow wails.exe through firewall
-3. Or temporarily disable for testing (not recommended for production)
+3. Ou desabilitar temporariamente para teste (nao recomendado para uso continuo)
 
 ---
 
@@ -453,13 +488,15 @@ New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
 Node.js: 23.3.0
 npm: 10.9.0
 pnpm: 10.18.2
-Python: 3.14.0
-Poetry: 1.8.5
+Python: 3.12.x
+uv: latest
 Go: 1.23.3
 Wails: v2.11.0
 Rust: 1.83.0
 Cargo: 1.83.0
 Tauri CLI: 1.5.14
+
+Note: manter as versoes acima para evitar quebrar dependencias; evite upgrades/downgrades sem testar.
 ```
 
 ---

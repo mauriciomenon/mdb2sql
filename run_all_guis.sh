@@ -3,6 +3,9 @@
 
 set -e
 
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+set -euo pipefail
+
 echo "========================================="
 echo "MDB2SQL - Running All GUI Implementations"
 echo "========================================="
@@ -16,8 +19,8 @@ NC='\033[0m' # No Color
 
 # 1. Python + PyQt6
 echo -e "${GREEN}[1/3] Starting Python + PyQt6...${NC}"
-cd /Users/menon/git/mdb2sql/py_qt6
-poetry run python main.py &
+cd "${ROOT_DIR}/py_qt6"
+uv run python src/main.py &
 PY_PID=$!
 echo -e "${GREEN}Python GUI started (PID: $PY_PID)${NC}"
 sleep 2
@@ -25,7 +28,7 @@ sleep 2
 # 2. Go + Wails + React
 echo ""
 echo -e "${GREEN}[2/3] Starting Go + Wails + React...${NC}"
-cd /Users/menon/git/mdb2sql/go_wails_react
+cd "${ROOT_DIR}/go_wails_react"
 wails dev &
 GO_PID=$!
 echo -e "${GREEN}Go Wails GUI started (PID: $GO_PID)${NC}"
@@ -34,7 +37,7 @@ sleep 3
 # 3. Rust + Tauri + Svelte
 echo ""
 echo -e "${GREEN}[3/3] Starting Rust + Tauri + Svelte...${NC}"
-cd /Users/menon/git/mdb2sql/rust_tauri_svelte
+cd "${ROOT_DIR}/rust_tauri_svelte"
 cargo tauri dev &
 RUST_PID=$!
 echo -e "${GREEN}Rust Tauri GUI started (PID: $RUST_PID)${NC}"

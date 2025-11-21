@@ -2,3 +2,5 @@
 // Exporta db_manager para uso no main.rs
 
 pub mod db_manager;
+#[cfg(test)]
+mod tests;

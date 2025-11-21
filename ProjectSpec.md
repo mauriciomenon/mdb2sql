@@ -100,25 +100,25 @@ Sistema multi-plataforma para gestao, pesquisa e comparacao de bancos de dados M
 
 Projeto mantem 3 implementacoes + POC arquivado:
 
-#### PYTHON + PYQT6 (Funcional - Producao)
-- Backend: Python 3.14 + Poetry
+#### PYTHON + PYQT6 (Em desenvolvimento)
+- Backend: Python 3.12 + uv
 - Frontend: PyQt6
 - DB: DuckDB (read-only mode)
-- Status: Feature complete, security hardened
-- Package Manager: Poetry (pyproject.toml)
+- Status: Fluxos principais funcionam; revisao de release em andamento
+- Package Manager: uv (pyproject.toml)
 
-#### GO + WAILS + REACT (Funcional - Producao)
+#### GO + WAILS + REACT (Em desenvolvimento)
 - Backend: Go 1.23 + go-duckdb
 - Frontend: React 19 + Vite
 - Bridge: Wails v2.11
 - DB: DuckDB embedded
-- Status: Feature complete, security hardened
+- Status: Fluxos principais funcionam; revisao de release em andamento
 - Package Manager: pnpm 10.x (frontend), Go modules (backend)
 
 #### RUST + TAURI + SVELTE (POC - Em Desenvolvimento)
 - Backend: Rust 1.83
 - Frontend: Svelte + Vite
-- Bridge: Tauri v2
+ - Bridge: Tauri v1 (tauri = 1.8, tauri-build = 1.5; v2 upgrade em avaliacao)
 - DB: duckdb-rs
 - Status: Known compatibility issues, linker errors
 - Package Manager: Cargo (backend), pnpm (frontend)
@@ -177,7 +177,7 @@ Projeto mantem 3 implementacoes + POC arquivado:
 - Sem acentos, cedilhas, espacos, emojis
 - Ingles tecnico em codigo
 - Dual-level comments: portugues basico + `!T:` ingles tecnico
-- Package managers: pnpm (JS), Poetry (Python), Cargo (Rust), Go modules (Go)
+- Package managers: pnpm (JS), uv (Python), Cargo (Rust), Go modules (Go)
 
 ---
 

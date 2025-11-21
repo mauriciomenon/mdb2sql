@@ -5,6 +5,8 @@
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
+const outDir = process.env.OUT_DIR || `dist/${process.platform}-${process.arch}`;
+
 export default defineConfig({
   plugins: [svelte()],
 
@@ -25,5 +27,6 @@ export default defineConfig({
     target: ['es2021', 'chrome100', 'safari13'],
     minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
+    outDir,
   },
 });

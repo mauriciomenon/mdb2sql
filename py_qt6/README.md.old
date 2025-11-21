@@ -14,8 +14,8 @@
 ## PREREQUISITES
 
 ### System
-- Python 3.11+ (`python3 --version`)
-- Poetry 2.0+ (`poetry --version`)
+- Python 3.12+ (`python3 --version`)
+- uv (`uv --version`)
 
 ### Platform Specific
 - **macOS**: Xcode Command Line Tools (for Nuitka)
@@ -27,20 +27,14 @@
 ## SETUP
 
 ```bash
-# Install Poetry (if not installed)
-curl -sSL https://install.python-poetry.org | python3 -
+# Install uv (if not installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Install dependencies
-poetry install
-
-# Activate virtual environment
-poetry shell
+uv sync
 
 # Run application
-python src/main.py
-
-# Or run directly with Poetry
-poetry run python src/main.py
+uv run python src/main.py
 ```
 
 **Database Path Configuration:**
@@ -50,13 +44,13 @@ poetry run python src/main.py
 ```bash
 
 # Install build tools (optional)
-poetry install --with build
+uv add --dev nuitka pyinstaller
 
-# Build with Nuitka (fast binary)
-poetry run python -m nuitka --standalone --onefile src/main.py
+# Build with Nuitka (fast binary, output per OS/arch)
+uv run python -m nuitka --standalone --onefile --output-dir=build/$(uname -s)-$(uname -m) src/main.py
 
-# Or PyInstaller (more compatible)
-poetry run pyinstaller --onefile --windowed src/main.py
+# Or PyInstaller (more compatible, output per OS/arch)
+uv run pyinstaller --onefile --windowed --distpath build/$(uname -s)-$(uname -m) src/main.py
 ```
 
 ---
@@ -148,14 +142,14 @@ worker.start()
 
 ```bash
 cd py_qt6
-poetry install
-poetry run python src/main.py
+uv sync
+uv run python src/main.py
 ```
 
 ## CURRENT STATUS
 
 - [x] Project structure created
-- [x] Poetry dependencies configured
+- [x] Dependencies configuradas com uv
 - [x] Basic QMainWindow
 - [x] DuckDB connection manager (backend/db_manager.py)
 - [x] Feature 1: Load and display table in QTableWidget

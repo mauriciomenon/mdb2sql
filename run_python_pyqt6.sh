@@ -10,5 +10,4 @@ echo ""
 echo "Starting Python PyQt6 application..."
 echo ""
 
-source .venv/bin/activate
-python src/main.py
+uv run python src/main.py

@@ -4,13 +4,15 @@
 
 set -e
 
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 # Verifica se pandoc esta instalado
 # !T: Check if pandoc is available for MD to PDF conversion
 if ! command -v pandoc &> /dev/null; then
     echo "ERRO: pandoc nao encontrado. Instale com:"
     echo "  macOS: brew install pandoc"
     echo "  Debian/Ubuntu: sudo apt-get install pandoc texlive-xelatex"
-    echo "  Windows: winget install pandoc"
+    echo "  Windows: winget install Pandoc.Pandoc && winget install MiKTeX.MiKTeX"
     echo ""
     echo "ERROR: pandoc not found. Install with the commands above."
     exit 1
@@ -19,21 +21,21 @@ fi
 # Array de arquivos MD para processar
 # !T: Find all relevant MD files excluding build artifacts and venv
 MD_FILES=(
-    "/Users/menon/git/mdb2sql/README.md"
-    "/Users/menon/git/mdb2sql/ProjectSpec.md"
-    "/Users/menon/git/mdb2sql/SetupWindows.md"
-    "/Users/menon/git/mdb2sql/SetupWindows11.md"
-    "/Users/menon/git/mdb2sql/SetupDebian.md"
-    "/Users/menon/git/mdb2sql/SetupSummary.md"
-    "/Users/menon/git/mdb2sql/temp/ConversaInicial20251116.md"
-    "/Users/menon/git/mdb2sql/temp/AnaliseMdbEstrutura.md"
-    "/Users/menon/git/mdb2sql/temp/Diario20251116.md"
-    "/Users/menon/git/mdb2sql/temp/ErrosEProblemasPoc.md"
-    "/Users/menon/git/mdb2sql/docs/Tauri2Setup.md"
-    "/Users/menon/git/mdb2sql/go_wails_react/temp/GoConceptsGuide.md"
-    "/Users/menon/git/mdb2sql/go_wails_react/temp/UiDesignGuidelines.md"
-    "/Users/menon/git/mdb2sql/py_qt6/temp/PythonConceptsGuide.md"
-    "/Users/menon/git/mdb2sql/rust_tauri_svelte/temp/RustConceptsGuide.md"
+    "$PROJECT_ROOT/README.md"
+    "$PROJECT_ROOT/ProjectSpec.md"
+    "$PROJECT_ROOT/SetupWindows.md"
+    "$PROJECT_ROOT/SetupWindows11.md"
+    "$PROJECT_ROOT/SetupDebian.md"
+    "$PROJECT_ROOT/SetupSummary.md"
+    "$PROJECT_ROOT/temp/ConversaInicial20251116.md"
+    "$PROJECT_ROOT/temp/AnaliseMdbEstrutura.md"
+    "$PROJECT_ROOT/temp/Diario20251116.md"
+    "$PROJECT_ROOT/temp/ErrosEProblemasPoc.md"
+    "$PROJECT_ROOT/docs/Tauri2Setup.md"
+    "$PROJECT_ROOT/go_wails_react/temp/GoConceptsGuide.md"
+    "$PROJECT_ROOT/go_wails_react/temp/UIDesignGuidelines.md"
+    "$PROJECT_ROOT/py_qt6/temp/PythonConceptsGuide.md"
+    "$PROJECT_ROOT/rust_tauri_svelte/temp/RustConceptsGuide.md"
 )
 
 echo "=== Gerando PDFs de arquivos MD ==="
@@ -64,13 +66,16 @@ for md_file in "${MD_FILES[@]}"; do
 
         # Gera PDF usando pandoc
         # !T: pandoc converts MD to PDF with metadata and formatting
-        if pandoc "$md_file" -o "$pdf_file" \
-            --pdf-engine=xelatex \
-            -V geometry:margin=1in \
-            -V documentclass=article \
-            -V fontsize=11pt \
-            --toc \
-            --number-sections 2>/dev/null; then
+PREFERRED_ENGINE=""
+if command -v xelatex &> /dev/null; then
+    PREFERRED_ENGINE="xelatex"
+elif command -v tectonic &> /dev/null; then
+    PREFERRED_ENGINE="tectonic"
+fi
+
+COMMON_FLAGS=( -s ${PREFERRED_ENGINE:+--pdf-engine=$PREFERRED_ENGINE} -V geometry:margin=1in -V documentclass=article -V fontsize=11pt --toc --number-sections --highlight-style=tango )
+
+if pandoc "$md_file" -o "$pdf_file" "${COMMON_FLAGS[@]}" 2>/dev/null; then
 
             pdf_files=$((pdf_files + 1))
             echo "    ✓ PDF gerado com sucesso"

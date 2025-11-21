@@ -15,6 +15,8 @@ import (
 type DBManager struct {
 	conn      *sql.DB // !T: Standard sql.DB interface from database/sql
 	currentDB string
+	tableSet  map[string]struct{}
+	tableList []string
 }
 
 // Cria novo DBManager sem conectar - conexao sera feita com Connect()
@@ -47,6 +49,15 @@ func (m *DBManager) Connect(dbPath string) error {
 
 	m.conn = conn
 	m.currentDB = dbPath
+
+	// Pre-carrega cache de tabelas para validar nomes sem overhead por chamada
+	if err := m.refreshTableCache(); err != nil {
+		// fecha conexao recem aberta para evitar estado inconsistente
+		conn.Close()
+		m.conn = nil
+		m.currentDB = ""
+		return fmt.Errorf("failed to load table cache: %w", err)
+	}
 	return nil
 }
 
@@ -57,25 +68,19 @@ func (m *DBManager) ListTables() ([]string, error) {
 		return nil, fmt.Errorf("no database connected")
 	}
 
-	// Query SHOW TABLES retorna lista de tabelas
-	// !T: DuckDB-specific SHOW TABLES syntax
-	rows, err := m.conn.Query("SHOW TABLES")
-	if err != nil {
-		return nil, fmt.Errorf("failed to list tables: %w", err)
-	}
-	defer rows.Close()
-
-	// Le cada linha e adiciona nome da tabela na lista
-	var tables []string
-	for rows.Next() {
-		var tableName string
-		if err := rows.Scan(&tableName); err != nil {
-			return nil, fmt.Errorf("failed to scan table name: %w", err)
-		}
-		tables = append(tables, tableName)
+	// Usa cache preenchido no Connect; evita nova consulta se cache existir
+	if len(m.tableList) > 0 && len(m.tableSet) == len(m.tableList) {
+		copied := make([]string, len(m.tableList))
+		copy(copied, m.tableList)
+		return copied, nil
 	}
 
-	return tables, rows.Err()
+	if err := m.refreshTableCache(); err != nil {
+		return nil, err
+	}
+	copied := make([]string, len(m.tableList))
+	copy(copied, m.tableList)
+	return copied, nil
 }
 
 // Struct que representa schema de uma coluna com nome, tipo e nullable
@@ -146,19 +151,17 @@ func (m *DBManager) validateTableName(tableName string) (string, error) {
 		return "", fmt.Errorf("no database connected")
 	}
 
-	// Query parametrizada contra information_schema
-	// !T: Parameterized query is safer and more efficient than fetching all tables
-	var validatedName string
-	err := m.conn.QueryRow(`SELECT table_name FROM information_schema.tables WHERE table_name = ?`, tableName).Scan(&validatedName)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return "", fmt.Errorf("table not found: %s", tableName)
+	// Usa cache para evitar overhead de conexao repetida
+	if m.tableSet == nil || len(m.tableSet) == 0 {
+		if err := m.refreshTableCache(); err != nil {
+			return "", err
 		}
-		return "", fmt.Errorf("failed to validate table name: %w", err)
+	}
+	if _, ok := m.tableSet[tableName]; !ok {
+		return "", fmt.Errorf("table not found: %s", tableName)
 	}
 
-	return validatedName, nil
+	return tableName, nil
 }
 
 // Executa SELECT na tabela e retorna resultados como slice de maps
@@ -249,7 +252,40 @@ func (m *DBManager) Close() error {
 		err := m.conn.Close()
 		m.conn = nil
 		m.currentDB = ""
+		m.tableSet = nil
+		m.tableList = nil
 		return err
 	}
+	return nil
+}
+
+// Atualiza cache de tabelas existentes no banco atual
+func (m *DBManager) refreshTableCache() error {
+	if m.conn == nil {
+		return fmt.Errorf("no database connected")
+	}
+
+	rows, err := m.conn.Query("SHOW TABLES")
+	if err != nil {
+		return fmt.Errorf("failed to list tables: %w", err)
+	}
+	defer rows.Close()
+
+	tableSet := make(map[string]struct{})
+	var tableList []string
+	for rows.Next() {
+		var tableName string
+		if err := rows.Scan(&tableName); err != nil {
+			return fmt.Errorf("failed to scan table name: %w", err)
+		}
+		tableSet[tableName] = struct{}{}
+		tableList = append(tableList, tableName)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	m.tableSet = tableSet
+	m.tableList = tableList
 	return nil
 }

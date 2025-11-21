@@ -40,7 +40,9 @@ sudo apt install -y \
     libwebkit2gtk-4.1-dev \
     libayatana-appindicator3-dev \
     librsvg2-dev \
-    patchelf
+    patchelf \
+    pandoc \
+    texlive-xetex
 ```
 
 ---
@@ -92,9 +94,9 @@ pnpm --version
 
 ---
 
-### 4. Instalar Python 3.14
+### 4. Instalar Python 3.12 (estavel)
 
-**Metodo 1: Build from Source (recomendado para versao exata)**
+**Metodo 1: Build from Source (recomendado para versao especifica estavel)**
 
 ```bash
 # Dependencias para compilar Python
@@ -110,11 +112,11 @@ sudo apt install -y \
     libffi-dev \
     zlib1g-dev
 
-# Download Python 3.14
+# Download Python 3.12
 cd /tmp
-wget https://www.python.org/ftp/python/3.14.0/Python-3.14.0.tgz
-tar -xf Python-3.14.0.tgz
-cd Python-3.14.0
+wget https://www.python.org/ftp/python/3.12.6/Python-3.12.6.tgz
+tar -xf Python-3.12.6.tgz
+cd Python-3.12.6
 
 # Compilar e instalar
 ./configure --enable-optimizations
@@ -122,30 +124,30 @@ make -j $(nproc)
 sudo make altinstall
 
 # Verificar
-python3.14 --version
+python3.12 --version
 ```
 
 **Criar alias (opcional):**
 ```bash
-echo "alias python=python3.14" >> ~/.bashrc
-echo "alias pip=pip3.14" >> ~/.bashrc
+echo "alias python=python3.12" >> ~/.bashrc
+echo "alias pip=pip3.12" >> ~/.bashrc
 source ~/.bashrc
 ```
 
-**Instalar Poetry:**
+**Instalar uv (gerenciador Python):**
 ```bash
-curl -sSL https://install.python-poetry.org | python3.14 -
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-**Adicionar Poetry ao PATH:**
+**Adicionar uv ao PATH (padrao instala em ~/.cargo/bin):**
 ```bash
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
 **Verificar:**
 ```bash
-poetry --version
+uv --version
 ```
 
 ---
@@ -193,8 +195,7 @@ sudo rm -rf /usr/local/go
 sudo tar -C /usr/local -xzf go1.23.3.linux-amd64.tar.gz
 
 # Adicionar ao PATH
-echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-echo 'export PATH=$PATH:$HOME/go/bin' >> ~/.bashrc
+echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> ~/.bashrc
 source ~/.bashrc
 ```
 
@@ -288,14 +289,14 @@ sudo apt install -y \
     libxcb-shape0
 ```
 
-**Instalar dependencias Python:**
+**Instalar dependencias Python (uv):**
 ```bash
-poetry install
+uv sync
 ```
 
 **Verificar instalacao:**
 ```bash
-poetry run python --version
+uv run python --version
 ```
 
 **Criar diretorio de dados:**
@@ -310,13 +311,10 @@ cp ../data/sample.duckdb ./data/sample.duckdb
 
 **Executar:**
 ```bash
-poetry run python src/main.py
+uv run python src/main.py
 ```
 
-**OU diretamente via venv (se Poetry der problema):**
-```bash
-.venv/bin/python src/main.py
-```
+**Nota:** uv cria e gerencia `.venv` automaticamente; nao misturar com outros gerenciadores.
 
 ---
 
@@ -342,25 +340,32 @@ cp ../data/sample.duckdb ./data/sample.duckdb
 go mod tidy
 ```
 
+**Instalar deps frontend:**
+```bash
+cd frontend
+pnpm install
+cd ..
+```
+
+**Build frontend (saida separada por OS/arch):**
+```bash
+OUT_DIR="dist/linux-$(uname -m)" pnpm run build
+```
+
 **Executar em modo desenvolvimento:**
 ```bash
 wails dev
 ```
 
-**Build para producao:**
+**Build para producao (amd64 exemplo):**
 ```bash
-wails build
+OUT_DIR="dist/linux-$(uname -m)" wails build -clean -tags=no_duckdb_arrow -platform linux/amd64
+mkdir -p build/bin/linux-amd64
+mv -f build/bin/mdb2sql build/bin/linux-amd64/mdb2sql
 ```
-
-**Executavel ficara em:**
-```
-~/mdb2sql/go_wails_react/build/bin/MDB2SQL
-```
-
-**Executar o build:**
-```bash
-./build/bin/MDB2SQL
-```
+**Build offline para pacote minimo:**
+- Python: `uv run pyinstaller --onefile --windowed --distpath build/$(uname -s)-$(uname -m) src/main.py`
+- Rust/Tauri release: `cargo tauri build` (binarios em `src-tauri/target/**/release/`)
 
 ---
 
@@ -418,7 +423,7 @@ NC='\033[0m' # No Color
 # 1. Python + PyQt6
 echo -e "${GREEN}[1/3] Starting Python + PyQt6...${NC}"
 cd ~/mdb2sql/py_qt6
-poetry run python src/main.py &
+uv run python src/main.py &
 PY_PID=$!
 echo -e "${CYAN}Python GUI started (PID: $PY_PID)${NC}"
 sleep 2
@@ -481,7 +486,7 @@ export DISPLAY=:0
 
 **OU executar com Wayland:**
 ```bash
-QT_QPA_PLATFORM=wayland poetry run python src/main.py
+QT_QPA_PLATFORM=wayland uv run python src/main.py
 ```
 
 ---
@@ -519,15 +524,18 @@ chmod +x script_name.sh
 
 ---
 
-### 5. Poetry Nao Encontra Python 3.14
+### 5. uv nao encontrado ou fora do PATH
 
-**Problema:** Poetry usa Python errado
+**Problema:** `uv` nao resolve no terminal
 
 **Solucao:**
 ```bash
-# Forcar Poetry a usar Python 3.14
-poetry env use python3.14
-poetry install
+# Se instalar via script oficial, binario fica em ~/.cargo/bin
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+
+# Verificar
+uv --version
 ```
 
 ---
@@ -542,12 +550,14 @@ Kernel: 6.x
 Node.js: 23.3.0
 npm: 10.9.0
 pnpm: Latest
-Python: 3.14.0
-Poetry: 1.8.5
+Python: 3.12.x
+uv: latest
 Go: 1.23.3
 Wails: v2.11.0
 Rust: 1.83.0
 Cargo: 1.83.0
+
+**Nota:** manter as versoes acima para evitar que upgrades/downgrades quebrem dependencias do build.
 ```
 
 ---
@@ -667,7 +677,7 @@ cargo test
 ### Python/PyQt6
 ```bash
 cd py_qt6
-poetry run pytest  # If tests implemented
+uv run pytest  # If tests implemented
 ```
 
 ---
@@ -691,8 +701,8 @@ cargo tauri build
 ### Python/PyQt6 (using PyInstaller)
 ```bash
 cd py_qt6
-poetry add --group dev pyinstaller
-poetry run pyinstaller --onefile --windowed src/main.py
+uv add --dev pyinstaller
+uv run pyinstaller --onefile --windowed src/main.py
 # Output: dist/main
 ```
 
@@ -715,7 +725,7 @@ cd go_wails_react && wails dev
 cd rust_tauri_svelte && cargo tauri dev
 
 # Python/PyQt6
-cd py_qt6 && poetry run python -m src.main
+cd py_qt6 && uv run python -m src.main
 ```
 
 ---
@@ -746,4 +756,4 @@ source ~/.bashrc
 
 ---
 
-**Setup complete. Choose your preferred stack and start development.**
+**Setup finalizado. Prosseguir para a stack desejada conforme os guias.**

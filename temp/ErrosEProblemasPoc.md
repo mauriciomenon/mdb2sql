@@ -118,27 +118,23 @@ cp data/sample.duckdb go_wails_react/data/
 
 ### 3. Python + PyQt6
 
-#### Problema A: Poetry Interpreter Path
+#### Problema A: Poetry Interpreter Path (LEGADO - migrado para uv)
 **Erro:**
 ```
 (eval):1: /opt/homebrew/bin/poetry: bad interpreter:
 /opt/homebrew/opt/python@3.11/bin/python3.11: no such file or directory
 ```
 
-**Causa Raiz:**
+**Causa Raiz (historico):**
 - Poetry foi instalado com Python 3.11
-- Sistema agora tem Python 3.14
-- Symlink do Poetry aponta para Python 3.11 inexistente
+- Sistema atualizava para Python 3.14 e symlink quebrou
 
-**Solucoes Alternativas:**
+**Solucoes Alternativas (historicas):**
 1. Executar diretamente via venv: `.venv/bin/python src/main.py`
-2. Reinstalar Poetry para Python 3.14
-3. Usar Poetry via `python3 -m poetry`
+2. (historico) Reinstalar Poetry para Python 3.14
+3. (historico) Usar Poetry via `python3 -m poetry`
 
-**Solucao Aplicada:**
-- Bypass do Poetry, execucao direta via venv
-
-**Status:** ✅ CONTORNADO (workaround funcional)
+**Estado Atual:** stack Python migrou para uv; problema nao se aplica mais. Manter registro apenas para audit trail.
 
 ---
 
@@ -215,7 +211,7 @@ func (a *App) validateDatabasePath(dbPath string) (string, error) {
 
 ### 3. Package Managers
 
-**Problema:** Poetry/npm/pnpm/cargo tem comportamentos diferentes
+**Problema (historico):** Poetry/npm/pnpm/cargo tem comportamentos diferentes; Python migrou para uv
 **Licao:** Documentar comandos exatos para cada plataforma
 **Acao:** Scripts `run_*.sh` para cada implementacao
 
@@ -255,8 +251,8 @@ npm 10.9.0
 
 #### Python + PyQt6
 ```
-Python 3.14.0
-poetry version 1.8.5
+Python 3.12.x
+uv (latest)
 PyQt6 == (verificar em pyproject.toml)
 ```
 

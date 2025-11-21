@@ -32,11 +32,33 @@ build = [
 dev = [
     "ruff>=0.1.0",
     "pytest>=8.0.0",
+    "flake8>=7.1.0",
+]
+
+[tool.flake8]
+max-line-length = 120
+exclude = [
+    ".venv",
+    "venv",
+    "env",
+    "build",
+    "dist",
+    ".ruff_cache",
+    "data",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.16.0",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
