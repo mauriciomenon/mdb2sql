@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
-// NIVEL BASICO: Declaracoes de tipos para arquivos nao-TypeScript
-// NIVEL TECNICO: Allows importing CSS/images without type errors
+// Declaracoes de tipos para arquivos nao-TypeScript (CSS, imagens)
+// !T: Allows importing CSS/images without type errors
 
 declare module '*.css' {
   const content: Record<string, string>;

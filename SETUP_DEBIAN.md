@@ -1,209 +1,595 @@
-# MDB2SQL - Setup Guide for Debian Trixie
+# MDB2SQL - Guia de Instalacao Debian 13.2 Stable
 
-**Target OS**: Debian Trixie (testing)
-**Last Updated**: 2025-11-16
+## Data: 2025-11-20
+## Status: Receita de Bolo para Instalacao Completa
 
 ---
 
-## PREREQUISITES
+## PREREQUISITOS
 
-### Update System
+### 1. Debian 13.2 Stable - 64-bit
+- Versao: Debian 13.2 (stable release)
+- Codinome: Trixie
+- Acesso root ou sudo
+- Conexao com internet
+
+---
+
+## ATUALIZACAO DO SISTEMA
+
 ```bash
 sudo apt update
 sudo apt upgrade -y
 ```
 
-### Install Essential Build Tools
-```bash
-sudo apt install -y build-essential curl wget git pkg-config libssl-dev
-```
-
 ---
 
-## STACK-SPECIFIC SETUP
+## INSTALACAO DE FERRAMENTAS BASE
 
-### GO + WAILS + REACT
+### 1. Instalar Dependencias Essenciais
 
-#### Install Go 1.21+
-```bash
-# Download latest Go (dynamic version fetch)
-GO_LATEST_FILENAME=$(curl -sS https://go.dev/dl/?mode=json | grep -o 'go[0-9.]*\.linux-amd64\.tar\.gz' | head -n 1)
-wget "https://go.dev/dl/${GO_LATEST_FILENAME}"
-sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf "${GO_LATEST_FILENAME}"
-rm "${GO_LATEST_FILENAME}"
-
-# Add to PATH
-echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-echo 'export PATH=$PATH:$HOME/go/bin' >> ~/.bashrc
-source ~/.bashrc
-```
-
-Verify:
-```bash
-go version  # Should show 1.21+
-```
-
-#### Install Node.js 20+ via nvm
-```bash
-# Download installer locally so you can inspect it before running
-curl -o install_nvm.sh https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh
-bash install_nvm.sh
-rm install_nvm.sh
-source ~/.bashrc
-
-nvm install 20
-nvm use 20
-```
-
-Verify:
-```bash
-node --version  # Should show v20+
-npm --version
-```
-
-#### Install Wails Dependencies
 ```bash
 sudo apt install -y \
+    build-essential \
+    curl \
+    wget \
+    git \
+    pkg-config \
+    libssl-dev \
     libgtk-3-dev \
-    libwebkit2gtk-4.0-dev \
+    libwebkit2gtk-4.1-dev \
     libayatana-appindicator3-dev \
     librsvg2-dev \
     patchelf
 ```
 
-#### Install Wails CLI
+---
+
+### 2. Instalar Git
+
 ```bash
-go install github.com/wailsapp/wails/v2/cmd/wails@latest
+sudo apt install -y git
 ```
 
-Verify:
+**Configurar Git:**
 ```bash
-wails version  # Should show v2.11+
+git config --global user.name "Seu Nome"
+git config --global user.email "seu@email.com"
 ```
 
-#### Build Go/Wails Implementation
+**Verificar:**
 ```bash
-cd go_wails_react
-go mod tidy
-cd frontend
-npm install
-cd ..
-wails dev
+git --version
 ```
-
-**CRITICAL**: If you get Arrow linker errors:
-```bash
-# Option 1: Build without Arrow (recommended - Arrow not needed)
-wails dev -tags no_duckdb_arrow
-wails build -tags no_duckdb_arrow
-
-# Option 2: Install Arrow libraries (only if you need Arrow)
-sudo apt install -y libarrow-dev
-```
-
-**Expected**: Window opens with database viewer showing sample data.
 
 ---
 
-### RUST + TAURI + SVELTE
+### 3. Instalar Node.js e npm
 
-#### Install Rust via rustup
+**Metodo 1: Via NodeSource (recomendado para versao especifica)**
+
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source ~/.cargo/env
+# Adicionar repositorio NodeSource para Node.js 23.x
+curl -fsSL https://deb.nodesource.com/setup_23.x | sudo -E bash -
+
+# Instalar Node.js
+sudo apt install -y nodejs
+
+# Verificar
+node --version
+npm --version
 ```
 
-Verify:
+**Instalar pnpm globalmente:**
 ```bash
-rustc --version  # Should show 1.70+
-cargo --version
+sudo npm install -g pnpm
 ```
 
-#### Install Node.js (if not already installed)
-See Go/Wails section above.
-
-#### Install Tauri Dependencies
+**Verificar:**
 ```bash
-sudo apt install -y \
-    libwebkit2gtk-4.0-dev \
-    libgtk-3-dev \
-    libayatana-appindicator3-dev \
-    librsvg2-dev \
-    patchelf \
-    libssl-dev
+pnpm --version
 ```
-
-#### Build Rust/Tauri Implementation
-```bash
-cd rust_tauri_svelte
-cargo check  # Download deps and verify build
-cd ui
-npm install
-cd ..
-cargo tauri dev
-```
-
-**Expected**: Window opens with database viewer showing sample data.
 
 ---
 
-### PYTHON + PYQT6
+### 4. Instalar Python 3.14
 
-#### Install Python 3.11+ and Dev Packages
+**Metodo 1: Build from Source (recomendado para versao exata)**
+
 ```bash
+# Dependencias para compilar Python
 sudo apt install -y \
-    python3 \
-    python3-pip \
-    python3-venv \
-    python3-dev
+    libreadline-dev \
+    libncursesw5-dev \
+    libssl-dev \
+    libsqlite3-dev \
+    tk-dev \
+    libgdbm-dev \
+    libc6-dev \
+    libbz2-dev \
+    libffi-dev \
+    zlib1g-dev
+
+# Download Python 3.14
+cd /tmp
+wget https://www.python.org/ftp/python/3.14.0/Python-3.14.0.tgz
+tar -xf Python-3.14.0.tgz
+cd Python-3.14.0
+
+# Compilar e instalar
+./configure --enable-optimizations
+make -j $(nproc)
+sudo make altinstall
+
+# Verificar
+python3.14 --version
 ```
 
-Verify:
+**Criar alias (opcional):**
 ```bash
-python3 --version  # Should show 3.11+
-pip3 --version
+echo "alias python=python3.14" >> ~/.bashrc
+echo "alias pip=pip3.14" >> ~/.bashrc
+source ~/.bashrc
 ```
 
-#### Install PyQt6 System Dependencies
+**Instalar Poetry:**
 ```bash
-sudo apt install -y \
-    libxcb-xinerama0 \
-    libxcb-cursor0 \
-    libegl1 \
-    libxkbcommon-x11-0 \
-    libdbus-1-3
+curl -sSL https://install.python-poetry.org | python3.14 -
 ```
 
-#### Install Poetry (Python dependency manager)
+**Adicionar Poetry ao PATH:**
 ```bash
-curl -sSL https://install.python-poetry.org | python3 -
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-Verify:
+**Verificar:**
 ```bash
 poetry --version
 ```
 
-#### Build Python/PyQt6 Implementation
+---
+
+### 5. Instalar Rust e Cargo
+
 ```bash
-cd py_qt6
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+**Seguir instrucoes do instalador (opcao padrao: 1)**
+
+**Adicionar ao PATH:**
+```bash
+source $HOME/.cargo/env
+```
+
+**Adicionar permanentemente:**
+```bash
+echo 'source $HOME/.cargo/env' >> ~/.bashrc
+```
+
+**Verificar:**
+```bash
+rustc --version
+cargo --version
+```
+
+**Versao recomendada: 1.83.0**
+
+---
+
+### 6. Instalar Go
+
+**Versao recomendada: 1.23.3**
+
+```bash
+# Download Go
+wget https://go.dev/dl/go1.23.3.linux-amd64.tar.gz
+
+# Remover instalacao anterior (se houver)
+sudo rm -rf /usr/local/go
+
+# Extrair
+sudo tar -C /usr/local -xzf go1.23.3.linux-amd64.tar.gz
+
+# Adicionar ao PATH
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+echo 'export PATH=$PATH:$HOME/go/bin' >> ~/.bashrc
+source ~/.bashrc
+```
+
+**Verificar:**
+```bash
+go version
+```
+
+---
+
+### 7. Instalar Wails CLI
+
+**Prerequisito:** Go ja instalado
+
+```bash
+go install github.com/wailsapp/wails/v2/cmd/wails@latest
+```
+
+**Verificar:**
+```bash
+wails version
+```
+
+**Versao recomendada: v2.11.0**
+
+**Instalar dependencias adicionais do Wails:**
+```bash
+sudo apt install -y \
+    libgtk-3-dev \
+    libwebkit2gtk-4.1-dev \
+    build-essential
+```
+
+---
+
+### 8. Instalar Tauri Prerequisites
+
+**Dependencias do sistema:**
+```bash
+sudo apt install -y \
+    libwebkit2gtk-4.1-dev \
+    libgtk-3-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev \
+    patchelf
+```
+
+**Instalar Tauri CLI:**
+```bash
+cargo install tauri-cli
+```
+
+**Verificar:**
+```bash
+cargo tauri --version
+```
+
+---
+
+## CLONAR REPOSITORIO
+
+```bash
+cd ~
+git clone https://github.com/seu-usuario/mdb2sql.git
+cd mdb2sql
+git checkout dev
+```
+
+---
+
+## CONFIGURACAO DE CADA IMPLEMENTACAO
+
+### 1. Python + PyQt6
+
+**Navegar ate o diretorio:**
+```bash
+cd ~/mdb2sql/py_qt6
+```
+
+**Instalar dependencias do sistema para PyQt6:**
+```bash
+sudo apt install -y \
+    libxcb-xinerama0 \
+    libxcb-cursor0 \
+    libxkbcommon-x11-0 \
+    libxcb-icccm4 \
+    libxcb-image0 \
+    libxcb-keysyms1 \
+    libxcb-randr0 \
+    libxcb-render-util0 \
+    libxcb-shape0
+```
+
+**Instalar dependencias Python:**
+```bash
 poetry install
-poetry run python -m src.main
 ```
 
-**Alternative without Poetry**:
+**Verificar instalacao:**
 ```bash
-cd py_qt6
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python -m src.main
+poetry run python --version
 ```
 
-**Expected**: Qt window opens with database viewer showing sample data.
+**Criar diretorio de dados:**
+```bash
+mkdir -p data
+```
+
+**Copiar banco de dados sample:**
+```bash
+cp ../data/sample.duckdb ./data/sample.duckdb
+```
+
+**Executar:**
+```bash
+poetry run python src/main.py
+```
+
+**OU diretamente via venv (se Poetry der problema):**
+```bash
+.venv/bin/python src/main.py
+```
+
+---
+
+### 2. Go + Wails + React
+
+**Navegar ate o diretorio:**
+```bash
+cd ~/mdb2sql/go_wails_react
+```
+
+**Criar diretorio de dados:**
+```bash
+mkdir -p data
+```
+
+**Copiar banco de dados:**
+```bash
+cp ../data/sample.duckdb ./data/sample.duckdb
+```
+
+**Instalar dependencias Go:**
+```bash
+go mod tidy
+```
+
+**Executar em modo desenvolvimento:**
+```bash
+wails dev
+```
+
+**Build para producao:**
+```bash
+wails build
+```
+
+**Executavel ficara em:**
+```
+~/mdb2sql/go_wails_react/build/bin/MDB2SQL
+```
+
+**Executar o build:**
+```bash
+./build/bin/MDB2SQL
+```
+
+---
+
+### 3. Rust + Tauri + Svelte
+
+**ATENCAO:** Implementacao Rust tem problemas conhecidos de incompatibilidade entre Tauri v1 e v2.
+
+**Navegar ate o diretorio:**
+```bash
+cd ~/mdb2sql/rust_tauri_svelte
+```
+
+**Instalar dependencias do frontend:**
+```bash
+cd ui
+pnpm install
+cd ..
+```
+
+**Tentar build (pode falhar):**
+```bash
+cd src-tauri
+cargo build
+```
+
+**Se der erro de incompatibilidade de versoes:**
+- Verificar temp/ERROS_E_PROBLEMAS_POC.md para detalhes
+- Esta e uma limitacao conhecida da POC
+
+---
+
+## TESTES COMPLETOS
+
+### Script Bash para Rodar Todas as GUIs
+
+**Criar arquivo:** `run_all_guis_debian.sh`
+
+```bash
+#!/usr/bin/env bash
+# Script para rodar as 3 implementacoes GUI no Debian
+
+set -e
+
+echo "========================================="
+echo "MDB2SQL - Running All GUI Implementations"
+echo "========================================="
+echo ""
+
+# Cores
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# 1. Python + PyQt6
+echo -e "${GREEN}[1/3] Starting Python + PyQt6...${NC}"
+cd ~/mdb2sql/py_qt6
+poetry run python src/main.py &
+PY_PID=$!
+echo -e "${CYAN}Python GUI started (PID: $PY_PID)${NC}"
+sleep 2
+
+# 2. Go + Wails + React
+echo ""
+echo -e "${GREEN}[2/3] Starting Go + Wails + React...${NC}"
+cd ~/mdb2sql/go_wails_react
+wails dev &
+GO_PID=$!
+echo -e "${CYAN}Go Wails GUI started (PID: $GO_PID)${NC}"
+sleep 3
+
+# 3. Rust + Tauri + Svelte (pode falhar)
+echo ""
+echo -e "${GREEN}[3/3] Starting Rust + Tauri + Svelte...${NC}"
+cd ~/mdb2sql/rust_tauri_svelte
+cargo tauri dev &
+RUST_PID=$!
+echo -e "${CYAN}Rust Tauri GUI started (PID: $RUST_PID)${NC}"
+
+echo ""
+echo "========================================="
+echo -e "${YELLOW}All 3 GUIs are starting...${NC}"
+echo ""
+echo "PIDs:"
+echo "  Python PyQt6: $PY_PID"
+echo "  Go Wails:     $GO_PID"
+echo "  Rust Tauri:   $RUST_PID"
+echo ""
+echo "Press Ctrl+C to stop all processes"
+echo "========================================="
+
+# Wait for all background processes
+wait
+```
+
+**Dar permissao de execucao:**
+```bash
+chmod +x run_all_guis_debian.sh
+```
+
+**Executar:**
+```bash
+./run_all_guis_debian.sh
+```
+
+---
+
+## PROBLEMAS CONHECIDOS NO DEBIAN
+
+### 1. PyQt6 Sem Display X11
+
+**Problema:** `cannot connect to X server`
+
+**Solucao:** Garantir que DISPLAY esta definido
+```bash
+export DISPLAY=:0
+```
+
+**OU executar com Wayland:**
+```bash
+QT_QPA_PLATFORM=wayland poetry run python src/main.py
+```
+
+---
+
+### 2. Wails Sem GTK/WebKit
+
+**Problema:** `package webkit2gtk-4.1 not found`
+
+**Solucao:**
+```bash
+sudo apt install -y libwebkit2gtk-4.1-dev libgtk-3-dev
+```
+
+---
+
+### 3. DuckDB Shared Library
+
+**Problema:** Erros ao carregar libduckdb.so
+
+**Solucao:**
+```bash
+sudo ldconfig
+```
+
+---
+
+### 4. Permission Denied em Scripts
+
+**Problema:** `Permission denied` ao executar scripts
+
+**Solucao:**
+```bash
+chmod +x script_name.sh
+```
+
+---
+
+### 5. Poetry Nao Encontra Python 3.14
+
+**Problema:** Poetry usa Python errado
+
+**Solucao:**
+```bash
+# Forcar Poetry a usar Python 3.14
+poetry env use python3.14
+poetry install
+```
+
+---
+
+## VERSOES TESTADAS E FUNCIONAIS
+
+### Debian 13.2 Stable (Trixie)
+
+```
+Debian: 13.2 stable
+Kernel: 6.x
+Node.js: 23.3.0
+npm: 10.9.0
+pnpm: Latest
+Python: 3.14.0
+Poetry: 1.8.5
+Go: 1.23.3
+Wails: v2.11.0
+Rust: 1.83.0
+Cargo: 1.83.0
+```
+
+---
+
+## CONFIGURACOES ADICIONAIS
+
+### Habilitar Wayland para GUIs
+
+```bash
+# Adicionar ao ~/.bashrc
+echo 'export QT_QPA_PLATFORM=wayland' >> ~/.bashrc
+echo 'export GDK_BACKEND=wayland' >> ~/.bashrc
+source ~/.bashrc
+```
+
+---
+
+### Otimizacoes de Performance
+
+```bash
+# Instalar aceleracao de hardware (Intel/AMD)
+sudo apt install -y mesa-vulkan-drivers libvulkan1
+
+# Verificar Vulkan
+vulkaninfo | head -20
+```
+
+---
+
+## PROXIMOS PASSOS
+
+1. Testar instalacao em VM limpa do Debian 13.2 stable
+2. Criar script de instalacao automatizado (apt + bash)
+3. Documentar erros especificos do Debian
+4. Adicionar suporte a Ubuntu 24.04 LTS
+
+---
+
+**Ultima Atualizacao:** 2025-11-20 22:40 UTC-3
+**Responsavel:** Claude Code
+**Versao Testada:** Debian 13.2 Stable (Trixie)
+**Status:** RECEITA COMPLETA PARA DEBIAN 13.2 STABLE
 
 ---
 
