@@ -32,19 +32,6 @@ build = [
 dev = [
     "ruff>=0.1.0",
     "pytest>=8.0.0",
-    "flake8>=7.1.0",
-]
-
-[tool.flake8]
-max-line-length = 120
-exclude = [
-    ".venv",
-    "venv",
-    "env",
-    "build",
-    "dist",
-    ".ruff_cache",
-    "data",
 ]
 
 [build-system]

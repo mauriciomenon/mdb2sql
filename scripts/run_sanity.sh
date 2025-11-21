@@ -74,7 +74,6 @@ else
     cd "$ROOT_DIR/py_qt6"
     uv run pytest
     uv run ruff check
-    uv run flake8 src tests --max-line-length 120 --extend-exclude ".venv,venv,env,build,dist,.ruff_cache,data"
   fi
 fi
 

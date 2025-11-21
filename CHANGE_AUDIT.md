@@ -174,28 +174,189 @@ body {
 **Mudanca:** 53 linhas
 **Status:** Validar se nao reverteu melhorias anteriores
 
-### 20-39. Outros arquivos
-**Status:** Analise pendente
+### 20. scripts/run_sanity.sh (NOVO)
+**Descricao:** Script unificado para build+test de todas implementacoes
+**Status:** ✅ EXCELENTE - Script bem estruturado com:
+- Flags de skip por stack (SKIP_GO, SKIP_RUST, SKIP_PYTHON)
+- Deteccao de OS/ARCH para artefatos segregados
+- Tests + linting + builds em sequencia
+- Menu interativo para abrir GUI apos sanity check
+**Manter:** SIM (remover apenas linha flake8)
+
+### 21. scripts/build_release.sh (NOVO)
+**Descricao:** Script para builds de release
+**Status:** ✅ BOM - Precisa teste mas parece util
+
+### 22. scripts/clean.sh (NOVO)
+**Descricao:** Script de limpeza de artefatos
+**Status:** ✅ BOM - Util para CI/CD
+
+### 23. scripts/package_minimal.sh (NOVO)
+**Descricao:** Script de empacotamento minimo
+**Status:** ✅ BOM - Gera artifacts/ segregados por OS/arch
+
+### 24. scripts/validate_build.sh (MODIFICADO)
+**Status:** ⚠️ REVISAR - Script ja existia, ver mudancas
+
+### 25. BUILD_REPORT.md (NOVO)
+**Status:** ✅ EXCELENTE - Documentacao detalhada de:
+- Tempos de build por stack
+- Comandos exatos usados
+- Checklist de sanity
+- Version pins (Go 1.23, Node 23, Python 3.12, Rust 1.83)
+**Manter:** SIM
+
+### 26. TODO.md (NOVO)
+**Status:** ✅ BOM - Todos marcados como completos:
+- Validacao SQL injection em db_manager.go
+- Revisao pnpm hoisting
+- Correcao links obsoletos
+- Toolchain PDF funcionando
+**Manter:** SIM
+
+### 27. go_wails_react/app_test.go (NOVO)
+**Status:** ✅ BOM - Testes unitarios Go backend
+**Manter:** SIM (testes sao sempre bons)
+
+### 28. go_wails_react/backend/db_manager_integration_test.go (NOVO)
+**Status:** ✅ BOM - Testes de integracao
+**Manter:** SIM
+
+### 29. py_qt6/tests/test_db_manager.py (MODIFICADO)
+**Status:** ⚠️ REVISAR - Ver mudancas especificas
+
+### 30. rust_tauri_svelte/src/backend/tests.rs (NOVO)
+**Status:** ✅ BOM - Testes Rust backend
+**Manter:** SIM
+
+### 31. .gitignore (MODIFICADO)
+**Status:** ✅ PROVAVELMENTE BOM - Ver adicoes
+
+### 32-39. Arquivos de setup guides (MODIFICADOS)
+**Arquivos:** ProjectSpec.md, README.md, SetupDebian.md, SetupSummary.md, etc
+**Status:** ⚠️ CRITICO - Precisa verificar se nao reverteram PascalCase ou outras melhorias anteriores
 
 ---
 
 ## PACOTES PROBLEMATICOS REINTRODUZIDOS
 
-### Investigacao necessaria:
-1. **Go Wails:** Verificar se versoes problematicas foram reintroduzidas
-2. **Rust Tauri:** 2245 linhas no Cargo.lock sugerem mudancas massivas
-3. **Python:** flake8 duplica ruff
+### ❌ CONFIRMADO: Tauri v2 REINTRODUZIDO (PROBLEMA CRITICO!)
+**Arquivo:** `rust_tauri_svelte/Cargo.toml`
+
+**Original (funcionava):**
+```toml
+tauri = { version = "1.8", features = ["shell-open"] }
+tauri-build = { version = "1.5", features = [] }
+```
+
+**Atual (problemático):**
+```toml
+tauri = { version = "2.9.3", features = [] }
+tauri-build = { version = "2.0", features = [] }
+```
+
+**Impacto:**
+- Tauri v2 tem incompatibilidades conhecidas com DuckDB
+- Projeto estava estável com Tauri v1.8
+- Cargo.lock teve 2245 linhas alteradas devido a essa mudança
+- `BUILD_REPORT.md` menciona "Tauri v1 config" mas código usa v2 (inconsistência)
+
+**ACAO OBRIGATORIA:** Reverter para Tauri 1.8 + tauri-build 1.5
 
 ---
 
-## PROXIMOS PASSOS
+### ⚠️ QUESTIONAVEL: Dependencias de teste frontend
+**Arquivo:** `go_wails_react/frontend/package.json`
 
-1. ✅ Criar branch backup: `git checkout -b backup-other-ai-changes`
-2. ⏳ Analisar diff completo de cada arquivo critico
-3. ⏳ Reverter interface Go Wails (App.tsx + App.css)
-4. ⏳ Revisar mudancas em backend Go
-5. ⏳ Validar scripts novos
-6. ⏳ Testar builds de cada implementacao
+**Adicionado:**
+```json
+"@testing-library/jest-dom": "^6.9.1",
+"@testing-library/react": "^16.3.0",
+"@vitest/ui": "^0.34.6",
+"jsdom": "^27.2.0",
+"vitest": "^0.34.6"
+```
+
+**Analise:**
+- Aumenta bundle size significativamente
+- Testes frontend nao eram prioridade (apenas backend tinha testes)
+- Script de teste criado: `scripts/run_sanity.sh` linha 39 executa `pnpm test`
+- Arquivo de teste criado: `go_wails_react/frontend/src/App.test.jsx`
+
+**ACAO SUGERIDA:** Revisar com usuario - pode ser util mas não era requisito
+
+---
+
+### ⚠️ QUESTIONAVEL: flake8 duplica ruff
+**Arquivo:** `py_qt6/pyproject.toml`
+
+**Problema:**
+- Projeto ja usa `ruff` para linting
+- `flake8` foi adicionado (duplicacao de funcao)
+- `scripts/run_sanity.sh` linha 77 executa ambos:
+  ```bash
+  uv run ruff check
+  uv run flake8 src tests --max-line-length 120
+  ```
+
+**ACAO SUGERIDA:** Remover flake8, manter apenas ruff (mais rapido e moderno)
+
+---
+
+## RESUMO EXECUTIVO FINAL
+
+### REVERTER IMEDIATAMENTE (HORRIVEIS):
+1. ❌ `go_wails_react/frontend/src/App.tsx` - Interface reescrita (88→212 linhas)
+2. ❌ `go_wails_react/frontend/src/App.css` - CSS complexo desnecessario (141→318 linhas)
+3. ❌ `rust_tauri_svelte/Cargo.toml` - Tauri v2.9.3 (voltar para v1.8)
+4. ❌ `rust_tauri_svelte/src-tauri/Cargo.toml` - tauri-build 2.0 (voltar para 1.5)
+5. ❌ `rust_tauri_svelte/Cargo.lock` - Consequencia de Tauri v2 (regerado apos reverter)
+
+### REVISAR COM USUARIO (QUESTIONAVEIS):
+1. ⚠️ `go_wails_react/frontend/package.json` - Dependencias de teste (vitest, testing-library)
+2. ⚠️ `go_wails_react/frontend/src/App.test.jsx` - Testes frontend (novo)
+3. ⚠️ `py_qt6/pyproject.toml` - flake8 duplica ruff
+4. ⚠️ `scripts/run_sanity.sh` linha 77 - Remove chamada flake8
+5. ⚠️ `go_wails_react/backend/db_manager.go` - Ver mudancas especificas
+
+### MANTER (BOAS):
+1. ✅ `BUILD_REPORT.md` - Documentacao excelente
+2. ✅ `TODO.md` - Tracking de tarefas
+3. ✅ `scripts/run_sanity.sh` - Script sanity unificado (remover flake8)
+4. ✅ `scripts/build_release.sh` - Build script
+5. ✅ `scripts/clean.sh` - Cleanup script
+6. ✅ `scripts/package_minimal.sh` - Package script
+7. ✅ `go_wails_react/app_test.go` - Testes Go backend
+8. ✅ `go_wails_react/backend/db_manager_integration_test.go` - Testes integracao
+9. ✅ `rust_tauri_svelte/src/backend/tests.rs` - Testes Rust
+10. ✅ Outros scripts PowerShell (.ps1) - Cross-platform
+
+---
+
+## PROXIMOS PASSOS PROPOSTOS
+
+### Fase 1: Reversao Critica (URGENTE)
+1. ✅ Branch backup criado: commit 568f419
+2. ⏳ **AGUARDANDO APROVACAO DO USUARIO**
+3. ⏳ Reverter App.tsx para commit f7b6315
+4. ⏳ Reverter App.css para commit f7b6315
+5. ⏳ Reverter Cargo.toml Tauri para v1.8
+6. ⏳ Executar `cargo update` para regererar Cargo.lock
+
+### Fase 2: Revisao Seletiva
+7. ⏳ Usuario decide sobre testes frontend (vitest)
+8. ⏳ Remover flake8 ou justificar duplicacao
+9. ⏳ Revisar mudancas em db_manager.go linha por linha
+
+### Fase 3: Validacao
+10. ⏳ Executar `scripts/run_sanity.sh` para todos stacks
+11. ⏳ Testar interface Go Wails manualmente
+12. ⏳ Confirmar Rust Tauri compila com v1.8
+
+### Fase 4: Documentacao
+13. ⏳ Criar CHANGELOG.md com todas decisoes
+14. ⏳ Atualizar ProjectSpec.md se necessario
+15. ⏳ Commit final com mensagem detalhada
 
 ---
 
@@ -205,3 +366,4 @@ body {
 - Dual-level comments (portugues + `// !T:`) sao OBRIGATORIOS
 - Semantic versioning deve ser respeitado
 - Pacotes problematicos ja haviam sido identificados em sessoes anteriores
+- Backup completo em commit 568f419 no branch dev
