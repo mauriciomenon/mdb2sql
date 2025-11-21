@@ -63,3 +63,7 @@ node_modules/
 
 # Rust build output
 rust_tauri_svelte/target/
+rust_tauri_svelte/src-tauri/
+
+# Artifacts (binaries too large for GitHub)
+artifacts/
