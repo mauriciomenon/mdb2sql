@@ -190,13 +190,15 @@ cargo test
 
 ## Version History
 
-### v0.1.0 (Current - POC Stage)
+### v0.4.0 (Current - Documentation Standardization)
 - ✅ Python implementation complete
 - ✅ Go implementation complete
 - 🔄 Rust implementation in progress
 - ✅ Dual-level code documentation
 - ✅ Security hardening (path traversal, SQL injection)
 - ✅ Platform setup guides (Windows 11, Debian 13.2)
+- ✅ All documentation files standardized to PascalCase
+- ✅ Comprehensive README and ProjectSpec
 
 ## Contributing
 
