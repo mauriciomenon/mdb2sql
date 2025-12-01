@@ -1,15 +1,15 @@
-# NIVEL BASICO: pyproject.toml e o arquivo de configuracao do Poetry
-# Define dependencias, metadados do projeto e build system
+# NIVEL BASICO: pyproject.toml para uv (package manager rapido)
+# Define dependencias e metadados do projeto
 
 [project]
 name = "mdb2sql"
 version = "0.1.0"
 description = "Multi-platform MDB database manager with search, comparison and validation"
 authors = [
-    {name = "Maurício Menon",email = "54405514+mauriciomenon@users.noreply.github.com"}
+    {name = "Maurício Menon", email = "54405514+mauriciomenon@users.noreply.github.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11"
 dependencies = [
     # NIVEL BASICO: PyQt6 para interfaces graficas nativas cross-platform
     "PyQt6>=6.7.0",
@@ -31,37 +31,21 @@ build = [
 # NIVEL TECNICO: Dev dependencies (linting, formatting, testing)
 dev = [
     "ruff>=0.1.0",
-    "black>=23.0.0",
     "pytest>=8.0.0",
 ]
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.poetry]
-name = "mdb2sql"
-version = "0.1.0"
-description = "Multi-platform MDB database manager"
-authors = ["Maurício Menon <54405514+mauriciomenon@users.noreply.github.com>"]
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.16.0",
+]
 
-[tool.poetry.dependencies]
-python = ">=3.11,<3.14"
-PyQt6 = "^6.7.0"
-duckdb = "^1.1.3"
-pandas = "^2.2.0"
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
 
-[tool.poetry.group.build]
-optional = true
-
-[tool.poetry.group.build.dependencies]
-nuitka = "^2.5.7"
-pyinstaller = "^6.10.0"
-
-[tool.poetry.group.dev]
-optional = true
-
-[tool.poetry.group.dev.dependencies]
-ruff = "^0.1.0"
-black = "^24.3.0"
-pytest = "^8.0.0"
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

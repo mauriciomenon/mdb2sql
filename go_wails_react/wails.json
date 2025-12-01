@@ -4,16 +4,18 @@
   "outputfilename": "mdb2sql",
   "frontend": {
     "dir": "./frontend",
-    "install": "npm install",
-    "build": "npm run build",
-    "dev": "npm run dev",
+    "install": "pnpm install",
+    "build": "pnpm run build",
+    "dev:watcher": {
+      "enabled": true
+    },
     "package": {
-      "manager": "npm"
+      "manager": "pnpm"
     }
   },
   "backend": {
     "dir": ".",
-    "go:build": "-tags=no_duckdb_arrow"
+    "go:build": "-tags no_duckdb_arrow"
   },
   "author": {
     "name": "Author",

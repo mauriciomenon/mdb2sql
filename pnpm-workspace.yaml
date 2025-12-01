@@ -1,0 +1,6 @@
+packages:
+  - go_wails_react/frontend
+  - rust_tauri_svelte/ui
+
+onlyBuiltDependencies:
+  - esbuild

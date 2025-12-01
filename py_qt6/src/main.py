@@ -1,33 +1,32 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# NIVEL BASICO: Entry point da aplicacao PyQt6
-# Este arquivo cria a janela principal e inicia o event loop
+# Entry point da aplicacao PyQt6 - cria janela e inicia event loop
+# !T: sys.argv allows CLI args, QApplication manages event loop and system resources
 
 import sys
 from PyQt6.QtWidgets import QApplication
 from ui.main_window import MainWindow
 
-# NIVEL TECNICO: sys.argv permite passar argumentos via linha de comando
-# QApplication gerencia event loop, temas, recursos do sistema
+# !T: sys.argv permite passar argumentos via linha de comando
+# !T: QApplication gerencia event loop, temas, recursos do sistema
 
 
 def main():
-    # NIVEL BASICO: Cria aplicacao Qt
-    # Cada app PyQt6 precisa exatamente 1 QApplication
+    # Cria aplicacao Qt - cada app PyQt6 precisa exatamente 1 QApplication
     app = QApplication(sys.argv)
 
-    # NIVEL BASICO: Define metadados da aplicacao
+    # Define metadados da aplicacao
     app.setApplicationName("MDB2SQL")
     app.setOrganizationName("MDB2SQL")
     app.setOrganizationDomain("mdb2sql.local")
 
-    # NIVEL BASICO: Cria e mostra janela principal
+    # Cria e mostra janela principal
     window = MainWindow()
     window.show()
 
-    # NIVEL BASICO: Inicia event loop (app fica rodando ate fechar janela)
-    # sys.exit() garante cleanup correto ao encerrar
+    # Inicia event loop - app fica rodando ate fechar janela
+    # !T: sys.exit() ensures proper cleanup on shutdown
     sys.exit(app.exec())
 
 

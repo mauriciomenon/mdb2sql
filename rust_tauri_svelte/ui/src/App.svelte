@@ -2,7 +2,7 @@
   // NIVEL BASICO: Svelte reactive script para table viewer
   // Variaveis aqui sao automaticamente observadas e re-renderizam UI quando mudam
 
-  import { invoke } from '@tauri-apps/api/tauri';
+  import { invoke } from '@tauri-apps/api/core';
 
   // NIVEL BASICO: Estado da aplicacao (reactive variables)
   let tables = [];
@@ -65,8 +65,13 @@
 
   <!-- NIVEL BASICO: Controles -->
   <div class="controls">
-    <label>Table:</label>
-    <select bind:value={selectedTable} on:change={() => loadTable(selectedTable)} disabled={tables.length === 0}>
+    <label for="table-select">Table:</label>
+    <select
+      id="table-select"
+      bind:value={selectedTable}
+      on:change={() => loadTable(selectedTable)}
+      disabled={tables.length === 0}
+    >
       {#each tables as table}
         <option value={table}>{table}</option>
       {/each}
