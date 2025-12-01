@@ -116,6 +116,9 @@
       {selectedTable}: Showing {tableData.length} of {rowCount} rows
     </div>
   {/if}
+
+  <!-- NIVEL BASICO: Identificacao discreta da implementacao -->
+  <div class="tech-badge">Rust Tauri + Svelte</div>
 </div>
 
 <style>
@@ -131,9 +134,10 @@
 
   h1 {
     text-align: center;
-    color: #333;
+    color: #000;
     margin-bottom: 20px;
     font-size: 24px;
+    font-weight: 600;
   }
 
   /* NIVEL BASICO: Area de controles (select, button, status) */
@@ -260,6 +264,21 @@
     font-size: 13px;
     color: #555;
     font-weight: 500;
+  }
+
+  /* NIVEL BASICO: Badge discreto de identificacao da tecnologia */
+  .tech-badge {
+    position: fixed;
+    bottom: 10px;
+    right: 10px;
+    padding: 4px 10px;
+    background-color: rgba(0, 0, 0, 0.05);
+    border-radius: 12px;
+    font-size: 11px;
+    color: #888;
+    font-weight: 500;
+    user-select: none;
+    pointer-events: none;
   }
 
   /* NIVEL TECNICO: Global body styles for future theme support */

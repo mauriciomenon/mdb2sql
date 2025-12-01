@@ -1,7 +1,7 @@
 {
   "build": {
-    "beforeDevCommand": "cd ui && pnpm run dev",
-    "beforeBuildCommand": "cd ui && pnpm run build",
+    "beforeDevCommand": "pnpm --dir ui run dev",
+    "beforeBuildCommand": "pnpm --dir ui run build",
     "devPath": "http://localhost:1420",
     "distDir": "../ui/dist"
   },

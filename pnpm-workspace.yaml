@@ -1,6 +1,9 @@
 packages:
   - go_wails_react/frontend
   - rust_tauri_svelte/ui
+  - node_electron_react
+  - node_electron_react/frontend
 
 onlyBuiltDependencies:
+  - duckdb
   - esbuild

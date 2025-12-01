@@ -138,6 +138,9 @@ function App() {
           {selectedTable}: Showing {tableData.length} of {rowCount} rows
         </div>
       )}
+
+      {/* NIVEL BASICO: Identificacao discreta da implementacao */}
+      <div className="tech-badge">Go Wails + React</div>
     </div>
   );
 }
