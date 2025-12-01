@@ -79,8 +79,24 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 		if envPath := os.Getenv("MDB2SQL_DB_PATH"); envPath != "" {
 			dbPath = envPath
 		} else {
-			// !T: Fallback to default relative path
-			dbPath = filepath.Join("data", "sample.duckdb")
+			// !T: Get executable directory for bundled app
+			exePath, err := os.Executable()
+			if err == nil {
+				// !T: In .app bundle, executable is in Contents/MacOS/
+				// data/ should be in Contents/Resources/data/
+				exeDir := filepath.Dir(exePath)
+				parentDir := filepath.Dir(exeDir) // Contents/
+				dbPath = filepath.Join(parentDir, "Resources", "data", "sample.duckdb")
+
+				// !T: Fallback to project root if Resources path doesn't exist
+				if _, err := os.Stat(dbPath); err != nil {
+					// Development mode - use project root
+					dbPath = filepath.Join("data", "sample.duckdb")
+				}
+			} else {
+				// !T: Fallback to default relative path
+				dbPath = filepath.Join("data", "sample.duckdb")
+			}
 		}
 	}
 
