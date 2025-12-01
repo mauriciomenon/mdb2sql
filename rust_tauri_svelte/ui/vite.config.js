@@ -5,7 +5,7 @@
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
-const outDir = process.env.OUT_DIR || `dist/${process.platform}-${process.arch}`;
+const outDir = process.env.OUT_DIR || 'dist';
 
 export default defineConfig({
   plugins: [svelte()],

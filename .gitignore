@@ -67,3 +67,20 @@ rust_tauri_svelte/src-tauri/
 
 # Artifacts (binaries too large for GitHub)
 artifacts/
+
+# Snyk Security Extension - AI Rules (auto-generated)
+.github/instructions/snyk_rules.instructions.md
+
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md
+
+# Trunk.io CLI tools (auto-installed)
+trunk
+trunk-analytics-cli
+
+# Node Electron implementation (work in progress)
+node_electron_react/
+
+# Root package-lock.json (monorepo uses pnpm)
+/package-lock.json
