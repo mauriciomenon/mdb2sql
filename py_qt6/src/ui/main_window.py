@@ -1,5 +1,5 @@
-# NIVEL BASICO: Janela principal da aplicacao
-# QMainWindow e o template padrao para apps com menu, toolbar, status bar
+# Janela principal da aplicacao com menu, toolbar, status bar
+# !T: QMainWindow provides standard app structure with slots/signals pattern
 
 from pathlib import Path
 from PyQt6.QtWidgets import (
@@ -17,81 +17,81 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from backend.db_manager import DBManager
 
-# NIVEL TECNICO: QMainWindow provides standard app structure
-# Slots/signals pattern for event handling
+# !T: QMainWindow provides standard app structure
+# !T: Slots/signals pattern for event handling
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        # NIVEL BASICO: Inicializa manager de banco de dados
+        # Inicializa manager de banco de dados
         self.db_manager = DBManager()
         self.init_ui()
 
     def init_ui(self):
-        # NIVEL BASICO: Configura janela principal
+        # Configura janela principal
         self.setWindowTitle("MDB2SQL - Database Viewer")
         self.setGeometry(100, 100, 1200, 800)
 
-        # NIVEL BASICO: Widget central
+        # Widget central
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
         main_layout = QVBoxLayout(central_widget)
 
-        # NIVEL BASICO: Titulo
+        # Titulo
         title = QLabel("MDB2SQL - Feature 1: Load and Display Table")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("font-size: 18px; font-weight: bold; margin: 10px;")
         main_layout.addWidget(title)
 
-        # NIVEL BASICO: Layout horizontal para controles
+        # Layout horizontal para controles
         controls_layout = QHBoxLayout()
 
-        # NIVEL BASICO: ComboBox para selecionar tabela
+        # ComboBox para selecionar tabela
         controls_layout.addWidget(QLabel("Table:"))
         self.table_combo = QComboBox()
         self.table_combo.setMinimumWidth(300)
-        # NIVEL TECNICO: Signal emitido quando usuario seleciona outra tabela
+        # !T: Signal emitido quando usuario seleciona outra tabela
         self.table_combo.currentTextChanged.connect(self.on_table_selected)
         controls_layout.addWidget(self.table_combo)
 
-        # NIVEL BASICO: Botao para carregar banco
+        # Botao para carregar banco
         self.load_button = QPushButton("Load Database")
         self.load_button.clicked.connect(self.load_database)
         controls_layout.addWidget(self.load_button)
 
-        # NIVEL BASICO: Label status
+        # Label status
         self.status_label = QLabel("No database loaded")
         controls_layout.addWidget(self.status_label)
 
         controls_layout.addStretch()
         main_layout.addLayout(controls_layout)
 
-        # NIVEL BASICO: Tabela para exibir dados
+        # Tabela para exibir dados
         self.data_table = QTableWidget()
-        # NIVEL TECNICO: Stretch columns to fill width
+        # !T: Stretch columns to fill width
         self.data_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
         )
         main_layout.addWidget(self.data_table)
 
-        # NIVEL BASICO: Label rodape com info
+        # Label rodape com info
         self.info_label = QLabel("Ready")
         main_layout.addWidget(self.info_label)
 
     def load_database(self):
-        # NIVEL BASICO: Carrega banco DuckDB
-        # NIVEL TECNICO: Check env var or use default path
+        # Carrega banco DuckDB usando env var ou caminho default
+        # !T: Check env var or use default path
 
-        # NIVEL BASICO: Tenta variavel de ambiente primeiro
+        # Tenta variavel de ambiente primeiro
         import os
         env_path = os.getenv("MDB2SQL_DB_PATH")
 
         if env_path:
             db_path = Path(env_path)
         else:
-            # NIVEL BASICO: Caminho do banco sample (relativo ao projeto)
+            # Caminho do banco sample relativo ao projeto
             db_path = Path(__file__).parent.parent.parent.parent / "data" / "sample.duckdb"
 
         if not db_path.exists():
@@ -100,20 +100,20 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            # NIVEL BASICO: Conecta ao banco
+            # Conecta ao banco
             self.db_manager.connect(str(db_path))
 
-            # NIVEL BASICO: Lista tabelas disponiveis
+            # Lista tabelas disponiveis
             tables = self.db_manager.list_tables()
 
-            # NIVEL BASICO: Popula ComboBox com nomes das tabelas
+            # Popula ComboBox com nomes das tabelas
             self.table_combo.clear()
             self.table_combo.addItems(tables)
 
             self.status_label.setText(f"Loaded: {db_path.name} ({len(tables)} tables)")
             self.status_label.setStyleSheet("color: green;")
 
-            # NIVEL BASICO: Carrega primeira tabela automaticamente
+            # Carrega primeira tabela automaticamente
             if tables:
                 self.on_table_selected(tables[0])
 
@@ -122,14 +122,14 @@ class MainWindow(QMainWindow):
             self.status_label.setStyleSheet("color: red;")
 
     def on_table_selected(self, table_name: str):
-        # NIVEL BASICO: Chamado quando usuario seleciona tabela no ComboBox
-        # Carrega dados da tabela e exibe na QTableWidget
+        # Chamado quando usuario seleciona tabela no ComboBox
+        # !T: Loads table data and displays in QTableWidget
 
         if not table_name or not self.db_manager.conn:
             return
 
         try:
-            # NIVEL BASICO: Busca dados da tabela (limit 100 linhas)
+            # Busca dados da tabela com limit de 100 linhas
             rows = self.db_manager.query_table(table_name, limit=100)
 
             if not rows:
@@ -138,23 +138,23 @@ class MainWindow(QMainWindow):
                 self.data_table.setColumnCount(0)
                 return
 
-            # NIVEL BASICO: Pega nomes das colunas do primeiro row
+            # Pega nomes das colunas do primeiro row
             columns = list(rows[0].keys())
 
-            # NIVEL BASICO: Configura tabela
+            # Configura tabela
             self.data_table.setRowCount(len(rows))
             self.data_table.setColumnCount(len(columns))
             self.data_table.setHorizontalHeaderLabels(columns)
 
-            # NIVEL BASICO: Preenche celulas com dados
+            # Preenche celulas com dados
             for row_idx, row_data in enumerate(rows):
                 for col_idx, col_name in enumerate(columns):
                     value = row_data[col_name]
-                    # NIVEL TECNICO: Convert to string, handle None
+                    # !T: Convert to string, handle None
                     item = QTableWidgetItem(str(value) if value is not None else "")
                     self.data_table.setItem(row_idx, col_idx, item)
 
-            # NIVEL BASICO: Atualiza info rodape
+            # Atualiza info rodape
             total_rows = self.db_manager.get_row_count(table_name)
             self.info_label.setText(
                 f"{table_name}: Showing {len(rows)} of {total_rows} rows"
