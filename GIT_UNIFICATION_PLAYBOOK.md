@@ -6,6 +6,21 @@
 
 ---
 
+## REGRAS DE FORMATACAO E NOMENCLATURA
+
+**IMPORTANTE:** Este documento segue as seguintes regras obrigatorias:
+
+1. **Nomes de arquivos/diretorios:** snake_case (ex: git_merge_strategy.md)
+2. **Sem caracteres especiais:** Proibido acentos, cedilha, trema, espacos em nomes
+3. **Sem emojis:** Nenhum emoji ou figura em codigo ou documentacao
+4. **Alfabeto basico:** Somente alfabeto basico e simbolos de programacao
+5. **Titulos em documentos:** Primeira letra maiuscula, resto minusculo (ex: "Parte 1: Diagnostico")
+6. **Variaveis e funcoes:** snake_case ou camelCase conforme linguagem
+
+**Justificativa:** Compatibilidade com sistemas *nix, Windows, macOS e ferramentas CLI.
+
+---
+
 ## PARTE 1: PEDIDO INICIAL DO USUARIO
 
 ### Contexto
@@ -402,7 +417,7 @@ deb64ff..8aef225  master → origin/master
   - archive/tauri2-migration
 
 GitHub Alerts:
-  ⚠️ 3 vulnerabilidades moderadas detectadas
+  [AVISO] 3 vulnerabilidades moderadas detectadas
 ```
 
 ### 5.2 Verificacao de Integridade Final
@@ -475,7 +490,7 @@ git push origin security/fix-dependabot-alerts
 gh pr create --title "Security: Fix Dependabot alerts" --body "Resolve 3 moderate vulnerabilities"
 ```
 
-**Status mdb2sql:** ⏳ PENDENTE (documentado como proxima acao)
+**Status mdb2sql:** [PENDENTE] PENDENTE (documentado como proxima acao)
 
 ---
 
@@ -519,7 +534,7 @@ gh pr create --base dev --title "chore(deps): Update golang.org/x/crypto to v0.4
 5. Commit com mensagem detalhada
 6. PR para dev (nao master diretamente)
 
-**Status mdb2sql:** ⏳ PENDENTE (documentado como proxima acao)
+**Status mdb2sql:** [PENDENTE] PENDENTE (documentado como proxima acao)
 
 ---
 
@@ -545,7 +560,7 @@ git branch -r
 - PR fechado
 - Commits ja incorporados via outros PRs
 
-**Status mdb2sql:** ⏳ PENDENTE (documentado como proxima acao)
+**Status mdb2sql:** [PENDENTE] PENDENTE (documentado como proxima acao)
 
 **Alternativa Segura:**
 ```bash
@@ -685,11 +700,11 @@ Arquivos Alterados: 4495 (+13322, -221697 linhas)
 - **Total: ~30 minutos**
 
 ### Sem Perda de Dados
-- ✅ Stashes preservados
-- ✅ Tags de backup criadas
-- ✅ Historico completo mantido
-- ✅ Branches orfaos arquivados (nao deletados)
-- ✅ Rollback possivel a qualquer momento
+- [OK] Stashes preservados
+- [OK] Tags de backup criadas
+- [OK] Historico completo mantido
+- [OK] Branches orfaos arquivados (nao deletados)
+- [OK] Rollback possivel a qualquer momento
 
 ---
 
@@ -786,10 +801,10 @@ cargo update
 5. Correcao de falhas identificadas
 
 ### Garantias
-- ✅ Zero perda de dados
-- ✅ Rollback a qualquer momento
-- ✅ Historico preservado
-- ✅ Rastreabilidade completa
+- [OK] Zero perda de dados
+- [OK] Rollback a qualquer momento
+- [OK] Historico preservado
+- [OK] Rastreabilidade completa
 
 ### Resultado Esperado
 - Branches unificados
