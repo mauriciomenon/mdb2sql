@@ -1,7 +1,8 @@
-# Janela principal da aplicacao com menu, toolbar, status bar
-# !T: QMainWindow provides standard app structure with slots/signals pattern
+# Janela principal da aplicacao com layout central customizado
+# !T: QMainWindow hosts the central widget and signal-driven interactions
 
 from pathlib import Path
+from typing import Any, Callable, cast
 from PyQt6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -10,22 +11,104 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QPushButton,
     QLabel,
-    QTableWidget,
-    QTableWidgetItem,
+    QTableView,
     QHeaderView,
 )
-from PyQt6.QtCore import Qt
-from backend.db_manager import DBManager
+from PyQt6.QtCore import (
+    QAbstractTableModel,
+    QModelIndex,
+    QObject,
+    QRunnable,
+    Qt,
+    QThreadPool,
+    QTimer,
+    pyqtSignal,
+)
+from backend.database_tasks import (
+    TablePayload,
+    database_path_from_env,
+    list_tables,
+    load_table_payload,
+)
 
 # !T: QMainWindow provides standard app structure
 # !T: Slots/signals pattern for event handling
 
 
+class _WorkerSignals(QObject):
+    success = pyqtSignal(object)
+    error = pyqtSignal(str)
+
+
+class _DatabaseWorker(QRunnable):
+    def __init__(self, task: Callable[[], object]):
+        super().__init__()
+        self.task = task
+        self.signals = _WorkerSignals()
+
+    def run(self) -> None:
+        try:
+            result = self.task()
+        except Exception as exc:
+            self.signals.error.emit(str(exc))
+            return
+
+        self.signals.success.emit(result)
+
+
+class _TableModel(QAbstractTableModel):
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: list[dict[str, Any]] = []
+        self.columns: list[str] = []
+
+    def rowCount(self, parent: QModelIndex | None = None) -> int:
+        if parent is not None and parent.isValid():
+            return 0
+        return len(self.rows)
+
+    def columnCount(self, parent: QModelIndex | None = None) -> int:
+        if parent is not None and parent.isValid():
+            return 0
+        return len(self.columns)
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> str | None:
+        if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
+            return None
+
+        value = self.rows[index.row()][self.columns[index.column()]]
+        return str(value) if value is not None else ""
+
+    def headerData(
+        self,
+        section: int,
+        orientation: Qt.Orientation,
+        role: int = Qt.ItemDataRole.DisplayRole,
+    ) -> str | None:
+        if role != Qt.ItemDataRole.DisplayRole:
+            return None
+
+        if orientation == Qt.Orientation.Horizontal and 0 <= section < len(self.columns):
+            return self.columns[section]
+
+        return str(section + 1) if orientation == Qt.Orientation.Vertical else None
+
+    def set_rows(self, rows: list[dict[str, Any]]) -> None:
+        self.beginResetModel()
+        self.rows = rows
+        self.columns = list(rows[0].keys()) if rows else []
+        self.endResetModel()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        # Inicializa manager de banco de dados
-        self.db_manager = DBManager()
+        self.current_db_path: Path | None = None
+        self.pending_table_name: str | None = None
+        self.thread_pool: QThreadPool = QThreadPool.globalInstance() or QThreadPool(self)
+        self.table_load_timer = QTimer(self)
+        self.table_load_timer.setSingleShot(True)
+        self.table_load_timer.timeout.connect(self._start_table_worker)
         self.init_ui()
 
     def init_ui(self):
@@ -69,11 +152,13 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(controls_layout)
 
         # Tabela para exibir dados
-        self.data_table = QTableWidget()
+        self.table_model = _TableModel()
+        self.data_table = QTableView()
+        self.data_table.setModel(self.table_model)
         # !T: Stretch columns to fill width
-        self.data_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch
-        )
+        header = self.data_table.horizontalHeader()
+        if header is not None:
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         main_layout.addWidget(self.data_table)
 
         # Label rodape com info
@@ -83,83 +168,87 @@ class MainWindow(QMainWindow):
     def load_database(self):
         # Carrega banco DuckDB usando env var ou caminho default
         # !T: Check env var or use default path
-
-        # Tenta variavel de ambiente primeiro
-        import os
-        env_path = os.getenv("MDB2SQL_DB_PATH")
-
-        if env_path:
-            db_path = Path(env_path)
-        else:
-            # Caminho do banco sample relativo ao projeto
-            db_path = Path(__file__).parent.parent.parent.parent / "data" / "sample.duckdb"
+        db_path = database_path_from_env()
 
         if not db_path.exists():
-            self.status_label.setText("Error: sample.duckdb not found")
+            self.status_label.setText(f"Error: {db_path.name} not found")
             self.status_label.setStyleSheet("color: red;")
             return
 
-        try:
-            # Conecta ao banco
-            self.db_manager.connect(str(db_path))
+        self.load_button.setEnabled(False)
+        self.status_label.setText(f"Loading: {db_path.name}")
+        worker = _DatabaseWorker(lambda: list_tables(db_path))
+        worker.signals.success.connect(self._on_database_loaded)
+        worker.signals.error.connect(self._on_database_error)
+        self.thread_pool.start(worker)
 
-            # Lista tabelas disponiveis
-            tables = self.db_manager.list_tables()
+    def _on_database_loaded(self, result: object) -> None:
+        db_path, tables = cast(tuple[Path, list[str]], result)
+        self.current_db_path = db_path
 
-            # Popula ComboBox com nomes das tabelas
-            self.table_combo.clear()
-            self.table_combo.addItems(tables)
+        self.table_combo.blockSignals(True)
+        self.table_combo.clear()
+        self.table_combo.addItems(tables)
+        if tables:
+            self.table_combo.setCurrentIndex(0)
+        self.table_combo.blockSignals(False)
 
-            self.status_label.setText(f"Loaded: {db_path.name} ({len(tables)} tables)")
-            self.status_label.setStyleSheet("color: green;")
+        self.status_label.setText(f"Loaded: {db_path.name} ({len(tables)} tables)")
+        self.status_label.setStyleSheet("color: green;")
+        self.load_button.setEnabled(True)
 
-            # Carrega primeira tabela automaticamente
-            if tables:
-                self.on_table_selected(tables[0])
+        if tables:
+            self.on_table_selected(tables[0])
 
-        except Exception as e:
-            self.status_label.setText(f"Error: {str(e)}")
-            self.status_label.setStyleSheet("color: red;")
+    def _on_database_error(self, message: str) -> None:
+        self.status_label.setText(f"Error: {message}")
+        self.status_label.setStyleSheet("color: red;")
+        self.load_button.setEnabled(True)
 
     def on_table_selected(self, table_name: str):
         # Chamado quando usuario seleciona tabela no ComboBox
-        # !T: Loads table data and displays in QTableWidget
+        # !T: Loads table data and displays in QTableView
 
-        if not table_name or not self.db_manager.conn:
+        if not table_name or self.current_db_path is None:
             return
 
-        try:
-            # Busca dados da tabela com limit de 100 linhas
-            rows = self.db_manager.query_table(table_name, limit=100)
+        self.pending_table_name = table_name
+        self.info_label.setStyleSheet("")
+        self.info_label.setText(f"Loading {table_name}...")
+        self.table_load_timer.start(150)
 
-            if not rows:
-                self.info_label.setText(f"{table_name}: 0 rows")
-                self.data_table.setRowCount(0)
-                self.data_table.setColumnCount(0)
-                return
+    def _start_table_worker(self) -> None:
+        if self.current_db_path is None or not self.pending_table_name:
+            return
 
-            # Pega nomes das colunas do primeiro row
-            columns = list(rows[0].keys())
+        db_path = self.current_db_path
+        table_name = self.pending_table_name
+        self.pending_table_name = None
+        self.info_label.setText(f"Loading {table_name}...")
+        worker = _DatabaseWorker(lambda: load_table_payload(db_path, table_name))
+        worker.signals.success.connect(self._on_table_loaded)
+        worker.signals.error.connect(self._on_table_error)
+        self.thread_pool.start(worker)
 
-            # Configura tabela
-            self.data_table.setRowCount(len(rows))
-            self.data_table.setColumnCount(len(columns))
-            self.data_table.setHorizontalHeaderLabels(columns)
+    def _on_table_loaded(self, result: object) -> None:
+        payload = cast(TablePayload, result)
+        table_name = payload["table_name"]
+        if table_name != self.table_combo.currentText():
+            return
 
-            # Preenche celulas com dados
-            for row_idx, row_data in enumerate(rows):
-                for col_idx, col_name in enumerate(columns):
-                    value = row_data[col_name]
-                    # !T: Convert to string, handle None
-                    item = QTableWidgetItem(str(value) if value is not None else "")
-                    self.data_table.setItem(row_idx, col_idx, item)
+        rows = payload["rows"]
+        if not rows:
+            self.info_label.setText(f"{table_name}: 0 rows")
+            self.info_label.setStyleSheet("")
+            self.table_model.set_rows([])
+            return
 
-            # Atualiza info rodape
-            total_rows = self.db_manager.get_row_count(table_name)
-            self.info_label.setText(
-                f"{table_name}: Showing {len(rows)} of {total_rows} rows"
-            )
+        self.table_model.set_rows(rows)
+        self.info_label.setText(
+            f"{table_name}: Showing {len(rows)} of {payload['total_rows']} rows"
+        )
+        self.info_label.setStyleSheet("")
 
-        except Exception as e:
-            self.info_label.setText(f"Error loading table: {str(e)}")
-            self.info_label.setStyleSheet("color: red;")
+    def _on_table_error(self, message: str) -> None:
+        self.info_label.setText(f"Error loading table: {message}")
+        self.info_label.setStyleSheet("color: red;")
