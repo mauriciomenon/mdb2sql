@@ -4,7 +4,7 @@
 [project]
 name = "mdb2sql"
 version = "0.1.0"
-description = "Multi-platform MDB database manager with search, comparison and validation"
+description = "DuckDB-backed desktop database viewer"
 authors = [
     {name = "Maurício Menon", email = "54405514+mauriciomenon@users.noreply.github.com"}
 ]
@@ -25,13 +25,7 @@ dependencies = [
 # NIVEL BASICO: Dependencias opcionais para build/distribuicao
 build = [
     "nuitka>=2.5.7",
-    "pyinstaller>=6.10.0",
-]
-
-# NIVEL TECNICO: Dev dependencies (linting, formatting, testing)
-dev = [
-    "ruff>=0.1.0",
-    "pytest>=8.0.0",
+    "pyinstaller>=6.16.0",
 ]
 
 [build-system]
@@ -41,10 +35,12 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "pyinstaller>=6.16.0",
+    "pytest>=9.0.3",
+    "ruff>=0.1.0",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src"]
+packages = ["src/backend", "src/ui", "src/shared"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
