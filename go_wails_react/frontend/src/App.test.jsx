@@ -32,7 +32,8 @@ describe('App IPC flow', () => {
   it('loads database via IPC and renders rows', async () => {
     render(<App />);
 
-    // Autoload triggers LoadDatabase on mount
+    fireEvent.click(screen.getByRole('button', { name: /Load Database/i }));
+
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenCalled());
     expect(screen.getByText(/Loaded:/i)).toBeInTheDocument();
 
@@ -43,13 +44,13 @@ describe('App IPC flow', () => {
 
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenCalledWith('RANGER_SOACCU', 100));
     expect(screen.getByText('Alpha')).toBeInTheDocument();
-    expect(screen.getByText(new RegExp('2 / 2 rows', 'i'))).toBeInTheDocument();
+    expect(screen.getByText(/Showing 2 of 2 rows/i)).toBeInTheDocument();
   });
 
   it('handles IPC unavailable gracefully', async () => {
     global.window = Object.assign(window, { go: undefined });
     render(<App />);
-    fireEvent.click(screen.getAllByText(/Usar sample.duckdb/i)[0]);
+    fireEvent.click(screen.getByRole('button', { name: /Load Database/i }));
     expect(await screen.findByText(/IPC bridge not available/i)).toBeInTheDocument();
   });
 });
