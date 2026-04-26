@@ -23,8 +23,8 @@ export default defineConfig({
   envPrefix: ['VITE_', 'TAURI_'],
 
   build: {
-    // NIVEL TECNICO: Target modern browsers (Tauri uses latest webview)
-    target: ['es2021', 'chrome100', 'safari13'],
+    // NIVEL TECNICO: Target latest Tauri webview without legacy transforms
+    target: 'esnext',
     minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
     outDir,
