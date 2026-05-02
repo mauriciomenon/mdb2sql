@@ -1,29 +1,15 @@
 {
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MDB2SQL",
+  "version": "0.1.0",
+  "identifier": "com.mdb2sql.app",
   "build": {
     "beforeDevCommand": "pnpm --dir ui run dev",
+    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm --dir ui run build",
-    "devPath": "http://localhost:1420",
-    "distDir": "../ui/dist"
+    "frontendDist": "../ui/dist"
   },
-  "package": {
-    "productName": "MDB2SQL",
-    "version": "0.1.0"
-  },
-  "tauri": {
-    "allowlist": {
-      "all": false,
-      "shell": {
-        "open": true
-      }
-    },
-    "bundle": {
-      "active": false,
-      "identifier": "com.mdb2sql.app",
-      "targets": "all"
-    },
-    "security": {
-      "csp": null
-    },
+  "app": {
     "windows": [
       {
         "title": "MDB2SQL",
@@ -32,6 +18,14 @@
         "resizable": true,
         "fullscreen": false
       }
-    ]
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all",
+    "icon": []
   }
 }
