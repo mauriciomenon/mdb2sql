@@ -24,12 +24,6 @@ else
   if ! has_cmd go; then
     warn "Go not found in PATH; skipping Go/Wails stack."
   else
-    info "Go/Wails: backend build+tests"
-    cd "$ROOT_DIR/go_wails_react"
-    go test ./...
-    go vet ./...
-    go build -tags=no_duckdb_arrow ./...
-
     if ! has_cmd pnpm; then
       warn "pnpm not found; skipping Go/Wails frontend tests/build."
     else
@@ -42,6 +36,12 @@ else
           fail "Frontend dist not found at ${OUT_DIR:-$OUT_DIR_DEFAULT}"
       fi
     fi
+
+    info "Go/Wails: backend build+tests"
+    cd "$ROOT_DIR/go_wails_react"
+    go test ./...
+    go vet ./...
+    go build -tags=no_duckdb_arrow ./...
   fi
 fi
 

@@ -46,7 +46,7 @@ go_frontend:
 
 rust:
   stage: test
-  image: rust:1.83-bookworm
+  image: rust:1.85-bookworm
   timeout: 30m
   variables:
     CARGO_HOME: "$CI_PROJECT_DIR/.cache/cargo"

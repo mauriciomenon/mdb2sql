@@ -32,7 +32,7 @@ definitions:
           - CI=true SKIP_RUST=1 SKIP_PYTHON=1 ./scripts/run_sanity.sh
     - step: &rust
         name: Rust
-        image: rust:1.83-bookworm
+        image: rust:1.85-bookworm
         size: 1x
         max-time: 30
         caches:
