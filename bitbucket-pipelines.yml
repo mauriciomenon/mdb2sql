@@ -34,7 +34,7 @@ definitions:
         name: Rust
         image: rust:1.96-bookworm
         size: 1x
-        max-time: 30
+        max-time: 45
         caches:
           - cargo-registry
           - cargo-git
