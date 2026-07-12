@@ -72,6 +72,14 @@ definitions:
 
 pipelines:
   custom:
+    go-frontend:
+      - step: *go-frontend
+    rust:
+      - step: *rust
+    python:
+      - step: *python
+    secret-scan:
+      - step: *secret-scan
     full-validation:
       - step: *go-frontend
       - step: *rust
