@@ -1,0 +1,93 @@
+stages:
+  - test
+  - security
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+default:
+  interruptible: true
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+go_frontend:
+  stage: test
+  image: golang:1.24-bookworm
+  timeout: 30m
+  variables:
+    GOCACHE: "$CI_PROJECT_DIR/.cache/go-build"
+    GOMODCACHE: "$CI_PROJECT_DIR/.cache/go-mod"
+  before_script:
+    - apt-get update
+    - apt-get install --yes --no-install-recommends nodejs npm
+    - npm install --global n@10.2.0 pnpm@10.18.2
+    - n 22.14.0
+    - hash -r
+    - pnpm config set store-dir "$CI_PROJECT_DIR/.cache/pnpm-store"
+    - command -v go
+    - command -v node
+    - command -v pnpm
+  script:
+    - CI=true SKIP_RUST=1 SKIP_PYTHON=1 ./scripts/run_sanity.sh
+  cache:
+    key: go-frontend
+    paths:
+      - .cache/go-build/
+      - .cache/go-mod/
+      - .cache/pnpm-store/
+
+rust:
+  stage: test
+  image: rust:1.83-bookworm
+  timeout: 30m
+  variables:
+    CARGO_HOME: "$CI_PROJECT_DIR/.cache/cargo"
+  before_script:
+    - apt-get update
+    - >-
+      apt-get install --yes --no-install-recommends
+      libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev
+      librsvg2-dev patchelf
+    - rustup component add clippy
+    - command -v cargo
+    - command -v rustc
+  script:
+    - CI=true SKIP_GO=1 SKIP_PYTHON=1 ./scripts/run_sanity.sh
+  cache:
+    key: rust
+    paths:
+      - rust_tauri_svelte/target/
+      - .cache/cargo/registry/
+      - .cache/cargo/git/
+
+python:
+  stage: test
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+  timeout: 20m
+  variables:
+    UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
+  before_script:
+    - command -v python
+    - command -v uv
+  script:
+    - CI=true SKIP_GO=1 SKIP_RUST=1 ./scripts/run_sanity.sh
+  cache:
+    key: python
+    paths:
+      - .cache/uv/
+
+secret_scan:
+  stage: security
+  image:
+    name: ghcr.io/gitleaks/gitleaks:v8.30.1
+    entrypoint: [""]
+  script:
+    - gitleaks dir . --redact --exit-code 1 --no-banner

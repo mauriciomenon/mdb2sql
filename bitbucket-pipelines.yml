@@ -1,0 +1,79 @@
+definitions:
+  caches:
+    go-build: .cache/go-build
+    go-mod: .cache/go-mod
+    pnpm-store: .cache/pnpm-store
+    cargo-registry: .cache/cargo/registry
+    cargo-git: .cache/cargo/git
+    rust-target: rust_tauri_svelte/target
+    uv: .cache/uv
+  steps:
+    - step: &go-frontend
+        name: Go and frontend
+        image: golang:1.24-bookworm
+        size: 1x
+        max-time: 30
+        caches:
+          - go-build
+          - go-mod
+          - pnpm-store
+        script:
+          - export GOCACHE="$BITBUCKET_CLONE_DIR/.cache/go-build"
+          - export GOMODCACHE="$BITBUCKET_CLONE_DIR/.cache/go-mod"
+          - apt-get update
+          - apt-get install --yes --no-install-recommends nodejs npm
+          - npm install --global n@10.2.0 pnpm@10.18.2
+          - n 22.14.0
+          - hash -r
+          - pnpm config set store-dir "$BITBUCKET_CLONE_DIR/.cache/pnpm-store"
+          - command -v go
+          - command -v node
+          - command -v pnpm
+          - CI=true SKIP_RUST=1 SKIP_PYTHON=1 ./scripts/run_sanity.sh
+    - step: &rust
+        name: Rust
+        image: rust:1.83-bookworm
+        size: 1x
+        max-time: 30
+        caches:
+          - cargo-registry
+          - cargo-git
+          - rust-target
+        script:
+          - export CARGO_HOME="$BITBUCKET_CLONE_DIR/.cache/cargo"
+          - apt-get update
+          - >-
+            apt-get install --yes --no-install-recommends
+            libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev
+            librsvg2-dev patchelf
+          - rustup component add clippy
+          - command -v cargo
+          - command -v rustc
+          - CI=true SKIP_GO=1 SKIP_PYTHON=1 ./scripts/run_sanity.sh
+    - step: &python
+        name: Python
+        image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+        size: 1x
+        max-time: 20
+        caches:
+          - uv
+        script:
+          - export UV_CACHE_DIR="$BITBUCKET_CLONE_DIR/.cache/uv"
+          - command -v python
+          - command -v uv
+          - CI=true SKIP_GO=1 SKIP_RUST=1 ./scripts/run_sanity.sh
+    - step: &secret-scan
+        name: Secret scan
+        image: ghcr.io/gitleaks/gitleaks:v8.30.1
+        size: 1x
+        max-time: 15
+        script:
+          - gitleaks dir . --redact --exit-code 1 --no-banner
+
+pipelines:
+  custom:
+    full-validation:
+      - step: *go-frontend
+      - step: *rust
+      - step: *python
+      - step: *secret-scan

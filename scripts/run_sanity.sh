@@ -35,7 +35,7 @@ else
     else
       info "Go/Wails: frontend install+test+build (OUT_DIR=${OUT_DIR_DEFAULT})"
       cd "$ROOT_DIR/go_wails_react/frontend"
-      pnpm install --frozen-lockfile=false --prefer-offline >/dev/null
+      pnpm install --frozen-lockfile --prefer-offline >/dev/null
       pnpm test
       OUT_DIR="${OUT_DIR:-$OUT_DIR_DEFAULT}" pnpm run build
       if [[ ! -f "${OUT_DIR:-$OUT_DIR_DEFAULT}/index.html" ]]; then
