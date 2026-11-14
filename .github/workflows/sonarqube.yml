@@ -38,10 +38,16 @@ permissions:
 
 jobs:
   Analysis:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
+    env:
+      HAS_SONAR: ${{ secrets.SONAR_TOKEN != '' && secrets.SONAR_HOST_URL != '' }}
 
     steps:
+      - name: Report skipped scan
+        if: env.HAS_SONAR != 'true'
+        run: echo "::notice::SONAR_TOKEN / SONAR_HOST_URL not configured; scan skipped"
       - name: Analyze with SonarQube
+        if: env.HAS_SONAR == 'true'
 
         # You can pin the exact commit or the version.
         # uses: SonarSource/sonarqube-scan-action@v1.1.0

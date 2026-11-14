@@ -30,10 +30,17 @@ jobs:
       contents: read # for actions/checkout to fetch code
       security-events: write # for github/codeql-action/upload-sarif to upload SARIF results
       actions: read # only required for a private repository by github/codeql-action/upload-sarif to get the Action run status
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
+    env:
+      HAS_SNYK: ${{ secrets.SNYK_TOKEN != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Report skipped scan
+        if: env.HAS_SNYK != 'true'
+        run: echo "::notice::SNYK_TOKEN not configured; scan skipped"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: env.HAS_SNYK == 'true'
       - name: Run Snyk to check configuration files for security issues
+        if: env.HAS_SNYK == 'true'
         # Snyk can be used to break the build when it detects security issues.
         # In this case we want to upload the issues to GitHub Code Scanning
         continue-on-error: true
@@ -49,6 +56,7 @@ jobs:
           # or `main.tf` for a Terraform configuration file
           file: your-file-to-test.yaml
       - name: Upload result to GitHub Code Scanning
-        uses: github/codeql-action/upload-sarif@v3
+        if: env.HAS_SNYK == 'true'
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: snyk.sarif

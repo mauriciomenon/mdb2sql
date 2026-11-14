@@ -51,10 +51,16 @@ jobs:
     permissions:
       security-events: write # for github/codeql-action/upload-sarif to upload SARIF results
       actions: read # only required for a private repository by github/codeql-action/upload-sarif to get the Action run status
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
+    env:
+      HAS_APISEC: ${{ secrets.apisec_username != '' && secrets.apisec_password != '' }}
 
     steps:
+       - name: Report skipped scan
+         if: env.HAS_APISEC != 'true'
+         run: echo "::notice::apisec_username / apisec_password not configured; scan skipped"
        - name: APIsec scan
+         if: env.HAS_APISEC == 'true'
          uses: apisec-inc/apisec-run-scan@025432089674a28ba8fb55f8ab06c10215e772ea
          with:
           # The APIsec username with which the scans will be executed
@@ -66,6 +72,7 @@ jobs:
           # The name of the sarif format result file The file is written only if this property is provided.
           sarif-result-file: "apisec-results.sarif"
        - name: Import results
-         uses: github/codeql-action/upload-sarif@v3
+         if: env.HAS_APISEC == 'true'
+         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
          with:
           sarif_file: ./apisec-results.sarif
