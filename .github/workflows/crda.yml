@@ -64,9 +64,8 @@ on:
 
   # pull_request_target is used to securely share secret to the PR's workflow run.
   # For more info visit: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#pull_request_target
-  pull_request_target:
-    branches: [ "master" ]
-    types: [ assigned, opened, synchronize, reopened, labeled, edited ]
+  # pull_request_target trigger removed: redhat-actions/crda was deleted upstream, so the
+  # job cannot start (and the action cannot be pinned to a commit SHA).
 
 permissions:
   contents: read
@@ -77,11 +76,11 @@ jobs:
       contents: read            # for actions/checkout to fetch code
       security-events: write    # for redhat-actions/crda to upload SARIF results
     name: Scan project vulnerabilities with CRDA
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
 
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # *******************************************************************
       # Required: Instructions to setup project
@@ -100,7 +99,7 @@ jobs:
 
       # https://github.com/redhat-actions/openshift-tools-installer/blob/main/README.md
       - name: Install CRDA CLI
-        uses: redhat-actions/openshift-tools-installer@v1
+        uses: redhat-actions/openshift-tools-installer@144527c7d98999f2652264c048c7a9bd103f8a82 # v1.13.1
         with:
           source: github
           github_pat: ${{ github.token }}
@@ -119,7 +118,7 @@ jobs:
       # process to get a SNYK_TOKEN or a CRDA_KEY
       - name: CRDA Scan
         id: scan
-        uses: redhat-actions/crda@v1
+        uses: redhat-actions/crda@v1 # repository deleted upstream; cannot be SHA-pinned
         with:
           crda_key: ${{ secrets.CRDA_KEY }}           # Either use crda_key or snyk_token
           # snyk_token: ${{ secrets.SNYK_TOKEN }}
