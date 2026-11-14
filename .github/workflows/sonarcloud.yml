@@ -40,10 +40,16 @@ permissions:
 
 jobs:
   Analysis:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
+    env:
+      HAS_SONAR: ${{ secrets.SONAR_TOKEN != '' }}
 
     steps:
+      - name: Report skipped scan
+        if: env.HAS_SONAR != 'true'
+        run: echo "::notice::SONAR_TOKEN not configured; scan skipped"
       - name: Analyze with SonarCloud
+        if: env.HAS_SONAR == 'true'
 
         # You can pin the exact commit or the version.
         # uses: SonarSource/sonarcloud-github-action@v2.2.0

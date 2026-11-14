@@ -29,13 +29,20 @@ jobs:
       security-events: write # for github/codeql-action/upload-sarif to upload SARIF results
       actions: read # only required for a private repository by github/codeql-action/upload-sarif to get the Action run status
     name: Scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
+    env:
+      HAS_SEMGREP: ${{ secrets.SEMGREP_APP_TOKEN != '' }}
     steps:
       # Checkout project source
-      - uses: actions/checkout@v4
+      - name: Report skipped scan
+        if: env.HAS_SEMGREP != 'true'
+        run: echo "::notice::SEMGREP_APP_TOKEN not configured; scan skipped"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: env.HAS_SEMGREP == 'true'
 
       # Scan code using project's configuration on https://semgrep.dev/manage
       - uses: returntocorp/semgrep-action@fcd5ab7459e8d91cb1777481980d1b18b4fc6735
+        if: env.HAS_SEMGREP == 'true'
         with:
           publishToken: ${{ secrets.SEMGREP_APP_TOKEN }}
           publishDeployment: ${{ secrets.SEMGREP_DEPLOYMENT_ID }}
@@ -43,7 +50,7 @@ jobs:
 
       # Upload SARIF file generated in previous step
       - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@v3
+        if: env.HAS_SEMGREP == 'true'
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: semgrep.sarif
-        if: always()
