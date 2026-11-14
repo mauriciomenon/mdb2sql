@@ -32,6 +32,11 @@ jobs:
       security-events: write # for github/codeql-action/upload-sarif to upload SARIF results
       actions: read # only required for a private repository by github/codeql-action/upload-sarif to get the Action run status
     name: Codacy Security Scan
+    # Not runnable under the repo's SHA-pinning policy today: action releases >= v4.4.0 call an
+    # unpinned actions/setup-go internally, and older releases ship a CLI that the Codacy API
+    # (v4.3.0) or the runner's Docker daemon (older) rejects. Set the repository variable
+    # CODACY_ENABLED=true once upstream ships a release with pinned nested actions.
+    if: vars.CODACY_ENABLED == 'true'
     runs-on: ubuntu-26.04
     steps:
       # Checkout the repository to the GitHub Actions runner
