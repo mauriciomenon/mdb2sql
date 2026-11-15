@@ -55,15 +55,25 @@ pnpm run dev &
 NODE_PID=$!
 echo -e "${GREEN}      Node Electron GUI started (PID: $NODE_PID)${NC}"
 
+# 5. Zig + Dear ImGui
+echo ""
+echo -e "${GREEN}[5] Starting Zig + Dear ImGui...${NC}"
+echo -e "${BLUE}      Port: N/A (desktop app)${NC}"
+cd "${ROOT_DIR}/zig_imgui"
+zig build run -Doptimize=ReleaseSafe &
+ZIG_PID=$!
+echo -e "${GREEN}      Zig ImGui GUI started (PID: $ZIG_PID)${NC}"
+
 echo ""
 echo "========================================="
-echo -e "${YELLOW}All 4 GUIs are starting...${NC}"
+echo -e "${YELLOW}All 5 GUIs are starting...${NC}"
 echo ""
 echo "PIDs:"
 echo "  Python PyQt6:      $PY_PID"
 echo "  Go Wails:          $GO_PID (http://localhost:34115)"
 echo "  Rust Tauri:        $RUST_PID (http://localhost:1420)"
 echo "  Node Electron:     $NODE_PID (http://localhost:5173)"
+echo "  Zig ImGui:         $ZIG_PID"
 echo ""
 echo "Press Ctrl+C to stop all processes"
 echo "========================================="
