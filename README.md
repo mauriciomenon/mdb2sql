@@ -10,21 +10,21 @@ MDB2SQL provides four independent GUI implementations showcasing different techn
 
 1. **Python + PyQt6**
    - Backend: Python 3.12 + DuckDB
-   - UI: PyQt6 native widgets
-   - Status: Active development; core flows work but still under review for release
+   - UI: PyQt6 native widgets (table sidebar with filter, Data/Schema tabs, row limit, search; DuckDB work off the UI thread; light/dark follows the system)
+   - Status: 1.0.0; run from source with `uv run` (no packaged binary in the release)
 
 2. **Go + Wails + React**
    - Backend: Go 1.26 (go.mod `go 1.26.0`, required by the security updates of wails/echo/x-crypto) + duckdb-go v2.20000.0 (`github.com/duckdb/duckdb-go/v2`, DuckDB 2.0.0 linked statically; no DuckDB DLL/shared library to install or ship)
    - Frontend: React 19 + Vite
    - Bridge: Wails v2.13
    - Notes: cgo needs a C toolchain (Windows: MinGW-w64 GCC with the UCRT runtime, see SetupWindows11.md; Linux: gcc/g++). Wails CLI: `go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0`. With Go 1.27 installed, run the Wails CLI with `GOTOOLCHAIN=go1.26.11` (CLI 2.13.0 fails on Go 1.27 with "package without types was imported")
-   - Status: Active development; core flows work but still under review for release
+   - Status: 1.0.0; single exe (`wails build`), DuckDB linked in
 
-3. **Rust + Tauri + Svelte** - POC stage
+3. **Rust + Tauri + Svelte**
    - Backend: Rust 1.90+ (required by Tauri 2.12) + duckdb-rs
    - Frontend: Svelte + Vite
    - Bridge: Tauri v2 (tauri 2.12, tauri-build 2.7, config v2 + `capabilities/default.json`); CLI: `cargo install tauri-cli --version "^2" --locked`
-   - Status: builds and bundles (NSIS/MSI) on Windows; under development
+   - Status: 1.0.0; `cargo tauri build` produces the NSIS and MSI installers on Windows
 
 4. **Zig + Dear ImGui**
    - Backend: Zig 0.17 + libduckdb 2.0.0 (C API)
@@ -48,14 +48,12 @@ All platforms require:
 ```bash
 git clone https://github.com/mauriciomenon/mdb2sql.git
 cd mdb2sql
-git checkout dev
 ```
 
 #### Windows
 ```powershell
 git clone https://github.com/mauriciomenon/mdb2sql.git
 cd mdb2sql
-git checkout dev
 ```
 
 ### Running Implementations
@@ -220,10 +218,19 @@ zig build test --summary all
 ### Go + Wails
 - WebView2 required on Windows (auto-installs on first run)
 - May require firewall exceptions for dev server
+- Run `clean_go_wails.sh` (or delete `frontend/dist`) before `wails build`: Vite writes to `frontend/dist/<platform>-<arch>/`, and a stale `frontend/dist/index.html` from an older build is embedded instead of the new UI
+- "Sample data" reports `sample.duckdb` in the status line even when `MDB2SQL_DB_PATH` points to another file
 
 ## Version History
 
-### v0.4.0 (Current - Documentation Standardization)
+### v1.0.0 (2026-11-15)
+- Four GUIs over DuckDB 2.0 files: PyQt6, Go + Wails + React, Rust + Tauri 2 + Svelte, Zig + Dear ImGui
+- New UIs in all four; checked against a real 287-table database (screenshots of table list and data)
+- DuckDB 2.0 in every stack (duckdb-go v2.20000.0, duckdb crate 1.20000.2, libduckdb 2.0.0, Python duckdb 2.0.0)
+- Tauri migrated from v1 to v2; Go 1.26 with Wails 2.13
+- Dependabot alerts reduced from 79 to the ones listed in RELEASE-NOTES-v1.0.0.md
+
+### v0.4.0 (Documentation Standardization)
 - Python implementation: core features working; release readiness under review
 - Go implementation: core features working; release readiness under review
 - Rust implementation: in progress, not release ready
