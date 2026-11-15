@@ -224,6 +224,12 @@ zig build test --summary all
 
 ## Version History
 
+### v1.0.1 (2026-11-15)
+- About dialog, copy value / copy row (TAB) / copy row with header, and row search in all four GUIs
+- Each stack folder has setup_tools.ps1 (pinned tools into .tools/) and build_windows.ps1 (no local paths in binaries)
+- PyQt6 ships as a single-file exe; Tauri gets a native file picker and readable dates; Zig runs queries off the UI thread
+- See RELEASE-NOTES-v1.0.1.md
+
 ### v1.0.0 (2026-11-15)
 - Four GUIs over DuckDB 2.0 files: PyQt6, Go + Wails + React, Rust + Tauri 2 + Svelte, Zig + Dear ImGui
 - New UIs in all four; checked against a real 287-table database (screenshots of table list and data)
