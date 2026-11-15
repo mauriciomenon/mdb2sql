@@ -9,7 +9,6 @@ dist/
 # allow distributing final archives
 !*.zip
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
@@ -49,10 +48,7 @@ venv.bak/
 
 logs/
 *.log
-*.pdf
 
-# temp/ pode ter diarios importantes, permitir controle manual
-# temp/
 benchmark_results_*.json
 
 # Frontend dependencies (should never be committed)
@@ -73,7 +69,6 @@ artifacts/
 trunk
 trunk-analytics-cli
 
-node_electron_react/
 
 # Root package-lock.json (monorepo uses pnpm)
 /package-lock.json

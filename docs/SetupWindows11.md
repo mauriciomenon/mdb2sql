@@ -97,16 +97,6 @@ $env:GOTOOLCHAIN = "go1.26.11"
 ```
 `go build`, `go test` and `go vet` work with Go 1.27 without this.
 
-#### PDF Toolchain (pandoc + MiKTeX) - opcional para gerar PDFs de docs
-```powershell
-winget install Pandoc.Pandoc
-winget install MiKTeX.MiKTeX
-pandoc --version
-xelatex --version
-```
-
-Usado por `scripts/generate_md_pdfs.sh`.
-
 #### Install WebView2 Runtime (Required for Wails)
 Usually pre-installed on Windows 11. If missing:
 ```powershell
@@ -299,26 +289,14 @@ uv run pytest  # If tests implemented
 
 ## BUILDING FOR PRODUCTION
 
-### Go/Wails
-```powershell
-cd go_wails_react
-wails build
-# Output: build/bin/mdb2sql.exe
-```
+One command per subproject, run in its folder; it cleans, downloads the pinned tools into `.tools\`,
+builds, runs the tests and puts the products in `dist\w11\amd64\`. Details in the README-BUILD.txt of each folder.
 
-### Rust/Tauri
 ```powershell
-cd rust_tauri_svelte
-cargo tauri build
-# Output: target/release/bundle/nsis/MDB2SQL_0.1.0_x64-setup.exe (+ bundle/msi/*.msi)
-```
-
-### Python/PyQt6 (using PyInstaller)
-```powershell
-cd python_pyqt6
-uv add --dev pyinstaller
-uv run pyinstaller --onefile --windowed src/main.py
-# Output: dist/main.exe
+pwsh -NoProfile -File python_pyqt6\build_w11_amd64.ps1
+pwsh -NoProfile -File go_wails_react\build_w11_amd64.ps1
+pwsh -NoProfile -File rust_tauri_svelte\build_w11_amd64.ps1
+pwsh -NoProfile -File zig_imgui\build_w11_amd64.ps1
 ```
 
 ---

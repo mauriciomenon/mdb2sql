@@ -44,9 +44,7 @@ sudo apt install -y \
     libwebkit2gtk-4.1-dev \
     libayatana-appindicator3-dev \
     librsvg2-dev \
-    patchelf \
-    pandoc \
-    texlive-xetex
+    patchelf
 ```
 
 ---
@@ -686,6 +684,9 @@ uv run pytest  # If tests implemented
 
 ## BUILDING FOR PRODUCTION
 
+Os pacotes oficiais sao so de Windows 11 amd64 (`build_w11_amd64.ps1` e `README-BUILD.txt` de cada
+subprojeto). No Debian ainda nao ha comando oficial de pacote; para um binario local:
+
 ### Go/Wails
 ```bash
 cd go_wails_react
@@ -697,15 +698,13 @@ wails build
 ```bash
 cd rust_tauri_svelte
 cargo tauri build
-# Output: target/release/bundle/deb/mdb2sql_0.1.0_amd64.deb
+# Output: target/release/bundle/deb/mdb2sql_<versao>_amd64.deb
 ```
 
-### Python/PyQt6 (using PyInstaller)
+### Python/PyQt6
 ```bash
 cd python_pyqt6
-uv add --dev pyinstaller
-uv run pyinstaller --onefile --windowed src/main.py
-# Output: dist/main
+uv run --python 3.12 python src/main.py   # roda do codigo; sem pacote Linux por enquanto
 ```
 
 ---

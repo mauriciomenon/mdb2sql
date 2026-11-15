@@ -161,27 +161,7 @@ MinGW msvcrt (o do Qt) falham no link. Download, SHA-256 e comandos: secao "Inst
 
 ---
 
-### 6. Install Pandoc + MiKTeX (PDF toolchain para scripts)
-
-**Uso:** Necessario para `scripts/generate_md_pdfs.sh` (pandoc + xelatex). Instalacao pode demorar por causa do MiKTeX.
-
-**Using winget (recomendado):**
-```powershell
-winget install Pandoc.Pandoc
-winget install MiKTeX.MiKTeX
-```
-
-**Alternativa:** Downloads diretos pelos instaladores oficiais (sem choco para evitar dependencia adicional).
-
-**Verificar:**
-```powershell
-pandoc --version
-xelatex --version
-```
-
----
-
-### 7. Install Wails v2.13.0
+### 6. Install Wails v2.13.0
 
 **Prerequisites:** Go must be installed first
 
@@ -209,7 +189,7 @@ wails version
 
 ---
 
-### 8. Install Tauri Prerequisites
+### 7. Install Tauri Prerequisites
 
 **WebView2 Runtime:**
 
