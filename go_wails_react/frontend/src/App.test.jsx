@@ -47,6 +47,32 @@ describe('App IPC flow', () => {
     expect(screen.getByText(/Showing 2 of 2 rows/i)).toBeInTheDocument();
   });
 
+  it('opens the file picked in the native dialog and shows its schema', async () => {
+    const SelectDatabase = vi.fn(async () => 'C:\\data\\real.duckdb');
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SelectDatabase } } } });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Load Database/i }));
+
+    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenCalledWith('C:\\data\\real.duckdb'));
+    expect(await screen.findByText(/Loaded: real\.duckdb \(2 tables\)/)).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole('tab', { name: /Schema \(2\)/ }));
+    expect(screen.getByText('INTEGER')).toBeInTheDocument();
+  });
+
+  it('does nothing when the dialog is cancelled', async () => {
+    const SelectDatabase = vi.fn(async () => '');
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SelectDatabase } } } });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Load Database/i }));
+
+    await waitFor(() => expect(SelectDatabase).toHaveBeenCalled());
+    expect(bridge.LoadDatabase).not.toHaveBeenCalled();
+    expect(screen.getByText('No database loaded')).toBeInTheDocument();
+  });
+
   it('handles IPC unavailable gracefully', async () => {
     global.window = Object.assign(window, { go: undefined });
     render(<App />);

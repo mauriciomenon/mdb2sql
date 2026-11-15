@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct principal do Wails - contem contexto e DB manager
@@ -28,6 +30,17 @@ func NewApp() *App {
 // !T: Wails lifecycle hook called on app startup, stores context for runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+}
+
+// SelectDatabase abre o seletor de arquivo nativo; retorna "" se o usuario cancelar
+// !T: Only returns a path; LoadDatabase still validates it
+func (a *App) SelectDatabase() (string, error) {
+	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Open database",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "DuckDB / SQLite (*.duckdb;*.db;*.sqlite;*.sqlite3)", Pattern: "*.duckdb;*.db;*.sqlite;*.sqlite3"},
+		},
+	})
 }
 
 // Valida caminho do banco de dados com protecao contra path traversal

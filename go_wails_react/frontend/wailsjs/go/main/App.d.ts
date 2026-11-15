@@ -9,3 +9,5 @@ export function GetTableData(arg1:string,arg2:number):Promise<Array<Record<strin
 export function GetTableSchema(arg1:string):Promise<Array<backend.ColumnSchema>>;
 
 export function LoadDatabase(arg1:string):Promise<Array<string>>;
+
+export function SelectDatabase():Promise<string>;
