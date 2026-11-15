@@ -192,6 +192,7 @@ cargo test
 ## Known Issues
 
 ### Rust + Tauri + Svelte
+- Release builds: use `cargo tauri build`; a plain `cargo build --release` produces an exe that loads the dev server (localhost:1420) and shows an empty window
 - Arrow Flight dependency linker errors on some platforms
 - See [temp/ErrosEProblemasPoc.md](temp/ErrosEProblemasPoc.md) for workarounds
 

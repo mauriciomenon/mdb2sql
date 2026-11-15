@@ -13,7 +13,7 @@ mod backend;
 use backend::db_manager::{ColumnSchema, DBManager};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::State;
 
 // NIVEL BASICO: Estado global da aplicacao com DBManager
 // NIVEL TECNICO: Tauri State manages app-wide shared state
@@ -103,11 +103,12 @@ fn main() {
             get_row_count,
             get_table_schema
         ])
-        .setup(|app| {
+        .setup(|_app| {
             // NIVEL TECNICO: Setup hook, executa antes de mostrar janela
             #[cfg(debug_assertions)]
             {
-                let window = app.get_webview_window("main").unwrap();
+                use tauri::Manager;
+                let window = _app.get_webview_window("main").unwrap();
                 window.open_devtools();
             }
             Ok(())
