@@ -1,8 +1,8 @@
 # MDB2SQL - Guia de Instalacao Debian 13.2 Stable
 
-> Nota (2026-11-14): `go_wails_react/go.mod` agora exige Go 1.26+ e Wails v2.13 (atualizacoes de seguranca das
-> dependencias). Onde este guia cita Go 1.23 / Wails v2.11, use essas versoes; Go 1.21+ baixa o toolchain 1.26 sozinho
-> (GOTOOLCHAIN=auto). Python do `py_qt6`: 3.12 (o duckdb travado no uv.lock nao tem wheel para 3.15).
+> Nota (2026-11-14): `go_wails_react/go.mod` exige Go 1.26 e Wails v2.13.0 (atualizacoes de seguranca das
+> dependencias) e usa `github.com/duckdb/duckdb-go/v2` v2.20000.0 (DuckDB 2.0.0 linkado estaticamente: nenhuma
+> DLL/.so do DuckDB para instalar). Python do `py_qt6`: 3.12 (o duckdb travado no uv.lock nao tem wheel para 3.15).
 
 ## Data: 2025-11-20
 ## Status: Receita de Bolo para Instalacao Completa
@@ -186,17 +186,17 @@ cargo --version
 
 ### 6. Instalar Go
 
-**Versao recomendada: 1.23.3**
+**Versao recomendada: 1.26.11** (cgo precisa de gcc/g++: `sudo apt install -y build-essential`)
 
 ```bash
 # Download Go
-wget https://go.dev/dl/go1.23.3.linux-amd64.tar.gz
+wget https://go.dev/dl/go1.26.11.linux-amd64.tar.gz
 
 # Remover instalacao anterior (se houver)
 sudo rm -rf /usr/local/go
 
 # Extrair
-sudo tar -C /usr/local -xzf go1.23.3.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.26.11.linux-amd64.tar.gz
 
 # Adicionar ao PATH
 echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> ~/.bashrc
@@ -215,7 +215,7 @@ go version
 **Prerequisito:** Go ja instalado
 
 ```bash
-go install github.com/wailsapp/wails/v2/cmd/wails@latest
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
 ```
 
 **Verificar:**
@@ -223,7 +223,7 @@ go install github.com/wailsapp/wails/v2/cmd/wails@latest
 wails version
 ```
 
-**Versao recomendada: v2.11.0**
+**Versao: v2.13.0** (igual ao go.mod). Com Go 1.27 instalado, rode o CLI com `GOTOOLCHAIN=go1.26.11` (o CLI 2.13.0 falha com "package without types was imported").
 
 **Instalar dependencias adicionais do Wails:**
 ```bash
@@ -508,7 +508,7 @@ sudo apt install -y libwebkit2gtk-4.1-dev libgtk-3-dev
 
 ### 3. DuckDB Shared Library
 
-**Problema:** Erros ao carregar libduckdb.so
+**Problema:** Erros ao carregar libduckdb.so (so no py_qt6/Rust; o Go linka o DuckDB estaticamente via duckdb-go v2 e nao usa libduckdb.so)
 
 **Solucao:**
 ```bash
@@ -556,8 +556,8 @@ npm: 10.9.0
 pnpm: Latest
 Python: 3.12.x
 uv: latest
-Go: 1.23.3
-Wails: v2.11.0
+Go: 1.26.11
+Wails: v2.13.0 (duckdb-go v2.20000.0 = DuckDB 2.0.0)
 Rust: 1.83.0
 Cargo: 1.83.0
 
