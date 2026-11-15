@@ -7,3 +7,8 @@ packages:
 onlyBuiltDependencies:
   - duckdb
   - esbuild
+
+# pnpm 11+ reads allowBuilds; onlyBuiltDependencies above is kept for pnpm 10
+allowBuilds:
+  duckdb: true
+  esbuild: true
