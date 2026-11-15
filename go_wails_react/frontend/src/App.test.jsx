@@ -96,11 +96,11 @@ describe('App IPC flow', () => {
     const lines = [...dialog.querySelectorAll('h2, p')].map((el) => el.textContent);
     expect(lines).toEqual([
       'MDB2SQL (Go + Wails + React)',
-      'Versão 1.0.1',
+      'Versao 1.0.1',
       'Visualizador de bancos DuckDB convertidos de Microsoft Access: tabelas, esquema, dados e consultas.',
       `Go 1.26.10, Wails 2.13.0, DuckDB 2.0.0, React ${React.version}`,
       'Autor: Mauricio Menon',
-      'Código: https://github.com/mauriciomenon/mdb2sql',
+      'Codigo: https://github.com/mauriciomenon/mdb2sql',
     ]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));

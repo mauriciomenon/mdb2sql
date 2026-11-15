@@ -40,11 +40,11 @@ export function aboutLines(info: AppInfo): string[] {
   const v = (s: string) => s.replace(/^v/, '');
   return [
     'MDB2SQL (Go + Wails + React)',
-    `Versão ${info.version}`,
+    `Versao ${info.version}`,
     'Visualizador de bancos DuckDB convertidos de Microsoft Access: tabelas, esquema, dados e consultas.',
     `Go ${info.go}, Wails ${v(info.wails)}, DuckDB ${v(info.duckdb)}, React ${reactVersion}`,
     'Autor: Mauricio Menon',
-    `Código: ${REPO_URL}`,
+    `Codigo: ${REPO_URL}`,
   ];
 }
 
