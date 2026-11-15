@@ -5,7 +5,10 @@ const std = @import("std");
 const ig = @import("cimgui");
 const glfw = @import("zglfw");
 const dbm = @import("db");
+const dialog = @import("dialog.zig");
+const build_options = @import("build_options");
 const query = dbm.query;
+const worker = dbm.worker;
 
 const page_size = query.default_page_size;
 
@@ -13,6 +16,10 @@ const page_size = query.default_page_size;
 extern "opengl32" fn glViewport(x: c_int, y: c_int, w: c_int, h: c_int) callconv(.winapi) void;
 extern "opengl32" fn glClearColor(r: f32, g: f32, b: f32, a: f32) callconv(.winapi) void;
 extern "opengl32" fn glClear(mask: c_uint) callconv(.winapi) void;
+
+extern "user32" fn MessageBoxA(hwnd: ?*anyopaque, text: [*:0]const u8, caption: [*:0]const u8, kind: c_uint) callconv(.winapi) c_int;
+extern "dwmapi" fn DwmSetWindowAttribute(hwnd: ?*anyopaque, attr: c_uint, value: *const c_int, size: c_uint) callconv(.winapi) c_long;
+extern fn glfwGetVersion(major: *c_int, minor: *c_int, rev: *c_int) void;
 
 // Backends do ImGui (imgui_impl_glfw/opengl3, compilados com IMGUI_IMPL_API=extern "C")
 extern fn ImGui_ImplGlfw_InitForOpenGL(window: *anyopaque, install_callbacks: bool) bool;
@@ -28,6 +35,87 @@ extern fn shim_io_setup() void;
 extern fn shim_add_font(path: [*:0]const u8, size_pixels: f32) void;
 extern fn shim_clipper_range(clipper: *const ig.ImGuiListClipper, start: *c_int, end: *c_int) void;
 
+// ------------------------------------------------------------------- tema
+
+var light_theme = false;
+
+const Color = struct { c_int, u24, f32 }; // ImGuiCol, 0xRRGGBB, alfa
+
+const dark_colors = [_]Color{
+    .{ ig.ImGuiCol_Text, 0xE6E8EB, 1 },                 .{ ig.ImGuiCol_TextDisabled, 0x8B929C, 1 },
+    .{ ig.ImGuiCol_WindowBg, 0x1B1D21, 1 },             .{ ig.ImGuiCol_ChildBg, 0x000000, 0 },
+    .{ ig.ImGuiCol_PopupBg, 0x23262B, 1 },              .{ ig.ImGuiCol_Border, 0x3A3F47, 1 },
+    .{ ig.ImGuiCol_FrameBg, 0x262A30, 1 },              .{ ig.ImGuiCol_FrameBgHovered, 0x30353D, 1 },
+    .{ ig.ImGuiCol_FrameBgActive, 0x3A404A, 1 },        .{ ig.ImGuiCol_TitleBg, 0x23262B, 1 },
+    .{ ig.ImGuiCol_TitleBgActive, 0x2B3038, 1 },        .{ ig.ImGuiCol_MenuBarBg, 0x23262B, 1 },
+    .{ ig.ImGuiCol_ScrollbarBg, 0x1B1D21, 0.6 },        .{ ig.ImGuiCol_ScrollbarGrab, 0x4A505A, 1 },
+    .{ ig.ImGuiCol_ScrollbarGrabHovered, 0x5A616C, 1 }, .{ ig.ImGuiCol_ScrollbarGrabActive, 0x6B7380, 1 },
+    .{ ig.ImGuiCol_CheckMark, 0x4C9BE8, 1 },            .{ ig.ImGuiCol_Button, 0x2F5F96, 1 },
+    .{ ig.ImGuiCol_ButtonHovered, 0x3A74B5, 1 },        .{ ig.ImGuiCol_ButtonActive, 0x4587D1, 1 },
+    .{ ig.ImGuiCol_Header, 0x2F5F96, 0.8 },             .{ ig.ImGuiCol_HeaderHovered, 0x3A74B5, 0.7 },
+    .{ ig.ImGuiCol_HeaderActive, 0x4587D1, 1 },         .{ ig.ImGuiCol_Separator, 0x3A3F47, 1 },
+    .{ ig.ImGuiCol_Tab, 0x23262B, 1 },                  .{ ig.ImGuiCol_TabHovered, 0x3A74B5, 1 },
+    .{ ig.ImGuiCol_TabSelected, 0x2F5F96, 1 },          .{ ig.ImGuiCol_TabSelectedOverline, 0x4C9BE8, 1 },
+    .{ ig.ImGuiCol_TableHeaderBg, 0x2A2E35, 1 },        .{ ig.ImGuiCol_TableBorderStrong, 0x3A3F47, 1 },
+    .{ ig.ImGuiCol_TableBorderLight, 0x30343B, 1 },     .{ ig.ImGuiCol_TableRowBg, 0x000000, 0 },
+    .{ ig.ImGuiCol_TableRowBgAlt, 0xFFFFFF, 0.04 },     .{ ig.ImGuiCol_TextSelectedBg, 0x4C9BE8, 0.4 },
+    .{ ig.ImGuiCol_NavCursor, 0x4C9BE8, 1 },            .{ ig.ImGuiCol_ModalWindowDimBg, 0x000000, 0.55 },
+};
+
+const light_colors = [_]Color{
+    .{ ig.ImGuiCol_Text, 0x1C1F23, 1 },                 .{ ig.ImGuiCol_TextDisabled, 0x646B75, 1 },
+    .{ ig.ImGuiCol_WindowBg, 0xF4F5F7, 1 },             .{ ig.ImGuiCol_ChildBg, 0x000000, 0 },
+    .{ ig.ImGuiCol_PopupBg, 0xFFFFFF, 1 },              .{ ig.ImGuiCol_Border, 0xBFC5CD, 1 },
+    .{ ig.ImGuiCol_FrameBg, 0xFFFFFF, 1 },              .{ ig.ImGuiCol_FrameBgHovered, 0xEDF3FA, 1 },
+    .{ ig.ImGuiCol_FrameBgActive, 0xDDE9F7, 1 },        .{ ig.ImGuiCol_TitleBg, 0xE4E7EB, 1 },
+    .{ ig.ImGuiCol_TitleBgActive, 0xD5DAE0, 1 },        .{ ig.ImGuiCol_MenuBarBg, 0xE9ECF0, 1 },
+    .{ ig.ImGuiCol_ScrollbarBg, 0xE9ECF0, 0.6 },        .{ ig.ImGuiCol_ScrollbarGrab, 0xB4BAC3, 1 },
+    .{ ig.ImGuiCol_ScrollbarGrabHovered, 0x9AA1AB, 1 }, .{ ig.ImGuiCol_ScrollbarGrabActive, 0x808893, 1 },
+    .{ ig.ImGuiCol_CheckMark, 0x1F6FC4, 1 },            .{ ig.ImGuiCol_Button, 0xD3E2F4, 1 },
+    .{ ig.ImGuiCol_ButtonHovered, 0xBCD4EF, 1 },        .{ ig.ImGuiCol_ButtonActive, 0xA3C4EA, 1 },
+    .{ ig.ImGuiCol_Header, 0xBCD4EF, 1 },               .{ ig.ImGuiCol_HeaderHovered, 0xD3E2F4, 1 },
+    .{ ig.ImGuiCol_HeaderActive, 0xA3C4EA, 1 },         .{ ig.ImGuiCol_Separator, 0xBFC5CD, 1 },
+    .{ ig.ImGuiCol_Tab, 0xE4E7EB, 1 },                  .{ ig.ImGuiCol_TabHovered, 0xBCD4EF, 1 },
+    .{ ig.ImGuiCol_TabSelected, 0xFFFFFF, 1 },          .{ ig.ImGuiCol_TabSelectedOverline, 0x1F6FC4, 1 },
+    .{ ig.ImGuiCol_TableHeaderBg, 0xE1E5EA, 1 },        .{ ig.ImGuiCol_TableBorderStrong, 0xBFC5CD, 1 },
+    .{ ig.ImGuiCol_TableBorderLight, 0xD8DCE2, 1 },     .{ ig.ImGuiCol_TableRowBg, 0x000000, 0 },
+    .{ ig.ImGuiCol_TableRowBgAlt, 0x000000, 0.035 },    .{ ig.ImGuiCol_TextSelectedBg, 0x1F6FC4, 0.3 },
+    .{ ig.ImGuiCol_NavCursor, 0x1F6FC4, 1 },            .{ ig.ImGuiCol_ModalWindowDimBg, 0x000000, 0.35 },
+};
+
+fn channel(hex: u24, shift: u5) f32 {
+    return @as(f32, @floatFromInt((hex >> shift) & 0xFF)) / 255.0;
+}
+
+// Cores do tema (os tamanhos sao definidos uma vez em setupSizes) + barra de titulo do Windows
+fn applyTheme(light: bool, hwnd: ?*anyopaque) void {
+    light_theme = light;
+    const st = ig.igGetStyle();
+    if (light) ig.igStyleColorsLight(st) else ig.igStyleColorsDark(st);
+    for (if (light) &light_colors else &dark_colors) |c|
+        st.*.Colors[@intCast(c[0])] = .{ .x = channel(c[1], 16), .y = channel(c[1], 8), .z = channel(c[1], 0), .w = c[2] };
+    const dark_title: c_int = @intFromBool(!light);
+    _ = DwmSetWindowAttribute(hwnd, 20, &dark_title, @sizeOf(c_int)); // DWMWA_USE_IMMERSIVE_DARK_MODE
+}
+
+fn setupSizes(scale: f32) void {
+    const st = ig.igGetStyle();
+    st.*.WindowPadding = .{ .x = 10, .y = 10 };
+    st.*.FramePadding = .{ .x = 8, .y = 5 };
+    st.*.ItemSpacing = .{ .x = 8, .y = 6 };
+    st.*.CellPadding = .{ .x = 6, .y = 4 };
+    st.*.WindowRounding = 0;
+    st.*.FrameRounding = 4;
+    st.*.GrabRounding = 4;
+    st.*.TabRounding = 4;
+    st.*.PopupRounding = 6;
+    st.*.ScrollbarSize = 14;
+    st.*.FrameBorderSize = 1; // caixas de texto com contorno: no tema claro o fundo delas e branco
+    ig.ImGuiStyle_ScaleAllSizes(st, scale);
+}
+
+// ------------------------------------------------------------------- texto
+
 const Msg = struct {
     buf: [1024]u8 = undefined,
     len: usize = 0,
@@ -40,7 +128,8 @@ const Msg = struct {
     }
 
     fn draw(m: *const Msg) void {
-        if (m.is_err) ig.igPushStyleColor_Vec4(ig.ImGuiCol_Text, .{ .x = 1, .y = 0.4, .z = 0.4, .w = 1 });
+        const red: [3]f32 = if (light_theme) .{ 0.70, 0.15, 0.12 } else .{ 1, 0.48, 0.45 };
+        if (m.is_err) ig.igPushStyleColor_Vec4(ig.ImGuiCol_Text, .{ .x = red[0], .y = red[1], .z = red[2], .w = 1 });
         ig.igPushTextWrapPos(0);
         textSlice(m.buf[0..m.len]);
         ig.igPopTextWrapPos();
@@ -57,13 +146,31 @@ fn text(comptime fmt: []const u8, args: anytype) void {
     textSlice(std.fmt.bufPrint(&buf, fmt, args) catch &buf);
 }
 
+fn button(label: [*:0]const u8) bool {
+    return ig.igButton(label, .{ .x = 0, .y = 0 });
+}
+
 fn zstr(buf: anytype) [:0]u8 {
     return std.mem.sliceTo(buf, 0);
 }
 
+fn copyZ(dst: anytype, src: []const u8) void {
+    const n = @min(src.len, dst.len);
+    @memcpy(dst[0..n], src[0..n]);
+    dst[n] = 0;
+}
+
+// ------------------------------------------------------------------- app
+
+const Tab = enum { data, schema, sql };
+
 const App = struct {
     gpa: std.mem.Allocator,
+    io: std.Io,
     db: dbm.Db,
+    slot: worker.Slot, // consultas rodam fora da thread da UI; slot.db aponta para `db`
+    busy_since: f64 = 0,
+    hwnd: ?*anyopaque = null,
     status: Msg = .{},
 
     path: [1024:0]u8 = @splat(0),
@@ -83,17 +190,41 @@ const App = struct {
     sql: [8192:0]u8 = @splat(0),
     result: ?dbm.Grid = null,
     sql_msg: Msg = .{},
+    result_filter: [128:0]u8 = @splat(0), // filtro sobre as linhas carregadas do resultado
+    result_rows: ?[]usize = null, // indices das linhas que casam; null = sem filtro
+    tab: Tab = .data,
+    data_sel: GridSel = .{},
+    schema_sel: GridSel = .{},
+    result_sel: GridSel = .{},
 
-    // Acoes pedidas pela UI, executadas no inicio do proximo quadro (nunca no meio do desenho)
+    // Acoes pedidas pela UI, executadas no inicio de um proximo quadro (nunca no meio do desenho).
+    // As que usam o banco esperam o trabalho em andamento terminar.
     want_open: bool = false,
     want_select: ?usize = null,
     want_reload: bool = false,
     want_run: bool = false,
+    want_browse: bool = false,
+    want_export: bool = false,
+    want_theme: ?bool = null, // true = claro
+    want_about: bool = false,
+    want_exit: bool = false,
+    about_open: bool = false,
     focus_sql: bool = false,
+    reveal_selected: bool = false, // rola a lista de tabelas ate a selecionada (ex.: --table)
+    start_table: []const u8 = "", // --table: tabela inicial do proximo open
+    start_sql: bool = false, // --sql: roda depois do primeiro open
+    start_search: []const u8 = "", // --search: busca na aba Data depois do primeiro open
+    start_cell: ?[2]usize = null, // --cell: linha e coluna (base 0) que abrem com o menu de copia
 
     fn deinit(app: *App) void {
+        // fechar com consulta em andamento: interrompe e espera a thread antes de soltar o banco
+        app.slot.cancel();
+        if (app.slot.wait()) |o| {
+            var out = o;
+            out.deinit(app.gpa);
+        }
         app.clearTable();
-        if (app.result) |*g| g.deinit();
+        app.clearResult();
         app.gpa.free(app.counts);
         app.db.close();
     }
@@ -105,6 +236,24 @@ const App = struct {
         app.schema = null;
         app.col_names = &.{};
         app.selected = null;
+        app.data_sel = .{};
+        app.schema_sel = .{};
+    }
+
+    fn clearResult(app: *App) void {
+        if (app.result) |*g| g.deinit();
+        app.result = null;
+        app.result_sel = .{};
+        app.refilter();
+    }
+
+    // Refaz a lista de linhas do resultado que casam com o filtro (todas as colunas)
+    fn refilter(app: *App) void {
+        if (app.result_rows) |r| app.gpa.free(r);
+        app.result_rows = null;
+        const needle = zstr(&app.result_filter);
+        const g = app.result orelse return;
+        if (needle.len > 0) app.result_rows = dbm.gridtools.filterRows(app.gpa, g.rows, needle) catch null;
     }
 
     fn fail(app: *App, msg: *Msg, err: dbm.Error) void {
@@ -112,111 +261,266 @@ const App = struct {
     }
 
     fn setPath(app: *App, p: []const u8) void {
-        const n = @min(p.len, app.path.len);
-        @memcpy(app.path[0..n], p[0..n]);
-        app.path[n] = 0;
+        copyZ(&app.path, p);
     }
 
-    fn open(app: *App) void {
-        app.clearTable();
-        if (app.result) |*g| g.deinit();
-        app.result = null;
-        const path = zstr(&app.path);
-        app.db.openReadOnly(path) catch |e| return app.fail(&app.status, e);
-
-        const names = app.db.table_names;
-        app.gpa.free(app.counts);
-        app.counts = app.gpa.alloc(u64, names.len) catch &.{};
-        // shortcut: COUNT(*) per table runs on the UI thread at open (287 tables ~ instant);
-        // move to a worker thread like py_qt6 if a database makes this noticeable
-        for (app.counts, names) |*n, name|
-            n.* = app.db.count(.{ .table = name, .tables = names, .columns = &.{} }) catch 0;
-        app.status.set(false, "Loaded: {s} ({d} tables)", .{ std.fs.path.basename(path), names.len });
-        if (names.len > 0) app.select(0);
+    // Enquanto o banco esta sendo aberto a outra thread troca db.table_names: nao desenhar o banco
+    fn opening(app: *const App) bool {
+        return app.slot.busyWith(.open);
     }
 
-    fn select(app: *App, index: usize) void {
-        app.clearTable();
-        if (index >= app.db.table_names.len) return;
-        var sch = app.db.schema(app.db.table_names[index]) catch |e| return app.fail(&app.status, e);
-        const names = sch.arena.allocator().alloc([]const u8, sch.rows.len) catch {
-            sch.deinit();
-            return app.fail(&app.status, error.OutOfMemory);
+    // Copia o estado da UI para o pedido e dispara a thread
+    fn start(app: *App, kind: worker.Kind) void {
+        const r = &app.slot.req;
+        r.kind = kind;
+        switch (kind) {
+            .open => {
+                r.path = app.path;
+                r.table_name = app.start_table;
+                app.start_table = "";
+            },
+            .select => r.table = app.want_select orelse return,
+            .reload => {
+                r.table = app.selected orelse return;
+                r.columns = app.col_names;
+                r.search = app.search;
+                r.sort_col = app.sort_col;
+                r.sort_desc = app.sort_desc;
+                r.page = app.page;
+            },
+            .sql => r.sql = app.sql,
+        }
+        app.busy_since = ig.igGetTime();
+        app.slot.start() catch |e| app.status.set(true, "Could not start the worker thread: {t}", .{e});
+    }
+
+    // Resultado de um trabalho, ja na thread da UI
+    fn apply(app: *App, result: worker.Out) void {
+        var out = result;
+        defer out.deinit(app.gpa); // libera o que nao foi aproveitado abaixo
+        switch (out.kind) {
+            .open => {
+                app.clearTable();
+                app.clearResult();
+                app.sql_msg.len = 0;
+                app.want_select = null;
+                app.want_reload = false;
+                app.gpa.free(app.counts);
+                app.counts = out.counts;
+                out.counts = &.{};
+                if (app.db.isOpen()) {
+                    app.status.set(false, "Loaded: {s} ({d} tables)", .{ std.fs.path.basename(zstr(&app.slot.req.path)), app.db.table_names.len });
+                    if (app.start_sql) {
+                        app.want_run = true;
+                        app.focus_sql = true;
+                    }
+                }
+                app.start_sql = false;
+                if (out.err == null) app.takeTable(&out);
+            },
+            .select => if (out.err == null) {
+                app.clearTable();
+                app.takeTable(&out);
+            },
+            .reload => if (out.err == null) {
+                if (app.data) |*old| old.deinit();
+                app.data = out.data;
+                out.data = null;
+                app.data_sel = .{};
+                app.total = out.total;
+                app.page = out.page;
+            },
+            .sql => {
+                app.clearResult();
+                if (out.result) |g| {
+                    app.result = g;
+                    out.result = null;
+                    app.refilter();
+                    if (g.total_rows > g.rows.len)
+                        app.sql_msg.set(false, "{d} rows (showing the first {d})", .{ g.total_rows, g.rows.len })
+                    else
+                        app.sql_msg.set(false, "{d} rows, {d} columns", .{ g.total_rows, g.columns.len });
+                }
+            },
+        }
+        if (out.err) |e| return app.fail(if (out.kind == .sql) &app.sql_msg else &app.status, e);
+
+        // Estado inicial pedido na linha de comando (--search, --cell), quando os dados dele chegam
+        if (out.kind == .open) {
+            if (app.start_search.len > 0 and app.selected != null) {
+                copyZ(&app.search, app.start_search);
+                app.want_reload = true;
+            }
+            app.start_search = "";
+        }
+        if (app.start_cell) |cell| if (!app.want_run and !app.want_reload) {
+            const sel = if (out.kind == .sql) &app.result_sel else &app.data_sel;
+            sel.* = .{ .row = cell[0], .col = cell[1], .popup = true };
+            app.start_cell = null;
         };
-        for (names, sch.rows) |*n, row| n.* = row[0].?;
-        app.schema = sch;
-        app.col_names = names;
-        app.selected = index;
+    }
+
+    // Tabela recem-carregada (schema + primeira pagina): comeca sem busca nem ordenacao
+    fn takeTable(app: *App, out: *worker.Out) void {
+        app.selected = out.table orelse return;
+        app.reveal_selected = true;
+        app.schema = out.schema;
+        app.col_names = out.columns;
+        app.data = out.data;
+        out.schema = null;
+        out.data = null;
+        app.total = out.total;
+        app.page = out.page;
         app.search[0] = 0;
         app.sort_col = null;
-        app.page = 0;
-        app.reload();
-    }
-
-    fn reload(app: *App) void {
-        const index = app.selected orelse return;
-        var spec: query.Spec = .{
-            .table = app.db.table_names[index],
-            .tables = app.db.table_names,
-            .columns = app.col_names,
-            .search = zstr(&app.search),
-            .sort_column = if (app.sort_col) |c| app.col_names[c] else null,
-            .sort_desc = app.sort_desc,
-        };
-        app.total = app.db.count(spec) catch |e| return app.fail(&app.status, e);
-        app.page = query.clampPage(app.page, app.total, page_size);
-        spec.offset = app.page * page_size;
-        const g = app.db.page(spec) catch |e| return app.fail(&app.status, e);
-        if (app.data) |*old| old.deinit();
-        app.data = g;
-    }
-
-    fn runSql(app: *App) void {
-        if (app.result) |*g| g.deinit();
-        app.result = null;
-        const g = app.db.run(zstr(&app.sql), &.{}) catch |e| return app.fail(&app.sql_msg, e);
-        app.result = g;
-        if (g.total_rows > g.rows.len)
-            app.sql_msg.set(false, "{d} rows (showing the first {d})", .{ g.total_rows, g.rows.len })
-        else
-            app.sql_msg.set(false, "{d} rows, {d} columns", .{ g.total_rows, g.columns.len });
+        app.sort_desc = false;
     }
 
     fn update(app: *App) void {
-        if (app.want_open) app.open();
-        if (app.want_select) |i| app.select(i);
-        if (app.want_reload) app.reload();
-        if (app.want_run) app.runSql();
-        app.want_open = false;
-        app.want_select = null;
-        app.want_reload = false;
-        app.want_run = false;
+        if (app.slot.poll()) |out| app.apply(out);
+
+        if (app.want_theme) |light| applyTheme(light, app.hwnd);
+        app.want_theme = null;
+        if (app.want_browse) {
+            var buf: dialog.PathBuf = undefined;
+            if (dialog.pick(.open_db, app.hwnd, "", &buf)) |p| {
+                app.setPath(p);
+                app.want_open = true;
+            }
+        }
+        app.want_browse = false;
+        if (app.want_export) app.exportCsv();
+        app.want_export = false;
+
+        if (app.slot.busy()) return; // um trabalho por vez; os pedidos abaixo ficam para depois
+        if (app.want_open) {
+            app.want_open = false;
+            app.start(.open);
+        } else if (app.want_select != null) {
+            app.start(.select);
+            app.want_select = null;
+        } else if (app.want_reload) {
+            app.want_reload = false;
+            app.start(.reload);
+        } else if (app.want_run) {
+            app.want_run = false;
+            app.start(.sql);
+        }
+    }
+
+    // Grid da aba atual e o nome de arquivo sugerido para exporta-lo
+    fn currentGrid(app: *const App, name_buf: []u8) ?struct { *const dbm.Grid, []const u8 } {
+        if (app.opening() or !app.db.isOpen()) return null;
+        const table = if (app.selected) |i| app.db.table_names[i] else "";
+        const grid: *const ?dbm.Grid, const name: []const u8 = switch (app.tab) {
+            .data => .{ &app.data, std.fmt.bufPrint(name_buf, "{s}.csv", .{table}) catch "data.csv" },
+            .schema => .{ &app.schema, std.fmt.bufPrint(name_buf, "{s}_schema.csv", .{table}) catch "schema.csv" },
+            .sql => .{ &app.result, "query.csv" },
+        };
+        return if (grid.*) |*g| .{ g, name } else null;
+    }
+
+    fn exportCsv(app: *App) void {
+        var name_buf: [300]u8 = undefined;
+        const grid, const name = app.currentGrid(&name_buf) orelse return;
+        var path_buf: dialog.PathBuf = undefined;
+        const path = dialog.pick(.save_csv, app.hwnd, name, &path_buf) orelse return;
+        dbm.csv.writeFile(app.io, path, grid.columns, grid.rows) catch |e| return app.status.set(true, "CSV export failed: {t}", .{e});
+        app.status.set(false, "Exported {d} rows to {s}", .{ grid.rows.len, std.fs.path.basename(path) });
     }
 
     fn draw(app: *App) void {
+        app.drawMenu();
         const vp = ig.igGetMainViewport();
         ig.igSetNextWindowPos(vp.*.WorkPos, ig.ImGuiCond_Always, .{ .x = 0, .y = 0 });
         ig.igSetNextWindowSize(vp.*.WorkSize, ig.ImGuiCond_Always);
         _ = ig.igBegin("MDB2SQL", null, ig.ImGuiWindowFlags_NoDecoration | ig.ImGuiWindowFlags_NoMove |
             ig.ImGuiWindowFlags_NoSavedSettings | ig.ImGuiWindowFlags_NoBringToFrontOnFocus);
         defer ig.igEnd();
+        app.drawAbout();
 
-        // Barra superior: caminho + Open + status (tambem aceita arrastar o arquivo para a janela)
-        ig.igSetNextItemWidth(ig.igGetContentRegionAvail().x * 0.5);
+        // Barra superior: caminho + Browse + Open + status (tambem aceita arrastar o arquivo para a janela)
+        ig.igSetNextItemWidth(ig.igGetContentRegionAvail().x * 0.45);
         const enter = ig.igInputTextWithHint("##path", "path to .duckdb / .db (or drop the file here)", &app.path, app.path.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null);
         ig.igSameLine(0, -1);
-        if (ig.igButton("Open", .{ .x = 0, .y = 0 }) or enter) app.want_open = true;
+        if (button("Browse...")) app.want_browse = true;
         ig.igSameLine(0, -1);
-        if (app.status.len == 0) ig.igTextDisabled("No database loaded") else app.status.draw();
+        if (button("Open") or enter) app.want_open = true;
+        ig.igSameLine(0, -1);
+        app.drawStatus();
         ig.igSeparator();
 
-        if (!app.db.isOpen()) return;
+        if (app.opening() or !app.db.isOpen()) return;
 
         if (ig.igBeginChild_Str("tables", .{ .x = 320, .y = 0 }, ig.ImGuiChildFlags_ResizeX | ig.ImGuiChildFlags_Borders, 0)) app.drawTables();
         ig.igEndChild();
         ig.igSameLine(0, -1);
         if (ig.igBeginChild_Str("content", .{ .x = 0, .y = 0 }, 0, 0)) app.drawContent();
         ig.igEndChild();
+    }
+
+    fn drawMenu(app: *App) void {
+        if (!ig.igBeginMainMenuBar()) return;
+        defer ig.igEndMainMenuBar();
+        if (ig.igBeginMenu("File", true)) {
+            defer ig.igEndMenu();
+            if (ig.igMenuItem_Bool("Open...", null, false, true)) app.want_browse = true;
+            var name_buf: [300]u8 = undefined;
+            if (ig.igMenuItem_Bool("Export CSV...", null, false, app.currentGrid(&name_buf) != null)) app.want_export = true;
+            ig.igSeparator();
+            if (ig.igMenuItem_Bool("Exit", null, false, true)) app.want_exit = true;
+        }
+        if (ig.igBeginMenu("View", true)) {
+            defer ig.igEndMenu();
+            if (ig.igBeginMenu("Theme", true)) {
+                defer ig.igEndMenu();
+                if (ig.igMenuItem_Bool("Dark", null, !light_theme, true)) app.want_theme = false;
+                if (ig.igMenuItem_Bool("Light", null, light_theme, true)) app.want_theme = true;
+            }
+        }
+        if (ig.igBeginMenu("Help", true)) {
+            defer ig.igEndMenu();
+            if (ig.igMenuItem_Bool("About MDB2SQL", null, false, true)) app.want_about = true;
+        }
+    }
+
+    fn drawAbout(app: *App) void {
+        const title = "About MDB2SQL";
+        if (app.want_about) {
+            _ = ig.igOpenPopup_Str(title, 0);
+            app.about_open = true;
+        }
+        app.want_about = false;
+        const vp = ig.igGetMainViewport();
+        ig.igSetNextWindowPos(.{ .x = vp.*.Pos.x + vp.*.Size.x / 2, .y = vp.*.Pos.y + vp.*.Size.y / 2 }, ig.ImGuiCond_Appearing, .{ .x = 0.5, .y = 0.5 });
+        if (!ig.igBeginPopupModal(title, &app.about_open, ig.ImGuiWindowFlags_AlwaysAutoResize | ig.ImGuiWindowFlags_NoSavedSettings)) return;
+        defer ig.igEndPopup();
+        var glfw_ver: [3]c_int = undefined;
+        glfwGetVersion(&glfw_ver[0], &glfw_ver[1], &glfw_ver[2]);
+        var ver_buf: [32]u8 = undefined;
+        const glfw_text = std.fmt.bufPrint(&ver_buf, "{d}.{d}.{d}", .{ glfw_ver[0], glfw_ver[1], glfw_ver[2] }) catch "";
+        var buf: [1024]u8 = undefined;
+        textSlice(dbm.about.text(&buf, std.mem.span(ig.igGetVersion()), glfw_text, dbm.libraryVersion()));
+        ig.igSpacing();
+        if (button("Close")) ig.igCloseCurrentPopup();
+    }
+
+    // Status, ou o trabalho em andamento quando ele ja demora o bastante para ser notado
+    fn drawStatus(app: *App) void {
+        const elapsed = ig.igGetTime() - app.busy_since;
+        if (app.slot.busy() and elapsed > 0.15) {
+            const kind = app.slot.req.kind;
+            ig.igAlignTextToFramePadding();
+            text("{s} {d:.1} s", .{ switch (kind) {
+                .open => "Opening database...",
+                .select, .reload => "Loading table...",
+                .sql => "Running query...",
+            }, elapsed });
+            if (kind != .open) {
+                ig.igSameLine(0, -1);
+                if (button("Cancel")) app.slot.cancel();
+            }
+        } else if (app.status.len == 0) ig.igTextDisabled("No database loaded") else app.status.draw();
     }
 
     fn drawTables(app: *App) void {
@@ -239,6 +543,10 @@ const App = struct {
             if (ig.igSelectable_Bool("##t", app.selected == i, ig.ImGuiSelectableFlags_SpanAllColumns, .{ .x = 0, .y = 0 }))
                 app.want_select = i;
             ig.igPopID();
+            if (app.selected == i and app.reveal_selected) {
+                ig.igSetScrollHereY(0.5);
+                app.reveal_selected = false;
+            }
             ig.igSameLine(0, 0);
             textSlice(name);
             _ = ig.igTableNextColumn();
@@ -252,14 +560,17 @@ const App = struct {
 
         if (ig.igBeginTabItem("Data", null, 0)) {
             defer ig.igEndTabItem();
+            app.tab = .data;
             app.drawData();
         }
         if (ig.igBeginTabItem("Schema", null, 0)) {
             defer ig.igEndTabItem();
-            if (app.schema) |*g| _ = drawGrid("schema", g, null);
+            app.tab = .schema;
+            if (app.schema) |*g| _ = drawGrid("schema", g, null, &app.schema_sel, null);
         }
         if (ig.igBeginTabItem("SQL", null, if (app.focus_sql) ig.ImGuiTabItemFlags_SetSelected else 0)) {
             defer ig.igEndTabItem();
+            app.tab = .sql;
             app.drawSql();
         }
         app.focus_sql = false;
@@ -279,18 +590,20 @@ const App = struct {
         }
         ig.igSameLine(0, -1);
         ig.igBeginDisabled(app.page == 0);
-        if (ig.igButton("< Prev", .{ .x = 0, .y = 0 })) {
+        if (button("< Prev")) {
             app.page -= 1;
             app.want_reload = true;
         }
         ig.igEndDisabled();
         ig.igSameLine(0, -1);
         ig.igBeginDisabled(app.page + 1 >= pages);
-        if (ig.igButton("Next >", .{ .x = 0, .y = 0 })) {
+        if (button("Next >")) {
             app.page += 1;
             app.want_reload = true;
         }
         ig.igEndDisabled();
+        ig.igSameLine(0, -1);
+        if (button("Export CSV...")) app.want_export = true;
         ig.igSameLine(0, -1);
         const first = app.page * page_size;
         const shown = if (app.data) |g| g.rows.len else 0;
@@ -300,7 +613,7 @@ const App = struct {
             if (app.search[0] != 0) " (filtered)" else "",
         });
 
-        if (app.data) |*g| if (drawGrid("data", g, .{ .col = app.sort_col, .desc = app.sort_desc })) |s| {
+        if (app.data) |*g| if (drawGrid("data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null)) |s| {
             app.sort_col = s.col;
             app.sort_desc = s.desc;
             app.page = 0;
@@ -309,18 +622,55 @@ const App = struct {
     }
 
     fn drawSql(app: *App) void {
-        const run = ig.igInputTextMultiline("##sql", &app.sql, app.sql.len + 1, .{ .x = -1, .y = ig.igGetTextLineHeight() * 7 }, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null);
-        if (ig.igButton("Run (Ctrl+Enter)", .{ .x = 0, .y = 0 }) or run) app.want_run = true;
+        const enter = ig.igInputTextMultiline("##sql", &app.sql, app.sql.len + 1, .{ .x = -1, .y = ig.igGetTextLineHeight() * 7 }, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null);
+        const running = app.slot.busyWith(.sql);
+        ig.igBeginDisabled(running);
+        if (button("Run (Ctrl+Enter)") or enter) app.want_run = true;
+        ig.igEndDisabled();
         ig.igSameLine(0, -1);
-        if (app.sql_msg.len == 0) ig.igTextDisabled("read-only connection") else app.sql_msg.draw();
-        if (app.result) |*g| _ = drawGrid("result", g, null);
+        ig.igBeginDisabled(app.result == null);
+        if (button("Export CSV...")) app.want_export = true;
+        ig.igEndDisabled();
+        ig.igSameLine(0, -1);
+        if (running) ig.igTextDisabled("Running...") else if (app.sql_msg.len == 0) ig.igTextDisabled("read-only connection") else app.sql_msg.draw();
+        const g = if (app.result) |*x| x else return;
+        ig.igSetNextItemWidth(260);
+        if (ig.igInputTextWithHint("##rfilter", "search the rows shown, all columns", &app.result_filter, app.result_filter.len + 1, 0, null, null)) app.refilter();
+        if (app.result_rows) |rows| {
+            ig.igSameLine(0, -1);
+            text("{d} of {d} rows match", .{ rows.len, g.rows.len });
+        }
+        _ = drawGrid("result", g, null, &app.result_sel, app.result_rows);
     }
 };
 
 const Sort = struct { col: ?usize, desc: bool };
 
-// Desenha um Grid; com `sort` os cabecalhos ordenam e a nova ordenacao pedida e devolvida
-fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort) ?Sort {
+// Celula selecionada de uma grade (indices da linha em Grid.rows e da coluna)
+const GridSel = struct {
+    row: ?usize = null,
+    col: usize = 0,
+    popup: bool = false, // abrir o menu de copia ao lado da celula (estado inicial --cell)
+};
+
+var copy_header = false; // "Copy row" tambem copia a linha de nomes das colunas
+
+// Poe na area de transferencia o valor da celula selecionada ou a linha dela separada por TAB
+fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool) void {
+    const r = sel.row orelse return;
+    if (r >= g.rows.len or sel.col >= g.columns.len) return;
+    var out: std.Io.Writer.Allocating = .init(std.heap.page_allocator);
+    defer out.deinit();
+    const w = &out.writer;
+    (if (whole_row) dbm.gridtools.writeRow(w, g.columns, g.rows[r], copy_header) else w.writeAll(g.rows[r][sel.col] orelse "")) catch return;
+    w.writeByte(0) catch return;
+    ig.igSetClipboardText(out.written().ptr);
+}
+
+// Desenha um Grid; com `sort` os cabecalhos ordenam e a nova ordenacao pedida e devolvida.
+// `rows` limita e ordena as linhas mostradas (filtro); null = todas.
+// Clique seleciona a celula; Ctrl+C copia o valor; o clique direito abre o menu de copia.
+fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, rows: ?[]const usize) ?Sort {
     // shortcut: ImGui tables hold at most 512 columns, wider results are cut at 512
     const n_cols: usize = @min(g.columns.len, 512);
     if (n_cols == 0) return null;
@@ -346,18 +696,46 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort) ?Sort {
 
     const clipper = ig.ImGuiListClipper_ImGuiListClipper();
     defer ig.ImGuiListClipper_destroy(clipper);
-    ig.ImGuiListClipper_Begin(clipper, @intCast(g.rows.len), -1);
+    ig.ImGuiListClipper_Begin(clipper, @intCast(if (rows) |r| r.len else g.rows.len), -1);
+    var open_menu = false;
     while (ig.ImGuiListClipper_Step(clipper)) {
         var start: c_int = 0;
         var end: c_int = 0;
         shim_clipper_range(clipper, &start, &end);
-        for (g.rows[@intCast(start)..@intCast(end)]) |row| {
+        for (@intCast(start)..@intCast(end)) |shown| {
+            const r = if (rows) |list| list[shown] else shown;
             ig.igTableNextRow(0, 0);
-            for (row[0..n_cols]) |cell| {
+            for (g.rows[r][0..n_cols], 0..) |cell, c| {
                 _ = ig.igTableNextColumn();
+                ig.igPushID_Int(@intCast(r * n_cols + c));
+                const selected = sel.row == r and sel.col == c;
+                // rotulo vazio: a area clicavel e a celula toda e o texto vem logo depois
+                if (ig.igSelectable_Bool("##cell", selected, 0, .{ .x = 0, .y = 0 })) sel.* = .{ .row = r, .col = c };
+                if (ig.igIsItemHovered(0) and ig.igIsMouseClicked_Bool(1, false)) {
+                    sel.* = .{ .row = r, .col = c };
+                    open_menu = true;
+                }
+                if (selected and sel.popup) {
+                    sel.popup = false;
+                    open_menu = true;
+                    const max = ig.igGetItemRectMax();
+                    ig.igSetNextWindowPos(.{ .x = ig.igGetItemRectMin().x + 24, .y = max.y }, ig.ImGuiCond_Always, .{ .x = 0, .y = 0 });
+                }
+                ig.igPopID();
+                ig.igSameLine(0, 0);
                 if (cell) |s| textSlice(s) else ig.igTextDisabled("NULL");
             }
         }
+    }
+
+    if (ig.igIsWindowFocused(0) and ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_C)) copySelection(g, sel, false);
+    if (open_menu) _ = ig.igOpenPopup_Str("copy", 0);
+    if (ig.igBeginPopup("copy", 0)) {
+        defer ig.igEndPopup();
+        if (ig.igMenuItem_Bool("Copy value", "Ctrl+C", false, true)) copySelection(g, sel, false);
+        if (ig.igMenuItem_Bool("Copy row (TAB separated)", null, false, true)) copySelection(g, sel, true);
+        ig.igSeparator();
+        _ = ig.igCheckbox("Copy row includes the header", &copy_header);
     }
     return changed;
 }
@@ -366,53 +744,64 @@ var dropped: [1024:0]u8 = @splat(0); // caminho solto na janela (callback do GLF
 
 fn onDrop(_: *glfw.Window, count: i32, paths: [*][*:0]const u8) callconv(.c) void {
     if (count < 1) return;
-    const p = std.mem.span(paths[0]);
-    const n = @min(p.len, dropped.len);
-    @memcpy(dropped[0..n], p[0..n]);
-    dropped[n] = 0;
+    copyZ(&dropped, std.mem.span(paths[0]));
 }
 
 const usage =
     \\usage: mdb2sql-zig [database.duckdb|.db] [--table NAME] [--sql "SELECT ..."]
+    \\                   [--search TEXT] [--cell ROW,COL] [--theme dark|light] [--about]
     \\  no database argument: uses the MDB2SQL_DB_PATH environment variable, if set
+    \\  the flags set the start state: selected table, SQL to run, search text of
+    \\  the Data tab, grid cell selected with its copy menu open, colors, About open
     \\
 ;
 
+// O exe de release e do subsistema GUI (sem console): ai o uso aparece numa caixa de mensagem
+fn showUsage() void {
+    std.debug.print("{s}", .{usage});
+    if (!build_options.console) _ = MessageBoxA(null, usage, "mdb2sql-zig", 0x40); // MB_ICONINFORMATION
+}
+
 pub fn main(init: std.process.Init) !void {
-    var app: App = .{ .gpa = init.gpa, .db = .init(init.gpa) };
+    var app: App = .{ .gpa = init.gpa, .io = init.io, .db = .init(init.gpa), .slot = undefined };
+    app.slot = .{ .db = &app.db, .gpa = init.gpa };
     defer app.deinit();
 
-    // Argumentos: caminho do banco e estado inicial opcional (--table, --sql)
+    // Argumentos: caminho do banco e estado inicial opcional
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-    var start_table: ?[]const u8 = null;
+    var light = false;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        const takes_value = std.mem.eql(u8, arg, "--table") or std.mem.eql(u8, arg, "--sql");
-        if (takes_value and i + 1 < args.len) {
+        if (!std.mem.startsWith(u8, arg, "-")) {
+            app.setPath(arg);
+        } else if (std.mem.eql(u8, arg, "--about")) {
+            app.want_about = true;
+        } else {
             i += 1;
-            if (arg[2] == 't') start_table = args[i] else {
-                const n = @min(args[i].len, app.sql.len);
-                @memcpy(app.sql[0..n], args[i][0..n]);
-                app.sql[n] = 0;
-            }
-        } else if (std.mem.startsWith(u8, arg, "-")) {
-            std.debug.print("{s}", .{usage});
-            return;
-        } else app.setPath(arg);
-    }
-    if (app.path[0] == 0) if (init.environ_map.get("MDB2SQL_DB_PATH")) |p| app.setPath(p);
-
-    if (app.path[0] != 0) {
-        app.open();
-        if (start_table) |name| for (app.db.table_names, 0..) |n, idx| {
-            if (std.ascii.eqlIgnoreCase(n, name)) app.select(idx);
-        };
-        if (app.sql[0] != 0 and app.db.isOpen()) {
-            app.runSql();
-            app.focus_sql = true;
+            if (i >= args.len) return showUsage();
+            const value = args[i];
+            if (std.mem.eql(u8, arg, "--table")) {
+                app.start_table = value;
+            } else if (std.mem.eql(u8, arg, "--sql")) {
+                copyZ(&app.sql, value);
+            } else if (std.mem.eql(u8, arg, "--search")) {
+                app.start_search = value;
+            } else if (std.mem.eql(u8, arg, "--cell")) {
+                // ROW,COL a partir de 1, como aparecem na grade
+                const comma = std.mem.indexOfScalar(u8, value, ',') orelse return showUsage();
+                const row = std.fmt.parseInt(usize, value[0..comma], 10) catch return showUsage();
+                const col = std.fmt.parseInt(usize, value[comma + 1 ..], 10) catch return showUsage();
+                if (row == 0 or col == 0) return showUsage();
+                app.start_cell = .{ row - 1, col - 1 };
+            } else if (std.mem.eql(u8, arg, "--theme") and (std.mem.eql(u8, value, "light") or std.mem.eql(u8, value, "dark"))) {
+                light = value[0] == 'l';
+            } else return showUsage();
         }
     }
+    if (app.path[0] == 0) if (init.environ_map.get("MDB2SQL_DB_PATH")) |p| app.setPath(p);
+    app.want_open = app.path[0] != 0;
+    app.start_sql = app.want_open and app.sql[0] != 0;
 
     try glfw.init();
     defer glfw.terminate();
@@ -424,13 +813,14 @@ pub fn main(init: std.process.Init) !void {
     glfw.makeContextCurrent(window);
     glfw.swapInterval(1);
     _ = glfw.setDropCallback(window, onDrop);
+    app.hwnd = @ptrCast(glfw.getWin32Window(window));
 
     _ = ig.igCreateContext(null);
     defer ig.igDestroyContext(null);
     shim_io_setup();
-    ig.igStyleColorsDark(null);
     const scale = window.getContentScale()[0];
-    ig.ImGuiStyle_ScaleAllSizes(ig.igGetStyle(), scale);
+    setupSizes(scale);
+    applyTheme(light, app.hwnd);
     // Segoe UI quando existe (acentos legiveis); senao fica a fonte embutida do ImGui
     const font = "C:\\Windows\\Fonts\\segoeui.ttf";
     if (std.Io.Dir.cwd().access(init.io, font, .{})) |_| {
@@ -442,7 +832,7 @@ pub fn main(init: std.process.Init) !void {
     _ = ImGui_ImplOpenGL3_Init("#version 330");
     defer ImGui_ImplOpenGL3_Shutdown();
 
-    while (!window.shouldClose()) {
+    while (!window.shouldClose() and !app.want_exit) {
         glfw.pollEvents();
         if (dropped[0] != 0) {
             app.setPath(zstr(&dropped));
