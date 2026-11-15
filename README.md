@@ -14,10 +14,10 @@ MDB2SQL provides three independent GUI implementations showcasing different tech
    - Status: Active development; core flows work but still under review for release
 
 2. **Go + Wails + React**
-   - Backend: Go 1.23 + go-duckdb
+   - Backend: Go 1.26+ (go.mod `go 1.26.0`, required by the security updates of wails/echo/x-crypto) + go-duckdb
    - Frontend: React 19 + Vite
-   - Bridge: Wails v2.11
-   - Notes: stick to Go 1.23.x and Node 23.3.x + pnpm 10.18.x to avoid dependency breakage
+   - Bridge: Wails v2.13
+   - Notes: Go 1.21+ downloads the Go 1.26 toolchain by itself (GOTOOLCHAIN=auto); install the Wails CLI v2.13 to match go.mod
    - Status: Active development; core flows work but still under review for release
 
 3. **Rust + Tauri + Svelte** - POC stage
@@ -33,7 +33,7 @@ MDB2SQL provides three independent GUI implementations showcasing different tech
 All platforms require:
 - Git
 - Node.js 23.x with pnpm 10.x (pinned to avoid dependency breakage)
-- Go 1.23.x
+- Go 1.26+ (see go_wails_react/go.mod)
 - Python 3.12.x + uv
 - Platform-specific toolchains (see setup guides)
 

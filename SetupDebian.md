@@ -1,5 +1,9 @@
 # MDB2SQL - Guia de Instalacao Debian 13.2 Stable
 
+> Nota (2026-11-14): `go_wails_react/go.mod` agora exige Go 1.26+ e Wails v2.13 (atualizacoes de seguranca das
+> dependencias). Onde este guia cita Go 1.23 / Wails v2.11, use essas versoes; Go 1.21+ baixa o toolchain 1.26 sozinho
+> (GOTOOLCHAIN=auto). Python do `py_qt6`: 3.12 (o duckdb travado no uv.lock nao tem wheel para 3.15).
+
 ## Data: 2025-11-20
 ## Status: Receita de Bolo para Instalacao Completa
 
