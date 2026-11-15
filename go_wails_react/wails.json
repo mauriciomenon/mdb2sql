@@ -6,13 +6,13 @@
   "frontend:install": "pnpm install --frozen-lockfile",
   "frontend:build": "pnpm run build",
   "author": {
-    "name": "Author",
-    "email": "author@example.com"
+    "name": "Mauricio Menon"
   },
   "info": {
+    "companyName": "Mauricio Menon",
     "productName": "MDB2SQL",
-    "productVersion": "1.0.0",
-    "copyright": "Copyright © 2025 Author",
-    "comments": "MDB to SQL converter"
+    "productVersion": "1.0.1",
+    "copyright": "Copyright © 2026 Mauricio Menon",
+    "comments": "Viewer for DuckDB databases converted from Microsoft Access"
   }
 }

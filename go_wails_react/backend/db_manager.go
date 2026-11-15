@@ -245,6 +245,19 @@ func (m *DBManager) GetRowCount(tableName string) (int, error) {
 	return count, nil
 }
 
+// DuckDBVersion retorna a versao da biblioteca DuckDB linkada (ex.: "v2.0.0")
+// !T: Uses a throwaway in-memory database so it works before any file is opened
+func DuckDBVersion() (string, error) {
+	conn, err := sql.Open("duckdb", "")
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+	var version string
+	err = conn.QueryRow("SELECT version()").Scan(&version)
+	return version, err
+}
+
 // Fecha conexao com o banco - sempre chame ao finalizar uso
 // !T: Closes sql.DB connection and resets manager state
 func (m *DBManager) Close() error {
