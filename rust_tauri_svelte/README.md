@@ -3,19 +3,22 @@
 Visualizador de bancos DuckDB convertidos de Microsoft Access. Backend em Rust (crate `duckdb`, DuckDB embutido),
 janela Tauri 2 (WebView2 no Windows) e interface Svelte 5.
 
-## Build de release no Windows
+Stack: Rust 1.99.1, tauri 2.12 (tauri-cli 2.12.4, tauri-plugin-dialog 2.8), crate duckdb 1.20000.2
+(DuckDB 2.0.0 bundled), Svelte 5.57 + Vite 8.3. Versoes exatas: `rust-toolchain.toml`, `Cargo.lock` e
+`pnpm-lock.yaml` (raiz do repositorio).
+
+## Build
 
 ```powershell
-pwsh -NoProfile -File rust_tauri_svelte/setup_tools.ps1    # uma vez
-pwsh -NoProfile -File rust_tauri_svelte/build_windows.ps1
+pwsh -NoProfile -File build_w11_amd64.ps1   # -> dist\w11\amd64\ (exe, instaladores NSIS e MSI)
 ```
 
-Saida: `target\release\mdb2sql.exe` e os instaladores em `target\release\bundle\nsis\` e `target\release\bundle\msi\`.
-Use sempre este script (ou `cargo tauri build`): um `cargo build --release` puro gera um exe que procura o
+Comandos, produtos, pastas de trabalho e limpeza: [README-BUILD.txt](README-BUILD.txt).
+Use sempre esse comando (ou `cargo tauri build`): um `cargo build --release` puro gera um exe que procura o
 servidor de desenvolvimento e abre uma janela vazia.
 
 Testes: `cargo test` nesta pasta (backend, texto do About, versoes) e `pnpm --filter mdb2sql-ui test`
-(`node --test`, sem dependencias: texto copiado da grade e busca).
+(`node --test`, sem dependencias: texto copiado da grade e busca). Desenvolvimento: `cargo tauri dev`.
 
 ## Grade de dados
 
@@ -34,12 +37,12 @@ o dialogo About le a mesma constante, e `ui/package.json` repete o numero; `carg
 
 | Ferramenta | Versao | Onde fica | Quem instala |
 | --- | --- | --- | --- |
-| Rust (rustc, cargo) | 1.99.1 | toolchain do rustup, escolhida por `rust-toolchain.toml` | `setup_tools.ps1` (`rustup toolchain install`) |
-| tauri-cli | 2.12.4 | `.tools\bin\cargo-tauri.exe` (pasta ignorada pelo git) | `setup_tools.ps1` (`cargo install --root .tools ... --locked`) |
+| Rust (rustc, cargo) | 1.99.1 | toolchain do rustup, escolhida por `rust-toolchain.toml` | `scripts/setup_tools.ps1` (`rustup toolchain install`) |
+| tauri-cli | 2.12.4 | `.tools\bin\cargo-tauri.exe` (pasta ignorada pelo git) | `scripts/setup_tools.ps1` (`cargo install --root .tools ... --locked`) |
 | Dependencias Rust | `Cargo.lock` | registry do cargo | cargo |
-| Dependencias do frontend | `pnpm-lock.yaml` (raiz) | `node_modules` | `setup_tools.ps1` (`pnpm install --frozen-lockfile`) |
+| Dependencias do frontend | `pnpm-lock.yaml` (raiz) | `node_modules` | `scripts/setup_tools.ps1` (`pnpm install --frozen-lockfile`) |
 
-O `build_windows.ps1` usa `.tools\bin\cargo-tauri.exe` quando existe; sem ele cai no `cargo tauri` do sistema.
+O `scripts/build_w11.ps1` usa `.tools\bin\cargo-tauri.exe` quando existe; sem ele cai no `cargo tauri` do sistema.
 O Rust 1.100.0 saiu em 2026-11-09, ha menos de duas semanas, por isso o pino fica em 1.99.1.
 
 ## O que continua no sistema e por que

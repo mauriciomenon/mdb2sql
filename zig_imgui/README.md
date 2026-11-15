@@ -1,4 +1,4 @@
-# MDB2SQL - Zig + Dear ImGui
+# MDB2SQL (Zig + Dear ImGui)
 
 Desktop viewer for the DuckDB files converted from Access, written in Zig with
 Dear ImGui (GLFW + OpenGL 3.3) and the DuckDB C API. Same core flows as `python_pyqt6`,
@@ -36,7 +36,7 @@ plus paging, search, sort and a free SQL tab.
 ## Requirements
 
 - Windows x64.
-- Zig **0.17.1**: `setup_tools.ps1` downloads it into `zig_imgui/.tools/`
+- Zig **0.17.1**: `scripts/setup_tools.ps1` downloads it into `zig_imgui/.tools/`
   (ignored by git), so no system-wide Zig is needed. A `zig` 0.17.x on `PATH`
   also works and is used when `.tools/` does not exist.
 - Stays on the system: PowerShell 7 (`pwsh`) to run the two scripts, and the
@@ -48,17 +48,15 @@ plus paging, search, sort and a free SQL tab.
 
 ## Build, run, test
 
-Release build from a clean clone:
+Release build from a clean clone (downloads Zig, builds, tests, packages):
 
 ```powershell
-pwsh -NoProfile -File zig_imgui/setup_tools.ps1    # once: Zig 0.17.1 into .tools/, sha256 checked
-pwsh -NoProfile -File zig_imgui/build_windows.ps1  # zig_imgui/dist/mdb2sql-zig-windows-x64/
+pwsh -NoProfile -File build_w11_amd64.ps1   # -> dist\w11\amd64\mdb2sql-<version>-w11-amd64-zig-imgui.zip
 ```
 
-The output folder is recreated on every build and holds `mdb2sql-zig.exe` and
-`duckdb.dll`.
+Commands, products, work folders and cleaning: [README-BUILD.txt](README-BUILD.txt).
 
-`setup_tools.ps1` pins the Zig version and the sha256 published in
+`scripts/setup_tools.ps1` pins the Zig version and the sha256 published in
 <https://ziglang.org/download/index.json>; the zip is extracted only when the
 hash matches. 0.17.1 (released 2026-11-02) is the current stable release and
 the one this code was written and tested with.
@@ -77,8 +75,7 @@ Release builds are Windows GUI programs: no console window opens with them.
 Debug builds (`zig build`) keep the console, so stderr is visible;
 `-Dconsole=true|false` overrides either way.
 
-From the repository root: `./run_zig_imgui.sh [file.duckdb]` and
-`./clean_zig_imgui.sh` (clean rebuild); both use `.tools/` when it exists.
+`.\clean.ps1` removes the build intermediates (`-Dist` also the products).
 
 The first build is slow (about 2 minutes for each `translate-c` of `duckdb.h`
 and `cimgui.h`, plus the C++ compile of Dear ImGui); later builds use the cache.
