@@ -9,6 +9,7 @@ class TablePayload(TypedDict):
     table_name: str
     rows: list[dict[str, Any]]
     total_rows: int
+    schema: list[dict[str, Any]]
 
 
 def default_database_path() -> Path:
@@ -27,9 +28,10 @@ def list_tables(db_path: Path) -> tuple[Path, list[str]]:
         return db_path, manager.list_tables()
 
 
-def load_table_payload(db_path: Path, table_name: str) -> TablePayload:
+def load_table_payload(db_path: Path, table_name: str, limit: int = 100) -> TablePayload:
     with DBManager(str(db_path)) as manager:
-        rows = manager.query_table(table_name, limit=100)
+        rows = manager.query_table(table_name, limit=limit)
         total_rows = manager.get_row_count(table_name)
+        schema = manager.get_table_schema(table_name)
 
-    return {"table_name": table_name, "rows": rows, "total_rows": total_rows}
+    return {"table_name": table_name, "rows": rows, "total_rows": total_rows, "schema": schema}

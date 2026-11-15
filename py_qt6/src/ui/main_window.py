@@ -1,48 +1,68 @@
-# Janela principal da aplicacao com layout central customizado
-# !T: QMainWindow hosts the central widget and signal-driven interactions
+# Janela principal: barra de ferramentas, painel de tabelas, abas Data/Schema e barra de status
+# !T: QMainWindow with toolbar + table sidebar + data/schema views; DuckDB work runs on QThreadPool
 
 from pathlib import Path
-from typing import Any, Callable, cast
-from PyQt6.QtWidgets import (
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QComboBox,
-    QPushButton,
-    QLabel,
-    QTableView,
-    QHeaderView,
-)
+from typing import Callable
+
 from PyQt6.QtCore import (
-    QAbstractTableModel,
-    QModelIndex,
     QObject,
     QRunnable,
+    QSortFilterProxyModel,
     Qt,
     QThreadPool,
     QTimer,
     pyqtSignal,
 )
+from PyQt6.QtGui import QAction, QGuiApplication, QKeySequence
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QDockWidget,
+    QFileDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QMainWindow,
+    QProgressBar,
+    QSizePolicy,
+    QStackedWidget,
+    QTableView,
+    QTabWidget,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
+)
+
 from backend.database_tasks import (
     TablePayload,
     database_path_from_env,
     list_tables,
     load_table_payload,
 )
+from ui.table_model import SORT_ROLE, TableModel
 
-# !T: QMainWindow provides standard app structure
-# !T: Slots/signals pattern for event handling
+APP_TITLE = "MDB2SQL - Database Viewer"
+# shortcut: search and sort run in the UI thread over the loaded rows, so the limit stops at 10 000;
+# move search to SQL in the backend when bigger limits are needed
+ROW_LIMITS = (100, 1_000, 10_000)
+MAX_COLUMN_WIDTH = 320
+EMPTY_HINT = (
+    "No database loaded.\n\n"
+    "Open a DuckDB file with File > Open Database (Ctrl+O),\n"
+    "or set MDB2SQL_DB_PATH and press F5."
+)
 
 
 class _WorkerSignals(QObject):
-    success = pyqtSignal(object)
-    error = pyqtSignal(str)
+    success = pyqtSignal(int, object)
+    error = pyqtSignal(int, str)
+    finished = pyqtSignal()
 
 
 class _DatabaseWorker(QRunnable):
-    def __init__(self, task: Callable[[], object]):
+    # request_id volta junto com o resultado para descartar respostas antigas
+    def __init__(self, request_id: int, task: Callable[[], object]):
         super().__init__()
+        self.request_id = request_id
         self.task = task
         self.signals = _WorkerSignals()
 
@@ -50,54 +70,11 @@ class _DatabaseWorker(QRunnable):
         try:
             result = self.task()
         except Exception as exc:
-            self.signals.error.emit(str(exc))
-            return
-
-        self.signals.success.emit(result)
-
-
-class _TableModel(QAbstractTableModel):
-    def __init__(self) -> None:
-        super().__init__()
-        self.rows: list[dict[str, Any]] = []
-        self.columns: list[str] = []
-
-    def rowCount(self, parent: QModelIndex | None = None) -> int:
-        if parent is not None and parent.isValid():
-            return 0
-        return len(self.rows)
-
-    def columnCount(self, parent: QModelIndex | None = None) -> int:
-        if parent is not None and parent.isValid():
-            return 0
-        return len(self.columns)
-
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> str | None:
-        if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
-            return None
-
-        value = self.rows[index.row()][self.columns[index.column()]]
-        return str(value) if value is not None else ""
-
-    def headerData(
-        self,
-        section: int,
-        orientation: Qt.Orientation,
-        role: int = Qt.ItemDataRole.DisplayRole,
-    ) -> str | None:
-        if role != Qt.ItemDataRole.DisplayRole:
-            return None
-
-        if orientation == Qt.Orientation.Horizontal and 0 <= section < len(self.columns):
-            return self.columns[section]
-
-        return str(section + 1) if orientation == Qt.Orientation.Vertical else None
-
-    def set_rows(self, rows: list[dict[str, Any]]) -> None:
-        self.beginResetModel()
-        self.rows = rows
-        self.columns = list(rows[0].keys()) if rows else []
-        self.endResetModel()
+            self.signals.error.emit(self.request_id, str(exc))
+        else:
+            self.signals.success.emit(self.request_id, result)
+        finally:
+            self.signals.finished.emit()
 
 
 class MainWindow(QMainWindow):
@@ -105,117 +82,352 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.current_db_path: Path | None = None
         self.pending_table_name: str | None = None
+        self.loaded_table: tuple[str, int] | None = None  # (name, total rows in the table)
+        self._table_request = 0
+        self._busy = 0
         self.thread_pool: QThreadPool = QThreadPool.globalInstance() or QThreadPool(self)
+
+        # !T: Debounce so arrow-key navigation in the table list does not start one query per row
         self.table_load_timer = QTimer(self)
         self.table_load_timer.setSingleShot(True)
+        self.table_load_timer.setInterval(150)
         self.table_load_timer.timeout.connect(self._start_table_worker)
+
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.setInterval(200)
+        self.search_timer.timeout.connect(self._apply_search)
+
         self.init_ui()
 
+    # ------------------------------------------------------------------ UI
+
     def init_ui(self):
-        # Configura janela principal
-        self.setWindowTitle("MDB2SQL - Database Viewer")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setWindowTitle(APP_TITLE)
+        self.resize(1200, 800)
 
-        # Widget central
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        self._create_actions()
+        self._create_central()
+        self._create_sidebar()
+        self._create_toolbar()
+        self._create_menus()
+        self._create_status_bar()
 
-        main_layout = QVBoxLayout(central_widget)
+        # Ordem do Tab: filtro de tabelas, lista, busca, dados
+        QWidget.setTabOrder(self.table_filter, self.table_list)
+        QWidget.setTabOrder(self.table_list, self.search_edit)
+        QWidget.setTabOrder(self.search_edit, self.data_table)
 
-        # Titulo
-        title = QLabel("MDB2SQL - Feature 1: Load and Display Table")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 18px; font-weight: bold; margin: 10px;")
-        main_layout.addWidget(title)
+    def _create_actions(self) -> None:
+        self.open_action = QAction("&Open Database...", self)
+        self.open_action.setShortcut(QKeySequence.StandardKey.Open)
+        self.open_action.setToolTip("Open a DuckDB database file (Ctrl+O)")
+        self.open_action.triggered.connect(self.choose_database)
 
-        # Layout horizontal para controles
-        controls_layout = QHBoxLayout()
+        self.reload_action = QAction("&Reload", self)
+        self.reload_action.setShortcut(QKeySequence("F5"))
+        self.reload_action.setToolTip("Reload the database and its table list (F5)")
+        self.reload_action.triggered.connect(self.load_database)
 
-        # ComboBox para selecionar tabela
-        controls_layout.addWidget(QLabel("Table:"))
-        self.table_combo = QComboBox()
-        self.table_combo.setMinimumWidth(300)
+        self.quit_action = QAction("&Quit", self)
+        self.quit_action.setShortcut(QKeySequence("Ctrl+Q"))
+        self.quit_action.triggered.connect(self.close)
+
+        self.copy_action = QAction("&Copy", self)
+        self.copy_action.setShortcut(QKeySequence.StandardKey.Copy)
+        # !T: Scoped to the tables so Ctrl+C keeps working in the text fields
+        self.copy_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.copy_action.triggered.connect(self.copy_selection)
+
+        self.find_action = QAction("&Find in Rows", self)
+        self.find_action.setShortcut(QKeySequence.StandardKey.Find)
+        self.find_action.triggered.connect(self._focus_search)
+
+        self.tables_action = QAction("Go to &Table List", self)
+        self.tables_action.setShortcut(QKeySequence("Ctrl+L"))
+        self.tables_action.triggered.connect(self._focus_tables)
+
+        self.data_tab_action = QAction("&Data", self)
+        self.data_tab_action.setShortcut(QKeySequence("Ctrl+1"))
+        self.data_tab_action.triggered.connect(lambda: self.tabs.setCurrentIndex(0))
+
+        self.schema_tab_action = QAction("&Schema", self)
+        self.schema_tab_action.setShortcut(QKeySequence("Ctrl+2"))
+        self.schema_tab_action.triggered.connect(lambda: self.tabs.setCurrentIndex(1))
+
+    def _create_central(self) -> None:
+        self.table_model = TableModel(self)
+        self.data_proxy, self.data_table = self._create_table_view(self.table_model, "Table data")
+        self.schema_model = TableModel(self)
+        self.schema_proxy, self.schema_table = self._create_table_view(self.schema_model, "Table schema")
+
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.tabs.addTab(self.data_table, "Data")
+        self.tabs.addTab(self.schema_table, "Schema")
+        self.tabs.addAction(self.copy_action)
+
+        self.empty_label = QLabel(EMPTY_HINT)
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_label.setEnabled(False)  # texto esmaecido pela paleta do sistema
+
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.empty_label)
+        self.stack.addWidget(self.tabs)
+        self.setCentralWidget(self.stack)
+
+    def _create_table_view(self, model: TableModel, name: str) -> tuple[QSortFilterProxyModel, QTableView]:
+        proxy = QSortFilterProxyModel(self)
+        proxy.setSourceModel(model)
+        proxy.setSortRole(SORT_ROLE)
+        proxy.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        proxy.setFilterKeyColumn(-1)  # busca em todas as colunas
+
+        view = QTableView()
+        view.setAccessibleName(name)
+        view.setModel(proxy)
+        view.setAlternatingRowColors(True)
+        view.setWordWrap(False)
+        view.setHorizontalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
+
+        header = view.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setHighlightSections(False)
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        header.setResizeContentsPrecision(200)  # mede so as primeiras linhas: rapido em tabelas grandes
+        # !T: A third click on a header returns to the order the backend gave
+        header.setSortIndicatorClearable(True)
+        header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        view.setSortingEnabled(True)
+
+        view.verticalHeader().setDefaultSectionSize(view.fontMetrics().height() + 8)
+        return proxy, view
+
+    def _create_sidebar(self) -> None:
+        self.table_filter = QLineEdit()
+        self.table_filter.setPlaceholderText("Filter tables")
+        self.table_filter.setClearButtonEnabled(True)
+        self.table_filter.setAccessibleName("Filter tables")
+        self.table_filter.textChanged.connect(self._filter_tables)
+
+        self.table_list = QListWidget()
+        self.table_list.setAccessibleName("Tables")
+        self.table_list.setUniformItemSizes(True)
         # !T: Signal emitido quando usuario seleciona outra tabela
-        self.table_combo.currentTextChanged.connect(self.on_table_selected)
-        controls_layout.addWidget(self.table_combo)
+        self.table_list.currentTextChanged.connect(self.on_table_selected)
 
-        # Botao para carregar banco
-        self.load_button = QPushButton("Load Database")
-        self.load_button.clicked.connect(self.load_database)
-        controls_layout.addWidget(self.load_button)
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.addWidget(self.table_filter)
+        layout.addWidget(self.table_list)
 
-        # Label status
+        self.tables_dock = QDockWidget("Tables", self)
+        self.tables_dock.setObjectName("tablesDock")
+        self.tables_dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        self.tables_dock.setWidget(panel)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.tables_dock)
+        self.resizeDocks([self.tables_dock], [260], Qt.Orientation.Horizontal)
+
+    def _create_toolbar(self) -> None:
+        toolbar = QToolBar("Main toolbar", self)
+        toolbar.setObjectName("mainToolbar")
+        toolbar.setMovable(False)
+        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.addToolBar(toolbar)
+
+        toolbar.addAction(self.open_action)
+        toolbar.addAction(self.reload_action)
+        toolbar.addSeparator()
+
+        self.limit_combo = QComboBox()
+        self.limit_combo.setAccessibleName("Rows to load")
+        self.limit_combo.setToolTip("Maximum number of rows loaded from the selected table")
+        for limit in ROW_LIMITS:
+            self.limit_combo.addItem(f"{limit:,}", limit)
+        self.limit_combo.currentIndexChanged.connect(self.reload_table)
+        limit_label = QLabel(" &Rows: ")
+        limit_label.setBuddy(self.limit_combo)
+        toolbar.addWidget(limit_label)
+        toolbar.addWidget(self.limit_combo)
+
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
+
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Search loaded rows (Ctrl+F)")
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.setAccessibleName("Search loaded rows")
+        self.search_edit.setMaximumWidth(320)
+        self.search_edit.textChanged.connect(lambda _text: self.search_timer.start())
+        toolbar.addWidget(self.search_edit)
+
+    def _create_menus(self) -> None:
+        menu_bar = self.menuBar()
+        file_menu = menu_bar.addMenu("&File")
+        file_menu.addAction(self.open_action)
+        file_menu.addAction(self.reload_action)
+        file_menu.addSeparator()
+        file_menu.addAction(self.quit_action)
+
+        edit_menu = menu_bar.addMenu("&Edit")
+        edit_menu.addAction(self.copy_action)
+        edit_menu.addAction(self.find_action)
+
+        view_menu = menu_bar.addMenu("&View")
+        toggle_tables = self.tables_dock.toggleViewAction()
+        toggle_tables.setText("&Tables Panel")
+        toggle_tables.setShortcut(QKeySequence("Ctrl+B"))
+        view_menu.addAction(toggle_tables)
+        view_menu.addAction(self.tables_action)
+        view_menu.addSeparator()
+        view_menu.addAction(self.data_tab_action)
+        view_menu.addAction(self.schema_tab_action)
+
+    def _create_status_bar(self) -> None:
         self.status_label = QLabel("No database loaded")
-        controls_layout.addWidget(self.status_label)
-
-        controls_layout.addStretch()
-        main_layout.addLayout(controls_layout)
-
-        # Tabela para exibir dados
-        self.table_model = _TableModel()
-        self.data_table = QTableView()
-        self.data_table.setModel(self.table_model)
-        # !T: Stretch columns to fill width
-        header = self.data_table.horizontalHeader()
-        if header is not None:
-            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        main_layout.addWidget(self.data_table)
-
-        # Label rodape com info
         self.info_label = QLabel("Ready")
-        main_layout.addWidget(self.info_label)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)  # indeterminado: o backend nao informa percentual
+        self.progress.setTextVisible(False)
+        self.progress.setFixedWidth(120)
+        self.progress.hide()
 
-    def load_database(self):
-        # Carrega banco DuckDB usando env var ou caminho default
-        # !T: Check env var or use default path
-        db_path = database_path_from_env()
+        status_bar = self.statusBar()
+        status_bar.addWidget(self.status_label, 1)
+        status_bar.addPermanentWidget(self.progress)
+        status_bar.addPermanentWidget(self.info_label)
 
-        if not db_path.exists():
-            self.status_label.setText(f"Error: {db_path.name} not found")
-            self.status_label.setStyleSheet("color: red;")
+    # ------------------------------------------------------------- helpers
+
+    def _set_message(self, label: QLabel, text: str, error: bool = False) -> None:
+        label.setText(text)
+        if not error:
+            label.setStyleSheet("")
             return
+        # !T: Pick a red that stays readable on the current (light or dark) system palette
+        dark = self.palette().window().color().lightness() < 128
+        label.setStyleSheet(f"color: {'#ff8a80' if dark else '#b3261e'};")
 
-        self.load_button.setEnabled(False)
-        self.status_label.setText(f"Loading: {db_path.name}")
-        worker = _DatabaseWorker(lambda: list_tables(db_path))
-        worker.signals.success.connect(self._on_database_loaded)
-        worker.signals.error.connect(self._on_database_error)
+    def _run(
+        self,
+        request_id: int,
+        task: Callable[[], object],
+        on_success: Callable[[int, object], None],
+        on_error: Callable[[int, str], None],
+    ) -> None:
+        worker = _DatabaseWorker(request_id, task)
+        worker.signals.success.connect(on_success)
+        worker.signals.error.connect(on_error)
+        worker.signals.finished.connect(self._on_worker_finished)
+        self._busy += 1
+        self.progress.show()
         self.thread_pool.start(worker)
 
-    def _on_database_loaded(self, result: object) -> None:
-        db_path, tables = cast(tuple[Path, list[str]], result)
+    def _on_worker_finished(self) -> None:
+        self._busy -= 1
+        if self._busy == 0:
+            self.progress.hide()
+
+    def _focus_search(self) -> None:
+        self.search_edit.setFocus()
+        self.search_edit.selectAll()
+
+    def _focus_tables(self) -> None:
+        self.tables_dock.show()
+        self.table_list.setFocus()
+
+    def _filter_tables(self, text: str) -> None:
+        needle = text.strip().lower()
+        for row in range(self.table_list.count()):
+            item = self.table_list.item(row)
+            item.setHidden(needle not in item.text().lower())
+
+    def copy_selection(self) -> None:
+        # Copia as celulas selecionadas como texto separado por tab (cola direto em planilhas)
+        view = self.tabs.currentWidget()
+        if not isinstance(view, QTableView):
+            return
+        lines: dict[int, list[str]] = {}
+        for index in sorted(view.selectedIndexes(), key=lambda i: (i.row(), i.column())):
+            lines.setdefault(index.row(), []).append(str(index.data() or ""))
+        if lines:
+            QGuiApplication.clipboard().setText("\n".join("\t".join(cells) for cells in lines.values()))
+
+    # ------------------------------------------------------------ database
+
+    def choose_database(self) -> None:
+        start_dir = str(self.current_db_path.parent) if self.current_db_path else str(Path.home())
+        file_name, _ = QFileDialog.getOpenFileName(
+            self, "Open Database", start_dir, "DuckDB databases (*.duckdb *.db);;All files (*)"
+        )
+        if file_name:
+            self.open_database(Path(file_name))
+
+    def load_database(self):
+        # Recarrega o banco atual; sem banco aberto usa a env var ou o caminho default
+        # !T: Check env var or use default path
+        self.open_database(self.current_db_path or database_path_from_env())
+
+    def open_database(self, db_path: Path) -> None:
+        if not db_path.exists():
+            self._set_message(self.status_label, f"Error: {db_path.name} not found", error=True)
+            return
+
+        self.open_action.setEnabled(False)
+        self.reload_action.setEnabled(False)
+        self._set_message(self.status_label, f"Loading: {db_path.name}")
+        self._run(0, lambda: list_tables(db_path), self._on_database_loaded, self._on_database_error)
+
+    def _on_database_loaded(self, _request_id: int, result: object) -> None:
+        db_path, tables = result  # type: ignore[misc]
+        previous = self.table_list.currentItem().text() if self.table_list.currentItem() else None
         self.current_db_path = db_path
+        self.setWindowTitle(f"{db_path.name} - {APP_TITLE}")
+        self.stack.setCurrentWidget(self.tabs)
 
-        self.table_combo.blockSignals(True)
-        self.table_combo.clear()
-        self.table_combo.addItems(tables)
+        self.table_list.blockSignals(True)
+        self.table_list.clear()
+        self.table_list.addItems(tables)
+        self.table_list.blockSignals(False)
+        self._filter_tables(self.table_filter.text())
+
+        self._set_message(self.status_label, f"Loaded: {db_path.name} ({len(tables)} tables)")
+        self.open_action.setEnabled(True)
+        self.reload_action.setEnabled(True)
+
         if tables:
-            self.table_combo.setCurrentIndex(0)
-        self.table_combo.blockSignals(False)
+            # !T: Keep the selected table across a reload; setCurrentRow triggers on_table_selected
+            self.table_list.setCurrentRow(tables.index(previous) if previous in tables else 0)
+        else:
+            self.loaded_table = None
+            self.table_model.set_rows([])
+            self.schema_model.set_rows([])
+            self._set_message(self.info_label, "No tables")
 
-        self.status_label.setText(f"Loaded: {db_path.name} ({len(tables)} tables)")
-        self.status_label.setStyleSheet("color: green;")
-        self.load_button.setEnabled(True)
+    def _on_database_error(self, _request_id: int, message: str) -> None:
+        self._set_message(self.status_label, f"Error: {message}", error=True)
+        self.open_action.setEnabled(True)
+        self.reload_action.setEnabled(True)
 
-        if tables:
-            self.on_table_selected(tables[0])
+    # --------------------------------------------------------------- table
 
-    def _on_database_error(self, message: str) -> None:
-        self.status_label.setText(f"Error: {message}")
-        self.status_label.setStyleSheet("color: red;")
-        self.load_button.setEnabled(True)
+    def reload_table(self) -> None:
+        item = self.table_list.currentItem()
+        if item is not None:
+            self.on_table_selected(item.text())
 
     def on_table_selected(self, table_name: str):
-        # Chamado quando usuario seleciona tabela no ComboBox
+        # Chamado quando usuario seleciona tabela na lista
         # !T: Loads table data and displays in QTableView
-
         if not table_name or self.current_db_path is None:
             return
 
         self.pending_table_name = table_name
-        self.info_label.setStyleSheet("")
-        self.info_label.setText(f"Loading {table_name}...")
-        self.table_load_timer.start(150)
+        self._set_message(self.info_label, f"Loading {table_name}...")
+        self.table_load_timer.start()
 
     def _start_table_worker(self) -> None:
         if self.current_db_path is None or not self.pending_table_name:
@@ -223,32 +435,57 @@ class MainWindow(QMainWindow):
 
         db_path = self.current_db_path
         table_name = self.pending_table_name
+        limit = self.limit_combo.currentData()
         self.pending_table_name = None
-        self.info_label.setText(f"Loading {table_name}...")
-        worker = _DatabaseWorker(lambda: load_table_payload(db_path, table_name))
-        worker.signals.success.connect(self._on_table_loaded)
-        worker.signals.error.connect(self._on_table_error)
-        self.thread_pool.start(worker)
-
-    def _on_table_loaded(self, result: object) -> None:
-        payload = cast(TablePayload, result)
-        table_name = payload["table_name"]
-        if table_name != self.table_combo.currentText():
-            return
-
-        rows = payload["rows"]
-        if not rows:
-            self.info_label.setText(f"{table_name}: 0 rows")
-            self.info_label.setStyleSheet("")
-            self.table_model.set_rows([])
-            return
-
-        self.table_model.set_rows(rows)
-        self.info_label.setText(
-            f"{table_name}: Showing {len(rows)} of {payload['total_rows']} rows"
+        self._table_request += 1
+        self._run(
+            self._table_request,
+            lambda: load_table_payload(db_path, table_name, limit),
+            self._on_table_loaded,
+            self._on_table_error,
         )
-        self.info_label.setStyleSheet("")
 
-    def _on_table_error(self, message: str) -> None:
-        self.info_label.setText(f"Error loading table: {message}")
-        self.info_label.setStyleSheet("color: red;")
+    def _on_table_loaded(self, request_id: int, result: object) -> None:
+        if request_id != self._table_request:
+            return  # resposta de uma selecao antiga
+
+        payload: TablePayload = result  # type: ignore[assignment]
+        schema = payload["schema"]
+        self.table_model.set_rows(
+            payload["rows"],
+            [column["column_name"] for column in schema],
+            [f"{column['column_name']}: {column['column_type']}" for column in schema],
+        )
+        self.schema_model.set_rows(schema)
+        self.loaded_table = (payload["table_name"], payload["total_rows"])
+
+        for view in (self.data_table, self.schema_table):
+            view.sortByColumn(-1, Qt.SortOrder.AscendingOrder)  # volta para a ordem do backend
+            view.resizeColumnsToContents()
+            for column in range(view.model().columnCount()):
+                if view.columnWidth(column) > MAX_COLUMN_WIDTH:
+                    view.setColumnWidth(column, MAX_COLUMN_WIDTH)
+        self._apply_search()
+
+    def _on_table_error(self, request_id: int, message: str) -> None:
+        if request_id == self._table_request:
+            self._set_message(self.info_label, f"Error loading table: {message}", error=True)
+
+    def _apply_search(self) -> None:
+        text = self.search_edit.text()
+        self.data_proxy.setFilterFixedString(text)
+        if self.loaded_table is None:
+            return
+
+        table_name, total_rows = self.loaded_table
+        loaded = self.table_model.rowCount()
+        if not loaded:
+            message = f"{table_name}: 0 rows"
+        elif text:
+            message = (
+                f"{table_name}: {self.data_proxy.rowCount():,} of {loaded:,} loaded rows match"
+                f" ({total_rows:,} rows in table)"
+            )
+        else:
+            message = f"{table_name}: Showing {loaded:,} of {total_rows:,} rows"
+        self._set_message(self.info_label, message)
