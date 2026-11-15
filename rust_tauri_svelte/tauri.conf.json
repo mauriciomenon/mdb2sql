@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.mdb2sql.app",
   "build": {
-    "beforeDevCommand": "pnpm --dir ui run dev",
-    "beforeBuildCommand": "pnpm --dir ui run build",
+    "beforeDevCommand": "pnpm --filter mdb2sql-ui run dev",
+    "beforeBuildCommand": "pnpm --filter mdb2sql-ui run build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "ui/dist"
   },
