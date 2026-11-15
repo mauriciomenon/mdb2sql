@@ -3,7 +3,7 @@
 
 [project]
 name = "mdb2sql"
-version = "1.0.0"
+version = "1.0.1"
 description = "DuckDB-backed desktop database viewer"
 authors = [
     {name = "Maurício Menon", email = "54405514+mauriciomenon@users.noreply.github.com"}
@@ -25,7 +25,7 @@ dependencies = [
 # NIVEL BASICO: Dependencias opcionais para build/distribuicao
 build = [
     "nuitka>=2.5.7",
-    "pyinstaller>=6.16.0",
+    "pyinstaller>=6.22.3",
 ]
 
 [build-system]
@@ -34,7 +34,7 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "pyinstaller>=6.16.0",
+    "pyinstaller>=6.22.3",
     "pytest>=9.0.3",
     "pytest-qt>=4.5.0",
     "ruff>=0.1.0",
