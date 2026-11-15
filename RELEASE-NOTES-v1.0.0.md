@@ -38,6 +38,7 @@ A versao PyQt6 roda a partir do codigo: `cd py_qt6 && uv run --python 3.12 pytho
 
 ## Como compilar
 Veja `README.md`, `SetupWindows11.md` e `zig_imgui/README.md`. Resumo:
-- Wails: `clean_go_wails.sh`, depois `GOTOOLCHAIN=go1.26.11 wails build -clean` com GCC UCRT no PATH.
-- Tauri: `cd rust_tauri_svelte && cargo tauri build`.
+- Wails: `pwsh -NoProfile -File go_wails_react/build_windows.ps1` (GCC UCRT do WinLibs; pasta em `MDB2SQL_GCC_BIN`).
+- Tauri: `pwsh -NoProfile -File rust_tauri_svelte/build_windows.ps1`.
+- Os dois scripts tiram do executavel os caminhos da maquina de build.
 - Zig: `cd zig_imgui && zig build -Doptimize=ReleaseSafe` (Zig 0.17.1).

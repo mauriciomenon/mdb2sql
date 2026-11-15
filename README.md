@@ -218,7 +218,7 @@ zig build test --summary all
 ### Go + Wails
 - WebView2 required on Windows (auto-installs on first run)
 - May require firewall exceptions for dev server
-- Run `clean_go_wails.sh` (or delete `frontend/dist`) before `wails build`: Vite writes to `frontend/dist/<platform>-<arch>/`, and a stale `frontend/dist/index.html` from an older build is embedded instead of the new UI
+- Release build on Windows: `pwsh -NoProfile -File go_wails_react/build_windows.ps1`. It deletes `frontend/dist` first (Vite writes to `frontend/dist/<platform>-<arch>/`, and a stale `frontend/dist/index.html` from an older build would be embedded instead of the new UI) and builds with `-trimpath` so no local paths end up in the exe. Tauri: `pwsh -NoProfile -File rust_tauri_svelte/build_windows.ps1` (same idea with `--remap-path-prefix`)
 - "Sample data" reports `sample.duckdb` in the status line even when `MDB2SQL_DB_PATH` points to another file
 
 ## Version History
