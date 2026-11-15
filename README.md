@@ -88,6 +88,8 @@ cargo tauri dev
 cd zig_imgui
 zig build run -Doptimize=ReleaseSafe -- path/to/file.duckdb
 ```
+Release build without a system-wide Zig (PowerShell 7): `zig_imgui/setup_tools.ps1` once, then
+`zig_imgui/build_windows.ps1` (output in `zig_imgui/dist/mdb2sql-zig-windows-x64/`).
 See [zig_imgui/README.md](zig_imgui/README.md).
 
 ## Documentation
