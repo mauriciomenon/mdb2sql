@@ -21,10 +21,10 @@ MDB2SQL provides four independent GUI implementations showcasing different techn
    - Status: 1.0.0; single exe (`wails build`), DuckDB linked in
 
 3. **Rust + Tauri + Svelte**
-   - Backend: Rust 1.90+ (required by Tauri 2.12) + duckdb-rs
+   - Backend: Rust 1.99.1 (pinned in `rust_tauri_svelte/rust-toolchain.toml`; Tauri 2.12 needs 1.90+) + duckdb-rs
    - Frontend: Svelte + Vite
-   - Bridge: Tauri v2 (tauri 2.12, tauri-build 2.7, config v2 + `capabilities/default.json`); CLI: `cargo install tauri-cli --version "^2" --locked`
-   - Status: 1.0.0; `cargo tauri build` produces the NSIS and MSI installers on Windows
+   - Bridge: Tauri v2 (tauri 2.12, tauri-build 2.7, config v2 + `capabilities/default.json`); CLI: tauri-cli 2.12.4 installed into `rust_tauri_svelte/.tools/` by `rust_tauri_svelte/setup_tools.ps1` (see [rust_tauri_svelte/README.md](rust_tauri_svelte/README.md))
+   - Status: 1.0.1 (About dialog, native file picker, light/dark theme, ISO dates); `rust_tauri_svelte/build_windows.ps1` produces the NSIS and MSI installers on Windows
 
 4. **Zig + Dear ImGui**
    - Backend: Zig 0.17 + libduckdb 2.0.0 (C API)

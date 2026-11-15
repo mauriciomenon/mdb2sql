@@ -9,6 +9,8 @@ $env:RUSTFLAGS = "--remap-path-prefix=$HOME=~ --remap-path-prefix=$PSScriptRoot=
 $env:CFLAGS = "/d1trimfile:$PSScriptRoot\"
 $env:CXXFLAGS = "/d1trimfile:$PSScriptRoot\"
 
-cargo tauri build
+# tauri-cli fixado pelo setup_tools.ps1; sem ele usa o `cargo tauri` instalado no sistema
+$localCli = Join-Path $PSScriptRoot '.tools\bin\cargo-tauri.exe'
+if (Test-Path $localCli) { & $localCli tauri build } else { cargo tauri build }
 if ($LASTEXITCODE) { throw "cargo tauri build falhou ($LASTEXITCODE)" }
 Get-ChildItem target\release\bundle\nsis\*.exe, target\release\bundle\msi\*.msi | Select-Object Name, Length, LastWriteTime

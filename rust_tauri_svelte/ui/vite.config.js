@@ -4,11 +4,15 @@
 // NIVEL TECNICO: Vite dev server with HMR, build optimization
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { VERSION as svelteVersion } from 'svelte/compiler';
 
 const outDir = process.env.OUT_DIR || 'dist';
 
 export default defineConfig({
   plugins: [svelte()],
+
+  // versao exata do Svelte empacotado, mostrada no dialogo About
+  define: { __SVELTE_VERSION__: JSON.stringify(svelteVersion) },
 
   // NIVEL BASICO: clearScreen false evita limpar terminal no hot reload
   clearScreen: false,
