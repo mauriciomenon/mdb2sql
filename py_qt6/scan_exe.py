@@ -9,9 +9,11 @@ from pathlib import Path
 
 from PyInstaller.archive.readers import CArchiveReader
 
-# pasta de usuario de quem fez o build (Users\nome, Users/nome) e os termos fixos da lista de verificacao
-USER = re.escape(os.environ.get("USERNAME", "mauri")).encode()
-LOCAL = re.compile(rb"users[\\/]+(?:mauri|" + USER + rb")|/home/menon|itaipu", re.IGNORECASE)
+# pasta de usuario de quem fez o build (Users\nome, /home/nome); termos extras vem de MDB2SQL_SCAN_TERMS
+# (separados por virgula), para nenhum dado pessoal ficar escrito no codigo
+USER = re.escape(Path.home().name).encode()
+EXTRA = [re.escape(t.strip()).encode() for t in os.environ.get("MDB2SQL_SCAN_TERMS", "").split(",") if t.strip()]
+LOCAL = re.compile(b"|".join([rb"users[\\/]+" + USER + rb"\b", rb"/home/" + USER + rb"\b", *EXTRA]), re.IGNORECASE)
 # "gmail" aparece em creditos de bibliotecas (stdlib, numpy): listado para conferencia, nao falha o build
 CREDITS = re.compile(rb"gmail", re.IGNORECASE)
 

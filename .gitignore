@@ -88,3 +88,4 @@ node_electron_react/
 
 # Root package-lock.json (monorepo uses pnpm)
 /package-lock.json
+/go_wails_react/mdb2sql
