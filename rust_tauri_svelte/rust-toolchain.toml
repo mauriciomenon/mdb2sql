@@ -1,0 +1,4 @@
+# Compilador fixo para o build ser repetivel; o rustup baixa esta versao sozinho ao rodar cargo nesta pasta.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
