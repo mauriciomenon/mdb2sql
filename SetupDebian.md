@@ -180,7 +180,7 @@ rustc --version
 cargo --version
 ```
 
-**Versao recomendada: 1.83.0**
+**Versao minima: 1.90 (exigida pelo Tauri 2.12)**
 
 ---
 
@@ -249,7 +249,7 @@ sudo apt install -y \
 
 **Instalar Tauri CLI:**
 ```bash
-cargo install tauri-cli
+cargo install tauri-cli --version "^2" --locked
 ```
 
 **Verificar:**
@@ -369,13 +369,13 @@ mv -f build/bin/mdb2sql build/bin/linux-amd64/mdb2sql
 ```
 **Build offline para pacote minimo:**
 - Python: `uv run pyinstaller --onefile --windowed --distpath build/$(uname -s)-$(uname -m) src/main.py`
-- Rust/Tauri release: `cargo tauri build` (binarios em `src-tauri/target/**/release/`)
+- Rust/Tauri release: `cargo tauri build` (binario em `target/release/`, pacotes deb/rpm/AppImage em `target/release/bundle/`)
 
 ---
 
 ### 3. Rust + Tauri + Svelte
 
-**ATENCAO:** Implementacao Rust tem problemas conhecidos de incompatibilidade entre Tauri v1 e v2.
+**Nota:** Implementacao Rust usa Tauri v2 (tauri 2.12, config v2, `capabilities/default.json`).
 
 **Navegar ate o diretorio:**
 ```bash
@@ -389,9 +389,8 @@ pnpm install
 cd ..
 ```
 
-**Tentar build (pode falhar):**
+**Build:**
 ```bash
-cd src-tauri
 cargo build
 ```
 
@@ -558,8 +557,8 @@ Python: 3.12.x
 uv: latest
 Go: 1.23.3
 Wails: v2.11.0
-Rust: 1.83.0
-Cargo: 1.83.0
+Rust: 1.90+ (Tauri 2.12)
+Cargo: 1.90+
 
 **Nota:** manter as versoes acima para evitar que upgrades/downgrades quebrem dependencias do build.
 ```

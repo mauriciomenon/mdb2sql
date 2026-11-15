@@ -11,7 +11,7 @@ echo "========================================="
 echo ""
 echo "Starting Rust Tauri development server..."
 echo "Frontend: Svelte + Vite"
-echo "Backend: Rust + Tauri v1.8"
+echo "Backend: Rust + Tauri v2"
 echo "Port: http://localhost:1420"
 echo ""
 

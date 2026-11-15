@@ -14,7 +14,7 @@ rm -rf ui/dist
 echo "      Done"
 
 echo "[2/4] Cleaning Rust target..."
-rm -rf target src-tauri/target
+rm -rf target
 echo "      Done"
 
 echo "[3/4] Installing frontend dependencies..."

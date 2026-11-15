@@ -21,10 +21,10 @@ MDB2SQL provides three independent GUI implementations showcasing different tech
    - Status: Active development; core flows work but still under review for release
 
 3. **Rust + Tauri + Svelte** - POC stage
-   - Backend: Rust 1.83 + duckdb-rs
+   - Backend: Rust 1.90+ (required by Tauri 2.12) + duckdb-rs
    - Frontend: Svelte + Vite
-   - Bridge: Tauri v1 (v2 upgrade deferred; keep tauri = 1.8, tauri-build = 1.5 config v1)
-   - Status: Known compatibility issues, under development
+   - Bridge: Tauri v2 (tauri 2.12, tauri-build 2.7, config v2 + `capabilities/default.json`); CLI: `cargo install tauri-cli --version "^2" --locked`
+   - Status: builds and bundles (NSIS/MSI) on Windows; under development
 
 ## Quick Start
 
@@ -73,7 +73,7 @@ wails dev
 ```bash
 cd rust_tauri_svelte/ui
 pnpm install
-cd ../src-tauri
+cd ..
 cargo tauri dev
 ```
 
@@ -88,11 +88,11 @@ cargo tauri dev
 - [ProjectSpec.md](ProjectSpec.md) - Complete project specification
 - [temp/ErrosEProblemasPoc.md](temp/ErrosEProblemasPoc.md) - Known issues and solutions
 - `scripts/generate_md_pdfs.sh` - requires pandoc + xelatex (MiKTeX/texlive-xetex) to export docs as PDF
-- Build outputs: Vite defaults to `dist/<platform>-<arch>` (override with `OUT_DIR`), Wails binaries in `build/bin/<os>-<arch>`, Tauri in `src-tauri/target/<triple>`, Python builds under `build/<os>-<arch>/`.
+- Build outputs: Vite defaults to `dist/<platform>-<arch>` (override with `OUT_DIR`), Wails binaries in `build/bin/<os>-<arch>`, Tauri in `rust_tauri_svelte/target/release` (installers in `target/release/bundle`), Python builds under `build/<os>-<arch>/`.
 - Sanity: `scripts/run_sanity.sh` runs go test/vet/build (+ frontend build), cargo test, and uv pytest using pinned tools.
 - Packaging: `scripts/package_minimal.sh` gera `build/minimal/minimal_<os>_<arch>.zip` apenas com binarios e READMEs.
 - Windows equivalents: `scripts/run_sanity.ps1`, `scripts/package_minimal.ps1`, `scripts/validate_build.ps1` para o mesmo fluxo em PowerShell.
-- Release build helpers: `scripts/build_release.sh` / `scripts/build_release.ps1` geram binarios em `build/bin/<os>-<arch>`, `src-tauri/target/**/release`, `py_qt6/build/<os>-<arch>` antes do pacote minimo.
+- Release build helpers: `scripts/build_release.sh` / `scripts/build_release.ps1` geram binarios em `build/bin/<os>-<arch>`, `rust_tauri_svelte/target/release`, `py_qt6/build/<os>-<arch>` antes do pacote minimo.
 - Clean: `scripts/clean.sh` / `scripts/clean.ps1` removem dist/target/build/minimal por OS/arch.
 - POC note: frontend Go/Wails `App.jsx` e um hello local sem IPC; para demo real exporte metodo no backend e ajuste o frontend.
 
@@ -136,7 +136,8 @@ mdb2sql/
 │   ├── frontend/        # React UI
 │   └── temp/            # Documentation
 ├── rust_tauri_svelte/   # Rust implementation (POC)
-│   ├── src-tauri/       # Rust backend
+│   ├── src/             # Rust backend
+│   ├── capabilities/    # Tauri v2 permissions
 │   ├── ui/              # Svelte frontend
 │   └── temp/            # Documentation
 ├── data/                # Sample databases
@@ -184,14 +185,13 @@ go test ./...
 
 #### Rust
 ```bash
-cd rust_tauri_svelte/src-tauri
+cd rust_tauri_svelte
 cargo test
 ```
 
 ## Known Issues
 
 ### Rust + Tauri + Svelte
-- Tauri v1 config; v2 upgrade deferred
 - Arrow Flight dependency linker errors on some platforms
 - See [temp/ErrosEProblemasPoc.md](temp/ErrosEProblemasPoc.md) for workarounds
 
