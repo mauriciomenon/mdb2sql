@@ -15,10 +15,10 @@ MDB2SQL provides four independent GUI implementations showcasing different techn
 
 2. **Go + Wails + React**
    - Backend: Go 1.26 (go.mod `go 1.26.0`, required by the security updates of wails/echo/x-crypto) + duckdb-go v2.20000.0 (`github.com/duckdb/duckdb-go/v2`, DuckDB 2.0.0 linked statically; no DuckDB DLL/shared library to install or ship)
-   - Frontend: React 19 + Vite
+   - Frontend: React 18 + Vite
    - Bridge: Wails v2.13
    - Notes: cgo needs a C toolchain (Windows: MinGW-w64 GCC with the UCRT runtime, see SetupWindows11.md; Linux: gcc/g++). Wails CLI: `go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0`. With Go 1.27 installed, run the Wails CLI with `GOTOOLCHAIN=go1.26.11` (CLI 2.13.0 fails on Go 1.27 with "package without types was imported")
-   - Status: 1.0.0; single exe (`wails build`), DuckDB linked in
+   - Status: 1.0.1; single exe, DuckDB linked in. Windows build with pinned tools: `go_wails_react/setup_tools.ps1` then `go_wails_react/build_windows.ps1` (see [go_wails_react/README.md](go_wails_react/README.md))
 
 3. **Rust + Tauri + Svelte**
    - Backend: Rust 1.99.1 (pinned in `rust_tauri_svelte/rust-toolchain.toml`; Tauri 2.12 needs 1.90+) + duckdb-rs
@@ -221,7 +221,6 @@ zig build test --summary all
 - WebView2 required on Windows (auto-installs on first run)
 - May require firewall exceptions for dev server
 - Release build on Windows: `pwsh -NoProfile -File go_wails_react/build_windows.ps1`. It deletes `frontend/dist` first (Vite writes to `frontend/dist/<platform>-<arch>/`, and a stale `frontend/dist/index.html` from an older build would be embedded instead of the new UI) and builds with `-trimpath` so no local paths end up in the exe. Tauri: `pwsh -NoProfile -File rust_tauri_svelte/build_windows.ps1` (same idea with `--remap-path-prefix`)
-- "Sample data" reports `sample.duckdb` in the status line even when `MDB2SQL_DB_PATH` points to another file
 
 ## Version History
 

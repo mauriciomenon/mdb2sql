@@ -2,20 +2,84 @@ package main
 
 import (
 	"context"
+	_ "embed"
+	"encoding/json"
 	"fmt"
 	"mdb2sql/backend"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
+	"runtime/debug"
 	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+// wails.json e a fonte unica da versao (info.productVersion); o Wails CLI usa o mesmo campo no recurso do exe
+// !T: Single source of the app version, embedded so the About dialog and the exe resource always agree
+//
+//go:embed wails.json
+var wailsJSON []byte
 
 // App struct principal do Wails - contem contexto e DB manager
 // !T: Main Wails application struct holding context and database manager singleton
 type App struct {
 	ctx       context.Context
 	dbManager *backend.DBManager
+	dbName    string
+}
+
+// AppInfo alimenta o dialogo Sobre: versao do app e versoes de runtime lidas em execucao
+// !T: Data for the About dialog; React adds its own version on the frontend side
+type AppInfo struct {
+	Version string `json:"version"`
+	Go      string `json:"go"`
+	Wails   string `json:"wails"`
+	DuckDB  string `json:"duckdb"`
+}
+
+func productVersion() string {
+	var cfg struct {
+		Info struct {
+			ProductVersion string `json:"productVersion"`
+		} `json:"info"`
+	}
+	if err := json.Unmarshal(wailsJSON, &cfg); err != nil || cfg.Info.ProductVersion == "" {
+		return "unknown"
+	}
+	return cfg.Info.ProductVersion
+}
+
+// wailsVersion le a versao do modulo Wails realmente linkado no binario
+func wailsVersion() string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, dep := range bi.Deps {
+			if dep.Path == "github.com/wailsapp/wails/v2" {
+				return dep.Version
+			}
+		}
+	}
+	return "unknown"
+}
+
+// GetAppInfo retorna versao do app e dos runtimes para o dialogo Sobre
+func (a *App) GetAppInfo() AppInfo {
+	duck, err := backend.DuckDBVersion()
+	if err != nil {
+		duck = "unknown"
+	}
+	return AppInfo{
+		Version: productVersion(),
+		Go:      strings.TrimPrefix(goruntime.Version(), "go"),
+		Wails:   wailsVersion(),
+		DuckDB:  duck,
+	}
+}
+
+// DatabaseName retorna o nome do arquivo aberto (sem pasta); "" se nenhum
+// !T: The frontend cannot know which file an empty path resolved to (MDB2SQL_DB_PATH or sample)
+func (a *App) DatabaseName() string {
+	return a.dbName
 }
 
 // Cria nova instancia App com DB manager inicializado
@@ -122,8 +186,10 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 
 	// Conecta ao banco
 	if err := a.dbManager.Connect(validatedPath); err != nil {
+		a.dbName = "" // Connect ja fechou o banco anterior
 		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
+	a.dbName = filepath.Base(validatedPath)
 
 	// Lista tabelas disponiveis
 	tables, err := a.dbManager.ListTables()
