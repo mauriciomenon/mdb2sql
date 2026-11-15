@@ -17,6 +17,8 @@ echo "[2/3] Cleaning build output..."
 rm -rf zig-out
 echo "      Done"
 
+# Usa o Zig de .tools/ (setup_tools.ps1) quando existe
+for d in .tools/zig-*/; do [ -x "$d/zig.exe" ] && PATH="$PWD/$d:$PATH"; done
 echo "[3/3] Building (ReleaseSafe)..."
 zig build -Doptimize=ReleaseSafe
 echo "      Done"

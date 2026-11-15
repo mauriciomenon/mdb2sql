@@ -15,4 +15,6 @@ echo "Type: Desktop application (no port)"
 echo ""
 
 # Argumento opcional: caminho de um .duckdb/.db (sem argumento usa MDB2SQL_DB_PATH)
+# Usa o Zig de .tools/ (setup_tools.ps1) quando existe
+for d in .tools/zig-*/; do [ -x "$d/zig.exe" ] && PATH="$PWD/$d:$PATH"; done
 zig build run -Doptimize=ReleaseSafe -- "$@"
