@@ -11,11 +11,11 @@ pub const zig_version = builtin.zig_version_string;
 pub fn text(buf: []u8, imgui: []const u8, glfw: []const u8, duckdb: []const u8) []const u8 {
     return std.fmt.bufPrint(buf,
         \\MDB2SQL (Zig + Dear ImGui)
-        \\Versão {s}
+        \\Versao {s}
         \\Visualizador de bancos DuckDB convertidos de Microsoft Access: tabelas, esquema, dados e consultas.
         \\Zig {s}, Dear ImGui {s}, GLFW {s}, DuckDB {s}
         \\Autor: Mauricio Menon
-        \\Código: https://github.com/mauriciomenon/mdb2sql
+        \\Codigo: https://github.com/mauriciomenon/mdb2sql
     , .{ version, zig_version, imgui, glfw, std.mem.trimStart(u8, duckdb, "v") }) catch buf;
 }
 
@@ -25,12 +25,12 @@ test "about text has the six lines, the zon version and the runtime versions" {
     var lines = std.mem.splitScalar(u8, s, '\n');
     try std.testing.expectEqualStrings("MDB2SQL (Zig + Dear ImGui)", lines.next().?);
     var want: [64]u8 = undefined;
-    try std.testing.expectEqualStrings(try std.fmt.bufPrint(&want, "Versão {s}", .{version}), lines.next().?);
+    try std.testing.expectEqualStrings(try std.fmt.bufPrint(&want, "Versao {s}", .{version}), lines.next().?);
     _ = try std.SemanticVersion.parse(version);
     try std.testing.expect(std.mem.startsWith(u8, lines.next().?, "Visualizador de bancos DuckDB"));
     var rt: [128]u8 = undefined;
     try std.testing.expectEqualStrings(try std.fmt.bufPrint(&rt, "Zig {s}, Dear ImGui 1.93.0, GLFW 3.4.0 Win32, DuckDB 2.0.0", .{zig_version}), lines.next().?);
     try std.testing.expectEqualStrings("Autor: Mauricio Menon", lines.next().?);
-    try std.testing.expectEqualStrings("Código: https://github.com/mauriciomenon/mdb2sql", lines.next().?);
+    try std.testing.expectEqualStrings("Codigo: https://github.com/mauriciomenon/mdb2sql", lines.next().?);
     try std.testing.expect(lines.next() == null);
 }
