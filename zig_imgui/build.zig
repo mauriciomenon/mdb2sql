@@ -10,6 +10,13 @@ pub fn build(b: *std.Build) void {
     if (target.result.os.tag != .windows or target.result.cpu.arch != .x86_64)
         @panic("zig_imgui currently builds for x86_64-windows only (pinned Windows x64 libduckdb)");
 
+    // Versao: build.zig.zon e a unica fonte; chega ao codigo (janela Sobre) pelas build options
+    const console = b.option(bool, "console", "Console subsystem, to see stderr (default: only in Debug)") orelse (optimize == .debug);
+    const options = b.addOptions();
+    options.addOption([]const u8, "version", @import("build.zig.zon").version);
+    options.addOption(bool, "console", console);
+    const build_options = options.createModule();
+
     // libduckdb pre-compilada: duckdb.h + duckdb.lib (import lib) + duckdb.dll
     const duckdb = b.dependency("libduckdb", .{});
     const duckdb_c = b.addTranslateC(.{
@@ -25,7 +32,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/db.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{.{ .name = "duckdb_c", .module = duckdb_c }},
+        .imports = &.{ .{ .name = "duckdb_c", .module = duckdb_c }, .{ .name = "build_options", .module = build_options } },
     });
 
     const zglfw = b.dependency("zglfw", .{ .target = target, .optimize = optimize });
@@ -82,11 +89,14 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "db", .module = core },
+                .{ .name = "build_options", .module = build_options },
                 .{ .name = "cimgui", .module = cimgui_tc.createModule() },
                 .{ .name = "zglfw", .module = zglfw.module("root") },
             },
         }),
     });
+    // Sem janela de console ao abrir pelo Explorer; -Dconsole=true para ver o stderr
+    exe.subsystem = if (console) .console else .windows;
     exe.root_module.addIncludePath(cimgui.path(""));
     exe.root_module.addCSourceFile(.{ .file = b.path("src/shim.c"), .flags = &.{"-DCIMGUI_NO_EXPORT"} });
     exe.root_module.linkLibrary(imgui_lib);

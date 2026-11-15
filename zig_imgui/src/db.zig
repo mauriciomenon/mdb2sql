@@ -4,6 +4,10 @@
 const std = @import("std");
 const c = @import("duckdb_c");
 pub const query = @import("query.zig");
+pub const worker = @import("worker.zig");
+pub const csv = @import("csv.zig");
+pub const about = @import("about.zig");
+pub const gridtools = @import("gridtools.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Error = error{DuckDb} || query.BuildError || query.PathError;
@@ -19,6 +23,11 @@ pub const Grid = struct {
         self.arena.deinit();
     }
 };
+
+// Versao da libduckdb carregada (ex.: "v2.0.0")
+pub fn libraryVersion() []const u8 {
+    return std.mem.span(c.duckdb_library_version());
+}
 
 // Teto de linhas materializadas por consulta (o SQL livre pode devolver milhoes)
 pub const max_rows = 10_000;
@@ -86,6 +95,11 @@ pub const Db = struct {
         _ = self.tables.arena.reset(.free_all);
         self.tables.rows = &.{};
         self.table_names = &.{};
+    }
+
+    // Interrompe a consulta em andamento; pode ser chamada de outra thread
+    pub fn interrupt(self: *Db) void {
+        if (self.conn != null) c.duckdb_interrupt(self.conn);
     }
 
     // Executa SQL com parametros '?' e devolve tudo como texto
@@ -235,11 +249,16 @@ pub const Db = struct {
 const t = std.testing;
 
 test {
-    _ = query; // roda tambem os testes de query.zig
+    // roda tambem os testes dos outros arquivos
+    _ = query;
+    _ = worker;
+    _ = csv;
+    _ = about;
+    _ = gridtools;
 }
 
 // Cria um banco de teste gravavel e fecha
-fn makeSample(path: [:0]const u8) !void {
+pub fn makeSample(path: [:0]const u8) !void {
     var db = Db.init(t.allocator);
     defer db.close();
     try db.open(path, false);
@@ -249,7 +268,7 @@ fn makeSample(path: [:0]const u8) !void {
     try db.exec("CREATE OR REPLACE TABLE strict (id INTEGER NOT NULL, note VARCHAR)");
 }
 
-fn tmpPath(buf: []u8, tmp: *const std.testing.TmpDir, name: []const u8) [:0]const u8 {
+pub fn tmpPath(buf: []u8, tmp: *const std.testing.TmpDir, name: []const u8) [:0]const u8 {
     return std.mem.printSentinel(buf, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, name }, 0) catch unreachable;
 }
 
