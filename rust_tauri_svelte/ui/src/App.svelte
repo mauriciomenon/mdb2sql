@@ -1,290 +1,445 @@
 <script>
-  // NIVEL BASICO: Svelte reactive script para table viewer
-  // Variaveis aqui sao automaticamente observadas e re-renderizam UI quando mudam
+  // NIVEL BASICO: Visualizador de tabelas DuckDB (abre banco, lista tabelas, mostra linhas)
+  // NIVEL TECNICO: Svelte 5 runes; every backend call goes through Tauri invoke()
 
   import { invoke } from '@tauri-apps/api/core';
 
-  // NIVEL BASICO: Estado da aplicacao (reactive variables)
-  let tables = [];
-  let selectedTable = '';
-  let tableData = [];
-  let rowCount = 0;
-  let status = 'No database loaded';
-  let error = '';
+  const LIMITS = [100, 500, 1000];
 
-  // NIVEL BASICO: Carrega banco de dados e lista tabelas
-  async function loadDatabase() {
+  let dbPath = $state('');
+  let tables = $state([]);
+  let filter = $state('');
+  let selectedTable = $state('');
+  let columns = $state([]); // [{ name, type, null }] na ordem real da tabela
+  let rows = $state([]);
+  let rowCount = $state(0);
+  let limit = $state(LIMITS[0]);
+  let busy = $state(false);
+  let status = $state('No database open');
+  let error = $state('');
+
+  let visibleTables = $derived(
+    tables.filter((t) => t.toLowerCase().includes(filter.trim().toLowerCase()))
+  );
+
+  const isNumeric = (type) => /INT|DOUBLE|FLOAT|DECIMAL|REAL|NUMERIC/i.test(type);
+
+  // NIVEL BASICO: Abre o banco; caminho vazio usa MDB2SQL_DB_PATH ou data/sample.duckdb
+  async function openDatabase(event) {
+    event?.preventDefault();
+    // "Copiar como caminho" do Windows cola o caminho entre aspas
+    const path = dbPath.trim().replace(/^"(.*)"$/, '$1');
+    busy = true;
+    error = '';
+    status = 'Opening database...';
     try {
-      error = '';
-      status = 'Loading...';
-
-      // NIVEL BASICO: invoke() chama comando Rust load_database
-      // NIVEL TECNICO: Tauri IPC automatically serializes/deserializes JSON
-      tables = await invoke('load_database', { dbPath: '' });
-
-      status = `Loaded: sample.duckdb (${tables.length} tables)`;
-
-      // NIVEL BASICO: Carrega primeira tabela automaticamente
+      tables = await invoke('load_database', { dbPath: path });
+      filter = '';
+      status = `${path || 'Default database'}: ${tables.length} tables`;
       if (tables.length > 0) {
-        await loadTable(tables[0]);
+        await openTable(tables[0]);
+      } else {
+        selectedTable = '';
+        columns = [];
+        rows = [];
+        rowCount = 0;
       }
     } catch (err) {
-      error = err;
-      status = 'Error loading database';
+      error = String(err);
+      status = 'Could not open database';
+    } finally {
+      busy = false;
     }
   }
 
-  // NIVEL BASICO: Carrega dados de uma tabela especifica
-  async function loadTable(tableName) {
+  // NIVEL BASICO: Busca schema, linhas e contagem da tabela em paralelo
+  async function openTable(tableName) {
+    if (!tableName) return;
+    selectedTable = tableName;
+    busy = true;
+    error = '';
     try {
-      error = '';
-      selectedTable = tableName;
-
-      // NIVEL BASICO: Busca dados e contagem em paralelo
-      // NIVEL TECNICO: Promise.all for concurrent Tauri commands
-      const [data, count] = await Promise.all([
-        invoke('get_table_data', { tableName, limit: 100 }),
+      const [schema, data, count] = await Promise.all([
+        invoke('get_table_schema', { tableName }),
+        invoke('get_table_data', { tableName, limit }),
         invoke('get_row_count', { tableName }),
       ]);
-
-      tableData = data;
+      // Ignora resposta atrasada se o usuario ja trocou de tabela
+      if (tableName !== selectedTable) return;
+      columns = schema;
+      rows = data;
       rowCount = count;
     } catch (err) {
-      error = err;
+      error = String(err);
+    } finally {
+      busy = false;
     }
   }
-
-  // NIVEL BASICO: Reactive statement - pega colunas do primeiro row
-  // NIVEL TECNICO: Svelte $ syntax runs when dependencies change
-  $: columns = tableData.length > 0 ? Object.keys(tableData[0]) : [];
 </script>
 
-<!-- NIVEL BASICO: Template Svelte para table viewer -->
-<div class="container">
-  <h1>MDB2SQL - Feature 1: Load and Display Table</h1>
+<div class="app">
+  <header>
+    <h1>MDB2SQL</h1>
+    <form onsubmit={openDatabase}>
+      <label for="db-path">Database</label>
+      <input
+        id="db-path"
+        type="text"
+        bind:value={dbPath}
+        placeholder="Path to a .duckdb file (empty: MDB2SQL_DB_PATH or data/sample.duckdb)"
+        spellcheck="false"
+        autocomplete="off"
+      />
+      <button type="submit" disabled={busy}>Open database</button>
+    </form>
+  </header>
 
-  <!-- NIVEL BASICO: Controles -->
-  <div class="controls">
-    <label for="table-select">Table:</label>
-    <select
-      id="table-select"
-      bind:value={selectedTable}
-      on:change={() => loadTable(selectedTable)}
-      disabled={tables.length === 0}
-    >
-      {#each tables as table}
-        <option value={table}>{table}</option>
-      {/each}
-    </select>
+  <p class="status" class:error role="status" aria-live="polite">
+    {error || status}
+  </p>
 
-    <button on:click={loadDatabase}>Load Database</button>
+  <div class="workspace">
+    <nav aria-label="Tables">
+      <label for="table-filter">Tables ({visibleTables.length}/{tables.length})</label>
+      <input
+        id="table-filter"
+        type="search"
+        bind:value={filter}
+        placeholder="Filter tables"
+        disabled={tables.length === 0}
+      />
+      <!-- NIVEL TECNICO: native listbox gives arrow keys and type-ahead for free -->
+      <select
+        size="2"
+        aria-label="Table list"
+        bind:value={selectedTable}
+        onchange={() => openTable(selectedTable)}
+        disabled={tables.length === 0}
+      >
+        {#each visibleTables as table (table)}
+          <option value={table}>{table}</option>
+        {/each}
+      </select>
+    </nav>
 
-    <span class="status" class:success={!error} class:error={error}>
-      {error || status}
-    </span>
+    <main aria-busy={busy}>
+      {#if selectedTable}
+        <div class="table-bar">
+          <h2>{selectedTable}</h2>
+          <span>
+            Showing {rows.length.toLocaleString()} of {rowCount.toLocaleString()} rows,
+            {columns.length} columns
+          </span>
+          <label for="row-limit">Row limit</label>
+          <select id="row-limit" bind:value={limit} onchange={() => openTable(selectedTable)}>
+            {#each LIMITS as option}
+              <option value={option}>{option}</option>
+            {/each}
+          </select>
+        </div>
+
+        <!-- tabindex: a area rolavel precisa de foco para rolar pelo teclado -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <div class="grid" tabindex="0" role="region" aria-label="Rows of {selectedTable}">
+          <table>
+            <thead>
+              <tr>
+                {#each columns as col (col.name)}
+                  <th scope="col" class:num={isNumeric(col.type)}>
+                    {col.name}
+                    <small>{col.type}</small>
+                  </th>
+                {/each}
+              </tr>
+            </thead>
+            <tbody>
+              {#each rows as row}
+                <tr>
+                  {#each columns as col (col.name)}
+                    {@const value = row[col.name]}
+                    {#if value === null || value === undefined}
+                      <td class="null">NULL</td>
+                    {:else}
+                      <td class:num={isNumeric(col.type)} title={String(value)}>{value}</td>
+                    {/if}
+                  {/each}
+                </tr>
+              {:else}
+                <tr><td class="null" colspan={Math.max(columns.length, 1)}>Table is empty</td></tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {:else}
+        <p class="empty">Open a DuckDB database to browse its tables.</p>
+      {/if}
+    </main>
   </div>
 
-  <!-- NIVEL BASICO: Tabela de dados -->
-  {#if tableData.length > 0}
-    <div class="table-container">
-      <table>
-        <thead>
-          <tr>
-            {#each columns as col}
-              <th>{col}</th>
-            {/each}
-          </tr>
-        </thead>
-        <tbody>
-          {#each tableData as row, idx}
-            <!-- NIVEL BASICO: Key unica para evitar re-render incorreto -->
-            <!-- NIVEL TECNICO: Prefer stable unique field over index -->
-            <tr key={row.UNIQID || row.id || `${selectedTable}_${idx}`}>
-              {#each columns as col}
-                <td>{row[col] ?? ''}</td>
-              {/each}
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
-  {/if}
-
-  <!-- NIVEL BASICO: Info rodape -->
-  {#if selectedTable}
-    <div class="info">
-      {selectedTable}: Showing {tableData.length} of {rowCount} rows
-    </div>
-  {/if}
-
-  <!-- NIVEL BASICO: Identificacao discreta da implementacao -->
-  <div class="tech-badge">Rust Tauri + Svelte</div>
+  <footer>Rust + Tauri v2 + Svelte</footer>
 </div>
 
 <style>
-  /* NIVEL BASICO: CSS scoped para table viewer */
-  /* Svelte adiciona hash unico para evitar conflitos globais */
+  /* NIVEL BASICO: Cores em variaveis; tema claro/escuro segue o sistema operacional */
+  :global(:root) {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --border: #d5d9e0;
+    --text: #1c2330;
+    --muted: #5d6778;
+    --accent: #1a5fb4;
+    --accent-text: #ffffff;
+    --row-alt: #f2f4f7;
+    --row-hover: #e3edfb;
+    --error-bg: #fde8e8;
+    --error-text: #9b1c1c;
+  }
 
-  .container {
-    max-width: 1400px;
-    margin: 20px auto;
-    padding: 20px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  @media (prefers-color-scheme: dark) {
+    :global(:root) {
+      --bg: #15181d;
+      --surface: #1e2229;
+      --border: #363c47;
+      --text: #e6e9ee;
+      --muted: #9aa4b2;
+      --accent: #78aeed;
+      --accent-text: #10141a;
+      --row-alt: #232831;
+      --row-hover: #2b3a50;
+      --error-bg: #4a1f1f;
+      --error-text: #ffc9c9;
+    }
+  }
+
+  :global(html),
+  :global(body),
+  :global(#app) {
+    height: 100%;
+    margin: 0;
+  }
+
+  :global(body) {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.4 'Segoe UI', system-ui, -apple-system, 'Roboto', sans-serif;
+  }
+
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    box-sizing: border-box;
+    padding: 12px 16px 6px;
+    gap: 10px;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 20px;
   }
 
   h1 {
-    text-align: center;
-    color: #000;
-    margin-bottom: 20px;
-    font-size: 24px;
-    font-weight: 600;
+    margin: 0;
+    font-size: 18px;
+    font-weight: 650;
+    letter-spacing: 0.02em;
   }
 
-  /* NIVEL BASICO: Area de controles (select, button, status) */
-  .controls {
+  form {
     display: flex;
+    flex: 1;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 20px;
-    padding: 15px;
-    background-color: #f5f5f5;
-    border-radius: 4px;
+    gap: 8px;
   }
 
-  .controls label {
+  label {
+    color: var(--muted);
+    font-size: 12px;
     font-weight: 600;
-    color: #555;
   }
 
-  .controls select {
-    min-width: 250px;
-    padding: 8px 12px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 14px;
-    background-color: white;
+  input,
+  select,
+  button {
+    font: inherit;
+    color: inherit;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+  }
+
+  form input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  button {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-text);
+    font-weight: 600;
     cursor: pointer;
   }
 
-  .controls select:disabled {
-    background-color: #e9ecef;
+  button:disabled,
+  select:disabled,
+  input:disabled {
+    opacity: 0.55;
     cursor: not-allowed;
   }
 
-  .controls button {
-    padding: 8px 16px;
-    background-color: #007bff;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background-color 0.2s;
+  :is(input, select, button, .grid):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
 
-  .controls button:hover {
-    background-color: #0056b3;
-  }
-
-  .controls .status {
-    margin-left: auto;
-    padding: 6px 12px;
-    border-radius: 4px;
+  .status {
+    margin: 0;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--muted);
     font-size: 13px;
-    font-weight: 500;
+    overflow-wrap: anywhere;
   }
 
-  .controls .status.success {
-    color: #155724;
-    background-color: #d4edda;
+  .status.error {
+    background: var(--error-bg);
+    border-color: var(--error-text);
+    color: var(--error-text);
   }
 
-  .controls .status.error {
-    color: #721c24;
-    background-color: #f8d7da;
+  .workspace {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    gap: 12px;
   }
 
-  /* NIVEL BASICO: Container da tabela com scroll */
-  .table-container {
-    overflow: auto;
-    max-height: 600px;
-    border: 1px solid #ddd;
+  nav {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 250px;
+    flex-shrink: 0;
+  }
+
+  nav select {
+    flex: 1;
+    min-height: 0;
+    padding: 4px;
+  }
+
+  nav option {
+    padding: 4px 6px;
     border-radius: 4px;
-    margin-bottom: 15px;
   }
 
-  /* NIVEL BASICO: Estilos da tabela de dados */
+  main {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .table-bar {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  h2 {
+    margin: 0;
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .table-bar label {
+    margin-left: auto;
+  }
+
+  .table-bar select {
+    padding: 3px 6px;
+  }
+
+  .grid {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
   table {
-    width: 100%;
-    border-collapse: collapse;
-    background-color: white;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
   }
 
-  thead {
+  th {
     position: sticky;
     top: 0;
-    background-color: #343a40;
-    color: white;
-    z-index: 10;
-  }
-
-  thead th {
-    padding: 12px 8px;
+    background: var(--surface);
+    border-bottom: 2px solid var(--border);
+    padding: 6px 10px;
     text-align: left;
     font-weight: 600;
-    font-size: 13px;
-    border-bottom: 2px solid #dee2e6;
+    white-space: nowrap;
   }
 
-  tbody tr {
-    border-bottom: 1px solid #dee2e6;
+  th small {
+    display: block;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
   }
 
-  tbody tr:hover {
-    background-color: #f8f9fa;
-  }
-
-  tbody td {
-    padding: 10px 8px;
-    font-size: 13px;
-    color: #333;
+  td {
+    padding: 4px 10px;
+    border-bottom: 1px solid var(--border);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 300px;
+    max-width: 320px;
   }
 
-  /* NIVEL BASICO: Rodape com info de linhas */
-  .info {
-    text-align: center;
-    padding: 10px;
-    background-color: #f8f9fa;
-    border-radius: 4px;
-    font-size: 13px;
-    color: #555;
-    font-weight: 500;
+  tbody tr:nth-child(even) {
+    background: var(--row-alt);
   }
 
-  /* NIVEL BASICO: Badge discreto de identificacao da tecnologia */
-  .tech-badge {
-    position: fixed;
-    bottom: 10px;
-    right: 10px;
-    padding: 4px 10px;
-    background-color: rgba(0, 0, 0, 0.05);
-    border-radius: 12px;
+  tbody tr:hover {
+    background: var(--row-hover);
+  }
+
+  .num {
+    text-align: right;
+  }
+
+  .null {
+    color: var(--muted);
+    font-style: italic;
+    opacity: 0.7;
+  }
+
+  .empty {
+    margin: auto;
+    color: var(--muted);
+  }
+
+  footer {
+    color: var(--muted);
     font-size: 11px;
-    color: #888;
-    font-weight: 500;
-    user-select: none;
-    pointer-events: none;
-  }
-
-  /* NIVEL TECNICO: Global body styles for future theme support */
-  :global(body) {
-    margin: 0;
-    background: #ffffff;
-    color: #000000;
+    text-align: right;
   }
 </style>
