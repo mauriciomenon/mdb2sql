@@ -7,7 +7,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-IMPORT_DIR="$PROJECT_ROOT/poc/importacao"
+# pasta com os .accdb: 1o argumento, ou data/importacao (fora do git)
+IMPORT_DIR="${1:-$PROJECT_ROOT/data/importacao}"
 DATA_DIR="$PROJECT_ROOT/data"
 
 # NIVEL BASICO: Cria diretorio data/ se nao existir
