@@ -1,0 +1,76 @@
+name: Publication Check
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publication-check:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository (full history)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Authorship, AI credits, secrets files and personal paths
+        shell: bash
+        env:
+          PERSONAL_TERMS: ${{ secrets.PERSONAL_TERMS }}
+        run: |
+          # Checagem basica antes de publicar: autoria humana com e-mail noreply, sem trailers de IA, sem .env/chaves,
+          # sem caminhos de usuario nem termos pessoais nos arquivos versionados.
+          # Termos pessoais extras (e-mail pessoal, empresa) vem da variavel PERSONAL_TERMS (segredo do repo, separados por
+          # virgula), para nao ficarem escritos no proprio repositorio.
+          set -euo pipefail
+          fail=0
+          note() { echo "[ERRO] $*" >&2; fail=1; }
+
+          # 1) autoria: author sempre o dono (noreply); committer o dono ou o GitHub (merge feito pela interface web)
+          owner='^(54405514\+)?mauriciomenon@users\.noreply\.github\.com$'
+          bad_authors=$(git log --format='%ae' | sort -u | grep -vE "$owner" || true)
+          bad_committers=$(git log --format='%ce' | sort -u | grep -vE "$owner|^noreply@github\.com$" || true)
+          [ -z "$bad_authors" ] || note "autores fora do noreply do dono: $bad_authors"
+          [ -z "$bad_committers" ] || note "committers fora do noreply do dono: $bad_committers"
+
+          # 2) nada de credito a ferramenta de IA nas mensagens de commit
+          ai=$(git log --format='%h %B' | grep -iE 'co-authored-by:|generated (with|by) ' || true)
+          [ -z "$ai" ] || note "mensagens de commit com credito de IA:"$'\n'"$ai"
+
+          # 3) nada de .env, chave ou certificado privado versionado
+          secrets=$(git ls-files | grep -iE '(^|/)\.env($|\.)|\.pem$|\.key$|\.pfx$|\.p12$|(^|/)id_(rsa|ed25519)' | grep -viE '\.env\.example$' || true)
+          [ -z "$secrets" ] || note "arquivos de segredo versionados:"$'\n'"$secrets"
+
+          # 4) nada de caminho absoluto com nome de usuario (Windows, Linux, macOS); <user>/$USER e similares passam
+          paths=$(git grep -nIE '[A-Za-z]:[\\/]+Users[\\/]+[A-Za-z0-9._-]+[\\/]|/home/[a-z0-9._-]+/|/Users/[A-Za-z0-9._-]+/' -- . \
+                  ':!*.lock' ':!pnpm-lock.yaml' ':!package-lock.json' ':!go.sum' \
+                  | grep -vE '[\\/](Users|home)[\\/]+(runner|user|username|USER|USERNAME|nome|seu_usuario|example|Public|Default|runneradmin)[\\/]' || true)
+          [ -z "$paths" ] || note "caminhos com nome de usuario em arquivos versionados:"$'\n'"$paths"
+
+          # 5) termos pessoais vindos do segredo PERSONAL_TERMS (nao ficam escritos aqui)
+          if [ -n "${PERSONAL_TERMS:-}" ]; then
+            IFS=',' read -r -a terms <<< "$PERSONAL_TERMS"
+            for t in "${terms[@]}"; do
+              t="$(echo "$t" | xargs)"; [ -n "$t" ] || continue
+              hits=$(git grep -nIiF -e "$t" -- . | cut -d: -f1-2 || true)
+              [ -z "$hits" ] || note "termo pessoal (segredo PERSONAL_TERMS) encontrado em: $hits"
+            done
+          else
+            echo "[AVISO] segredo PERSONAL_TERMS nao definido: so a checagem generica de caminhos rodou"
+          fi
+
+          [ "$fail" = 0 ] && echo "[OK] checagem de publicacao sem problemas"
+          exit "$fail"
