@@ -1,157 +1,308 @@
-/* NIVEL BASICO: Estilos da aplicacao table viewer */
+/* Tema claro/escuro por variaveis; data-theme (auto|light|dark) e definido em App.tsx */
 
-.container {
-  max-width: 1400px;
-  margin: 20px auto;
-  padding: 20px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+:root {
+  color-scheme: light;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --border: #d5dae1;
+  --text: #1c2430;
+  --muted: #5b6675;
+  --accent: #0b62c4;
+  --accent-text: #ffffff;
+  --row-alt: #f3f5f8;
+  --row-hover: #e6effb;
+  --error: #b3261e;
 }
 
-h1 {
-  text-align: center;
-  color: #000;
-  margin-bottom: 20px;
-  font-size: 24px;
-  font-weight: 600;
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #161b22;
+  --surface: #1f2630;
+  --border: #3a4553;
+  --text: #e6eaf0;
+  --muted: #a3aebd;
+  --accent: #6cb0ff;
+  --accent-text: #0d1622;
+  --row-alt: #242c38;
+  --row-hover: #2c3a4d;
+  --error: #ff8a80;
 }
 
-/* NIVEL BASICO: Area de controles (ComboBox, Button, Status) */
-.controls {
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --bg: #161b22;
+    --surface: #1f2630;
+    --border: #3a4553;
+    --text: #e6eaf0;
+    --muted: #a3aebd;
+    --accent: #6cb0ff;
+    --accent-text: #0d1622;
+    --row-alt: #242c38;
+    --row-hover: #2c3a4d;
+    --error: #ff8a80;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 'Segoe UI', system-ui, -apple-system, 'Roboto', sans-serif;
+}
+
+.app {
+  display: grid;
+  grid-template: auto minmax(0, 1fr) / 260px minmax(0, 1fr);
+  height: 100%;
+}
+
+/* Toolbar */
+.toolbar {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 20px;
-  padding: 15px;
-  background-color: #f5f5f5;
-  border-radius: 4px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 
-.controls label {
+h1 {
+  margin: 0 8px 0 0;
+  font-size: 18px;
   font-weight: 600;
-  color: #555;
 }
 
-.controls select {
-  min-width: 250px;
-  padding: 8px 12px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  font-size: 14px;
-  background-color: white;
-  cursor: pointer;
-}
-
-.controls select:disabled {
-  background-color: #e9ecef;
-  cursor: not-allowed;
-}
-
-.controls button {
-  padding: 8px 16px;
-  background-color: #007bff;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  font-size: 14px;
+h2 {
+  margin: 0;
+  font-size: 16px;
   font-weight: 600;
-  cursor: pointer;
-  transition: background-color 0.2s;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.controls button:hover {
-  background-color: #0056b3;
-}
-
-.controls .status {
-  margin-left: auto;
+button,
+select,
+input {
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
   padding: 6px 12px;
-  border-radius: 4px;
-  font-size: 13px;
-  font-weight: 500;
 }
 
-.controls .status.success {
-  color: #155724;
-  background-color: #d4edda;
+button {
+  cursor: pointer;
 }
 
-.controls .status.error {
-  color: #721c24;
-  background-color: #f8d7da;
+button:hover:not(:disabled) {
+  border-color: var(--accent);
 }
 
-/* NIVEL BASICO: Container da tabela com scroll */
-.table-container {
-  overflow: auto;
-  max-height: 600px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  margin-bottom: 15px;
+button:disabled,
+input:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
-/* NIVEL BASICO: Estilos da tabela de dados */
-table {
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.status {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status.error {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.field select {
+  padding: 4px 8px;
+  color: var(--text);
+}
+
+/* Sidebar */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 12px 8px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+.sidebar ul {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.table-item {
+  display: block;
   width: 100%;
-  border-collapse: collapse;
-  background-color: white;
+  padding: 5px 8px;
+  border: 0;
+  background: none;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-thead {
+.table-item:hover {
+  background: var(--row-hover);
+}
+
+.table-item[aria-current='true'] {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* focus ring inside the item so the scrolling list does not clip it */
+.table-item:focus-visible {
+  outline-offset: -2px;
+}
+
+/* Content */
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 16px;
+}
+
+.content-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.content-bar h2 {
+  flex: 1;
+  min-width: 0;
+}
+
+.tabs {
+  display: flex;
+}
+
+.tabs button {
+  border-radius: 0;
+  margin-left: -1px;
+}
+
+.tabs button:first-child {
+  border-radius: 6px 0 0 6px;
+  margin-left: 0;
+}
+
+.tabs button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+
+.tabs button[aria-selected='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.table-container {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 100%;
+  font-size: 13px;
+}
+
+th,
+td {
+  padding: 5px 10px;
+  text-align: left;
+  white-space: nowrap;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--border);
+}
+
+th {
   position: sticky;
   top: 0;
-  background-color: #343a40;
-  color: white;
-  z-index: 10;
-}
-
-thead th {
-  padding: 12px 8px;
-  text-align: left;
+  background: var(--surface);
   font-weight: 600;
-  font-size: 13px;
-  border-bottom: 2px solid #dee2e6;
+  border-bottom: 2px solid var(--border);
 }
 
-tbody tr {
-  border-bottom: 1px solid #dee2e6;
+td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+tbody tr:nth-child(even) {
+  background: var(--row-alt);
 }
 
 tbody tr:hover {
-  background-color: #f8f9fa;
+  background: var(--row-hover);
 }
 
-tbody td {
-  padding: 10px 8px;
-  font-size: 13px;
-  color: #333;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 300px;
+.info,
+.empty {
+  margin: 0;
+  color: var(--muted);
 }
 
-/* NIVEL BASICO: Rodape com info de linhas */
-.info {
-  text-align: center;
-  padding: 10px;
-  background-color: #f8f9fa;
-  border-radius: 4px;
-  font-size: 13px;
-  color: #555;
-  font-weight: 500;
-}
-
-/* NIVEL BASICO: Badge discreto de identificacao da tecnologia */
-.tech-badge {
-  position: fixed;
-  bottom: 10px;
-  right: 10px;
-  padding: 4px 10px;
-  background-color: rgba(0, 0, 0, 0.05);
-  border-radius: 12px;
-  font-size: 11px;
-  color: #888;
-  font-weight: 500;
-  user-select: none;
-  pointer-events: none;
+.empty {
+  padding: 16px;
 }

@@ -1,8 +1,8 @@
 # MDB2SQL - Windows 11 Installation Guide
 
-> Nota (2026-11-14): `go_wails_react/go.mod` agora exige Go 1.26+ e Wails v2.13 (atualizacoes de seguranca das
-> dependencias). Onde este guia cita Go 1.23 / Wails v2.11, use essas versoes; Go 1.21+ baixa o toolchain 1.26 sozinho
-> (GOTOOLCHAIN=auto). Python do `py_qt6`: 3.12 (o duckdb travado no uv.lock nao tem wheel para 3.15).
+> Nota (2026-11-14): `go_wails_react/go.mod` exige Go 1.26 e Wails v2.13.0 (atualizacoes de seguranca das
+> dependencias) e usa `github.com/duckdb/duckdb-go/v2` v2.20000.0 (DuckDB 2.0.0 linkado estaticamente: nenhuma
+> DLL/.so do DuckDB para instalar). Python do `py_qt6`: 3.12 (o duckdb travado no uv.lock nao tem wheel para 3.15).
 
 ## Document Information
 - **Date**: 2025-11-20
@@ -137,7 +137,7 @@ cargo --version
 
 ---
 
-### 5. Install Go 1.23.3
+### 5. Install Go 1.26.x + C toolchain (cgo)
 
 **Using winget:**
 ```powershell
@@ -146,13 +146,18 @@ winget install GoLang.Go
 
 **Direct download alternative:**
 - URL: https://go.dev/dl/
-- Download go1.23.3.windows-amd64.msi
+- Download go1.26.11.windows-amd64.msi (Go 1.27 also works; see the Wails step)
 - Run installer with default options
 
 **Verify installation:**
 ```powershell
 go version
 ```
+
+**C toolchain (cgo):** o DuckDB (duckdb-go v2.20000.0 = DuckDB 2.0.0) e linkado estaticamente no exe, sem DLL.
+O link exige MinGW-w64 GCC com runtime UCRT (WinLibs GCC 16.2.0 UCRT r3 testado) primeiro no PATH; llvm-mingw e
+MinGW msvcrt (o do Qt) falham no link. Download, SHA-256 e comandos: secao "Install a C toolchain for cgo" de
+[SetupWindows11.md](SetupWindows11.md). Com Go 1.27, rode o Wails CLI com `$env:GOTOOLCHAIN = "go1.26.11"`.
 
 ---
 
@@ -176,12 +181,12 @@ xelatex --version
 
 ---
 
-### 7. Install Wails v2.11.0
+### 7. Install Wails v2.13.0
 
 **Prerequisites:** Go must be installed first
 
 ```powershell
-go install github.com/wailsapp/wails/v2/cmd/wails@latest
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
 ```
 
 **Add to PATH:**
@@ -494,8 +499,8 @@ npm: 10.9.0
 pnpm: 10.18.2
 Python: 3.12.x
 uv: latest
-Go: 1.23.3
-Wails: v2.11.0
+Go: 1.26.11
+Wails: v2.13.0 (duckdb-go v2.20000.0 = DuckDB 2.0.0, GCC UCRT 16.2.0)
 Rust: 1.83.0
 Cargo: 1.83.0
 Tauri CLI: 1.5.14

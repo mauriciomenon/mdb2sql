@@ -2,21 +2,9 @@
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "mdb2sql",
   "outputfilename": "mdb2sql",
-  "frontend": {
-    "dir": "./frontend",
-    "install": "pnpm install",
-    "build": "pnpm run build",
-    "dev:watcher": {
-      "enabled": true
-    },
-    "package": {
-      "manager": "pnpm"
-    }
-  },
-  "backend": {
-    "dir": ".",
-    "go:build": "-tags no_duckdb_arrow"
-  },
+  "frontend:dir": "frontend",
+  "frontend:install": "pnpm install --frozen-lockfile",
+  "frontend:build": "pnpm run build",
   "author": {
     "name": "Author",
     "email": "author@example.com"

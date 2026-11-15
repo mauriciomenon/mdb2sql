@@ -17,3 +17,7 @@ export function GetTableSchema(arg1) {
 export function LoadDatabase(arg1) {
   return window['go']['main']['App']['LoadDatabase'](arg1);
 }
+
+export function SelectDatabase() {
+  return window['go']['main']['App']['SelectDatabase']();
+}

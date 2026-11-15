@@ -1,8 +1,9 @@
 # MDB2SQL - Setup Guide for Windows 11
 
-> Nota (2026-11-14): `go_wails_react/go.mod` agora exige Go 1.26+ e Wails v2.13 (atualizacoes de seguranca das
-> dependencias). Onde este guia cita Go 1.23 / Wails v2.11, use essas versoes; Go 1.21+ baixa o toolchain 1.26 sozinho
-> (GOTOOLCHAIN=auto). Python do `py_qt6`: 3.12 (o duckdb travado no uv.lock nao tem wheel para 3.15).
+> Nota (2026-11-14): `go_wails_react/go.mod` exige Go 1.26 e Wails v2.13.0 (atualizacoes de seguranca das
+> dependencias) e usa `github.com/duckdb/duckdb-go/v2` v2.20000.0 (DuckDB 2.0.0 estatico, sem DLL). A secao
+> GO + WAILS + REACT abaixo tem as versoes exatas. Python do `py_qt6`: 3.12 (o duckdb travado no uv.lock nao tem
+> wheel para 3.15).
 
 **Target OS**: Windows 11 (x64)
 **Last Updated**: 2025-11-16
@@ -29,15 +30,36 @@ Restart terminal after install.
 
 ### GO + WAILS + REACT
 
-#### Install Go 1.21+
+#### Install Go 1.26.x
 ```powershell
 winget install GoLang.Go
 ```
 
 Verify:
 ```powershell
-go version  # Should show 1.21+
+go version  # 1.26.x, or newer (see the GOTOOLCHAIN note in the Wails CLI step)
 ```
+
+#### Install a C toolchain for cgo (MinGW-w64 GCC, UCRT runtime)
+DuckDB comes from the Go module `github.com/duckdb/duckdb-go/v2` v2.20000.0, which downloads the official
+prebuilt static libraries of DuckDB 2.0.0 for windows/amd64 (`go.duckdb.org/libduckdb/windows-amd64`, verified by
+go.sum). They are linked into `mdb2sql.exe`: there is no `duckdb.dll` to download, install or ship.
+
+The link step needs GNU GCC + libstdc++ built for the UCRT runtime. Other toolchains fail at link time:
+llvm-mingw/clang (`undefined symbol: std::...`, `pthread_...`) and msvcrt MinGW builds such as the one bundled with
+Qt (`undefined reference to __stdio_common_vsnprintf_s`).
+
+Tested with WinLibs GCC 16.2.0 + MinGW-w64 14.0.0 UCRT r3 (also `winget install BrechtSanders.WinLibs.POSIX.UCRT`):
+```powershell
+# https://github.com/brechtsanders/winlibs_mingw/releases/tag/16.2.0posix-23.1.3-14.0.0-ucrt-r3
+# winlibs-x86_64-posix-seh-gcc-16.2.0-mingw-w64ucrt-14.0.0-r3.zip
+# SHA-256 3c69305081e4a647144339a936244fcf7d3d9e558319e1ad7be2cd2886d4b6a1
+# Extract anywhere (example below) and put it FIRST in PATH of the build shell:
+$env:Path = "$env:USERPROFILE\.local\winlibs-gcc-16.2.0-ucrt-r3\mingw64\bin;$env:Path"
+gcc --version   # must say x86_64-ucrt-posix-seh
+```
+Alternative recommended by duckdb-go (not tested here): MSYS2, `pacman -S mingw-w64-ucrt-x86_64-gcc`, with
+`C:\msys64\ucrt64\bin` first in PATH.
 
 #### Install Node.js 20+
 ```powershell
@@ -52,7 +74,7 @@ npm --version
 
 #### Install Wails CLI
 ```powershell
-go install github.com/wailsapp/wails/v2/cmd/wails@latest
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
 ```
 
 Add to PATH (PowerShell as Admin):
@@ -63,8 +85,17 @@ $env:Path += ";$env:USERPROFILE\go\bin"
 
 Verify:
 ```powershell
-wails version  # Should show v2.11+
+wails version  # v2.13.0 (must match go_wails_react/go.mod)
+wails doctor
 ```
+
+With Go 1.27 installed, Wails CLI 2.13.0 stops with
+`internal error: package "database/sql" without types was imported` (its bundled golang.org/x/tools is older than
+Go 1.27). Run the CLI with the Go 1.26 toolchain; Go downloads it by itself:
+```powershell
+$env:GOTOOLCHAIN = "go1.26.11"
+```
+`go build`, `go test` and `go vet` work with Go 1.27 without this.
 
 #### PDF Toolchain (pandoc + MiKTeX) - opcional para gerar PDFs de docs
 ```powershell
@@ -84,20 +115,26 @@ winget install Microsoft.EdgeWebView2Runtime
 
 #### Build Go/Wails Implementation
 ```powershell
-cd go_wails_react
-go mod tidy
-cd frontend
-npm install
+cd go_wails_react\frontend
+pnpm install --frozen-lockfile   # workspace member; uses the root pnpm-lock.yaml
+pnpm run build                   # main.go embeds frontend/dist; go build/vet fail without it
 cd ..
+go test ./...
+go vet ./...
+go build ./...
 wails dev
+wails build -platform windows/amd64   # build\bin\mdb2sql.exe, single file, no DLL next to it
 ```
 
-**CRITICAL**: If you get Arrow linker errors:
-```powershell
-# Build without Arrow (recommended - Arrow not needed)
-wails dev -tags no_duckdb_arrow
-wails build -tags no_duckdb_arrow
-```
+`wails build` runs `pnpm install --frozen-lockfile` and `pnpm run build` by itself (`frontend:install` /
+`frontend:build` in wails.json). The linker line `.rsrc merge failure: multiple non-default manifests` is a warning:
+the exe still carries the Wails manifest, icon and version info.
+
+In the app: **Load database** opens a file dialog (.duckdb, .db, .sqlite, .sqlite3); **Sample data** loads
+`MDB2SQL_DB_PATH` or `data/sample.duckdb`. The Go app reads DuckDB files; it does not convert .mdb/.accdb.
+
+The first link of DuckDB takes 1-2 minutes. The `no_duckdb_arrow` tag of older guides is no longer needed:
+duckdb-go v2 only builds Arrow with `-tags duckdb_arrow`.
 
 **Expected**: Window opens with database viewer showing sample data.
 

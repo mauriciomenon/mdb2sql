@@ -14,10 +14,10 @@ MDB2SQL provides three independent GUI implementations showcasing different tech
    - Status: Active development; core flows work but still under review for release
 
 2. **Go + Wails + React**
-   - Backend: Go 1.26+ (go.mod `go 1.26.0`, required by the security updates of wails/echo/x-crypto) + go-duckdb
+   - Backend: Go 1.26 (go.mod `go 1.26.0`, required by the security updates of wails/echo/x-crypto) + duckdb-go v2.20000.0 (`github.com/duckdb/duckdb-go/v2`, DuckDB 2.0.0 linked statically; no DuckDB DLL/shared library to install or ship)
    - Frontend: React 19 + Vite
    - Bridge: Wails v2.13
-   - Notes: Go 1.21+ downloads the Go 1.26 toolchain by itself (GOTOOLCHAIN=auto); install the Wails CLI v2.13 to match go.mod
+   - Notes: cgo needs a C toolchain (Windows: MinGW-w64 GCC with the UCRT runtime, see SetupWindows11.md; Linux: gcc/g++). Wails CLI: `go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0`. With Go 1.27 installed, run the Wails CLI with `GOTOOLCHAIN=go1.26.11` (CLI 2.13.0 fails on Go 1.27 with "package without types was imported")
    - Status: Active development; core flows work but still under review for release
 
 3. **Rust + Tauri + Svelte** - POC stage
@@ -33,7 +33,7 @@ MDB2SQL provides three independent GUI implementations showcasing different tech
 All platforms require:
 - Git
 - Node.js 23.x with pnpm 10.x (pinned to avoid dependency breakage)
-- Go 1.26+ (see go_wails_react/go.mod)
+- Go 1.26.x (see go_wails_react/go.mod) and a C compiler for cgo (DuckDB is linked statically)
 - Python 3.12.x + uv
 - Platform-specific toolchains (see setup guides)
 
@@ -64,10 +64,13 @@ uv run python src/main.py
 
 #### Go + Wails + React
 ```bash
-cd go_wails_react
-go mod tidy
-wails dev
+cd go_wails_react/frontend
+pnpm install && pnpm run build   # main.go embeds frontend/dist; go build/vet fail without it
+cd ..
+go test ./... && go vet ./... && go build ./...
+wails dev                        # or: wails build -platform windows/amd64
 ```
+Windows needs a UCRT MinGW-w64 GCC first in PATH (see [SetupWindows11.md](SetupWindows11.md)).
 
 #### Rust + Tauri + Svelte
 ```bash
@@ -94,7 +97,7 @@ cargo tauri dev
 - Windows equivalents: `scripts/run_sanity.ps1`, `scripts/package_minimal.ps1`, `scripts/validate_build.ps1` para o mesmo fluxo em PowerShell.
 - Release build helpers: `scripts/build_release.sh` / `scripts/build_release.ps1` geram binarios em `build/bin/<os>-<arch>`, `src-tauri/target/**/release`, `py_qt6/build/<os>-<arch>` antes do pacote minimo.
 - Clean: `scripts/clean.sh` / `scripts/clean.ps1` removem dist/target/build/minimal por OS/arch.
-- POC note: frontend Go/Wails `App.jsx` e um hello local sem IPC; para demo real exporte metodo no backend e ajuste o frontend.
+- Go/Wails UI (`frontend/src/App.tsx`): abre um arquivo DuckDB pelo dialogo nativo, lista/filtra tabelas, mostra dados e schema, tema claro/escuro. Nao converte .mdb/.accdb.
 
 ### Implementation Guides
 - [py_qt6/temp/PythonConceptsGuide.md](py_qt6/temp/PythonConceptsGuide.md)
