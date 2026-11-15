@@ -1,6 +1,6 @@
 # Varre o exe do PyInstaller (bootloader + cada arquivo embutido, descompactado) atras de dados da maquina de build
 # !T: Entries are zlib-compressed inside the exe, so a plain byte search of the file would miss them
-# Uso: python scan_exe.py dist/mdb2sql-pyqt.exe   (sai com 1 se achar caminho local; "gmail" so e listado)
+# Uso: python scripts/scan_exe.py build/dist/mdb2sql-pyqt.exe   (sai com 1 se achar caminho local; "gmail" so e listado)
 
 import os
 import re

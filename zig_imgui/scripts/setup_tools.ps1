@@ -1,5 +1,5 @@
-# Baixa para zig_imgui/.tools/ (fora do git) o compilador Zig fixado, para o build nao depender de um Zig global.
-# Uso: pwsh -NoProfile -File zig_imgui/setup_tools.ps1
+# Baixa para .tools/ do subprojeto (fora do git) o compilador Zig fixado, para o build nao depender de um Zig global.
+# Chamado por ..\build_w11_amd64.ps1; sozinho: pwsh -NoProfile -File scripts/setup_tools.ps1
 # As outras dependencias (Dear ImGui, cimgui, zglfw, libduckdb) sao baixadas pelo proprio `zig build`,
 # fixadas por hash em build.zig.zon.
 $ErrorActionPreference = 'Stop'
@@ -10,7 +10,7 @@ $ZigVersion = '0.17.1'
 $ZigSha256 = 'b03f477a1943673e02aca0f570e8030dffd536ce1f45cbc4d3326ec31159562e'
 
 $name = "zig-x86_64-windows-$ZigVersion"
-$tools = Join-Path $PSScriptRoot '.tools'
+$tools = Join-Path (Split-Path $PSScriptRoot) '.tools'
 $zig = Join-Path $tools "$name\zig.exe"
 if (Test-Path $zig) { "Zig $(& $zig version) ja esta em $tools\$name"; return }
 

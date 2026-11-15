@@ -1,5 +1,5 @@
 // GUI Dear ImGui (cimgui + GLFW + OpenGL3): abre .duckdb, lista tabelas, pagina dados, roda SQL
-// !T: Same core flows as py_qt6 (load database -> pick table -> grid), plus paging and free SQL
+// !T: Same core flows as python_pyqt6 (load database -> pick table -> grid), plus paging and free SQL
 
 const std = @import("std");
 const ig = @import("cimgui");

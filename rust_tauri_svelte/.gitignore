@@ -1,1 +1,5 @@
 .tools/
+dist/
+target/
+ui/dist/
+src-tauri/

@@ -2,7 +2,7 @@
 
 > Nota (2026-11-14): `go_wails_react/go.mod` exige Go 1.26 e Wails v2.13.0 (atualizacoes de seguranca das
 > dependencias) e usa `github.com/duckdb/duckdb-go/v2` v2.20000.0 (DuckDB 2.0.0 linkado estaticamente: nenhuma
-> DLL/.so do DuckDB para instalar). Python do `py_qt6`: 3.12 (o duckdb travado no uv.lock nao tem wheel para 3.15).
+> DLL/.so do DuckDB para instalar). Python do `python_pyqt6`: 3.12 (o duckdb travado no uv.lock nao tem wheel para 3.15).
 
 ## Document Information
 - **Date**: 2025-11-20
@@ -163,7 +163,7 @@ MinGW msvcrt (o do Qt) falham no link. Download, SHA-256 e comandos: secao "Inst
 
 ### 6. Install Pandoc + MiKTeX (PDF toolchain para scripts)
 
-**Uso:** Necessario para `scripts/generate_pdfs_and_rename.sh` (pandoc + xelatex). Instalacao pode demorar por causa do MiKTeX.
+**Uso:** Necessario para `scripts/generate_md_pdfs.sh` (pandoc + xelatex). Instalacao pode demorar por causa do MiKTeX.
 
 **Using winget (recomendado):**
 ```powershell
@@ -264,7 +264,7 @@ git checkout dev
 
 **Navigate to directory:**
 ```powershell
-cd C:\Users\$env:USERNAME\Documents\mdb2sql\py_qt6
+cd C:\Users\$env:USERNAME\Documents\mdb2sql\python_pyqt6
 ```
 
 **Install dependencies:**
@@ -367,7 +367,6 @@ cargo build
 ```
 
 **On version incompatibility errors:**
-- Refer to `temp/ErrosEProblemasPoc.md` for details
 - This is a known POC limitation
 
 ---
@@ -390,7 +389,7 @@ $ProjectRoot = "C:\Users\$env:USERNAME\Documents\mdb2sql"
 
 # Launch Python + PyQt6
 Write-Host "[1/3] Launching Python + PyQt6..." -ForegroundColor Cyan
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd $ProjectRoot\py_qt6; uv run python src\main.py"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd $ProjectRoot\python_pyqt6; uv run python src\main.py"
 Start-Sleep -Seconds 2
 
 # Launch Go + Wails + React

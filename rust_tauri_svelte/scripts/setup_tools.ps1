@@ -1,8 +1,8 @@
 # Prepara o que o build do app Tauri precisa e nao vem do sistema, em versoes fixas.
-# Uso: pwsh -NoProfile -File rust_tauri_svelte/setup_tools.ps1
+# Chamado por ..\build_w11_amd64.ps1; sozinho: pwsh -NoProfile -File scripts/setup_tools.ps1
 # Fica no sistema (ver README): rustup, MSVC Build Tools + Windows SDK, Node.js + pnpm, WebView2.
 $ErrorActionPreference = 'Stop'
-Set-Location $PSScriptRoot
+Set-Location (Split-Path $PSScriptRoot)
 
 $TauriCliVersion = '2.12.4'  # crates.io, 2026-10-21; mesma serie do crate tauri 2.12 do Cargo.lock
 

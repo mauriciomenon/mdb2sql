@@ -2,7 +2,7 @@
 
 > Nota (2026-11-14): `go_wails_react/go.mod` exige Go 1.26 e Wails v2.13.0 (atualizacoes de seguranca das
 > dependencias) e usa `github.com/duckdb/duckdb-go/v2` v2.20000.0 (DuckDB 2.0.0 linkado estaticamente: nenhuma
-> DLL/.so do DuckDB para instalar). Python do `py_qt6`: 3.12 (o duckdb travado no uv.lock nao tem wheel para 3.15).
+> DLL/.so do DuckDB para instalar). Python do `python_pyqt6`: 3.12 (o duckdb travado no uv.lock nao tem wheel para 3.15).
 
 ## Data: 2025-11-20
 ## Status: Receita de Bolo para Instalacao Completa
@@ -276,7 +276,7 @@ git checkout dev
 
 **Navegar ate o diretorio:**
 ```bash
-cd ~/mdb2sql/py_qt6
+cd ~/mdb2sql/python_pyqt6
 ```
 
 **Instalar dependencias do sistema para PyQt6:**
@@ -395,7 +395,6 @@ cargo build
 ```
 
 **Se der erro de incompatibilidade de versoes:**
-- Verificar temp/ERROS_E_PROBLEMAS_POC.md para detalhes
 - Esta e uma limitacao conhecida da POC
 
 ---
@@ -425,7 +424,7 @@ NC='\033[0m' # No Color
 
 # 1. Python + PyQt6
 echo -e "${GREEN}[1/3] Starting Python + PyQt6...${NC}"
-cd ~/mdb2sql/py_qt6
+cd ~/mdb2sql/python_pyqt6
 uv run python src/main.py &
 PY_PID=$!
 echo -e "${CYAN}Python GUI started (PID: $PY_PID)${NC}"
@@ -507,7 +506,7 @@ sudo apt install -y libwebkit2gtk-4.1-dev libgtk-3-dev
 
 ### 3. DuckDB Shared Library
 
-**Problema:** Erros ao carregar libduckdb.so (so no py_qt6/Rust; o Go linka o DuckDB estaticamente via duckdb-go v2 e nao usa libduckdb.so)
+**Problema:** Erros ao carregar libduckdb.so (so no python_pyqt6/Rust; o Go linka o DuckDB estaticamente via duckdb-go v2 e nao usa libduckdb.so)
 
 **Solucao:**
 ```bash
@@ -679,7 +678,7 @@ cargo test
 
 ### Python/PyQt6
 ```bash
-cd py_qt6
+cd python_pyqt6
 uv run pytest  # If tests implemented
 ```
 
@@ -703,7 +702,7 @@ cargo tauri build
 
 ### Python/PyQt6 (using PyInstaller)
 ```bash
-cd py_qt6
+cd python_pyqt6
 uv add --dev pyinstaller
 uv run pyinstaller --onefile --windowed src/main.py
 # Output: dist/main
@@ -728,7 +727,7 @@ cd go_wails_react && wails dev
 cd rust_tauri_svelte && cargo tauri dev
 
 # Python/PyQt6
-cd py_qt6 && uv run python -m src.main
+cd python_pyqt6 && uv run python -m src.main
 ```
 
 ---

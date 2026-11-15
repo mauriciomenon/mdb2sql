@@ -1,10 +1,11 @@
-# Build de release do app Wails no Windows: build/bin/mdb2sql.exe sem caminhos locais embutidos.
-# Uso: pwsh -NoProfile -File go_wails_react/build_windows.ps1
+# Ambiente comum de build e teste (dot-source: . scripts\env_w11.ps1): Go, GCC e Wails no PATH.
+# Tambem serve para desenvolver: `. scripts\env_w11.ps1; wails dev`. Vai para a raiz do subprojeto.
 $ErrorActionPreference = 'Stop'
-Set-Location $PSScriptRoot
+$Root = Split-Path $PSScriptRoot
+Set-Location $Root
 
 # Ferramentas fixas de setup_tools.ps1 (.tools/) tem prioridade; sem elas vale o que estiver no sistema
-$tools = Join-Path $PSScriptRoot '.tools'
+$tools = Join-Path $Root '.tools'
 $toolsGcc = Join-Path $tools 'winlibs\mingw64\bin'
 $toolsGo = Join-Path $tools 'go\go\bin'
 $toolsBin = Join-Path $tools 'bin'
@@ -13,7 +14,7 @@ $toolsBin = Join-Path $tools 'bin'
 $gcc = if ($env:MDB2SQL_GCC_BIN) { $env:MDB2SQL_GCC_BIN }
     elseif (Test-Path (Join-Path $toolsGcc 'gcc.exe')) { $toolsGcc }
     else { Join-Path $HOME '.local\winlibs-gcc-16.2.0-ucrt-r3\mingw64\bin' }
-if (-not (Test-Path (Join-Path $gcc 'gcc.exe'))) { throw "gcc.exe nao encontrado em $gcc; rode setup_tools.ps1 ou defina MDB2SQL_GCC_BIN" }
+if (-not (Test-Path (Join-Path $gcc 'gcc.exe'))) { throw "gcc.exe nao encontrado em $gcc; rode scripts\setup_tools.ps1 ou defina MDB2SQL_GCC_BIN" }
 $env:PATH = "$gcc;$env:PATH"
 $env:CGO_ENABLED = '1'
 
@@ -29,11 +30,3 @@ if (Test-Path (Join-Path $toolsBin 'wails.exe')) { $env:PATH = "$toolsBin;$env:P
 "go:    $((Get-Command go).Source)"
 "gcc:   $((Get-Command gcc).Source)"
 "wails: $((Get-Command wails).Source)"
-
-# Vite escreve em frontend/dist/<plataforma>-<arch>; um frontend/dist/index.html antigo seria embutido no lugar da UI nova
-Remove-Item -Recurse -Force frontend\dist -ErrorAction Ignore
-
-# -trimpath tira do exe os caminhos da maquina de build (pasta do usuario, cache de modulos)
-wails build -clean -trimpath
-if ($LASTEXITCODE) { throw "wails build falhou ($LASTEXITCODE)" }
-Get-Item build\bin\mdb2sql.exe | Select-Object Name, Length, LastWriteTime

@@ -1,1 +1,6 @@
 .tools/
+dist/
+build/
+frontend/dist/
+frontend/package.json.md5
+/mdb2sql

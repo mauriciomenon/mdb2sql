@@ -1,7 +1,7 @@
 # MDB2SQL - Zig + Dear ImGui
 
 Desktop viewer for the DuckDB files converted from Access, written in Zig with
-Dear ImGui (GLFW + OpenGL 3.3) and the DuckDB C API. Same core flows as `py_qt6`,
+Dear ImGui (GLFW + OpenGL 3.3) and the DuckDB C API. Same core flows as `python_pyqt6`,
 plus paging, search, sort and a free SQL tab.
 
 ## Features

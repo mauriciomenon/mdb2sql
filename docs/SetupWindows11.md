@@ -2,7 +2,7 @@
 
 > Nota (2026-11-14): `go_wails_react/go.mod` exige Go 1.26 e Wails v2.13.0 (atualizacoes de seguranca das
 > dependencias) e usa `github.com/duckdb/duckdb-go/v2` v2.20000.0 (DuckDB 2.0.0 estatico, sem DLL). A secao
-> GO + WAILS + REACT abaixo tem as versoes exatas. Python do `py_qt6`: 3.12 (o duckdb travado no uv.lock nao tem
+> GO + WAILS + REACT abaixo tem as versoes exatas. Python do `python_pyqt6`: 3.12 (o duckdb travado no uv.lock nao tem
 > wheel para 3.15).
 
 **Target OS**: Windows 11 (x64)
@@ -214,7 +214,7 @@ uv --version
 
 #### Build Python/PyQt6 Implementation
 ```powershell
-cd py_qt6
+cd python_pyqt6
 uv sync
 uv run python -m src.main
 ```
@@ -225,7 +225,7 @@ uv run pyinstaller --onefile --windowed --distpath build\windows-$env:PROCESSOR_
 
 **Alternative sem uv**:
 ```powershell
-cd py_qt6
+cd python_pyqt6
 python -m venv venv
 .\venv\Scripts\activate
 pip install .
@@ -291,7 +291,7 @@ cargo test
 
 ### Python/PyQt6
 ```powershell
-cd py_qt6
+cd python_pyqt6
 uv run pytest  # If tests implemented
 ```
 
@@ -315,7 +315,7 @@ cargo tauri build
 
 ### Python/PyQt6 (using PyInstaller)
 ```powershell
-cd py_qt6
+cd python_pyqt6
 uv add --dev pyinstaller
 uv run pyinstaller --onefile --windowed src/main.py
 # Output: dist/main.exe
@@ -340,7 +340,7 @@ cd go_wails_react && wails dev
 cd rust_tauri_svelte && cargo tauri dev
 
 # Python/PyQt6
-cd py_qt6 && uv run python -m src.main
+cd python_pyqt6 && uv run python -m src.main
 ```
 
 ---

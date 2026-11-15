@@ -5,14 +5,7 @@ __pycache__/
 .Python
 build/
 dist/
-go_wails_react/build/
-go_wails_react/frontend/package.json.md5
-rust_tauri_svelte/target/
-rust_tauri_svelte/ui/dist/
-py_qt6/build/
-zig_imgui/.zig-cache/
-zig_imgui/zig-out/
-zig_imgui/zig-pkg/
+.tools/
 # allow distributing final archives
 !*.zip
 develop-eggs/
@@ -65,9 +58,6 @@ benchmark_results_*.json
 # Frontend dependencies (should never be committed)
 node_modules/
 
-# Rust build output
-rust_tauri_svelte/target/
-rust_tauri_svelte/src-tauri/
 
 # Artifacts (binaries too large for GitHub)
 artifacts/
@@ -83,9 +73,7 @@ artifacts/
 trunk
 trunk-analytics-cli
 
-# Node Electron implementation (work in progress)
 node_electron_react/
 
 # Root package-lock.json (monorepo uses pnpm)
 /package-lock.json
-/go_wails_react/mdb2sql

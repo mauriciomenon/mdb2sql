@@ -1,8 +1,9 @@
-# Baixa para go_wails_react/.tools/ (fora do git) as ferramentas de build em versoes fixas:
+# Baixa para .tools/ do subprojeto (fora do git) as ferramentas de build em versoes fixas:
 #   .tools/go       Go (zip oficial de go.dev)
 #   .tools/winlibs  GCC MinGW-w64 UCRT (WinLibs), exigido pelo cgo do duckdb-go
 #   .tools/bin      Wails CLI, compilado com o Go acima
-# Uso: pwsh -NoProfile -File go_wails_react/setup_tools.ps1      (repetir e seguro: so refaz o que mudou)
+# Chamado por ..\build_w11_amd64.ps1; sozinho: pwsh -NoProfile -File scripts/setup_tools.ps1
+# (repetir e seguro: so refaz o que mudou)
 # Node.js e pnpm continuam sendo pre-requisitos do sistema (ver README.md desta pasta).
 $ErrorActionPreference = 'Stop'
 
@@ -18,7 +19,7 @@ $winlibsSha256 = '3c69305081e4a647144339a936244fcf7d3d9e558319e1ad7be2cd2886d4b6
 # Wails CLI: mesma versao do modulo em go.mod; o go confere o hash do modulo em sum.golang.org
 $wailsVersion = 'v2.13.0'
 
-$tools = Join-Path $PSScriptRoot '.tools'
+$tools = Join-Path (Split-Path $PSScriptRoot) '.tools'
 $downloads = Join-Path $tools 'downloads'
 New-Item -ItemType Directory -Force $downloads | Out-Null
 # tar do Windows (bsdtar) abre zip e e bem mais rapido que Expand-Archive; o tar do Git Bash nao abre zip

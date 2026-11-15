@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Exe unico do Windows (dist/mdb2sql-pyqt.exe). Use build_windows.ps1, que tambem varre o resultado.
+# Exe unico do Windows (build/dist/mdb2sql-pyqt.exe). Use build_w11_amd64.ps1, que tambem testa e varre o resultado.
 import tomllib
 from pathlib import Path
 

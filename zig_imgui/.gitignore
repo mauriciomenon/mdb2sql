@@ -1,1 +1,5 @@
 .tools/
+dist/
+.zig-cache/
+zig-out/
+zig-pkg/

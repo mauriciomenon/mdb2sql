@@ -1,5 +1,5 @@
 // Gerenciador de conexao DuckDB (C API) - abre banco, lista tabelas, pagina, conta, schema
-// !T: DuckDB connection manager over libduckdb's C API; mirrors py_qt6/src/backend/db_manager.py
+// !T: DuckDB connection manager over libduckdb's C API; mirrors python_pyqt6/src/backend/db_manager.py
 
 const std = @import("std");
 const c = @import("duckdb_c");
@@ -294,7 +294,7 @@ test "list tables, schema, paging, search, filter, sort, read-only" {
     try t.expectEqual(3, db.table_names.len);
     try t.expect(query.contains(db.table_names, "people"));
 
-    // somente leitura, como read_only=True do py_qt6
+    // somente leitura, como read_only=True do python_pyqt6
     try t.expectError(error.DuckDb, db.exec("CREATE TABLE nope (x INTEGER)"));
     try t.expectError(error.TableNotFound, db.schema("nope"));
 

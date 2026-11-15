@@ -8,7 +8,7 @@ pub const default_page_size: u32 = 100; // mesmo padrao das outras GUIs
 
 pub const PathError = error{UnsupportedExtension};
 
-// !T: Same rule as py_qt6 DBManager._validate_database_path: only .duckdb and .db
+// !T: Same rule as python_pyqt6 DBManager._validate_database_path: only .duckdb and .db
 pub fn validateDbExtension(path: []const u8) PathError!void {
     const ext = std.fs.path.extension(path);
     if (std.ascii.eqlIgnoreCase(ext, ".duckdb") or std.ascii.eqlIgnoreCase(ext, ".db")) return;
@@ -193,7 +193,7 @@ pub fn buildCount(a: Allocator, spec: Spec) BuildError!Built {
     return finish(&out, &params, a);
 }
 
-// !T: DESCRIBE gives name, type and YES/NO null as text (same 3 fields as py_qt6 get_table_schema)
+// !T: DESCRIBE gives name, type and YES/NO null as text (same 3 fields as python_pyqt6 get_table_schema)
 pub fn buildSchema(a: Allocator, tables: []const []const u8, table: []const u8) BuildError![:0]u8 {
     if (!contains(tables, table)) return error.TableNotFound;
     var out: std.ArrayList(u8) = .empty;
@@ -216,7 +216,7 @@ pub fn clampPage(page: u64, total_rows: u64, page_size: u32) u64 {
 
 const t = std.testing;
 
-test "extension validation mirrors py_qt6" {
+test "extension validation mirrors python_pyqt6" {
     try validateDbExtension("C:\\data\\sample.duckdb");
     try validateDbExtension("/tmp/x.DB");
     try t.expectError(error.UnsupportedExtension, validateDbExtension("invalid.txt"));
