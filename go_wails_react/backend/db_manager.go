@@ -121,16 +121,16 @@ func (m *DBManager) GetTableSchema(tableName string) ([]ColumnSchema, error) {
 	for rows.Next() {
 		var cid int
 		var name, colType string
-		var notNull int
+		var notNull bool // DuckDB returns BOOLEAN for notnull and pk
 		var dfltValue interface{}
-		var pk int
+		var pk bool
 
 		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
 			return nil, fmt.Errorf("failed to scan column: %w", err)
 		}
 
 		nullStr := "YES"
-		if notNull == 1 {
+		if notNull {
 			nullStr = "NO"
 		}
 
