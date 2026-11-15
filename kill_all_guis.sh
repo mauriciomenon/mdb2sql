@@ -18,6 +18,12 @@ pkill -f "electron" 2>/dev/null || echo "  No Electron processes found"
 echo "Killing Vite dev servers..."
 pkill -f "vite" 2>/dev/null || echo "  No Vite processes found"
 
+echo "Killing Zig Dear ImGui..."
+# Git Bash no Windows nao tem pkill: cai para o taskkill
+pkill -f "mdb2sql-zig" 2>/dev/null \
+    || taskkill //F //IM mdb2sql-zig.exe >/dev/null 2>&1 \
+    || echo "  No Zig ImGui processes found"
+
 echo "Killing Python PyQt6..."
 pkill -f "python.*main.py" 2>/dev/null || echo "  No PyQt6 processes found"
 

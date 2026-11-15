@@ -1,0 +1,25 @@
+.{
+    .name = .mdb2sql_zig,
+    .version = "0.1.0",
+    .fingerprint = 0x716b6b022cd43757,
+    .minimum_zig_version = "0.17.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src", "README.md" },
+    .dependencies = .{
+        .zglfw = .{
+            .url = "https://github.com/zig-gamedev/zglfw/archive/2450fe3c4140091287c79cb41e4a8020af73d896.tar.gz",
+            .hash = "zglfw-0.10.0-dev-zgVDNHC7IQAbvGj5whD2Cp5TMmo5G2C9gNYaF-y-EDZ3",
+        },
+        .libduckdb = .{
+            .url = "https://github.com/duckdb/duckdb/releases/download/v2.0.0/duckdb-shared-libs-windows-amd64.tar.gz",
+            .hash = "N-V-__8AAHTG7AOdGzABv3wZqJfUdsMwV9028PxqH-FLc1VV",
+        },
+        .cimgui = .{
+            .url = "https://github.com/cimgui/cimgui/archive/2a6a93fccd10f275ee9206167dc9698f6f00fac1.tar.gz",
+            .hash = "N-V-__8AAA14OwAnjBemy4fwO1a3Zbixy5gSLW2fyME4iPJn",
+        },
+        .imgui = .{
+            .url = "https://github.com/ocornut/imgui/archive/6d32174508fb8c518e7a832cc1d571fadd5cba76.tar.gz",
+            .hash = "N-V-__8AAGNjfgBD2GOqdPUGkR89I-Ygw93OyAENnPPahX_t",
+        },
+    },
+}

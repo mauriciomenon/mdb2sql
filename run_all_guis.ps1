@@ -27,6 +27,12 @@ if (-not (Test-Path "src/main.rs")) { throw "Rust Tauri main.rs not found" }
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd \"$PWD\"; cargo tauri dev"
 Pop-Location
 
+# Zig + Dear ImGui
+Push-Location (Join-Path $ROOT "zig_imgui")
+if (-not (Test-Path "build.zig")) { throw "Zig ImGui build.zig not found" }
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd \"$PWD\"; zig build run -Doptimize=ReleaseSafe"
+Pop-Location
+
 Write-Host ""
 Write-Host "All implementations launching in separate windows"
 Write-Host "Close each window individually to terminate"

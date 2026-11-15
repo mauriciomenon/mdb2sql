@@ -10,6 +10,9 @@ go_wails_react/frontend/package.json.md5
 rust_tauri_svelte/target/
 rust_tauri_svelte/ui/dist/
 py_qt6/build/
+zig_imgui/.zig-cache/
+zig_imgui/zig-out/
+zig_imgui/zig-pkg/
 # allow distributing final archives
 !*.zip
 develop-eggs/

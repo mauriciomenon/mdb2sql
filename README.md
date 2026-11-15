@@ -4,7 +4,7 @@ Multi-platform desktop application for converting Microsoft Access databases (.m
 
 ## Project Overview
 
-MDB2SQL provides three independent GUI implementations showcasing different technology stacks, each demoing the same core functionality: loading, viewing, and querying DuckDB databases converted from Microsoft Access.
+MDB2SQL provides four independent GUI implementations showcasing different technology stacks, each demoing the same core functionality: loading, viewing, and querying DuckDB databases converted from Microsoft Access.
 
 ### Technology Stacks
 
@@ -25,6 +25,11 @@ MDB2SQL provides three independent GUI implementations showcasing different tech
    - Frontend: Svelte + Vite
    - Bridge: Tauri v2 (tauri 2.12, tauri-build 2.7, config v2 + `capabilities/default.json`); CLI: `cargo install tauri-cli --version "^2" --locked`
    - Status: builds and bundles (NSIS/MSI) on Windows; under development
+
+4. **Zig + Dear ImGui**
+   - Backend: Zig 0.17 + libduckdb 2.0.0 (C API)
+   - UI: Dear ImGui 1.93 (cimgui) on GLFW + OpenGL 3.3, no web view
+   - Status: Windows x64 only; open, table list with row counts, paged data, search, sort, schema, free SQL
 
 ## Quick Start
 
@@ -79,6 +84,13 @@ pnpm install
 cd ..
 cargo tauri dev
 ```
+
+#### Zig + Dear ImGui (Windows x64)
+```bash
+cd zig_imgui
+zig build run -Doptimize=ReleaseSafe -- path/to/file.duckdb
+```
+See [zig_imgui/README.md](zig_imgui/README.md).
 
 ## Documentation
 
@@ -190,6 +202,12 @@ go test ./...
 ```bash
 cd rust_tauri_svelte
 cargo test
+```
+
+#### Zig
+```bash
+cd zig_imgui
+zig build test --summary all
 ```
 
 ## Known Issues
