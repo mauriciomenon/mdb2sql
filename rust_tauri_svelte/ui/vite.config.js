@@ -20,13 +20,13 @@ export default defineConfig({
   },
 
   // NIVEL TECNICO: Tauri expects specific env var patterns
-  envPrefix: ['VITE_', 'TAURI_'],
+  envPrefix: ['VITE_', 'TAURI_ENV_*'],
 
   build: {
     // NIVEL TECNICO: Target latest Tauri webview without legacy transforms
     target: 'esnext',
-    minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
-    sourcemap: !!process.env.TAURI_DEBUG,
+    minify: !process.env.TAURI_ENV_DEBUG ? 'esbuild' : false,
+    sourcemap: !!process.env.TAURI_ENV_DEBUG,
     outDir,
   },
 });

@@ -29,5 +29,5 @@ Pop-Location
 
 Write-Host "[INFO] Build release concluido:"
 Write-Host " - Go/Wails: $outBin"
-Write-Host " - Rust/Tauri: rust_tauri_svelte/src-tauri/target/**/release/"
+Write-Host " - Rust/Tauri: rust_tauri_svelte/target/**/release/"
 Write-Host " - Python/PyQt6: $distDir"

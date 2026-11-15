@@ -25,7 +25,7 @@ else
 fi
 
 # Rust/Tauri: copia binarios de target/<triple>
-RUST_BIN_SRC="$ROOT_DIR/rust_tauri_svelte/src-tauri/target"
+RUST_BIN_SRC="$ROOT_DIR/rust_tauri_svelte/target"
 if compgen -G "$RUST_BIN_SRC/*/release/*mdb2sql*" > /dev/null; then
   info "Copiando Rust/Tauri binarios"
   mkdir -p "$PACKAGE_DIR/rust_tauri_svelte"

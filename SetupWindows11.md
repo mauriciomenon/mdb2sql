@@ -152,7 +152,7 @@ winget install Rustlang.Rustup
 
 Restart terminal, then verify:
 ```powershell
-rustc --version  # Should show 1.70+
+rustc --version  # Should show 1.90+ (Tauri 2.12)
 cargo --version
 ```
 
@@ -172,6 +172,7 @@ During install, select:
 #### Install Tauri Prerequisites
 ```powershell
 # WebView2 already installed (see Wails section)
+cargo install tauri-cli --version "^2" --locked
 ```
 
 #### Build Rust/Tauri Implementation
@@ -270,7 +271,7 @@ copy path\to\sample.duckdb data\sample.duckdb
 **Fix**: Install WebView2 Runtime (see Wails section)
 
 ### Tauri: "NSIS error"
-**Fix**: Only occurs during build, not dev. Ignore for development.
+**Fix**: Only occurs during `cargo tauri build`, not dev. The Tauri v2 CLI downloads NSIS/WiX on the first build; check network access.
 
 ---
 
@@ -309,7 +310,7 @@ wails build
 ```powershell
 cd rust_tauri_svelte
 cargo tauri build
-# Output: target/release/bundle/nsis/mdb2sql_0.1.0_x64-setup.exe
+# Output: target/release/bundle/nsis/MDB2SQL_0.1.0_x64-setup.exe (+ bundle/msi/*.msi)
 ```
 
 ### Python/PyQt6 (using PyInstaller)

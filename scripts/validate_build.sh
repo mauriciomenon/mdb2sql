@@ -119,17 +119,11 @@ if command -v cargo &> /dev/null; then
         check_fail "Cargo.toml missing"
     fi
 
-    # Check both Tauri configs exist
+    # Check Tauri config exists
     if [[ -f "tauri.conf.json" ]]; then
-        check_pass "tauri.conf.json (v1) exists"
+        check_pass "tauri.conf.json (v2) exists"
     else
         check_fail "tauri.conf.json missing"
-    fi
-
-    if [[ -f "tauri.conf.v2.json" ]]; then
-        check_pass "tauri.conf.v2.json (v2) exists"
-    else
-        check_warn "tauri.conf.v2.json missing - only v1 config available"
     fi
 
     # Test Rust build

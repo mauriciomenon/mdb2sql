@@ -111,7 +111,7 @@ uv --version
 
 ---
 
-### 4. Install Rust 1.83.0
+### 4. Install Rust 1.90+
 
 **Direct download:**
 - URL: https://rustup.rs/
@@ -235,7 +235,7 @@ Direct download:
 
 **Install Tauri CLI:**
 ```powershell
-cargo install tauri-cli
+cargo install tauri-cli --version "^2" --locked
 ```
 
 **Verify installation:**
@@ -347,7 +347,7 @@ Move-Item -Force -Path build\bin\mdb2sql.exe -Destination build\bin\windows-amd6
 
 ### 3. Rust + Tauri + Svelte
 
-**WARNING:** This implementation usa Tauri v1; upgrade para v2 esta em avaliacao.
+**Note:** This implementation uses Tauri v2 (tauri 2.12, config v2, `capabilities/default.json`).
 
 **Navigate to directory:**
 ```powershell
@@ -361,9 +361,8 @@ pnpm install
 cd ..
 ```
 
-**Attempt build (may fail):**
+**Build:**
 ```powershell
-cd src-tauri
 cargo build
 ```
 
@@ -501,9 +500,9 @@ Python: 3.12.x
 uv: latest
 Go: 1.26.11
 Wails: v2.13.0 (duckdb-go v2.20000.0 = DuckDB 2.0.0, GCC UCRT 16.2.0)
-Rust: 1.83.0
-Cargo: 1.83.0
-Tauri CLI: 1.5.14
+Rust: 1.90+ (Tauri 2.12)
+Cargo: 1.90+
+Tauri CLI: 2.x (tauri-cli ^2)
 
 Note: manter as versoes acima para evitar quebrar dependencias; evite upgrades/downgrades sem testar.
 ```

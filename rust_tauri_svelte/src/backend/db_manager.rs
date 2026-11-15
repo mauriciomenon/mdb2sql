@@ -1,7 +1,7 @@
 // NIVEL BASICO: Gerenciador de conexoes DuckDB em Rust
 // Responsavel por carregar bancos, listar tabelas, executar queries
 
-use duckdb::{Connection, Result};
+use duckdb::{AccessMode, Config, Connection, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Mutex;
@@ -79,8 +79,12 @@ impl DBManager {
 
         // NIVEL BASICO: Abre conexao DuckDB read-only
         // NIVEL TECNICO: read_only flag prevents accidental writes
-        let conn_str = format!("{}?access_mode=read_only", validated_path);
-        match Connection::open(&conn_str) {
+        // DuckDB nao entende "?access_mode=..." no caminho (isso e DSN do go-duckdb):
+        // o sufixo virava parte do nome do arquivo. Read-only vai pela Config.
+        let config = Config::default()
+            .access_mode(AccessMode::ReadOnly)
+            .map_err(|e| format!("Failed to configure connection: {}", e))?;
+        match Connection::open_with_flags(&validated_path, config) {
             Ok(conn) => {
                 *conn_guard = Some(conn);
                 let mut db_guard = self.current_db.lock().unwrap();
@@ -163,11 +167,11 @@ impl DBManager {
                 // NIVEL TECNICO: PRAGMA returns: cid, name, type, notnull, dflt_value, pk
                 let schema_iter = stmt
                     .query_map([], |row| {
-                        let not_null: i32 = row.get(3)?;
+                        let not_null: bool = row.get(3)?;
                         Ok(ColumnSchema {
                             name: row.get(1)?,     // name
                             col_type: row.get(2)?, // type
-                            null: if not_null == 1 {
+                            null: if not_null {
                                 "NO".to_string()
                             } else {
                                 "YES".to_string()
@@ -215,19 +219,30 @@ impl DBManager {
                     .prepare(&query)
                     .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
-                // NIVEL BASICO: Pega nomes das colunas
-                let column_count = stmt.column_count();
-                let column_names: Vec<String> = (0..column_count)
-                    .map(|i| stmt.column_name(i).unwrap().to_string())
-                    .collect();
+                // NIVEL TECNICO: duckdb-rs panics if column metadata is read before the
+                // statement runs, so execute first and take the names from the result
+                let mut rows = stmt
+                    .query([])
+                    .map_err(|e| format!("Failed to query table: {}", e))?;
+                let column_names: Vec<String> = rows
+                    .as_ref()
+                    .map(|executed| executed.column_names())
+                    .unwrap_or_default();
 
                 // NIVEL BASICO: Le cada row e converte para JSON object
-                let rows = stmt
-                    .query_map([], |row| {
+                let mut results = Vec::new();
+                while let Some(row) = rows
+                    .next()
+                    .map_err(|e| format!("Failed to read row: {}", e))?
+                {
+                    {
                         let mut map = serde_json::Map::new();
                         for (i, col_name) in column_names.iter().enumerate() {
                             // NIVEL TECNICO: Handle multiple DuckDB types
-                            let value: serde_json::Value = match row.get_ref(i).unwrap() {
+                            let value: serde_json::Value = match row
+                                .get_ref(i)
+                                .map_err(|e| format!("Failed to read value: {}", e))?
+                            {
                                 duckdb::types::ValueRef::Null => serde_json::Value::Null,
                                 duckdb::types::ValueRef::Boolean(b) => serde_json::Value::Bool(b),
                                 duckdb::types::ValueRef::TinyInt(i) => {
@@ -247,17 +262,14 @@ impl DBManager {
                                 duckdb::types::ValueRef::Text(s) => serde_json::Value::String(
                                     String::from_utf8_lossy(s).to_string(),
                                 ),
-                                _ => serde_json::Value::String(format!("{:?}", row.get_ref(i))),
+                                // shortcut: other types (dates, decimals, blobs) show their
+                                // debug form; add real formatting when a table needs it
+                                other => serde_json::Value::String(format!("{:?}", other)),
                             };
                             map.insert(col_name.clone(), value);
                         }
-                        Ok(serde_json::Value::Object(map))
-                    })
-                    .map_err(|e| format!("Failed to query table: {}", e))?;
-
-                let mut results = Vec::new();
-                for row_result in rows {
-                    results.push(row_result.map_err(|e| format!("Failed to read row: {}", e))?);
+                        results.push(serde_json::Value::Object(map));
+                    }
                 }
 
                 Ok(results)

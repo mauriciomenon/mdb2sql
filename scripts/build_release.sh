@@ -22,7 +22,7 @@ popd >/dev/null
 # Rust/Tauri
 info "Building Rust/Tauri release"
 pushd "$ROOT_DIR/rust_tauri_svelte" >/dev/null
-TAURI_DIST_DIR="ui/dist/${OS}-${ARCH}" TAURI_DEV_PATH="http://localhost:1420" cargo tauri build
+cargo tauri build
 popd >/dev/null
 
 # Python/PyQt6
@@ -38,5 +38,5 @@ popd >/dev/null
 
 info "Build release concluido. Binarios esperados:"
 echo " - Go/Wails: go_wails_react/build/bin/${OS}-${ARCH}/mdb2sql*"
-echo " - Rust/Tauri: rust_tauri_svelte/src-tauri/target/**/release/"
+echo " - Rust/Tauri: rust_tauri_svelte/target/**/release/"
 echo " - Python/PyQt6: py_qt6/build/${OS}-${ARCH}/main*"

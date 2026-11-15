@@ -20,7 +20,7 @@ if (Test-Path $goBinSrc) {
 } else { throw "Binario Go/Wails nao encontrado em $goBinSrc (execute wails build e organize em build/bin/<os>-<arch>)" }
 
 Write-Host "[INFO] Copiando Rust/Tauri binarios release se existirem"
-$rustSrc = Join-Path $ROOT "rust_tauri_svelte/src-tauri/target"
+$rustSrc = Join-Path $ROOT "rust_tauri_svelte/target"
 $rustBins = Get-ChildItem $rustSrc -Recurse -Filter "mdb2sql*" -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "release" }
 if ($rustBins) {
   New-Item -ItemType Directory -Force -Path (Join-Path $PACKAGE_DIR "rust_tauri_svelte") | Out-Null
