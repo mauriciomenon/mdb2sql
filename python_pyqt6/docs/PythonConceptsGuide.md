@@ -160,14 +160,14 @@ class Worker(QThread):
 - Model-View-Model (Qt) com modelos baseados em dados; evita copiar listas inteiras.
 - Estado global em objeto `AppState` com referencias a configuracao, conexao atual e preferencia de UI.
 - Eventos de dominio (busca concluida, diff pronto) propagados por sinais customizados.
-- Guard rails: validacao de entrada antes de atingir DuckDB; mapeamentos de colunas vindos de `config/`.
+- Guard rails: validacao de entrada antes de atingir DuckDB; mapeamentos de colunas.
 
 ## 20. Seguranca, Configuracao e Boas Praticas de Equipe
 - Sanitizar entradas de busca; nunca concatenar SQL direto.
-- Preferir arquivos de config somente leitura dentro de `config/`; escrever apenas em `data/` ou `~/.local/share/mdb2sql`.
+- Preferir arquivos de config somente leitura; escrever apenas em `data/` ou `~/.local/share/mdb2sql`.
 - Logs nao devem conter dados sensiveis de usuarios.
 - Checklists de PR: lint, testes, review de threads, review de UI freeze.
-- Documentar decisoes em `docs/` ou `temp/` para replicabilidade.
+- Documentar decisoes em `docs/` para replicabilidade.
 
 ## 21. Roteiro de Estudos e Cheatsheets Relacionados
 - Sequencia sug. (em horas aproximadas):
