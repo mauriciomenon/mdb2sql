@@ -1,12 +1,14 @@
 [package]
 name = "mdb2sql"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 
 [dependencies]
 # NIVEL BASICO: Tauri permite criar apps desktop com Rust backend + web frontend
 # sem precisar do peso do Electron (usa webview nativo do sistema)
 tauri = { version = "2.12", features = [] }
+# seletor de arquivo nativo (botao Browse)
+tauri-plugin-dialog = "2.8"
 
 # NIVEL BASICO: serde faz serializacao/deserializacao de dados entre Rust e JSON
 # necessario para comunicar com frontend JavaScript

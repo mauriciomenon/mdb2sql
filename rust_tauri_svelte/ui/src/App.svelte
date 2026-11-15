@@ -3,8 +3,23 @@
   // NIVEL TECNICO: Svelte 5 runes; every backend call goes through Tauri invoke()
 
   import { invoke } from '@tauri-apps/api/core';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { cellText, rowMatches, rowToTsv } from './grid.js';
 
   const LIMITS = [100, 500, 1000];
+  // null devolve a janela (barra de titulo e webview) ao tema do sistema
+  const THEMES = [
+    ['System', null],
+    ['Light', 'light'],
+    ['Dark', 'dark'],
+  ];
+
+  let search = $state('');
+  let selected = $state.raw(null); // { row, col }: celula escolhida para copiar
+  let menu = $state.raw(null); // { x, y } do menu de copia aberto
+  let themeIndex = $state(0);
+  let aboutDialog;
+  let aboutLines = $state([]);
 
   let dbPath = $state('');
   let tables = $state([]);
@@ -22,7 +37,55 @@
     tables.filter((t) => t.toLowerCase().includes(filter.trim().toLowerCase()))
   );
 
-  const isNumeric = (type) => /INT|DOUBLE|FLOAT|DECIMAL|REAL|NUMERIC/i.test(type);
+  let visibleRows = $derived(rows.filter((row) => rowMatches(row, search)));
+
+  // NIVEL BASICO: Celula sob o clique (td tem o indice da coluna, tr o da linha visivel)
+  function selectCell(event) {
+    const td = event.target.closest('td[data-c]');
+    if (td) selected = { row: visibleRows[td.parentElement.dataset.r], col: columns[td.dataset.c].name };
+  }
+
+  function openMenu(event) {
+    event.preventDefault();
+    selectCell(event);
+    if (!selected) return;
+    // a tecla de menu do teclado nao tem posicao de mouse: abre no canto da grade
+    const box = event.currentTarget.getBoundingClientRect();
+    menu = { x: event.clientX || box.left + 40, y: event.clientY || box.top + 40 };
+  }
+
+  // NIVEL BASICO: kind = 'value' (celula), 'row' ou 'row-header' (linha separada por TAB)
+  async function copy(kind) {
+    menu = null;
+    if (!selected) return;
+    const names = columns.map((col) => col.name);
+    const text =
+      kind === 'value'
+        ? cellText(selected.row[selected.col])
+        : rowToTsv(names, selected.row, kind === 'row-header');
+    try {
+      await navigator.clipboard.writeText(text);
+      error = '';
+      status =
+        kind === 'value'
+          ? `Copied value of ${selected.col}`
+          : `Copied row (${names.length} columns${kind === 'row-header' ? ', with header' : ''})`;
+    } catch (err) {
+      error = `Copy failed: ${err}`;
+    }
+  }
+
+  function gridKey(event) {
+    // com texto selecionado pelo mouse vale o Ctrl+C normal do navegador
+    if (event.ctrlKey && event.key.toLowerCase() === 'c' && selected && !String(getSelection())) {
+      event.preventDefault();
+      copy('value');
+    }
+  }
+
+  const focusNow = (node) => node.focus();
+
+  const isNumeric =(type) => /INT|DOUBLE|FLOAT|DECIMAL|REAL|NUMERIC/i.test(type);
 
   // NIVEL BASICO: Abre o banco; caminho vazio usa MDB2SQL_DB_PATH ou data/sample.duckdb
   async function openDatabase(event) {
@@ -52,9 +115,50 @@
     }
   }
 
+  // NIVEL BASICO: Seletor de arquivo nativo; o arquivo escolhido e aberto em seguida
+  // NIVEL TECNICO: calls the dialog plugin command directly, no npm package for one call
+  async function browse() {
+    try {
+      const picked = await invoke('plugin:dialog|open', {
+        options: {
+          title: 'Open DuckDB database',
+          filters: [{ name: 'DuckDB database', extensions: ['duckdb', 'db'] }],
+        },
+      });
+      if (!picked) return; // cancelado
+      dbPath = String(picked);
+      await openDatabase();
+    } catch (err) {
+      error = String(err);
+    }
+  }
+
+  async function cycleTheme() {
+    const next = (themeIndex + 1) % THEMES.length;
+    try {
+      await getCurrentWindow().setTheme(THEMES[next][1]);
+      themeIndex = next;
+    } catch (err) {
+      error = String(err);
+    }
+  }
+
+  // NIVEL TECNICO: __SVELTE_VERSION__ is the bundled Svelte version, injected by vite.config.js
+  async function showAbout() {
+    try {
+      const svelteVersion = __SVELTE_VERSION__;
+      aboutLines = await invoke('about', { svelteVersion });
+      aboutDialog.showModal();
+    } catch (err) {
+      error = String(err);
+    }
+  }
+
   // NIVEL BASICO: Busca schema, linhas e contagem da tabela em paralelo
   async function openTable(tableName) {
     if (!tableName) return;
+    if (tableName !== selectedTable) search = '';
+    selected = null;
     selectedTable = tableName;
     busy = true;
     error = '';
@@ -90,9 +194,25 @@
         spellcheck="false"
         autocomplete="off"
       />
+      <button type="button" class="secondary" onclick={browse} disabled={busy}>Browse...</button>
       <button type="submit" disabled={busy}>Open database</button>
     </form>
+    <button type="button" class="secondary" onclick={cycleTheme}>
+      Theme: {THEMES[themeIndex][0]}
+    </button>
+    <button type="button" class="secondary" onclick={showAbout}>About</button>
   </header>
+
+  <dialog bind:this={aboutDialog} aria-labelledby="about-title">
+    {#each aboutLines as line, i}
+      {#if i === 0}
+        <h2 id="about-title">{line}</h2>
+      {:else}
+        <p>{line}</p>
+      {/if}
+    {/each}
+    <button type="button" onclick={() => aboutDialog.close()}>Close</button>
+  </dialog>
 
   <p class="status" class:error role="status" aria-live="polite">
     {error || status}
@@ -103,6 +223,7 @@
       <label for="table-filter">Tables ({visibleTables.length}/{tables.length})</label>
       <input
         id="table-filter"
+        aria-label="Filter tables"
         type="search"
         bind:value={filter}
         placeholder="Filter tables"
@@ -127,9 +248,20 @@
         <div class="table-bar">
           <h2>{selectedTable}</h2>
           <span>
-            Showing {rows.length.toLocaleString()} of {rowCount.toLocaleString()} rows,
+            {#if search.trim()}
+              {visibleRows.length.toLocaleString()} matches in {rows.length.toLocaleString()} loaded rows,
+            {:else}
+              Showing {rows.length.toLocaleString()} of {rowCount.toLocaleString()} rows,
+            {/if}
             {columns.length} columns
           </span>
+          <input
+            class="search"
+            type="search"
+            bind:value={search}
+            aria-label="Search rows"
+            placeholder="Search loaded rows (all columns)"
+          />
           <label for="row-limit">Row limit</label>
           <select id="row-limit" bind:value={limit} onchange={() => openTable(selectedTable)}>
             {#each LIMITS as option}
@@ -139,8 +271,17 @@
         </div>
 
         <!-- tabindex: a area rolavel precisa de foco para rolar pelo teclado -->
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <div class="grid" tabindex="0" role="region" aria-label="Rows of {selectedTable}">
+        <!-- clique seleciona a celula; botao direito ou tecla de menu abre o menu de copia; Ctrl+C copia o valor -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
+        <div
+          class="grid"
+          tabindex="0"
+          role="region"
+          aria-label="Rows of {selectedTable}"
+          onclick={selectCell}
+          oncontextmenu={openMenu}
+          onkeydown={gridKey}
+        >
           <table>
             <thead>
               <tr>
@@ -153,19 +294,29 @@
               </tr>
             </thead>
             <tbody>
-              {#each rows as row}
-                <tr>
-                  {#each columns as col (col.name)}
+              {#each visibleRows as row, r}
+                <tr data-r={r}>
+                  {#each columns as col, c (col.name)}
                     {@const value = row[col.name]}
+                    {@const isSelected = selected?.row === row && selected.col === col.name}
                     {#if value === null || value === undefined}
-                      <td class="null">NULL</td>
+                      <td data-c={c} class="null" class:selected={isSelected}>NULL</td>
                     {:else}
-                      <td class:num={isNumeric(col.type)} title={String(value)}>{value}</td>
+                      <td
+                        data-c={c}
+                        class:num={isNumeric(col.type)}
+                        class:selected={isSelected}
+                        title={String(value)}>{value}</td
+                      >
                     {/if}
                   {/each}
                 </tr>
               {:else}
-                <tr><td class="null" colspan={Math.max(columns.length, 1)}>Table is empty</td></tr>
+                <tr>
+                  <td class="null" colspan={Math.max(columns.length, 1)}>
+                    {rows.length ? 'No loaded row matches the search' : 'Table is empty'}
+                  </td>
+                </tr>
               {/each}
             </tbody>
           </table>
@@ -176,8 +327,25 @@
     </main>
   </div>
 
+  {#if menu}
+    <div class="menu" role="menu" aria-label="Copy" style="left: {menu.x}px; top: {menu.y}px">
+      <button type="button" role="menuitem" use:focusNow onclick={() => copy('value')}>
+        Copy value <kbd>Ctrl+C</kbd>
+      </button>
+      <button type="button" role="menuitem" onclick={() => copy('row')}>Copy row</button>
+      <button type="button" role="menuitem" onclick={() => copy('row-header')}>
+        Copy row with header
+      </button>
+    </div>
+  {/if}
+
   <footer>Rust + Tauri v2 + Svelte</footer>
 </div>
+
+<svelte:window
+  onclick={() => (menu = null)}
+  onkeydown={(event) => event.key === 'Escape' && (menu = null)}
+/>
 
 <style>
   /* NIVEL BASICO: Cores em variaveis; tema claro/escuro segue o sistema operacional */
@@ -284,6 +452,44 @@
     cursor: pointer;
   }
 
+  button {
+    white-space: nowrap;
+  }
+
+  button.secondary {
+    background: var(--surface);
+    border-color: var(--border);
+    color: var(--text);
+  }
+
+  dialog {
+    max-width: 560px;
+    padding: 20px 24px;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    user-select: text;
+  }
+
+  dialog::backdrop {
+    background: rgb(0 0 0 / 0.45);
+  }
+
+  dialog h2 {
+    margin-bottom: 4px;
+  }
+
+  dialog p {
+    margin: 8px 0;
+    overflow-wrap: anywhere;
+  }
+
+  dialog button {
+    display: block;
+    margin: 16px 0 0 auto;
+  }
+
   button:disabled,
   select:disabled,
   input:disabled {
@@ -362,8 +568,51 @@
     font-weight: 600;
   }
 
-  .table-bar label {
+  .table-bar .search {
     margin-left: auto;
+    width: 240px;
+    padding: 3px 8px;
+  }
+
+  td.selected {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+    background: var(--row-hover);
+  }
+
+  .menu {
+    position: fixed;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    min-width: 200px;
+    padding: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgb(0 0 0 / 0.3);
+  }
+
+  .menu button {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    background: none;
+    border-color: transparent;
+    color: var(--text);
+    font-weight: 400;
+    text-align: left;
+  }
+
+  .menu button:hover,
+  .menu button:focus-visible {
+    background: var(--row-hover);
+  }
+
+  .menu kbd {
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
   }
 
   .table-bar select {

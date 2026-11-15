@@ -16,6 +16,42 @@ pub struct ColumnSchema {
     pub null: String,
 }
 
+const MICROS_PER_DAY: i64 = 86_400_000_000;
+
+// NIVEL BASICO: Dias desde 1970-01-01 viram "AAAA-MM-DD"
+// NIVEL TECNICO: civil_from_days (Howard Hinnant), proleptic Gregorian, valid for negative days
+pub(crate) fn format_date(days: i64) -> String {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+// NIVEL BASICO: Microssegundos desde a meia-noite viram "HH:MM:SS" (fracao so quando existe)
+pub(crate) fn format_time(micros: i64) -> String {
+    let secs = micros / 1_000_000;
+    let text = format!("{:02}:{:02}:{:02}", secs / 3600, secs / 60 % 60, secs % 60);
+    match micros % 1_000_000 {
+        0 => text,
+        frac => format!("{text}.{frac:06}").trim_end_matches('0').to_string(),
+    }
+}
+
+// NIVEL BASICO: Microssegundos desde 1970-01-01 viram "AAAA-MM-DD HH:MM:SS"
+pub(crate) fn format_timestamp(micros: i64) -> String {
+    format!(
+        "{} {}",
+        format_date(micros.div_euclid(MICROS_PER_DAY)),
+        format_time(micros.rem_euclid(MICROS_PER_DAY))
+    )
+}
+
 // NIVEL BASICO: Manager de banco DuckDB com conexao thread-safe
 // NIVEL TECNICO: Mutex ensures safe concurrent access from Tauri commands
 pub struct DBManager {
@@ -262,7 +298,36 @@ impl DBManager {
                                 duckdb::types::ValueRef::Text(s) => serde_json::Value::String(
                                     String::from_utf8_lossy(s).to_string(),
                                 ),
-                                // shortcut: other types (dates, decimals, blobs) show their
+                                duckdb::types::ValueRef::UTinyInt(i) => {
+                                    serde_json::Value::Number(i.into())
+                                }
+                                duckdb::types::ValueRef::USmallInt(i) => {
+                                    serde_json::Value::Number(i.into())
+                                }
+                                duckdb::types::ValueRef::UInt(i) => {
+                                    serde_json::Value::Number(i.into())
+                                }
+                                duckdb::types::ValueRef::UBigInt(i) => {
+                                    serde_json::Value::Number(i.into())
+                                }
+                                // texto: JavaScript perderia digitos de inteiros de 128 bits e decimais
+                                duckdb::types::ValueRef::HugeInt(i) => {
+                                    serde_json::Value::String(i.to_string())
+                                }
+                                duckdb::types::ValueRef::Decimal(d) => {
+                                    serde_json::Value::String(d.to_string())
+                                }
+                                // TIMESTAMP WITH TIME ZONE chega em UTC e e mostrado em UTC
+                                duckdb::types::ValueRef::Timestamp(unit, v) => {
+                                    serde_json::Value::String(format_timestamp(unit.to_micros(v)))
+                                }
+                                duckdb::types::ValueRef::Date32(days) => {
+                                    serde_json::Value::String(format_date(days.into()))
+                                }
+                                duckdb::types::ValueRef::Time64(unit, v) => {
+                                    serde_json::Value::String(format_time(unit.to_micros(v)))
+                                }
+                                // shortcut: other types (blobs, intervals, lists) show their
                                 // debug form; add real formatting when a table needs it
                                 other => serde_json::Value::String(format!("{:?}", other)),
                             };
