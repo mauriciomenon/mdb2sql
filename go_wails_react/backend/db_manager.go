@@ -7,7 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	_ "github.com/marcboeker/go-duckdb" // !T: Import for side effects (register DuckDB driver)
+	_ "github.com/duckdb/duckdb-go/v2" // !T: Import for side effects (register DuckDB driver)
 )
 
 // Struct que gerencia acesso aos bancos DuckDB - conectar, listar tabelas, queries
