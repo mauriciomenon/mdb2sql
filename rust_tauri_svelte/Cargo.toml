@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 # NIVEL BASICO: Tauri permite criar apps desktop com Rust backend + web frontend
 # sem precisar do peso do Electron (usa webview nativo do sistema)
-tauri = { version = "1.8", features = ["shell-open"] }
+tauri = { version = "2.12", features = [] }
 
 # NIVEL BASICO: serde faz serializacao/deserializacao de dados entre Rust e JSON
 # necessario para comunicar com frontend JavaScript
@@ -16,12 +16,11 @@ serde_json = "1.0"
 # NIVEL BASICO: DuckDB binding para Rust, permite queries SQL em banco embedded
 duckdb = { version = "1.1", features = ["bundled"] }
 
-# NIVEL TECNICO: Tauri runtime, shell-open permite abrir URLs/arquivos externos
 # NIVEL TECNICO: duckdb bundled inclui biblioteca C estatica (no external deps)
 
 [build-dependencies]
 # NIVEL BASICO: Tauri build script gera contexto em compile time
-tauri-build = { version = "1.5", features = [] }
+tauri-build = { version = "2.7", features = [] }
 
 [dev-dependencies]
 tempfile = "3"
