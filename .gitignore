@@ -6,6 +6,7 @@ __pycache__/
 build/
 dist/
 go_wails_react/build/
+go_wails_react/frontend/package.json.md5
 rust_tauri_svelte/target/
 rust_tauri_svelte/ui/dist/
 py_qt6/build/
