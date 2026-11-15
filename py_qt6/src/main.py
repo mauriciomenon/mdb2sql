@@ -5,7 +5,11 @@
 # !T: sys.argv allows CLI args, QApplication manages event loop and system resources
 
 import sys
+from pathlib import Path
+
 from PyQt6.QtWidgets import QApplication
+
+from backend.database_tasks import database_path_from_env
 from ui.main_window import MainWindow
 
 # !T: sys.argv permite passar argumentos via linha de comando
@@ -20,10 +24,22 @@ def main():
     app.setApplicationName("MDB2SQL")
     app.setOrganizationName("MDB2SQL")
     app.setOrganizationDomain("mdb2sql.local")
+    # Tema claro/escuro segue o sistema pelo estilo nativo (windows11, macOS, Fusion)
+    # !T: The Windows 10 style ("windowsvista") has no dark mode; Fusion follows the system scheme
+    if app.style().objectName() == "windowsvista":
+        app.setStyle("Fusion")
 
     # Cria e mostra janela principal
     window = MainWindow()
     window.show()
+
+    # Abre o banco passado na linha de comando; sem argumento usa MDB2SQL_DB_PATH ou o default
+    # !T: app.arguments() has the Qt-specific options already removed
+    arguments = app.arguments()[1:]
+    if arguments:
+        window.open_database(Path(arguments[0]))
+    elif database_path_from_env().exists():
+        window.load_database()
 
     # Inicia event loop - app fica rodando ate fechar janela
     # !T: sys.exit() ensures proper cleanup on shutdown
