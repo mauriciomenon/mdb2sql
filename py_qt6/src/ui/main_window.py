@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
     QSizePolicy,
     QStackedWidget,
@@ -38,6 +39,8 @@ from backend.database_tasks import (
     list_tables,
     load_table_payload,
 )
+from shared.about import about_html
+from shared.tsv import rows_to_tsv
 from ui.table_model import SORT_ROLE, TableModel
 
 APP_TITLE = "MDB2SQL - Database Viewer"
@@ -133,11 +136,19 @@ class MainWindow(QMainWindow):
         self.quit_action.setShortcut(QKeySequence("Ctrl+Q"))
         self.quit_action.triggered.connect(self.close)
 
-        self.copy_action = QAction("&Copy", self)
+        self.copy_action = QAction("&Copy Value", self)
         self.copy_action.setShortcut(QKeySequence.StandardKey.Copy)
         # !T: Scoped to the tables so Ctrl+C keeps working in the text fields
         self.copy_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self.copy_action.triggered.connect(self.copy_selection)
+
+        self.copy_row_action = QAction("Copy &Row", self)
+        self.copy_row_action.setShortcut(QKeySequence("Ctrl+Shift+C"))
+        self.copy_row_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.copy_row_action.triggered.connect(lambda: self.copy_rows())
+
+        self.copy_row_header_action = QAction("Copy Row with &Header", self)
+        self.copy_row_header_action.triggered.connect(lambda: self.copy_rows(header=True))
 
         self.find_action = QAction("&Find in Rows", self)
         self.find_action.setShortcut(QKeySequence.StandardKey.Find)
@@ -165,7 +176,12 @@ class MainWindow(QMainWindow):
         self.tabs.setDocumentMode(True)
         self.tabs.addTab(self.data_table, "Data")
         self.tabs.addTab(self.schema_table, "Schema")
-        self.tabs.addAction(self.copy_action)
+        # !T: On the tabs for the shortcut scope, on each view for its right-click menu
+        copy_actions = [self.copy_action, self.copy_row_action, self.copy_row_header_action]
+        self.tabs.addActions(copy_actions)
+        for view in (self.data_table, self.schema_table):
+            view.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
+            view.addActions(copy_actions)
 
         self.empty_label = QLabel(EMPTY_HINT)
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -216,6 +232,7 @@ class MainWindow(QMainWindow):
         self.table_list.setUniformItemSizes(True)
         # !T: Signal emitido quando usuario seleciona outra tabela
         self.table_list.currentTextChanged.connect(self.on_table_selected)
+        self.table_list.itemSelectionChanged.connect(self._sync_current_table)
 
         panel = QWidget()
         layout = QVBoxLayout(panel)
@@ -274,6 +291,8 @@ class MainWindow(QMainWindow):
 
         edit_menu = menu_bar.addMenu("&Edit")
         edit_menu.addAction(self.copy_action)
+        edit_menu.addAction(self.copy_row_action)
+        edit_menu.addAction(self.copy_row_header_action)
         edit_menu.addAction(self.find_action)
 
         view_menu = menu_bar.addMenu("&View")
@@ -285,6 +304,15 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
         view_menu.addAction(self.data_tab_action)
         view_menu.addAction(self.schema_tab_action)
+
+        help_menu = menu_bar.addMenu("&Help")
+        help_menu.addAction("&Sobre", self.show_about)
+
+    def show_about(self) -> None:
+        # !T: open() instead of exec(): no nested event loop, so tests and UI Automation do not block
+        box = QMessageBox(QMessageBox.Icon.NoIcon, "Sobre", about_html(), QMessageBox.StandardButton.Ok, self)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.open()
 
     def _create_status_bar(self) -> None:
         self.status_label = QLabel("No database loaded")
@@ -331,6 +359,12 @@ class MainWindow(QMainWindow):
         if self._busy == 0:
             self.progress.hide()
 
+    def _sync_current_table(self) -> None:
+        # !T: UI Automation / screen readers select an item without making it current; follow the selection
+        items = self.table_list.selectedItems()
+        if items and items[0] is not self.table_list.currentItem():
+            self.table_list.setCurrentItem(items[0])
+
     def _focus_search(self) -> None:
         self.search_edit.setFocus()
         self.search_edit.selectAll()
@@ -346,15 +380,34 @@ class MainWindow(QMainWindow):
             item.setHidden(needle not in item.text().lower())
 
     def copy_selection(self) -> None:
-        # Copia as celulas selecionadas como texto separado por tab (cola direto em planilhas)
+        # Copia o valor da celula; com varias celulas selecionadas, texto separado por TAB
         view = self.tabs.currentWidget()
         if not isinstance(view, QTableView):
             return
-        lines: dict[int, list[str]] = {}
-        for index in sorted(view.selectedIndexes(), key=lambda i: (i.row(), i.column())):
-            lines.setdefault(index.row(), []).append(str(index.data() or ""))
+        indexes = sorted(view.selectedIndexes(), key=lambda i: (i.row(), i.column()))
+        if len(indexes) == 1:
+            QGuiApplication.clipboard().setText(str(indexes[0].data() or ""))  # valor puro, sem aspas de TSV
+            return
+        lines: dict[int, list[object]] = {}
+        for index in indexes:
+            lines.setdefault(index.row(), []).append(index.data())
         if lines:
-            QGuiApplication.clipboard().setText("\n".join("\t".join(cells) for cells in lines.values()))
+            QGuiApplication.clipboard().setText(rows_to_tsv(list(lines.values())))
+
+    def copy_rows(self, header: bool = False) -> None:
+        # Copia as linhas inteiras das celulas selecionadas (todas as colunas), separadas por TAB
+        view = self.tabs.currentWidget()
+        if not isinstance(view, QTableView):
+            return
+        model = view.model()
+        columns = range(model.columnCount())
+        rows = sorted({index.row() for index in view.selectedIndexes()})
+        if not rows:
+            return
+        titles = [model.headerData(c, Qt.Orientation.Horizontal) for c in columns] if header else None
+        QGuiApplication.clipboard().setText(
+            rows_to_tsv([[model.index(row, c).data() for c in columns] for row in rows], titles)
+        )
 
     # ------------------------------------------------------------ database
 

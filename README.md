@@ -10,8 +10,8 @@ MDB2SQL provides four independent GUI implementations showcasing different techn
 
 1. **Python + PyQt6**
    - Backend: Python 3.12 + DuckDB
-   - UI: PyQt6 native widgets (table sidebar with filter, Data/Schema tabs, row limit, search; DuckDB work off the UI thread; light/dark follows the system)
-   - Status: 1.0.0; run from source with `uv run` (no packaged binary in the release)
+   - UI: PyQt6 native widgets (table sidebar with filter, Data/Schema tabs, row limit, search across all loaded columns, right-click/Ctrl+C copy of a value or of whole rows as TAB-separated text with optional header; DuckDB work off the UI thread; light/dark follows the system)
+   - Status: 1.0.1; single-file Windows exe `mdb2sql-pyqt.exe` (Python, Qt and DuckDB bundled) built with `py_qt6/setup_tools.ps1` + `py_qt6/build_windows.ps1`, see [py_qt6/README.md](py_qt6/README.md); Help > Sobre shows the version and runtimes
 
 2. **Go + Wails + React**
    - Backend: Go 1.26 (go.mod `go 1.26.0`, required by the security updates of wails/echo/x-crypto) + duckdb-go v2.20000.0 (`github.com/duckdb/duckdb-go/v2`, DuckDB 2.0.0 linked statically; no DuckDB DLL/shared library to install or ship)
