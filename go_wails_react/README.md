@@ -51,4 +51,5 @@ cd frontend; pnpm exec vitest run
 
 - Load database: native file dialog (`.duckdb`, `.db`, `.sqlite`, `.sqlite3`), opened read-only.
 - Sample data: opens the file in `MDB2SQL_DB_PATH`, or `data/sample.duckdb` when the variable is not set.
+- Data grid: click selects a cell; right-click opens Copy value, Copy row and Copy row with header (TAB-separated, pastes into Excel); Ctrl+C copies the selected cell. "Search loaded rows" filters the loaded rows by text in any column; "Filter tables" filters the table list.
 - Theme: auto (follows Windows), light or dark. About: app version and runtime versions.
