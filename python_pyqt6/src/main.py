@@ -8,9 +8,11 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QSettings
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
 from backend.database_tasks import database_path_from_env
+from shared.bundle import resource
 from ui.main_window import MainWindow, apply_theme
 
 # !T: sys.argv permite passar argumentos via linha de comando
@@ -25,6 +27,10 @@ def main():
     app.setApplicationName("MDB2SQL")
     app.setOrganizationName("MDB2SQL")
     app.setOrganizationDomain("mdb2sql.local")
+    # icone da barra de titulo e da barra de tarefas: .ico com varios tamanhos + PNG 1024 para telas de DPI alto
+    icon = QIcon(str(resource("mdb2sql.ico")))
+    icon.addFile(str(resource("mdb2sql.png")))
+    app.setWindowIcon(icon)
     # Tema claro/escuro segue o sistema pelo estilo nativo (windows11, macOS, Fusion)
     # !T: The Windows 10 style ("windowsvista") has no dark mode; Fusion follows the system scheme
     if app.style().objectName() == "windowsvista":

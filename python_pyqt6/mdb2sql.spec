@@ -27,7 +27,8 @@ if missing:
 a = Analysis(
     ["src/main.py"],
     pathex=["src"],
-    datas=[("build/VERSION", "."), ("build/BUILD", ".")] + [(path, Path(path).parent.name) for path in bundled],
+    datas=[("build/VERSION", "."), ("build/BUILD", "."), ("src/resources/mdb2sql.ico", "resources"),
+           ("src/resources/mdb2sql.png", "resources")] + [(path, Path(path).parent.name) for path in bundled],
     # pandas importa pytest so em pandas.testing; ferramenta de teste nao vai no exe
     excludes=["pytest", "_pytest", "pygments", "openpyxl"],
 )
@@ -39,6 +40,7 @@ onefile = EXE(
     a.binaries,
     a.datas,
     name="mdb2sql-pyqt",
+    icon="src/resources/mdb2sql.ico",
     console=False,
     upx=False,
 )
@@ -48,6 +50,7 @@ onedir = EXE(
     a.scripts,
     exclude_binaries=True,
     name="mdb2sql",
+    icon="src/resources/mdb2sql.ico",
     console=False,
     upx=False,
 )

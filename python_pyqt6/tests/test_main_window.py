@@ -33,8 +33,18 @@ def test_starts_empty(qtbot) -> None:
     qtbot.addWidget(win)
 
     assert win.stack.currentWidget() is win.empty_label
+    assert win.windowTitle() == "mdb2sql 1.1.1 - Python + PyQt6"
     assert win.status_label.text() == "No database loaded"
     assert win.progress.isHidden()
+
+
+def test_app_icon_loads(qtbot) -> None:
+    from PyQt6.QtGui import QIcon
+
+    from shared.bundle import resource
+
+    icon = QIcon(str(resource("mdb2sql.ico")))
+    assert 16 in {size.width() for size in icon.availableSizes()}  # .ico com varios tamanhos, lido pelo Qt
 
 
 def test_missing_database_reports_error(qtbot, tmp_path: Path) -> None:
@@ -51,6 +61,7 @@ def test_open_lists_tables_and_loads_first(window: MainWindow) -> None:
 
     assert names == ["empty_table", "people"]
     assert window.status_label.text() == "Loaded: people.duckdb (2 tables) via DuckDB"
+    assert window.windowTitle() == "people.duckdb - mdb2sql 1.1.1 - Python + PyQt6"
     assert window.stack.currentWidget() is window.tabs
     # tabela vazia ainda mostra as colunas do schema
     assert window.info_label.text() == "empty_table: 0 rows"
@@ -83,6 +94,8 @@ def test_table_filter_hides_non_matching(window: MainWindow) -> None:
 
     hidden = {window.table_list.item(i).text(): window.table_list.item(i).isHidden() for i in range(2)}
     assert hidden == {"empty_table": True, "people": False}
+    window.table_filter.setText("TABLE Émpty")  # todas as palavras, qualquer ordem, sem caixa nem acento
+    assert [window.table_list.item(i).isHidden() for i in range(2)] == [False, True]
 
 
 def test_row_limit_reloads_table(qtbot, window: MainWindow) -> None:
