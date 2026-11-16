@@ -103,6 +103,9 @@ RANGER_SOSTAT 36,754 rows, 130 columns):
   "Opened via mdbtools"), File and Export menus, Settings > Theme (dark and light), Help > About, SQL tab.
   The native save dialog itself was not driven (its file name field did not answer to UI Automation in the
   test session); the exports behind it were checked by the automatic tests above.
+- 1.1.1 search, release exe through UI Automation on the `.duckdb` copy: RANGER_SOMESG (100 of 10,000 rows
+  loaded), "banco numero" -> 1 match, the row "Número do banco invalido". Timing on 1000 rows x 123
+  columns of RANGER_SOSTAT: about 21 ms to prepare the rows once, 2-3 ms per search.
 
 ## Known limits
 
