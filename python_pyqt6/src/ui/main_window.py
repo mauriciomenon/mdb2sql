@@ -50,11 +50,11 @@ from backend.database_tasks import (
 )
 from backend.db_manager import DBManager
 from backend.export import Cancelled, default_save_dir, export_database, export_result
-from shared.about import about_html
+from shared.about import about_html, app_version
 from shared.tsv import rows_to_tsv
 from ui.table_model import SORT_ROLE, SearchProxyModel, TableModel, fold, search_words
 
-APP_TITLE = "MDB2SQL - Database Viewer"
+APP_TITLE = f"mdb2sql {app_version()} - Python + PyQt6"  # versao da fonte unica (pyproject.toml / VERSION)
 # shortcut: search and sort run in the UI thread over the loaded rows, so the limit stops at 10 000;
 # move search to SQL in the backend when bigger limits are needed
 ROW_LIMITS = (100, 1_000, 10_000)

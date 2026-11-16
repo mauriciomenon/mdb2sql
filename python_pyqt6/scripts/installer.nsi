@@ -18,6 +18,9 @@ VIAddVersionKey "FileVersion" "${APP_VERSION}"
 VIAddVersionKey "FileDescription" "${APP_NAME} installer"
 VIAddVersionKey "CompanyName" "Mauricio Menon"
 VIAddVersionKey "LegalCopyright" "Mauricio Menon"
+; icone do app no instalador e no desinstalador (o atalho usa o do mdb2sql.exe)
+Icon "${__FILEDIR__}\..\src\resources\mdb2sql.ico"
+UninstallIcon "${__FILEDIR__}\..\src\resources\mdb2sql.ico"
 InstallDir "$LOCALAPPDATA\Programs\${APP_NAME}"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
@@ -32,7 +35,7 @@ Section
   RMDir /r "$INSTDIR\_internal"
   SetOutPath "$INSTDIR"
   File /r "${APP_DIR}\*.*"
-  CreateShortCut "$SMPROGRAMS\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
+  CreateShortCut "$SMPROGRAMS\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}" "" "$INSTDIR\${APP_EXE}" 0
   WriteUninstaller "$INSTDIR\uninstall.exe"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "${APP_NAME}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${APP_VERSION}"
