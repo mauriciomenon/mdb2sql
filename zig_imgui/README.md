@@ -131,7 +131,7 @@ NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 
 - DB4 exported to `.duckdb` and `.sqlite`, reopened: 287 tables, every count equal to the source.
 - DB4 exported to `.xlsx` (22 MB) and read back with openpyxl: 287 sheets; RANGER_SOSTAT 36,754,
   RANGER_SOANLG 4,460, RANGER_SOTEXT 3,516 and RANGER_SOACCU 27 data rows, numbers read as numbers.
-- Unit tests (`zig build test`, 37; the real-Access one runs only when `MDB2SQL_TEST_ACCDB` is set): SQL building and whitelists, paging, streaming results, sheet names and
+- Unit tests (`zig build test`, 38; the real-Access one runs only when `MDB2SQL_TEST_ACCDB` is set): SQL building and whitelists, paging, streaming results, sheet names and
   splitting, the xlsx zip read back by Zig's zip reader (CRC and headers checked), CSV, Access reader choice,
   Access type mapping and `mdb-schema` parsing, settings file and default dialog folder, worker thread jobs,
   cancel, and a long session (25 rounds of reopen, SQL errors, a 10-billion-row result, exports and cancels)
