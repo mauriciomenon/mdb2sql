@@ -98,6 +98,21 @@ def _menu(win: MainWindow, title: str):
     return next(a.menu() for a in win.menuBar().actions() if a.text() == title)
 
 
+def test_decimal_without_scale_shows_as_integer(qtbot, tmp_path: Path) -> None:
+    import duckdb
+
+    db_file = tmp_path / "dec.duckdb"
+    with duckdb.connect(str(db_file)) as conn:
+        conn.execute("CREATE TABLE t AS SELECT 1::DECIMAL(10,0) AS rtuno, 2.50::DECIMAL(10,2) AS v")
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.open_database(db_file)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=10000)
+
+    assert _column(win, 0) == ["1"] and _column(win, 1) == ["2.50"]
+    assert win.table_model.numeric == [True, True]
+
+
 def test_menus_have_export_and_settings_theme(window: MainWindow) -> None:
     titles = [a.text() for a in window.menuBar().actions()]
     assert titles == ["&File", "&Edit", "&View", "&Settings", "&Help"]  # Exportar fica dentro de File

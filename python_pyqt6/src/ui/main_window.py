@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
@@ -354,7 +355,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.reload_action)
 
         # botao Exportar com o mesmo menu de Arquivo > Exportar
-        self.export_menu = self.menuBar().addMenu("&Export")  # recolocado dentro de File em _create_menus
+        self.export_menu = QMenu("&Export", self)  # o mesmo menu fica em File > Export
         self.export_menu.addActions(self.export_db_actions)
         self.export_menu.addSeparator()
         self.export_menu.addActions(self.export_result_actions)
@@ -392,7 +393,6 @@ class MainWindow(QMainWindow):
 
     def _create_menus(self) -> None:
         menu_bar = self.menuBar()
-        menu_bar.clear()  # tira o menu Exportar provisorio da barra; ele vai dentro de File
         file_menu = menu_bar.addMenu("&File")
         file_menu.addAction(self.open_action)
         file_menu.addAction(self.reload_action)

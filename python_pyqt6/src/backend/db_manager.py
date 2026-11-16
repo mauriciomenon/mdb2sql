@@ -179,10 +179,11 @@ class DBManager:
         self._validate_table_name(table_name)
 
         # SELECT com LIMIT para nao carregar tabela inteira
-        # !T: to_dict('records') returns list of row dicts
+        # !T: Plain Python values, not pandas: DECIMAL(10,0) stays 1 (pandas would show 1.0) and NULL stays None
         with self.cursor() as cursor:
-            result = cursor.execute(f"SELECT * FROM {quote(table_name)} LIMIT {int(limit)}").df()
-        return result.to_dict("records")
+            cursor.execute(f"SELECT * FROM {quote(table_name)} LIMIT {int(limit)}")
+            columns = [column[0] for column in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     def execute_query(self, query: str, limit: int = 1000) -> tuple[List[str], List[Dict[str, Any]], bool]:
         """

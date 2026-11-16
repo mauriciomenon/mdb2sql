@@ -24,6 +24,7 @@ def test_load_table_payload_default_limit_and_schema(people) -> None:
     assert payload["table_name"] == "people"
     assert payload["total_rows"] == 3
     assert [row["name"] for row in payload["rows"]] == ["Ana", "Bruno", "carla"]
+    assert payload["rows"][1] == {"id": 2, "name": "Bruno", "score": None}
     assert payload["schema"] == [
         {"column_name": "id", "column_type": "INTEGER", "null": "NO"},
         {"column_name": "name", "column_type": "VARCHAR", "null": "YES"},
