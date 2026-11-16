@@ -122,8 +122,9 @@ DuckDB 2.0.0, Dear ImGui 1.93.0, GLFW 3.4, Microsoft Access ODBC driver installe
 NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 rows):
 
 - `DB4.accdb` through Access ODBC and, forced, through mdbtools: 287 tables, 113,962 rows both ways, every
-  table count equal. Conversion time: about 3 s with ODBC, about 45 s with mdbtools.
-- `DB4.sqlite` (about 12 s to open: the row count of 287 tables through the SQLite reader) and `DB4.duckdb`
+  table count equal. Conversion time (release build): 10 to 20 s with ODBC, about 75 s with mdbtools (eight
+  `mdb-export` processes at a time).
+- `DB4.sqlite` (about 8 s to open: the row count of 287 tables through the SQLite reader) and `DB4.duckdb`
   (about 1 s): 287 tables, RANGER_SOSTAT 36,754 rows.
 - DB4 exported to `.duckdb` and `.sqlite`, reopened: 287 tables, every count equal to the source.
 - DB4 exported to `.xlsx` (22 MB) and read back with openpyxl: 287 sheets; RANGER_SOSTAT 36,754,
