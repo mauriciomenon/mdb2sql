@@ -19,8 +19,34 @@ export function rowToTsv(columnNames, row, withHeader = false) {
   return withHeader ? `${columnNames.map(tsvField).join('\t')}\r\n${line}` : line;
 }
 
-// Busca sem diferenciar maiusculas em todas as colunas; busca vazia aceita tudo
-export function rowMatches(row, query) {
-  const needle = query.trim().toLowerCase();
-  return !needle || Object.values(row).some((value) => cellText(value).toLowerCase().includes(needle));
+// NIVEL BASICO: Texto para comparar na busca: minusculas e sem acento (ç vira c, ã vira a)
+// NIVEL TECNICO: NFD splits a letter from its accent, \p{M} drops the accent marks
+export function fold(text) {
+  return text.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+}
+
+// Palavras da busca (separadas por espaco), ja sem acento e em minusculas; busca vazia = nenhuma palavra
+export function searchWords(query) {
+  return fold(query).split(/\s+/).filter(Boolean);
+}
+
+// true quando o texto (ja dobrado por fold) contem todas as palavras, em qualquer ordem
+export function hasAllWords(text, words) {
+  return words.every((word) => text.includes(word));
+}
+
+// texto de cada celula dobrado uma vez por linha carregada, nao a cada tecla digitada
+const foldedRows = new WeakMap();
+
+function foldedCells(row) {
+  let cells = foldedRows.get(row);
+  if (!cells) foldedRows.set(row, (cells = Object.values(row).map((value) => fold(cellText(value)))));
+  return cells;
+}
+
+// NIVEL BASICO: A linha aparece quando UMA celula tem todas as palavras (qualquer ordem, sem
+// diferenciar maiusculas nem acentos); a celula e comparada pelo texto que a grade mostra (NULL vazio).
+// Palavras separadas tambem acham texto com varios espacos seguidos, que a grade mostra como um so
+export function rowMatches(row, words) {
+  return !words.length || foldedCells(row).some((cell) => hasAllWords(cell, words));
 }

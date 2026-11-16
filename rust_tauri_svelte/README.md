@@ -1,4 +1,4 @@
-# MDB2SQL (Rust + Tauri + Svelte) 1.1.0
+# MDB2SQL (Rust + Tauri + Svelte) 1.1.1
 
 Programa de Windows para abrir bancos Microsoft Access (`.mdb`, `.accdb`), DuckDB (`.duckdb`, `.db`) e SQLite
 (`.sqlite`, `.sqlite3`), ver tabelas, esquema e dados, rodar SQL e exportar o banco inteiro para DuckDB, SQLite
@@ -8,14 +8,14 @@ Backend em Rust (DuckDB 2.0 embutido), janela Tauri 2 (WebView2 do Windows) e in
 
 ## Qual arquivo baixar
 
-Release `rust_tauri_svelte-v1.1.0` (pasta `dist\w11\amd64\` do build). Os quatro fazem a mesma coisa:
+Release `rust_tauri_svelte-v1.1.1` (pasta `dist\w11\amd64\` do build). Os quatro fazem a mesma coisa:
 
 | Arquivo | Para quem |
 | --- | --- |
-| `mdb2sql-1.1.0-w11-amd64-rust-tauri-svelte.exe` | **Executavel unico**: baixe e de dois cliques. Nao instala nada. |
-| `mdb2sql-1.1.0-w11-amd64-rust-tauri-svelte.zip` | O mesmo exe e este README numa pasta; extraia e rode `mdb2sql.exe`. |
-| `mdb2sql-1.1.0-w11-amd64-rust-tauri-svelte-installer.exe` | Instalador NSIS: atalho no menu Iniciar e desinstalador. Nao pede administrador. |
-| `mdb2sql-1.1.0-w11-amd64-rust-tauri-svelte-installer.msi` | Instalador MSI (WiX), para distribuicao por politica/GPO. |
+| `mdb2sql-1.1.1-w11-amd64-rust-tauri-svelte.exe` | **Executavel unico**: baixe e de dois cliques. Nao instala nada. |
+| `mdb2sql-1.1.1-w11-amd64-rust-tauri-svelte.zip` | O mesmo exe e este README numa pasta; extraia e rode `mdb2sql.exe`. |
+| `mdb2sql-1.1.1-w11-amd64-rust-tauri-svelte-installer.exe` | Instalador NSIS: atalho no menu Iniciar e desinstalador. Nao pede administrador. |
+| `mdb2sql-1.1.1-w11-amd64-rust-tauri-svelte-installer.msi` | Instalador MSI (WiX), para distribuicao por politica/GPO. |
 
 O exe nao e assinado digitalmente: na primeira execucao o SmartScreen pode avisar ("Mais informacoes" >
 "Executar assim mesmo").
@@ -45,9 +45,12 @@ A **barra de status** (embaixo) mostra a mensagem atual e por qual caminho o arq
 **Opened via DuckDB**, **SQLite**, **Access ODBC** ou **mdbtools**.
 
 **Tela**:
-- **Tables** (esquerda): lista de tabelas; **Filter tables** filtra por nome. Clique (ou setas) abre a tabela.
-- Aba **Data**: as primeiras linhas da tabela (quantas: **Row limit**, 100/500/1000) e o total de linhas.
-  **Search loaded rows** procura em todas as colunas das linhas carregadas (nao na tabela inteira).
+- **Tables** (esquerda): lista de tabelas; **Filter tables** filtra por nome, com a mesma regra da busca abaixo.
+  Clique (ou setas) abre a tabela.
+- Aba **Data**: as primeiras linhas da tabela (quantas: **Row limit**, 100/500/1000; padrao 100) e o total de
+  linhas. **Search loaded rows** procura nas linhas carregadas (nao na tabela inteira): a linha aparece quando
+  uma mesma celula tem todas as palavras digitadas, em qualquer ordem e sem diferenciar maiusculas nem acentos
+  (`campo tensao` acha `EXCITAÇÃO TENSÃO DE CAMPO`; palavras que so aparecem em celulas diferentes nao contam).
 - Aba **Schema**: colunas da tabela, tipo e se aceita nulo.
 - Aba **SQL**: SQL livre do DuckDB sobre as tabelas abertas (ex.: `SELECT * FROM "RANGER_SOSTAT" WHERE RTUNO = 2`);
   **Run SQL** ou `Ctrl+Enter`. A grade mostra ate o Row limit; a exportacao do resultado leva todas as linhas.
@@ -84,7 +87,7 @@ SQLite e mdbtools, e se o driver ODBC do Access esta instalado.
 
 ## O que o programa grava no computador
 
-- `%LOCALAPPDATA%\mdb2sql\rust-tauri-svelte-1.1.0\mdbtools\`: o mdbtools embutido, extraido na primeira vez que
+- `%LOCALAPPDATA%\mdb2sql\rust-tauri-svelte-1.1.1\mdbtools\`: o mdbtools embutido, extraido na primeira vez que
   um Access e aberto sem ODBC (3 exes + licencas GPL e LGPL, ~0,7 MB). Pastas de versoes antigas deste programa sao
   apagadas sozinhas. Pode ser apagada a qualquer momento.
 - `%LOCALAPPDATA%\com.mdb2sql.app\`: dados do WebView2 e as preferencias (tema, ultima pasta).
@@ -111,7 +114,9 @@ Com copias de bancos reais do NMR5 (287 tabelas; RANGER_SOSTAT com 36.754 linhas
 - Access e SQLite sao lidos inteiros para a memoria (RAM ~ tamanho do arquivo); um banco de varios GB nao cabe.
 - Pelo mdbtools a leitura e ~8x mais lenta que pelo ODBC (DB4: ~1 min). Nomes de tabela Access com acento pelo
   ODBC nao foram testados (os bancos NMR5 so tem ASCII).
-- A busca da aba Data so ve as linhas carregadas (Row limit); para a tabela inteira use a aba SQL.
+- A busca da aba Data so ve as linhas carregadas (Row limit, padrao 100, maximo 1000); para a tabela inteira
+  aumente o Row limit ou use a aba SQL (ex.: no DB4, `EXCITACAO TENSAO DE CAMPO` aparece pela 1a vez na linha 429
+  de RANGER_SOANLG: com Row limit 100 a busca nao acha).
 - Excel: texto com mais de 32.767 caracteres e cortado nesse limite (limite do Excel); numeros com mais de 15
   digitos significativos e datas antes de 1900 vao como texto; BLOB vai como texto.
 - O SQL livre roda no DuckDB com todo o poder dele: o arquivo aberto e so leitura, mas um `COPY ... TO` ou
@@ -143,6 +148,11 @@ estatico, Svelte 5.57 + Vite 8.3. Versoes exatas: `rust-toolchain.toml`, `Cargo.
 A fonte unica e `version` em `Cargo.toml`. O `tauri.conf.json` nao tem `version` (o Tauri herda a do Cargo.toml),
 o dialogo About le a mesma constante, e `ui/package.json` repete o numero; `cargo test` falha se eles divergirem.
 Numero do build (`git rev-list --count HEAD`) e data entram no About pelo build oficial; fora dele, "build dev".
+
+- **1.1.1**: busca da aba Data e filtro de tabelas por palavras (todas numa mesma celula, qualquer ordem, sem
+  maiusculas nem acentos). Antes a busca procurava o texto exato: texto com espacos repetidos (2.499 valores no
+  DB4, que a grade mostra com um espaco so) nao era achado pelo que aparecia na tela, nem `tensao` achava `TENSÃO`.
+- **1.1.0**: abre .duckdb/.sqlite/.mdb/.accdb e exporta para DuckDB, SQLite, Excel e CSV.
 
 ## Ferramentas com versao fixa
 

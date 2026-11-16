@@ -234,8 +234,8 @@ mod tests {
         let lines = about("5.0.0".to_string());
         assert_eq!(lines.len(), 6);
         assert_eq!(lines[0], "MDB2SQL (Rust + Tauri + Svelte)");
-        // "Versao 1.1.0 - build 123 (2026-11-15)" no build oficial, "Versao 1.1.0 - build dev" fora dele
-        let version = lines[1].strip_prefix("Versao 1.1.0 - build ").expect(&lines[1]);
+        // "Versao 1.1.1 - build 123 (2026-11-15)" no build oficial, "Versao 1.1.1 - build dev" fora dele
+        let version = lines[1].strip_prefix("Versao 1.1.1 - build ").expect(&lines[1]);
         let official = version.split_once(" (").is_some_and(|(n, d)| {
             n.parse::<u32>().is_ok() && d.len() == 11 && d.ends_with(')') && d.as_bytes()[4] == b'-'
         });
