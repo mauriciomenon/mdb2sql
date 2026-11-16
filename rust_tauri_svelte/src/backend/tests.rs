@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[allow(clippy::module_inception)] // backend::tests::tests: the wrapper keeps the cfg(test) in this file
 mod tests {
     use crate::backend::access::{Reader, choose_reader, parse_pg_schema, pg_to_duck};
     use crate::backend::db_manager::DBManager;
