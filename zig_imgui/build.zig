@@ -10,30 +10,43 @@ pub fn build(b: *std.Build) void {
     if (target.result.os.tag != .windows or target.result.cpu.arch != .x86_64)
         @panic("zig_imgui currently builds for x86_64-windows only (pinned Windows x64 libduckdb)");
 
-    // Versao: build.zig.zon e a unica fonte; chega ao codigo (janela Sobre) pelas build options
+    // Versao: build.zig.zon e a unica fonte; chega ao codigo (janela Sobre) pelas build options.
+    // Numero e data do build: passados pelo scripts\build_w11.ps1; fora dele o Sobre mostra "build dev".
     const console = b.option(bool, "console", "Console subsystem, to see stderr (default: only in Debug)") orelse (optimize == .debug);
+    const version = @import("build.zig.zon").version;
     const options = b.addOptions();
-    options.addOption([]const u8, "version", @import("build.zig.zon").version);
+    options.addOption([]const u8, "version", version);
     options.addOption(bool, "console", console);
+    options.addOption([]const u8, "build_number", b.option([]const u8, "build_number", "Build number (git rev-list --count HEAD)") orelse "");
+    options.addOption([]const u8, "build_date", b.option([]const u8, "build_date", "Build date (YYYY-MM-DD)") orelse "");
     const build_options = options.createModule();
+
+    // Arquivos que vao junto do programa, baixados por scripts\setup_tools.ps1 (sha256 conferido)
+    const sqlite_ext = b.path(".tools/duckdb-ext-v2.0.0/sqlite_scanner.duckdb_extension");
+    const mdbtools_dir = b.path(".tools/mdbtools-1.0.1");
+    const mdbtools_files = [_][]const u8{ "mdb-tables.exe", "mdb-schema.exe", "mdb-export.exe", "COPYING", "COPYING.LIB" };
 
     // libduckdb pre-compilada: duckdb.h + duckdb.lib (import lib) + duckdb.dll
     const duckdb = b.dependency("libduckdb", .{});
-    const duckdb_c = b.addTranslateC(.{
+    const duckdb_tc = b.addTranslateC(.{
         .root_source_file = duckdb.path("duckdb.h"),
         .target = target,
         .optimize = optimize,
-    }).createModule();
+    });
+    // duckdb_pending_prepared_streaming (marcada obsoleta, mas e a unica que devolve resultado em fluxo na API C 2.0)
+    duckdb_tc.defineCMacro("DUCKDB_API_ALLOW_DEPRECATED", "1");
+    const duckdb_c = duckdb_tc.createModule();
     duckdb_c.addLibraryPath(duckdb.path(""));
     duckdb_c.linkSystemLibrary("duckdb", .{});
 
-    // Logica sem UI (db.zig + query.zig): usada pelo exe e pelos testes
+    // Logica sem UI (db.zig e o resto de src/ menos main/dialog): usada pelo exe e pelos testes
     const core = b.createModule(.{
         .root_source_file = b.path("src/db.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{ .{ .name = "duckdb_c", .module = duckdb_c }, .{ .name = "build_options", .module = build_options } },
     });
+    core.linkSystemLibrary("odbc32", .{});
 
     const zglfw = b.dependency("zglfw", .{ .target = target, .optimize = optimize });
 
@@ -103,19 +116,64 @@ pub fn build(b: *std.Build) void {
     exe.root_module.linkLibrary(zglfw.artifact("glfw"));
     exe.root_module.linkSystemLibrary("opengl32", .{});
     b.installArtifact(exe);
-    // duckdb.dll vai ao lado do exe (zig-out/bin)
-    b.getInstallStep().dependOn(&b.addInstallBinFile(duckdb.path("duckdb.dll"), "duckdb.dll").step);
+
+    // Pasta do app em zig-out/bin: exe + duckdb.dll + extensao sqlite + mdbtools\ (tudo junto)
+    const install = b.getInstallStep();
+    install.dependOn(&b.addInstallBinFile(duckdb.path("duckdb.dll"), "duckdb.dll").step);
+    install.dependOn(&b.addInstallBinFile(sqlite_ext, "sqlite_scanner.duckdb_extension").step);
+    for (mdbtools_files) |f| install.dependOn(&b.addInstallBinFile(mdbtools_dir.path(b, f), b.fmt("mdbtools/{s}", .{f})).step);
+
+    // Executavel unico: a mesma pasta comprimida dentro de um lancador (src/launcher.zig)
+    const pack = b.addExecutable(.{
+        .name = "pack",
+        .root_module = b.createModule(.{ .root_source_file = b.path("src/pack.zig"), .target = b.graph.host, .optimize = .ReleaseFast }),
+    });
+    const payload = b.addWriteFiles();
+    var payload_src: std.ArrayList(u8) = .empty;
+    payload_src.print(b.allocator, "pub const version = \"{s}\";\npub const files = [_]struct {{ name: []const u8, data: []const u8 }}{{\n", .{version}) catch @panic("OOM");
+    const Item = struct { []const u8, std.Build.LazyPath };
+    var items: std.ArrayList(Item) = .empty;
+    items.appendSlice(b.allocator, &.{
+        .{ "mdb2sql-zig.exe", exe.getEmittedBin() },
+        .{ "duckdb.dll", duckdb.path("duckdb.dll") },
+        .{ "sqlite_scanner.duckdb_extension", sqlite_ext },
+    }) catch @panic("OOM");
+    for (mdbtools_files) |f| items.append(b.allocator, .{ b.fmt("mdbtools\\{s}", .{f}), mdbtools_dir.path(b, f) }) catch @panic("OOM");
+    for (items.items, 0..) |item, i| {
+        const run_pack = b.addRunArtifact(pack);
+        run_pack.addFileArg(item[1]);
+        const gz = run_pack.addOutputFileArg(b.fmt("{d}.gz", .{i}));
+        _ = payload.addCopyFile(gz, b.fmt("{d}.gz", .{i}));
+        payload_src.print(b.allocator, "    .{{ .name = \"{f}\", .data = @embedFile(\"{d}.gz\") }},\n", .{ std.zig.fmtString(item[0]), i }) catch @panic("OOM");
+    }
+    payload_src.appendSlice(b.allocator, "};\n") catch @panic("OOM");
+    const payload_zig = payload.add("payload.zig", payload_src.items);
+    const onefile = b.addExecutable(.{
+        .name = "mdb2sql-zig-onefile",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/launcher.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "payload", .module = b.createModule(.{ .root_source_file = payload_zig }) }},
+        }),
+    });
+    onefile.subsystem = .windows;
+    b.step("onefile", "Single-file exe (zig-out/onefile/)").dependOn(&b.addInstallArtifact(onefile, .{ .dest_dir = .{ .override = .{ .custom = "onefile" } } }).step);
 
     const run = b.addRunArtifact(exe);
-    run.step.dependOn(b.getInstallStep());
+    run.step.dependOn(install);
     run.addPassthruArgs();
     b.step("run", "Run the GUI").dependOn(&run.step);
 
-    // Testes: o exe de teste roda com cwd numa pasta do cache que tem a duckdb.dll
+    // Testes: o exe de teste roda com cwd numa pasta do cache que tem a duckdb.dll e a extensao sqlite
     const tests = b.addTest(.{ .root_module = core });
     const run_tests = b.addRunArtifact(tests);
     const dll_dir = b.addWriteFiles();
     _ = dll_dir.addCopyFile(duckdb.path("duckdb.dll"), "duckdb.dll");
+    _ = dll_dir.addCopyFile(sqlite_ext, "sqlite_scanner.duckdb_extension");
     run_tests.setCwd(dll_dir.getDirectory());
-    b.step("test", "Run unit tests").dependOn(&run_tests.step);
+    const pack_tests = b.addRunArtifact(b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/pack.zig"), .target = target, .optimize = optimize }) }));
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&pack_tests.step);
 }

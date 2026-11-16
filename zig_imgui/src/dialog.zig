@@ -2,7 +2,13 @@
 // !T: Native Windows open/save file dialogs through GetOpenFileNameW / GetSaveFileNameW
 
 const std = @import("std");
-const L = std.unicode.utf8ToUtf16LeStringLiteral;
+// Texto UTF-16 fixo (os filtros longos passam do limite padrao de avaliacao em tempo de compilacao)
+fn L(comptime s: []const u8) [*:0]const u16 {
+    return comptime blk: {
+        @setEvalBranchQuota(100_000);
+        break :blk std.unicode.utf8ToUtf16LeStringLiteral(s);
+    };
+}
 
 const OPENFILENAMEW = extern struct {
     lStructSize: u32,
@@ -44,18 +50,23 @@ const OFN_PATHMUSTEXIST = 0x800;
 const OFN_FILEMUSTEXIST = 0x1000;
 const OFN_EXPLORER = 0x80000;
 
-pub const Kind = enum { open_db, save_csv };
+pub const Kind = enum { open_db, save_csv, save_xlsx, save_duckdb, save_sqlite };
 
 pub const max_path = 1024; // em unidades UTF-16
 pub const PathBuf = [max_path * 3]u8; // pior caso em UTF-8
 
 // Caminho escolhido em UTF-8 dentro de `out`, ou null se o usuario cancelou.
-// `default_name` e o nome sugerido (so no salvar).
-pub fn pick(kind: Kind, owner: ?*anyopaque, default_name: []const u8, out: *PathBuf) ?[]const u8 {
+// `initial` e o caminho sugerido: pasta + nome (o dialogo abre nessa pasta), ou so a pasta (abrir).
+pub fn pick(kind: Kind, owner: ?*anyopaque, initial: []const u8, out: *PathBuf) ?[]const u8 {
     var file: [max_path]u16 = @splat(0);
-    if (default_name.len < max_path) {
+    var dir: [max_path:0]u16 = @splat(0);
+    if (kind == .open_db) {
+        // abrir: so a pasta inicial
+        const n = std.unicode.wtf8ToWtf16Le(&dir, initial) catch 0;
+        dir[@min(n, max_path - 1)] = 0;
+    } else if (initial.len < max_path) {
         // nome invalido em UTF-8: fica sem sugestao
-        const n = std.unicode.utf8ToUtf16Le(&file, default_name) catch 0;
+        const n = std.unicode.wtf8ToWtf16Le(&file, initial) catch 0;
         @memset(file[n..], 0);
     }
     var ofn: OPENFILENAMEW = .{
@@ -63,17 +74,25 @@ pub fn pick(kind: Kind, owner: ?*anyopaque, default_name: []const u8, out: *Path
         .hwndOwner = owner,
         .lpstrFile = &file,
         .nMaxFile = file.len,
+        .lpstrInitialDir = if (dir[0] != 0) &dir else null,
         .Flags = OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY,
     };
     const ok = switch (kind) {
         .open_db => blk: {
-            ofn.lpstrFilter = L("DuckDB (*.duckdb;*.db)\x00*.duckdb;*.db\x00All files (*.*)\x00*.*\x00");
+            ofn.lpstrFilter = L("Databases (*.duckdb;*.db;*.sqlite;*.sqlite3;*.mdb;*.accdb)\x00*.duckdb;*.db;*.sqlite;*.sqlite3;*.mdb;*.accdb\x00" ++
+                "DuckDB (*.duckdb;*.db)\x00*.duckdb;*.db\x00SQLite (*.sqlite;*.sqlite3)\x00*.sqlite;*.sqlite3\x00" ++
+                "Access (*.mdb;*.accdb)\x00*.mdb;*.accdb\x00All files (*.*)\x00*.*\x00");
             ofn.Flags |= OFN_FILEMUSTEXIST;
             break :blk GetOpenFileNameW(&ofn);
         },
-        .save_csv => blk: {
-            ofn.lpstrFilter = L("CSV (*.csv)\x00*.csv\x00All files (*.*)\x00*.*\x00");
-            ofn.lpstrDefExt = L("csv");
+        else => blk: {
+            ofn.lpstrFilter, ofn.lpstrDefExt = switch (kind) {
+                .save_csv => .{ L("CSV UTF-8 (*.csv)\x00*.csv\x00"), L("csv") },
+                .save_xlsx => .{ L("Excel (*.xlsx)\x00*.xlsx\x00"), L("xlsx") },
+                .save_duckdb => .{ L("DuckDB (*.duckdb)\x00*.duckdb\x00"), L("duckdb") },
+                .save_sqlite => .{ L("SQLite (*.sqlite)\x00*.sqlite\x00"), L("sqlite") },
+                .open_db => unreachable,
+            };
             ofn.Flags |= OFN_OVERWRITEPROMPT;
             break :blk GetSaveFileNameW(&ofn);
         },

@@ -22,12 +22,12 @@ detalhes; aqui fica so o mapa. Nao ha build na raiz.
   Padrao em Windows: executavel unico, .zip da pasta do app e instalador. Hoje:
 
   Subprojeto          executavel unico   .zip      instalador
-  python_pyqt6        sim                falta     falta
-  go_wails_react      sim                falta     falta
+  python_pyqt6        sim                sim       sim (NSIS, por usuario)
+  go_wails_react      sim                sim       sim (NSIS do Wails)
   rust_tauri_svelte   sim                sim       sim (NSIS .exe e MSI)
-  zig_imgui           falta              sim       falta
+  zig_imgui           sim                sim       sim (NSIS, por usuario)
 
-  O que falta entra no scripts\package_w11.ps1 de cada subprojeto (nomes ja definidos no README-BUILD.txt
+  Todos os subprojetos geram os tres produtos (1.1.0). Detalhes no scripts\package_w11.ps1 de cada subprojeto (nomes ja definidos no README-BUILD.txt
   de cada um).
 
 

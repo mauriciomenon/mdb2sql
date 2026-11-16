@@ -8,10 +8,16 @@ pub const default_page_size: u32 = 100; // mesmo padrao das outras GUIs
 
 pub const PathError = error{UnsupportedExtension};
 
-// !T: Same rule as python_pyqt6 DBManager._validate_database_path: only .duckdb and .db
-pub fn validateDbExtension(path: []const u8) PathError!void {
+pub const SourceKind = enum { duckdb, sqlite, access };
+
+// !T: Only database file extensions are opened: .duckdb/.db, .sqlite/.sqlite3, .mdb/.accdb
+pub fn sourceKind(path: []const u8) PathError!SourceKind {
     const ext = std.fs.path.extension(path);
-    if (std.ascii.eqlIgnoreCase(ext, ".duckdb") or std.ascii.eqlIgnoreCase(ext, ".db")) return;
+    const table = [_]struct { []const u8, SourceKind }{
+        .{ ".duckdb", .duckdb }, .{ ".db", .duckdb },     .{ ".sqlite", .sqlite },
+        .{ ".sqlite3", .sqlite }, .{ ".mdb", .access }, .{ ".accdb", .access },
+    };
+    for (table) |e| if (std.ascii.eqlIgnoreCase(ext, e[0])) return e[1];
     return error.UnsupportedExtension;
 }
 
@@ -22,13 +28,22 @@ pub fn contains(names: []const []const u8, name: []const u8) bool {
 }
 
 // Escreve "nome" com aspas duplicadas
-fn writeIdent(out: *std.ArrayList(u8), a: Allocator, name: []const u8) !void {
-    try out.append(a, '"');
-    for (name) |ch| {
-        if (ch == '"') try out.append(a, '"');
+pub fn writeIdent(out: *std.ArrayList(u8), a: Allocator, name: []const u8) Allocator.Error!void {
+    return writeQuoted(out, a, name, '"');
+}
+
+// Escreve 'texto' com apostrofos duplicados (caminhos em ATTACH, que nao aceita parametros)
+pub fn writeLiteral(out: *std.ArrayList(u8), a: Allocator, text: []const u8) Allocator.Error!void {
+    return writeQuoted(out, a, text, '\'');
+}
+
+fn writeQuoted(out: *std.ArrayList(u8), a: Allocator, s: []const u8, q: u8) Allocator.Error!void {
+    try out.append(a, q);
+    for (s) |ch| {
+        if (ch == q) try out.append(a, q);
         try out.append(a, ch);
     }
-    try out.append(a, '"');
+    try out.append(a, q);
 }
 
 pub const Op = enum {
@@ -177,7 +192,8 @@ pub fn buildSelect(a: Allocator, spec: Spec) BuildError!Built {
         try writeIdent(&out, a, col);
         try out.appendSlice(a, if (spec.sort_desc) " DESC NULLS LAST" else " ASC NULLS LAST");
     }
-    try out.print(a, " LIMIT {d} OFFSET {d}", .{ spec.limit, spec.offset });
+    // limit 0 = todas as linhas (exportacao da tabela inteira)
+    if (spec.limit > 0) try out.print(a, " LIMIT {d} OFFSET {d}", .{ spec.limit, spec.offset });
     return finish(&out, &params, a);
 }
 
@@ -216,12 +232,15 @@ pub fn clampPage(page: u64, total_rows: u64, page_size: u32) u64 {
 
 const t = std.testing;
 
-test "extension validation mirrors python_pyqt6" {
-    try validateDbExtension("C:\\data\\sample.duckdb");
-    try validateDbExtension("/tmp/x.DB");
-    try t.expectError(error.UnsupportedExtension, validateDbExtension("invalid.txt"));
-    try t.expectError(error.UnsupportedExtension, validateDbExtension("invalid.sqlite"));
-    try t.expectError(error.UnsupportedExtension, validateDbExtension("invalid.mdb"));
+test "extension decides the source kind" {
+    try t.expectEqual(.duckdb, try sourceKind("C:\\data\\sample.duckdb"));
+    try t.expectEqual(.duckdb, try sourceKind("/tmp/x.DB"));
+    try t.expectEqual(.sqlite, try sourceKind("a.SQLite3"));
+    try t.expectEqual(.sqlite, try sourceKind("a b.sqlite"));
+    try t.expectEqual(.access, try sourceKind("2026-07-14 DB4.accdb"));
+    try t.expectEqual(.access, try sourceKind("old.MDB"));
+    try t.expectError(error.UnsupportedExtension, sourceKind("invalid.txt"));
+    try t.expectError(error.UnsupportedExtension, sourceKind("noext"));
 }
 
 const t_tables = [_][]const u8{ "RANGER_SOACCU", "odd\"name" };
@@ -232,6 +251,13 @@ test "plain page select" {
     defer b.deinit(t.allocator);
     try t.expectEqualStrings("SELECT * FROM \"RANGER_SOACCU\" LIMIT 100 OFFSET 0", b.sql);
     try t.expectEqual(0, b.params.len);
+    const all = try buildSelect(t.allocator, .{ .table = "RANGER_SOACCU", .tables = &t_tables, .columns = &t_cols, .limit = 0 });
+    defer all.deinit(t.allocator);
+    try t.expectEqualStrings("SELECT * FROM \"RANGER_SOACCU\"", all.sql);
+    var lit: std.ArrayList(u8) = .empty;
+    defer lit.deinit(t.allocator);
+    try writeLiteral(&lit, t.allocator, "C:\\a'b.duckdb");
+    try t.expectEqualStrings("'C:\\a''b.duckdb'", lit.items);
 }
 
 test "unknown table and column are rejected, identifiers are quoted" {

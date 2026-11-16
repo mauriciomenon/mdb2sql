@@ -1,5 +1,6 @@
-// GUI Dear ImGui (cimgui + GLFW + OpenGL3): abre .duckdb, lista tabelas, pagina dados, roda SQL
-// !T: Same core flows as python_pyqt6 (load database -> pick table -> grid), plus paging and free SQL
+// GUI Dear ImGui (cimgui + GLFW + OpenGL3): abre .duckdb/.sqlite/.mdb/.accdb, lista tabelas, pagina dados,
+// roda SQL e exporta (banco inteiro, tabela ou resultado) para DuckDB, SQLite, Excel e CSV
+// !T: Same core flows as python_pyqt6 (load database -> pick table -> grid), plus paging, free SQL and exports
 
 const std = @import("std");
 const ig = @import("cimgui");
@@ -9,6 +10,8 @@ const dialog = @import("dialog.zig");
 const build_options = @import("build_options");
 const query = dbm.query;
 const worker = dbm.worker;
+const settings = dbm.settings;
+const ExportKind = worker.ExportKind;
 
 const page_size = query.default_page_size;
 
@@ -17,7 +20,7 @@ extern "opengl32" fn glViewport(x: c_int, y: c_int, w: c_int, h: c_int) callconv
 extern "opengl32" fn glClearColor(r: f32, g: f32, b: f32, a: f32) callconv(.winapi) void;
 extern "opengl32" fn glClear(mask: c_uint) callconv(.winapi) void;
 
-extern "user32" fn MessageBoxA(hwnd: ?*anyopaque, text: [*:0]const u8, caption: [*:0]const u8, kind: c_uint) callconv(.winapi) c_int;
+extern "user32" fn MessageBoxW(hwnd: ?*anyopaque, text: [*:0]const u16, caption: [*:0]const u16, kind: c_uint) callconv(.winapi) c_int;
 extern "dwmapi" fn DwmSetWindowAttribute(hwnd: ?*anyopaque, attr: c_uint, value: *const c_int, size: c_uint) callconv(.winapi) c_long;
 extern fn glfwGetVersion(major: *c_int, minor: *c_int, rev: *c_int) void;
 
@@ -34,6 +37,25 @@ extern fn ImGui_ImplOpenGL3_Shutdown() void;
 extern fn shim_io_setup() void;
 extern fn shim_add_font(path: [*:0]const u8, size_pixels: f32) void;
 extern fn shim_clipper_range(clipper: *const ig.ImGuiListClipper, start: *c_int, end: *c_int) void;
+
+const app_title = "MDB2SQL (Zig + Dear ImGui)";
+
+// Caixa de mensagem: o exe de release nao tem console, entao erro fatal e panico aparecem aqui
+fn messageBox(text_utf8: []const u8, icon: c_uint) void {
+    var wide: [2048:0]u16 = undefined;
+    const n = std.unicode.wtf8ToWtf16Le(wide[0 .. wide.len - 1], text_utf8[0..@min(text_utf8.len, 1000)]) catch 0;
+    wide[n] = 0;
+    _ = MessageBoxW(null, &wide, std.unicode.utf8ToUtf16LeStringLiteral(app_title), icon);
+}
+
+// Panico (checagem de seguranca do ReleaseSafe): mostra a mensagem antes de encerrar, em vez de sumir calado
+pub const panic = std.debug.FullPanic(panicBox);
+
+fn panicBox(msg: []const u8, ret_addr: ?usize) noreturn {
+    var buf: [1200]u8 = undefined;
+    messageBox(std.fmt.bufPrint(&buf, "Internal error, the program will close:\n{s}", .{msg}) catch msg, 0x10);
+    std.debug.defaultPanic(msg, ret_addr);
+}
 
 // ------------------------------------------------------------------- tema
 
@@ -60,6 +82,7 @@ const dark_colors = [_]Color{
     .{ ig.ImGuiCol_TableBorderLight, 0x30343B, 1 },     .{ ig.ImGuiCol_TableRowBg, 0x000000, 0 },
     .{ ig.ImGuiCol_TableRowBgAlt, 0xFFFFFF, 0.04 },     .{ ig.ImGuiCol_TextSelectedBg, 0x4C9BE8, 0.4 },
     .{ ig.ImGuiCol_NavCursor, 0x4C9BE8, 1 },            .{ ig.ImGuiCol_ModalWindowDimBg, 0x000000, 0.55 },
+    .{ ig.ImGuiCol_PlotHistogram, 0x4C9BE8, 1 },
 };
 
 const light_colors = [_]Color{
@@ -81,6 +104,7 @@ const light_colors = [_]Color{
     .{ ig.ImGuiCol_TableBorderLight, 0xD8DCE2, 1 },     .{ ig.ImGuiCol_TableRowBg, 0x000000, 0 },
     .{ ig.ImGuiCol_TableRowBgAlt, 0x000000, 0.035 },    .{ ig.ImGuiCol_TextSelectedBg, 0x1F6FC4, 0.3 },
     .{ ig.ImGuiCol_NavCursor, 0x1F6FC4, 1 },            .{ ig.ImGuiCol_ModalWindowDimBg, 0x000000, 0.35 },
+    .{ ig.ImGuiCol_PlotHistogram, 0x1F6FC4, 1 },
 };
 
 fn channel(hex: u24, shift: u5) f32 {
@@ -172,8 +196,12 @@ const App = struct {
     busy_since: f64 = 0,
     hwnd: ?*anyopaque = null,
     status: Msg = .{},
+    prefs: settings.Settings = .{},
+    prefs_path: []const u8 = "",
 
     path: [1024:0]u8 = @splat(0),
+    loaded_path: [1024:0]u8 = @splat(0), // arquivo aberto agora (pasta padrao dos dialogos de salvar)
+    source: ?dbm.Source = null,
     counts: []u64 = &.{}, // linhas por tabela, mesma ordem de db.table_names
     table_filter: [128:0]u8 = @splat(0),
 
@@ -186,9 +214,12 @@ const App = struct {
     sort_desc: bool = false,
     page: u64 = 0,
     total: u64 = 0,
+    // busca e ordenacao que valem para a pagina na tela (a caixa de busca pode ter texto ainda nao aplicado)
+    applied_search: [256:0]u8 = @splat(0),
 
     sql: [8192:0]u8 = @splat(0),
     result: ?dbm.Grid = null,
+    result_sql: [8192:0]u8 = @splat(0), // SQL que gerou `result` (a exportacao roda de novo, sem limite)
     sql_msg: Msg = .{},
     result_filter: [128:0]u8 = @splat(0), // filtro sobre as linhas carregadas do resultado
     result_rows: ?[]usize = null, // indices das linhas que casam; null = sem filtro
@@ -204,8 +235,8 @@ const App = struct {
     want_reload: bool = false,
     want_run: bool = false,
     want_browse: bool = false,
-    want_export: bool = false,
-    want_theme: ?bool = null, // true = claro
+    want_export: ?ExportKind = null, // abre o dialogo de salvar e dispara a exportacao
+    want_theme: ?settings.Theme = null,
     want_about: bool = false,
     want_exit: bool = false,
     about_open: bool = false,
@@ -215,9 +246,12 @@ const App = struct {
     start_sql: bool = false, // --sql: roda depois do primeiro open
     start_search: []const u8 = "", // --search: busca na aba Data depois do primeiro open
     start_cell: ?[2]usize = null, // --cell: linha e coluna (base 0) que abrem com o menu de copia
+    start_menu: ?enum { File, Settings, Help, Export } = null, // --menu: menu aberto quando o banco termina de abrir (capturas)
+    start_export: ?ExportKind = null, // --export: abre o dialogo de salvar dessa exportacao quando o banco abrir
 
     fn deinit(app: *App) void {
-        // fechar com consulta em andamento: interrompe e espera a thread antes de soltar o banco
+        // fechar com trabalho em andamento: pede para parar e espera a thread antes de soltar o banco
+        // (uma exportacao interrompida apaga o arquivo .part)
         app.slot.cancel();
         if (app.slot.wait()) |o| {
             var out = o;
@@ -256,8 +290,14 @@ const App = struct {
         if (needle.len > 0) app.result_rows = dbm.gridtools.filterRows(app.gpa, g.rows, needle) catch null;
     }
 
-    fn fail(app: *App, msg: *Msg, err: dbm.Error) void {
-        if (err == error.DuckDb) msg.set(true, "{s}", .{app.db.lastError()}) else msg.set(true, "Error: {t}", .{err});
+    fn fail(app: *App, msg: *Msg, err: anyerror) void {
+        switch (err) {
+            error.DuckDb, error.Failed => msg.set(true, "{s}", .{app.db.lastError()}),
+            error.Canceled => msg.set(true, "Canceled", .{}),
+            error.UnsupportedExtension => msg.set(true, "Not a database file: use .duckdb, .db, .sqlite, .sqlite3, .mdb or .accdb", .{}),
+            error.AccessDenied, error.FileBusy, error.PermissionDenied => msg.set(true, "Cannot write the file: it is open in another program or the folder is read-only ({t})", .{err}),
+            else => msg.set(true, "Error: {t}", .{err}),
+        }
     }
 
     fn setPath(app: *App, p: []const u8) void {
@@ -289,6 +329,7 @@ const App = struct {
                 r.page = app.page;
             },
             .sql => r.sql = app.sql,
+            .export_ => {}, // preenchido em startExport
         }
         app.busy_since = ig.igGetTime();
         app.slot.start() catch |e| app.status.set(true, "Could not start the worker thread: {t}", .{e});
@@ -308,8 +349,13 @@ const App = struct {
                 app.gpa.free(app.counts);
                 app.counts = out.counts;
                 out.counts = &.{};
+                app.source = if (app.db.isOpen()) out.source else null;
+                app.loaded_path = if (app.db.isOpen()) app.slot.req.path else @splat(0);
                 if (app.db.isOpen()) {
-                    app.status.set(false, "Loaded: {s} ({d} tables)", .{ std.fs.path.basename(zstr(&app.slot.req.path)), app.db.table_names.len });
+                    app.status.set(false, "Loaded: {s} ({d} tables) - opened with {s}", .{
+                        std.fs.path.basename(zstr(&app.slot.req.path)), app.db.table_names.len, app.source.?.label(),
+                    });
+                    app.rememberDir(zstr(&app.slot.req.path));
                     if (app.start_sql) {
                         app.want_run = true;
                         app.focus_sql = true;
@@ -329,18 +375,26 @@ const App = struct {
                 app.data_sel = .{};
                 app.total = out.total;
                 app.page = out.page;
+                app.applied_search = app.slot.req.search;
             },
             .sql => {
                 app.clearResult();
                 if (out.result) |g| {
                     app.result = g;
                     out.result = null;
+                    app.result_sql = app.slot.req.sql;
                     app.refilter();
-                    if (g.total_rows > g.rows.len)
-                        app.sql_msg.set(false, "{d} rows (showing the first {d})", .{ g.total_rows, g.rows.len })
+                    if (g.truncated)
+                        app.sql_msg.set(false, "More than {d} rows: showing the first {d} (export writes all of them)", .{ g.rows.len, g.rows.len })
                     else
-                        app.sql_msg.set(false, "{d} rows, {d} columns", .{ g.total_rows, g.columns.len });
+                        app.sql_msg.set(false, "{d} rows, {d} columns", .{ g.rows.len, g.columns.len });
                 }
+            },
+            .export_ => if (out.err == null) {
+                const r = &app.slot.req;
+                app.status.set(false, "Exported {d} {s} to {s}", .{
+                    out.exported, if (r.export_kind.countsTables()) "tables" else "rows", std.fs.path.basename(r.destPath()),
+                });
             },
         }
         if (out.err) |e| return app.fail(if (out.kind == .sql) &app.sql_msg else &app.status, e);
@@ -372,28 +426,51 @@ const App = struct {
         app.total = out.total;
         app.page = out.page;
         app.search[0] = 0;
+        app.applied_search[0] = 0;
         app.sort_col = null;
         app.sort_desc = false;
+    }
+
+    // Pasta usada por ultimo (abrir ou salvar), gravada para a proxima execucao
+    fn rememberDir(app: *App, file_path: []const u8) void {
+        const dir = std.fs.path.dirname(file_path) orelse return;
+        if (std.mem.eql(u8, dir, app.prefs.lastDir())) return;
+        app.prefs.setLastDir(dir);
+        app.savePrefs();
+    }
+
+    fn savePrefs(app: *App) void {
+        if (app.prefs_path.len == 0) return;
+        app.prefs.save(app.io, app.prefs_path) catch |e| app.status.set(true, "Could not save the settings: {t}", .{e});
     }
 
     fn update(app: *App) void {
         if (app.slot.poll()) |out| app.apply(out);
 
-        if (app.want_theme) |light| applyTheme(light, app.hwnd);
+        if (app.want_theme) |theme| {
+            app.prefs.theme = theme;
+            applyTheme(settings.isLight(theme), app.hwnd);
+            app.savePrefs();
+        }
         app.want_theme = null;
         if (app.want_browse) {
             var buf: dialog.PathBuf = undefined;
-            if (dialog.pick(.open_db, app.hwnd, "", &buf)) |p| {
+            if (dialog.pick(.open_db, app.hwnd, app.prefs.lastDir(), &buf)) |p| {
                 app.setPath(p);
                 app.want_open = true;
             }
         }
         app.want_browse = false;
-        if (app.want_export) app.exportCsv();
-        app.want_export = false;
 
         if (app.slot.busy()) return; // um trabalho por vez; os pedidos abaixo ficam para depois
-        if (app.want_open) {
+        if (app.start_export != null and app.db.isOpen() and !app.want_open and !app.want_reload and !app.want_run) {
+            app.want_export = app.start_export;
+            app.start_export = null;
+        }
+        if (app.want_export) |kind| {
+            app.want_export = null;
+            app.startExport(kind);
+        } else if (app.want_open) {
             app.want_open = false;
             app.start(.open);
         } else if (app.want_select != null) {
@@ -408,25 +485,90 @@ const App = struct {
         }
     }
 
-    // Grid da aba atual e o nome de arquivo sugerido para exporta-lo
-    fn currentGrid(app: *const App, name_buf: []u8) ?struct { *const dbm.Grid, []const u8 } {
-        if (app.opening() or !app.db.isOpen()) return null;
-        const table = if (app.selected) |i| app.db.table_names[i] else "";
-        const grid: *const ?dbm.Grid, const name: []const u8 = switch (app.tab) {
-            .data => .{ &app.data, std.fmt.bufPrint(name_buf, "{s}.csv", .{table}) catch "data.csv" },
-            .schema => .{ &app.schema, std.fmt.bufPrint(name_buf, "{s}_schema.csv", .{table}) catch "schema.csv" },
-            .sql => .{ &app.result, "query.csv" },
+    // O que a aba atual exporta: tabela (Data), esquema (Schema, via DESCRIBE) ou resultado (SQL)
+    fn canExportCurrent(app: *const App) bool {
+        if (app.opening() or !app.db.isOpen()) return false;
+        return switch (app.tab) {
+            .data, .schema => app.selected != null,
+            .sql => app.result != null,
         };
-        return if (grid.*) |*g| .{ g, name } else null;
     }
 
-    fn exportCsv(app: *App) void {
-        var name_buf: [300]u8 = undefined;
-        const grid, const name = app.currentGrid(&name_buf) orelse return;
+    // Dialogo de salvar (pasta do arquivo aberto; sem arquivo, a ultima usada) e dispara o trabalho
+    fn startExport(app: *App, kind_in: ExportKind) void {
+        if (!app.db.isOpen()) return;
+        var kind = kind_in;
+        const r = &app.slot.req;
+        const loaded = zstr(&app.loaded_path);
+        var name_buf: [512]u8 = undefined;
+        const base: []const u8 = switch (kind) {
+            .db_duckdb, .db_sqlite, .db_xlsx => std.fs.path.stem(loaded),
+            .table_csv, .table_xlsx => switch (app.tab) {
+                .schema => std.fmt.bufPrint(&name_buf, "{s}_schema", .{app.db.table_names[app.selected orelse return]}) catch "schema",
+                else => app.db.table_names[app.selected orelse return],
+            },
+            .result_csv, .result_xlsx => "query",
+        };
+        var file_buf: [600]u8 = undefined;
+        var file = settings.fileName(&file_buf, base, kind.ext());
+        // DB4.duckdb exportado para .duckdb: o nome sugerido nao pode ser o do proprio arquivo aberto
+        if (std.ascii.eqlIgnoreCase(file, std.fs.path.basename(loaded))) {
+            var b2: [520]u8 = undefined;
+            file = settings.fileName(&file_buf, std.fmt.bufPrint(&b2, "{s}_export", .{base}) catch base, kind.ext());
+        }
+        var sugg_buf: [4096]u8 = undefined;
+        var dir = settings.defaultDir(loaded, app.prefs.lastDir());
+        // pasta que nao existe mais (apagada, pendrive removido): o dialogo recusaria abrir
+        if (dir.len > 0) std.Io.Dir.cwd().access(app.io, dir, .{}) catch {
+            dir = "";
+        };
+        const initial = settings.suggest(&sugg_buf, dir, file);
+        const dkind: dialog.Kind = switch (kind) {
+            .db_duckdb => .save_duckdb,
+            .db_sqlite => .save_sqlite,
+            .db_xlsx, .table_xlsx, .result_xlsx => .save_xlsx,
+            .table_csv, .result_csv => .save_csv,
+        };
         var path_buf: dialog.PathBuf = undefined;
-        const path = dialog.pick(.save_csv, app.hwnd, name, &path_buf) orelse return;
-        dbm.csv.writeFile(app.io, path, grid.columns, grid.rows) catch |e| return app.status.set(true, "CSV export failed: {t}", .{e});
-        app.status.set(false, "Exported {d} rows to {s}", .{ grid.rows.len, std.fs.path.basename(path) });
+        const dest = dialog.pick(dkind, app.hwnd, initial, &path_buf) orelse return;
+        if (std.ascii.eqlIgnoreCase(dest, loaded)) return app.status.set(true, "Choose another file: this one is the database that is open", .{});
+        app.rememberDir(dest);
+
+        r.setDest(dest);
+        r.total_hint = 0;
+        if (kind == .table_csv or kind == .table_xlsx) {
+            const index = app.selected orelse return;
+            if (app.tab == .schema) {
+                // o esquema exportado e o mesmo da aba: Column, Type, Null
+                var sql: std.ArrayList(u8) = .initBuffer(&r.sql);
+                sql.appendSliceAssumeCapacity("SELECT column_name AS \"Column\", column_type AS \"Type\", \"null\" AS \"Null\" FROM (DESCRIBE ");
+                var tmp: std.ArrayList(u8) = .empty;
+                defer tmp.deinit(app.gpa);
+                query.writeIdent(&tmp, app.gpa, app.db.table_names[index]) catch return;
+                if (tmp.items.len + 2 > sql.unusedCapacitySlice().len) return app.status.set(true, "Table name too long", .{});
+                sql.appendSliceAssumeCapacity(tmp.items);
+                sql.appendSliceAssumeCapacity(")");
+                r.sql[sql.items.len] = 0;
+                kind = if (kind == .table_csv) .result_csv else .result_xlsx;
+            } else {
+                // a tabela inteira com a busca e a ordenacao aplicadas na tela
+                r.table = index;
+                r.columns = app.col_names;
+                r.search = app.applied_search;
+                r.sort_col = app.sort_col;
+                r.sort_desc = app.sort_desc;
+                r.total_hint = app.total;
+            }
+        } else if (kind == .result_csv or kind == .result_xlsx) {
+            r.sql = app.result_sql;
+            if (app.result) |g| if (!g.truncated) {
+                r.total_hint = g.rows.len;
+            };
+        } else if (kind == .db_xlsx) {
+            for (app.counts) |n| r.total_hint += n;
+        }
+        r.export_kind = kind;
+        app.start(.export_);
     }
 
     fn draw(app: *App) void {
@@ -439,13 +581,25 @@ const App = struct {
         defer ig.igEnd();
         app.drawAbout();
 
-        // Barra superior: caminho + Browse + Open + status (tambem aceita arrastar o arquivo para a janela)
-        ig.igSetNextItemWidth(ig.igGetContentRegionAvail().x * 0.45);
-        const enter = ig.igInputTextWithHint("##path", "path to .duckdb / .db (or drop the file here)", &app.path, app.path.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null);
+        // Barra superior: caminho + Browse + Open + Export + status (tambem aceita arrastar o arquivo para a janela)
+        ig.igSetNextItemWidth(ig.igGetContentRegionAvail().x * 0.40);
+        const enter = ig.igInputTextWithHint("##path", "path to .duckdb / .sqlite / .accdb / .mdb (or drop the file here)", &app.path, app.path.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null);
         ig.igSameLine(0, -1);
         if (button("Browse...")) app.want_browse = true;
         ig.igSameLine(0, -1);
         if (button("Open") or enter) app.want_open = true;
+        ig.igSameLine(0, -1);
+        ig.igBeginDisabled(app.opening() or !app.db.isOpen());
+        if (button("Export...") or app.takeStartMenu(.Export)) _ = ig.igOpenPopup_Str("export_menu", 0);
+        // o menu abre logo abaixo do botao (e nao onde o mouse estiver)
+        const below_x = ig.igGetItemRectMin().x;
+        const below_y = ig.igGetItemRectMax().y;
+        ig.igEndDisabled();
+        ig.igSetNextWindowPos(.{ .x = below_x, .y = below_y }, ig.ImGuiCond_Appearing, .{ .x = 0, .y = 0 });
+        if (ig.igBeginPopup("export_menu", 0)) {
+            defer ig.igEndPopup();
+            app.exportItems();
+        }
         ig.igSameLine(0, -1);
         app.drawStatus();
         ig.igSeparator();
@@ -459,29 +613,72 @@ const App = struct {
         ig.igEndChild();
     }
 
+    // Itens de exportacao (menu Arquivo > Exportar e botao Export...)
+    fn exportItems(app: *App) void {
+        const can_db = !app.opening() and app.db.isOpen();
+        if (ig.igMenuItem_Bool("Database to DuckDB (.duckdb)...", null, false, can_db)) app.want_export = .db_duckdb;
+        if (ig.igMenuItem_Bool("Database to SQLite (.sqlite)...", null, false, can_db)) app.want_export = .db_sqlite;
+        if (ig.igMenuItem_Bool("Database to Excel (.xlsx, one sheet per table)...", null, false, can_db)) app.want_export = .db_xlsx;
+        ig.igSeparator();
+        const cur = app.canExportCurrent();
+        const what: [:0]const u8 = switch (app.tab) {
+            .data => "Current table",
+            .schema => "Current table schema",
+            .sql => "Current SQL result",
+        };
+        var b1: [96]u8 = undefined;
+        var b2: [96]u8 = undefined;
+        const l1 = std.fmt.bufPrintSentinel(&b1, "{s} to CSV...", .{what}, 0) catch "CSV...";
+        const l2 = std.fmt.bufPrintSentinel(&b2, "{s} to Excel (.xlsx)...", .{what}, 0) catch "Excel...";
+        if (ig.igMenuItem_Bool(l1, null, false, cur)) app.want_export = if (app.tab == .sql) .result_csv else .table_csv;
+        if (ig.igMenuItem_Bool(l2, null, false, cur)) app.want_export = if (app.tab == .sql) .result_xlsx else .table_xlsx;
+        ig.igSeparator();
+        ig.igTextDisabled("Export to .mdb/.accdb: not available");
+    }
+
     fn drawMenu(app: *App) void {
         if (!ig.igBeginMainMenuBar()) return;
         defer ig.igEndMainMenuBar();
+        // --menu: abre o menu (e o submenu Exportar / Tema) no mesmo quadro, para as capturas de tela
+        const open_file = app.takeStartMenu(.File);
+        const open_settings = app.takeStartMenu(.Settings);
+        if (open_file) _ = ig.igOpenPopup_Str("File", 0);
+        if (open_settings) _ = ig.igOpenPopup_Str("Settings", 0);
+        if (app.takeStartMenu(.Help)) _ = ig.igOpenPopup_Str("Help", 0);
         if (ig.igBeginMenu("File", true)) {
             defer ig.igEndMenu();
-            if (ig.igMenuItem_Bool("Open...", null, false, true)) app.want_browse = true;
-            var name_buf: [300]u8 = undefined;
-            if (ig.igMenuItem_Bool("Export CSV...", null, false, app.currentGrid(&name_buf) != null)) app.want_export = true;
+            if (ig.igMenuItem_Bool("Open...", "Ctrl+O", false, true)) app.want_browse = true;
+            if (open_file) _ = ig.igOpenPopup_Str("Export", 0);
+            if (ig.igBeginMenu("Export", !app.opening() and app.db.isOpen())) {
+                defer ig.igEndMenu();
+                app.exportItems();
+            }
             ig.igSeparator();
             if (ig.igMenuItem_Bool("Exit", null, false, true)) app.want_exit = true;
         }
-        if (ig.igBeginMenu("View", true)) {
+        if (ig.igBeginMenu("Settings", true)) {
             defer ig.igEndMenu();
+            if (open_settings) _ = ig.igOpenPopup_Str("Theme", 0);
             if (ig.igBeginMenu("Theme", true)) {
                 defer ig.igEndMenu();
-                if (ig.igMenuItem_Bool("Dark", null, !light_theme, true)) app.want_theme = false;
-                if (ig.igMenuItem_Bool("Light", null, light_theme, true)) app.want_theme = true;
+                const cur = app.prefs.theme;
+                if (ig.igMenuItem_Bool("System", null, cur == .system, true)) app.want_theme = .system;
+                if (ig.igMenuItem_Bool("Light", null, cur == .light, true)) app.want_theme = .light;
+                if (ig.igMenuItem_Bool("Dark", null, cur == .dark, true)) app.want_theme = .dark;
             }
         }
         if (ig.igBeginMenu("Help", true)) {
             defer ig.igEndMenu();
             if (ig.igMenuItem_Bool("About MDB2SQL", null, false, true)) app.want_about = true;
         }
+        if (ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_O)) app.want_browse = true;
+    }
+
+    // O menu de --menu, uma vez, so depois que o banco abriu e nada esta rodando
+    fn takeStartMenu(app: *App, which: @typeInfo(@FieldType(App, "start_menu")).optional.child) bool {
+        if (app.start_menu != which or app.slot.busy() or app.want_open or app.want_reload or app.want_run) return false;
+        app.start_menu = null;
+        return true;
     }
 
     fn drawAbout(app: *App) void {
@@ -505,21 +702,30 @@ const App = struct {
         if (button("Close")) ig.igCloseCurrentPopup();
     }
 
-    // Status, ou o trabalho em andamento quando ele ja demora o bastante para ser notado
+    // Status, ou o trabalho em andamento (com progresso e Cancelar) quando ele ja demora o bastante para ser notado
     fn drawStatus(app: *App) void {
         const elapsed = ig.igGetTime() - app.busy_since;
         if (app.slot.busy() and elapsed > 0.15) {
-            const kind = app.slot.req.kind;
+            const r = &app.slot.req;
+            const done = app.slot.progress.done.load(.monotonic);
+            const total = app.slot.progress.total.load(.monotonic);
             ig.igAlignTextToFramePadding();
-            text("{s} {d:.1} s", .{ switch (kind) {
-                .open => "Opening database...",
+            text("{s} {d:.1} s", .{ switch (r.kind) {
+                .open => if (query.sourceKind(zstr(&r.path)) catch .duckdb == .access) "Converting the Access database..." else "Opening database...",
                 .select, .reload => "Loading table...",
                 .sql => "Running query...",
+                .export_ => "Exporting...",
             }, elapsed });
-            if (kind != .open) {
+            if (total > 0 and (r.kind == .open or r.kind == .export_)) {
                 ig.igSameLine(0, -1);
-                if (button("Cancel")) app.slot.cancel();
+                var buf: [64]u8 = undefined;
+                const unit = if (r.kind == .open or r.export_kind.countsTables()) "tables" else "rows";
+                const overlay = std.fmt.bufPrintSentinel(&buf, "{d} / {d} {s}", .{ done, total, unit }, 0) catch "";
+                const frac: f32 = @floatCast(@as(f64, @floatFromInt(@min(done, total))) / @as(f64, @floatFromInt(total)));
+                ig.igProgressBar(frac, .{ .x = 240, .y = 0 }, overlay);
             }
+            ig.igSameLine(0, -1);
+            if (button("Cancel")) app.slot.cancel();
         } else if (app.status.len == 0) ig.igTextDisabled("No database loaded") else app.status.draw();
     }
 
@@ -591,7 +797,7 @@ const App = struct {
         ig.igSameLine(0, -1);
         ig.igBeginDisabled(app.page == 0);
         if (button("< Prev")) {
-            app.page -= 1;
+            app.page -|= 1;
             app.want_reload = true;
         }
         ig.igEndDisabled();
@@ -603,14 +809,16 @@ const App = struct {
         }
         ig.igEndDisabled();
         ig.igSameLine(0, -1);
-        if (button("Export CSV...")) app.want_export = true;
+        if (button("Export CSV...")) app.want_export = .table_csv;
+        ig.igSameLine(0, -1);
+        if (button("Export Excel...")) app.want_export = .table_xlsx;
         ig.igSameLine(0, -1);
         const first = app.page * page_size;
         const shown = if (app.data) |g| g.rows.len else 0;
         text("{s}: page {d} of {d} | rows {d}-{d} of {d}{s}", .{
             app.db.table_names[index],                     app.page + 1,  pages,
             if (shown == 0) 0 else first + 1,              first + shown, app.total,
-            if (app.search[0] != 0) " (filtered)" else "",
+            if (app.applied_search[0] != 0) " (filtered)" else "",
         });
 
         if (app.data) |*g| if (drawGrid("data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null)) |s| {
@@ -629,10 +837,12 @@ const App = struct {
         ig.igEndDisabled();
         ig.igSameLine(0, -1);
         ig.igBeginDisabled(app.result == null);
-        if (button("Export CSV...")) app.want_export = true;
+        if (button("Export CSV...")) app.want_export = .result_csv;
+        ig.igSameLine(0, -1);
+        if (button("Export Excel...")) app.want_export = .result_xlsx;
         ig.igEndDisabled();
         ig.igSameLine(0, -1);
-        if (running) ig.igTextDisabled("Running...") else if (app.sql_msg.len == 0) ig.igTextDisabled("read-only connection") else app.sql_msg.draw();
+        if (running) ig.igTextDisabled("Running...") else if (app.sql_msg.len == 0) ig.igTextDisabled("the open file is read-only") else app.sql_msg.draw();
         const g = if (app.result) |*x| x else return;
         ig.igSetNextItemWidth(260);
         if (ig.igInputTextWithHint("##rfilter", "search the rows shown, all columns", &app.result_filter, app.result_filter.len + 1, 0, null, null)) app.refilter();
@@ -748,28 +958,61 @@ fn onDrop(_: *glfw.Window, count: i32, paths: [*][*:0]const u8) callconv(.c) voi
 }
 
 const usage =
-    \\usage: mdb2sql-zig [database.duckdb|.db] [--table NAME] [--sql "SELECT ..."]
-    \\                   [--search TEXT] [--cell ROW,COL] [--theme dark|light] [--about]
-    \\  no database argument: uses the MDB2SQL_DB_PATH environment variable, if set
+    \\usage: mdb2sql-zig [file.duckdb|.db|.sqlite|.sqlite3|.mdb|.accdb] [--table NAME] [--sql "SELECT ..."]
+    \\                   [--search TEXT] [--cell ROW,COL] [--theme system|dark|light] [--about] [--menu NAME] [--export KIND]
+    \\  no file argument: uses the MDB2SQL_DB_PATH environment variable, if set
+    \\  MDB2SQL_ACCESS_READER=odbc|mdbtools forces the reader of .mdb/.accdb files
     \\  the flags set the start state: selected table, SQL to run, search text of
-    \\  the Data tab, grid cell selected with its copy menu open, colors, About open
+    \\  the Data tab, grid cell selected with its copy menu open, colors (this run only),
+    \\  About open, a menu open (File, Settings, Help, Export)
+    \\  --export db_duckdb|db_sqlite|db_xlsx|table_csv|table_xlsx|result_csv|result_xlsx
+    \\  opens the save dialog of that export when the file is loaded
     \\
 ;
 
-// O exe de release e do subsistema GUI (sem console): ai o uso aparece numa caixa de mensagem
 fn showUsage() void {
     std.debug.print("{s}", .{usage});
-    if (!build_options.console) _ = MessageBoxA(null, usage, "mdb2sql-zig", 0x40); // MB_ICONINFORMATION
+    if (!build_options.console) messageBox(usage, 0x40); // MB_ICONINFORMATION
 }
 
-pub fn main(init: std.process.Init) !void {
+pub fn main(init: std.process.Init) void {
+    run(init) catch |e| {
+        // sem console no release: o motivo aparece numa caixa, nao some calado
+        var buf: [512]u8 = undefined;
+        const hint = if (e == error.APIUnavailable or e == error.VersionUnavailable or e == error.PlatformError)
+            "\nThe graphics driver must support OpenGL 3.3 (on a remote desktop or a VM without 3D, use the computer itself)."
+        else
+            "";
+        messageBox(std.fmt.bufPrint(&buf, "MDB2SQL could not start: {t}{s}", .{ e, hint }) catch "MDB2SQL could not start", 0x10);
+        std.process.exit(1);
+    };
+}
+
+fn run(init: std.process.Init) !void {
     var app: App = .{ .gpa = init.gpa, .io = init.io, .db = .init(init.gpa), .slot = undefined };
-    app.slot = .{ .db = &app.db, .gpa = init.gpa };
+    const arena = init.arena.allocator();
+
+    // Arquivos que vem junto do programa (pasta do exe): extensao sqlite e mdbtools\
+    const exe_dir = std.process.executableDirPathAlloc(init.io, arena) catch "";
+    const sqlite_ext = try std.fs.path.join(arena, &.{ exe_dir, "sqlite_scanner.duckdb_extension" });
+    if (std.Io.Dir.cwd().access(init.io, sqlite_ext, .{})) |_| app.db.sqlite_ext = sqlite_ext else |_| {}
+    app.slot = .{ .db = &app.db, .gpa = init.gpa, .env = .{ .io = init.io, .access = .{
+        .forced = init.environ_map.get("MDB2SQL_ACCESS_READER") orelse "",
+        .tools_dir = try std.fs.path.join(arena, &.{ exe_dir, "mdbtools" }),
+        .temp_dir = init.environ_map.get("TEMP") orelse init.environ_map.get("TMP") orelse ".",
+    } } };
     defer app.deinit();
+    // a instancia DuckDB do programa nasce aqui, na thread da UI (ver db.zig)
+    try app.db.start();
+
+    if (init.environ_map.get("APPDATA")) |appdata| {
+        app.prefs_path = try std.fs.path.join(arena, &.{ appdata, "mdb2sql", "zig-imgui.ini" });
+        app.prefs = settings.Settings.load(init.io, app.prefs_path);
+    }
 
     // Argumentos: caminho do banco e estado inicial opcional
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
-    var light = false;
+    const args = try init.minimal.args.toSlice(arena);
+    var theme = app.prefs.theme;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -794,8 +1037,12 @@ pub fn main(init: std.process.Init) !void {
                 const col = std.fmt.parseInt(usize, value[comma + 1 ..], 10) catch return showUsage();
                 if (row == 0 or col == 0) return showUsage();
                 app.start_cell = .{ row - 1, col - 1 };
-            } else if (std.mem.eql(u8, arg, "--theme") and (std.mem.eql(u8, value, "light") or std.mem.eql(u8, value, "dark"))) {
-                light = value[0] == 'l';
+            } else if (std.mem.eql(u8, arg, "--theme")) {
+                theme = std.meta.stringToEnum(settings.Theme, value) orelse return showUsage();
+            } else if (std.mem.eql(u8, arg, "--export")) {
+                app.start_export = std.meta.stringToEnum(ExportKind, value) orelse return showUsage();
+            } else if (std.mem.eql(u8, arg, "--menu")) {
+                app.start_menu = std.meta.stringToEnum(@typeInfo(@FieldType(App, "start_menu")).optional.child, value) orelse return showUsage();
             } else return showUsage();
         }
     }
@@ -808,7 +1055,7 @@ pub fn main(init: std.process.Init) !void {
     glfw.windowHint(.context_version_major, 3);
     glfw.windowHint(.context_version_minor, 3);
     glfw.windowHint(.opengl_profile, .opengl_core_profile);
-    const window = try glfw.Window.create(1280, 800, "MDB2SQL - Database Viewer (Zig + Dear ImGui)", null, null);
+    const window = try glfw.Window.create(1280, 800, "MDB2SQL (Zig + Dear ImGui)", null, null);
     defer window.destroy();
     glfw.makeContextCurrent(window);
     glfw.swapInterval(1);
@@ -820,16 +1067,16 @@ pub fn main(init: std.process.Init) !void {
     shim_io_setup();
     const scale = window.getContentScale()[0];
     setupSizes(scale);
-    applyTheme(light, app.hwnd);
+    applyTheme(settings.isLight(theme), app.hwnd);
     // Segoe UI quando existe (acentos legiveis); senao fica a fonte embutida do ImGui
     const font = "C:\\Windows\\Fonts\\segoeui.ttf";
     if (std.Io.Dir.cwd().access(init.io, font, .{})) |_| {
         shim_add_font(font, 17 * scale);
     } else |_| ig.igGetStyle().*.FontScaleDpi = scale;
 
-    _ = ImGui_ImplGlfw_InitForOpenGL(window, true);
+    if (!ImGui_ImplGlfw_InitForOpenGL(window, true)) return error.PlatformError;
     defer ImGui_ImplGlfw_Shutdown();
-    _ = ImGui_ImplOpenGL3_Init("#version 330");
+    if (!ImGui_ImplOpenGL3_Init("#version 330")) return error.APIUnavailable;
     defer ImGui_ImplOpenGL3_Shutdown();
 
     while (!window.shouldClose() and !app.want_exit) {

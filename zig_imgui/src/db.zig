@@ -1,5 +1,9 @@
 // Gerenciador de conexao DuckDB (C API) - abre banco, lista tabelas, pagina, conta, schema
 // !T: DuckDB connection manager over libduckdb's C API; mirrors python_pyqt6/src/backend/db_manager.py
+//
+// Uma instancia DuckDB em memoria vive o programa inteiro (a conexao nunca e trocada, entao
+// duckdb_interrupt pode ser chamado de outra thread a qualquer momento). O arquivo aberto entra
+// como o banco "src" (ATTACH ... READ_ONLY; o Access vira um banco em memoria com esse nome).
 
 const std = @import("std");
 const c = @import("duckdb_c");
@@ -8,16 +12,37 @@ pub const worker = @import("worker.zig");
 pub const csv = @import("csv.zig");
 pub const about = @import("about.zig");
 pub const gridtools = @import("gridtools.zig");
+pub const xlsx = @import("xlsx.zig");
+pub const exporter = @import("exporter.zig");
+pub const access = @import("access.zig");
+pub const settings = @import("settings.zig");
 const Allocator = std.mem.Allocator;
 
-pub const Error = error{DuckDb} || query.BuildError || query.PathError;
+pub const Error = error{ DuckDb, Canceled } || query.BuildError || query.PathError;
+
+// Por onde o arquivo aberto foi lido (mostrado na barra de status)
+pub const Source = enum {
+    duckdb,
+    sqlite,
+    access_odbc,
+    access_mdbtools,
+
+    pub fn label(s: Source) []const u8 {
+        return switch (s) {
+            .duckdb => "DuckDB",
+            .sqlite => "SQLite",
+            .access_odbc => "Access ODBC",
+            .access_mdbtools => "mdbtools",
+        };
+    }
+};
 
 // Resultado materializado como texto; null = NULL do banco
 pub const Grid = struct {
     arena: std.heap.ArenaAllocator,
     columns: []const [:0]const u8 = &.{},
     rows: []const []?[]const u8 = &.{},
-    total_rows: usize = 0, // linhas do resultado; rows.len <= max_rows
+    truncated: bool = false, // o resultado tinha mais que max_rows linhas (as outras nao foram lidas)
 
     pub fn deinit(self: *Grid) void {
         self.arena.deinit();
@@ -32,12 +57,119 @@ pub fn libraryVersion() []const u8 {
 // Teto de linhas materializadas por consulta (o SQL livre pode devolver milhoes)
 pub const max_rows = 10_000;
 
+pub const QueryOpts = struct {
+    wrap: bool = true, // SELECT CAST(COLUMNS(*) AS VARCHAR) FROM (...): todo tipo chega como texto
+    types: bool = false, // le tambem os tipos originais das colunas (Rows.types)
+};
+
+// Resultado em fluxo (streaming): um bloco de linhas por vez, memoria limitada mesmo com milhoes de linhas.
+// Enquanto existe, nenhuma outra consulta pode rodar na conexao.
+pub const Rows = struct {
+    db: *Db,
+    stmt: c.duckdb_prepared_statement,
+    pending: c.duckdb_pending_result,
+    res: c.duckdb_result,
+    n_cols: usize,
+    types: []const c.duckdb_type = &.{}, // so com QueryOpts.types (tipos antes do CAST para texto)
+    chunk: c.duckdb_data_chunk = null,
+    size: usize = 0, // linhas do bloco atual
+
+    // Ordem importa: o resultado depende do pending, que depende do statement
+    pub fn deinit(r: *Rows) void {
+        if (r.chunk != null) c.duckdb_destroy_data_chunk(&r.chunk);
+        c.duckdb_destroy_result(&r.res);
+        c.duckdb_destroy_pending(&r.pending);
+        c.duckdb_destroy_prepare(&r.stmt);
+        r.db.gpa.free(r.types);
+    }
+
+    pub fn name(r: *Rows, col: usize) []const u8 {
+        return std.mem.span(c.duckdb_column_name(&r.res, col));
+    }
+
+    // Proximo bloco; false no fim. Erro durante a execucao (ex.: interrupcao) vira error.DuckDb.
+    pub fn next(r: *Rows) Error!bool {
+        if (r.chunk != null) c.duckdb_destroy_data_chunk(&r.chunk);
+        r.chunk = c.duckdb_fetch_chunk(r.res);
+        r.size = if (r.chunk != null) @intCast(c.duckdb_data_chunk_get_size(r.chunk)) else 0;
+        if (r.chunk != null) return true;
+        if (c.duckdb_result_error(&r.res)) |msg| {
+            r.db.setError(msg);
+            return error.DuckDb;
+        }
+        return false;
+    }
+
+    // Texto da celula (linha `row` do bloco atual). Aponta para a memoria do bloco ou para `buf`:
+    // vale ate o proximo next().
+    pub fn cell(r: *Rows, col: usize, row: usize, buf: *[64]u8) ?[]const u8 {
+        const vec = c.duckdb_data_chunk_get_vector(r.chunk, col);
+        const validity = c.duckdb_vector_get_validity(vec); // null = nenhum NULL no bloco
+        if (validity != null and !c.duckdb_validity_row_is_valid(validity, row)) return null;
+        const data = c.duckdb_vector_get_data(vec);
+        const ty = c.duckdb_column_type(&r.res, col);
+        return cellText(ty, data, row, buf);
+    }
+};
+
+// Texto de uma celula. SELECTs chegam sempre como VARCHAR (ver Db.query); os outros tipos so
+// aparecem em comandos que nao sao SELECT (PRAGMA, CREATE...).
+fn cellText(ty: c.duckdb_type, data: ?*anyopaque, r: usize, buf: *[64]u8) []const u8 {
+    return switch (ty) {
+        c.DUCKDB_TYPE_VARCHAR => {
+            const s = &at(c.duckdb_string_t, data)[r];
+            return c.duckdb_string_t_data(s)[0..c.duckdb_string_t_length(s.*)];
+        },
+        c.DUCKDB_TYPE_BOOLEAN => if (at(bool, data)[r]) "true" else "false",
+        c.DUCKDB_TYPE_TINYINT => fmtNum(buf, at(i8, data)[r]),
+        c.DUCKDB_TYPE_SMALLINT => fmtNum(buf, at(i16, data)[r]),
+        c.DUCKDB_TYPE_INTEGER => fmtNum(buf, at(i32, data)[r]),
+        c.DUCKDB_TYPE_BIGINT => fmtNum(buf, at(i64, data)[r]),
+        c.DUCKDB_TYPE_UTINYINT => fmtNum(buf, at(u8, data)[r]),
+        c.DUCKDB_TYPE_USMALLINT => fmtNum(buf, at(u16, data)[r]),
+        c.DUCKDB_TYPE_UINTEGER => fmtNum(buf, at(u32, data)[r]),
+        c.DUCKDB_TYPE_UBIGINT => fmtNum(buf, at(u64, data)[r]),
+        c.DUCKDB_TYPE_FLOAT => fmtNum(buf, at(f32, data)[r]),
+        c.DUCKDB_TYPE_DOUBLE => fmtNum(buf, at(f64, data)[r]),
+        // shortcut: other types of non-SELECT statements (and of a SELECT with text after its
+        // final ";", which cannot be wrapped) are not decoded; wrap the statement
+        // in a SELECT (e.g. FROM pragma_xxx()) to see the values
+        else => "(not text)",
+    };
+}
+
+fn fmtNum(buf: *[64]u8, v: anytype) []const u8 {
+    return std.fmt.bufPrint(buf, "{d}", .{v}) catch "?";
+}
+
+fn at(comptime T: type, data: ?*anyopaque) [*]T {
+    return @ptrCast(@alignCast(data.?));
+}
+
+// Tipos que viram numero numa planilha
+pub fn isNumericType(ty: c.duckdb_type) bool {
+    return switch (ty) {
+        c.DUCKDB_TYPE_TINYINT, c.DUCKDB_TYPE_SMALLINT, c.DUCKDB_TYPE_INTEGER, c.DUCKDB_TYPE_BIGINT,
+        c.DUCKDB_TYPE_UTINYINT, c.DUCKDB_TYPE_USMALLINT, c.DUCKDB_TYPE_UINTEGER, c.DUCKDB_TYPE_UBIGINT,
+        c.DUCKDB_TYPE_FLOAT, c.DUCKDB_TYPE_DOUBLE, c.DUCKDB_TYPE_DECIMAL, c.DUCKDB_TYPE_HUGEINT,
+        c.DUCKDB_TYPE_UHUGEINT => true,
+        else => false,
+    };
+}
+
+pub fn isBoolType(ty: c.duckdb_type) bool {
+    return ty == c.DUCKDB_TYPE_BOOLEAN;
+}
+
 pub const Db = struct {
     gpa: Allocator,
     db: c.duckdb_database = null,
     conn: c.duckdb_connection = null,
     tables: Grid, // 1 coluna: nomes (cache, como o tableSet do Go)
     table_names: []const []const u8 = &.{},
+    source: ?Source = null, // arquivo aberto como "src"; null = nenhum
+    sqlite_ext: []const u8 = "", // caminho do sqlite_scanner.duckdb_extension (pasta do programa)
+    sqlite_loaded: bool = false,
     err_buf: [1024]u8 = undefined,
     err_len: usize = 0,
 
@@ -46,7 +178,7 @@ pub const Db = struct {
     }
 
     pub fn isOpen(self: *const Db) bool {
-        return self.conn != null;
+        return self.source != null;
     }
 
     // Mensagem do ultimo erro.DuckDb
@@ -54,27 +186,27 @@ pub const Db = struct {
         return self.err_buf[0..self.err_len];
     }
 
-    fn setError(self: *Db, msg: ?[*:0]const u8) void {
+    pub fn setError(self: *Db, msg: ?[*:0]const u8) void {
         const text: []const u8 = if (msg) |m| std.mem.span(m) else "unknown DuckDB error";
+        self.setErrorText(text);
+    }
+
+    pub fn setErrorText(self: *Db, text: []const u8) void {
         self.err_len = @min(text.len, self.err_buf.len);
         @memcpy(self.err_buf[0..self.err_len], text[0..self.err_len]);
     }
 
-    // !T: Viewer path: extension whitelist + read-only, a missing file is a DuckDB error
-    pub fn openReadOnly(self: *Db, path: [:0]const u8) Error!void {
-        try query.validateDbExtension(path);
-        try self.open(path, true);
-        errdefer self.close();
-        try self.refreshTables();
-    }
-
-    // Abre (fechando a conexao anterior, como DBManager.connect)
+    // Abre uma instancia DuckDB (fechando a anterior). O app usa so start(); os testes usam open
+    // para criar bancos de exemplo.
     pub fn open(self: *Db, path: [:0]const u8, read_only: bool) Error!void {
         self.close();
         var config: c.duckdb_config = null;
         if (c.duckdb_create_config(&config) != c.DuckDBSuccess) return error.OutOfMemory;
         defer c.duckdb_destroy_config(&config);
         if (read_only) _ = c.duckdb_set_config(config, "access_mode", "READ_ONLY");
+        // offline: nada de baixar nem carregar extensoes sozinho (a do SQLite e carregada do disco)
+        _ = c.duckdb_set_config(config, "autoinstall_known_extensions", "false");
+        _ = c.duckdb_set_config(config, "autoload_known_extensions", "false");
 
         var msg: [*c]u8 = null;
         if (c.duckdb_open_ext(path, &self.db, config, &msg) != c.DuckDBSuccess) {
@@ -89,12 +221,82 @@ pub const Db = struct {
         }
     }
 
+    // A instancia em memoria do programa (uma vez, na thread da UI, antes de qualquer trabalho)
+    pub fn start(self: *Db) Error!void {
+        if (self.conn == null) try self.open(":memory:", false);
+    }
+
     pub fn close(self: *Db) void {
         if (self.conn != null) c.duckdb_disconnect(&self.conn);
         if (self.db != null) c.duckdb_close(&self.db);
+        self.forgetTables();
+        self.source = null;
+        self.sqlite_loaded = false;
+    }
+
+    fn forgetTables(self: *Db) void {
         _ = self.tables.arena.reset(.free_all);
         self.tables.rows = &.{};
         self.table_names = &.{};
+    }
+
+    // Solta o arquivo aberto (o lock do arquivo sai junto)
+    pub fn closeSource(self: *Db) void {
+        self.forgetTables();
+        self.source = null;
+        if (self.conn == null) return;
+        self.exec("USE memory") catch {};
+        self.exec("DETACH DATABASE IF EXISTS src") catch {};
+    }
+
+    // !T: Viewer path: extension whitelist + read-only ATTACH; a missing file is a DuckDB error.
+    // Access files go through access.zig (converted into a memory database).
+    pub fn openReadOnly(self: *Db, path: []const u8) Error!void {
+        const kind = try query.sourceKind(path);
+        if (kind == .access) return error.UnsupportedExtension;
+        try self.start();
+        self.closeSource();
+        if (kind == .sqlite) try self.loadSqlite();
+        var sql: std.ArrayList(u8) = .empty;
+        defer sql.deinit(self.gpa);
+        try sql.appendSlice(self.gpa, "ATTACH ");
+        try query.writeLiteral(&sql, self.gpa, path);
+        try sql.appendSlice(self.gpa, if (kind == .sqlite) " AS src (TYPE sqlite, READ_ONLY)" else " AS src (READ_ONLY)");
+        try sql.append(self.gpa, 0);
+        try self.exec(sql.items[0 .. sql.items.len - 1 :0]);
+        errdefer self.closeSource();
+        try self.exec("USE src");
+        try self.refreshTables();
+        self.source = if (kind == .sqlite) .sqlite else .duckdb;
+    }
+
+    // Banco "src" vazio em memoria, para o Access convertido; depois finishMemory
+    pub fn beginMemory(self: *Db) Error!void {
+        try self.start();
+        self.closeSource();
+        try self.exec("ATTACH ':memory:' AS src");
+        try self.exec("USE src");
+    }
+
+    pub fn finishMemory(self: *Db, source: Source) Error!void {
+        try self.refreshTables();
+        self.source = source;
+    }
+
+    // Extensao sqlite do DuckDB, lida do arquivo ao lado do programa (sem internet)
+    pub fn loadSqlite(self: *Db) Error!void {
+        if (self.sqlite_loaded) return;
+        if (self.sqlite_ext.len == 0) {
+            self.setErrorText("SQLite support missing: sqlite_scanner.duckdb_extension is not next to the program");
+            return error.DuckDb;
+        }
+        var sql: std.ArrayList(u8) = .empty;
+        defer sql.deinit(self.gpa);
+        try sql.appendSlice(self.gpa, "LOAD ");
+        try query.writeLiteral(&sql, self.gpa, self.sqlite_ext);
+        try sql.append(self.gpa, 0);
+        try self.exec(sql.items[0 .. sql.items.len - 1 :0]);
+        self.sqlite_loaded = true;
     }
 
     // Interrompe a consulta em andamento; pode ser chamada de outra thread
@@ -102,26 +304,28 @@ pub const Db = struct {
         if (self.conn != null) c.duckdb_interrupt(self.conn);
     }
 
-    // Executa SQL com parametros '?' e devolve tudo como texto
-    pub fn run(self: *Db, sql: [:0]const u8, params: []const []const u8) Error!Grid {
+    // Executa SQL com parametros '?' em fluxo (ver Rows)
+    pub fn stream(self: *Db, sql: [:0]const u8, params: []const []const u8, opts: QueryOpts) Error!Rows {
         if (self.conn == null) {
             self.setError("no database connected");
             return error.DuckDb;
         }
-        // !T: DuckDB itself casts every column to VARCHAR (any type, same text as the CLI), so the
-        // reader below only needs VARCHAR vectors. The row API (duckdb_value_varchar) is deprecated
-        // and crashed in libduckdb 2.0.0 on the real NMR5 database.
-        const wrapped = try self.gpa.printSentinel("SELECT CAST(COLUMNS(*) AS VARCHAR) FROM (\n{s}\n)", .{std.mem.trimEnd(u8, sql, " \t\r\n;")}, 0);
-        defer self.gpa.free(wrapped);
         var stmt: c.duckdb_prepared_statement = null;
-        defer c.duckdb_destroy_prepare(&stmt);
-        if (c.duckdb_prepare(self.conn, wrapped, &stmt) != c.DuckDBSuccess) {
+        errdefer c.duckdb_destroy_prepare(&stmt);
+        var wrapped_ok = false;
+        if (opts.wrap) {
+            // !T: DuckDB itself casts every column to VARCHAR (any type, same text as the CLI), so the
+            // reader only needs VARCHAR vectors. The row API (duckdb_value_varchar) is deprecated
+            // and crashed in libduckdb 2.0.0 on the real NMR5 database.
+            const wrapped = try self.gpa.printSentinel("SELECT CAST(COLUMNS(*) AS VARCHAR) FROM (\n{s}\n)", .{std.mem.trimEnd(u8, sql, " \t\r\n;")}, 0);
+            defer self.gpa.free(wrapped);
+            wrapped_ok = c.duckdb_prepare(self.conn, wrapped, &stmt) == c.DuckDBSuccess;
             // Nao e um SELECT (PRAGMA, SET, CREATE...) ou o SQL esta errado: roda como veio
-            c.duckdb_destroy_prepare(&stmt);
-            if (c.duckdb_prepare(self.conn, sql, &stmt) != c.DuckDBSuccess) {
-                self.setError(c.duckdb_prepare_error(stmt));
-                return error.DuckDb;
-            }
+            if (!wrapped_ok) c.duckdb_destroy_prepare(&stmt);
+        }
+        if (!wrapped_ok and c.duckdb_prepare(self.conn, sql, &stmt) != c.DuckDBSuccess) {
+            self.setError(c.duckdb_prepare_error(stmt));
+            return error.DuckDb;
         }
         for (params, 1..) |p, i| {
             if (c.duckdb_bind_varchar_length(stmt, i, p.ptr, p.len) != c.DuckDBSuccess) {
@@ -129,81 +333,75 @@ pub const Db = struct {
                 return error.DuckDb;
             }
         }
-        var res: c.duckdb_result = undefined;
-        defer c.duckdb_destroy_result(&res);
-        if (c.duckdb_execute_prepared(stmt, &res) != c.DuckDBSuccess) {
-            self.setError(c.duckdb_result_error(&res));
+        const types = if (opts.types) try self.columnTypes(sql, stmt, wrapped_ok) else &.{};
+        errdefer self.gpa.free(types);
+
+        var pending: c.duckdb_pending_result = null;
+        errdefer c.duckdb_destroy_pending(&pending);
+        // streaming: so os blocos pedidos sao calculados (duckdb_pending_prepared materializa tudo)
+        if (c.duckdb_pending_prepared_streaming(stmt, &pending) != c.DuckDBSuccess) {
+            self.setError(c.duckdb_pending_error(pending));
             return error.DuckDb;
         }
+        var res: c.duckdb_result = std.mem.zeroes(c.duckdb_result);
+        if (c.duckdb_execute_pending(pending, &res) != c.DuckDBSuccess) {
+            self.setError(c.duckdb_result_error(&res));
+            c.duckdb_destroy_result(&res);
+            return error.DuckDb;
+        }
+        return .{ .db = self, .stmt = stmt, .pending = pending, .res = res, .n_cols = @intCast(c.duckdb_column_count(&res)), .types = types };
+    }
+
+    // Tipos das colunas antes do CAST para texto (prepara o SQL original so para ler os tipos)
+    fn columnTypes(self: *Db, sql: [:0]const u8, stmt: c.duckdb_prepared_statement, wrapped: bool) Error![]c.duckdb_type {
+        var raw: c.duckdb_prepared_statement = null;
+        defer if (wrapped) c.duckdb_destroy_prepare(&raw);
+        if (wrapped and c.duckdb_prepare(self.conn, sql, &raw) != c.DuckDBSuccess) {
+            self.setError(c.duckdb_prepare_error(raw));
+            return error.DuckDb;
+        }
+        const src = if (wrapped) raw else stmt;
+        const n: usize = @intCast(c.duckdb_prepared_statement_column_count(src));
+        const types = try self.gpa.alloc(c.duckdb_type, n);
+        for (types, 0..) |*ty, i| ty.* = c.duckdb_prepared_statement_column_type(src, i);
+        return types;
+    }
+
+    // Executa SQL com parametros '?' e devolve tudo como texto (no maximo max_rows linhas)
+    pub fn run(self: *Db, sql: [:0]const u8, params: []const []const u8) Error!Grid {
+        var rows = try self.stream(sql, params, .{});
+        defer rows.deinit();
 
         var grid: Grid = .{ .arena = .init(self.gpa) };
         errdefer grid.deinit();
         const a = grid.arena.allocator();
-        const n_cols: usize = @intCast(c.duckdb_column_count(&res));
-        const columns = try a.alloc([:0]const u8, n_cols);
-        for (columns, 0..) |*col, i| col.* = try a.dupeSentinel(u8, std.mem.span(c.duckdb_column_name(&res, i)), 0);
+        const columns = try a.alloc([:0]const u8, rows.n_cols);
+        for (columns, 0..) |*col, i| col.* = try a.dupeSentinel(u8, rows.name(i), 0);
 
-        var rows: std.ArrayList([]?[]const u8) = .empty;
-        while (true) {
-            var chunk = c.duckdb_fetch_chunk(res);
-            if (chunk == null) break;
-            defer c.duckdb_destroy_data_chunk(&chunk);
-            const size: usize = @intCast(c.duckdb_data_chunk_get_size(chunk));
-            grid.total_rows += size;
-            // shortcut: past max_rows the chunks are only counted, but DuckDB still computes them;
-            // use a streaming/pending result if huge free-SQL results become a problem
-            const take = @min(size, max_rows - rows.items.len);
-            const base = rows.items.len;
-            for (0..take) |_| try rows.append(a, try a.alloc(?[]const u8, n_cols));
-            for (0..n_cols) |col| {
-                const vec = c.duckdb_data_chunk_get_vector(chunk, col);
-                const validity = c.duckdb_vector_get_validity(vec); // null = nenhum NULL no chunk
-                const data = c.duckdb_vector_get_data(vec);
-                const ty = c.duckdb_column_type(&res, col);
-                for (0..take) |r| {
-                    const is_null = validity != null and !c.duckdb_validity_row_is_valid(validity, r);
-                    rows.items[base + r][col] = if (is_null) null else try cellText(a, ty, data, r);
-                }
+        var list: std.ArrayList([]?[]const u8) = .empty;
+        var buf: [64]u8 = undefined;
+        while (try rows.next()) {
+            const take = @min(rows.size, max_rows - list.items.len);
+            for (0..take) |r| {
+                const row = try a.alloc(?[]const u8, rows.n_cols);
+                for (row, 0..) |*cell, col| cell.* = if (rows.cell(col, r, &buf)) |s| try a.dupe(u8, s) else null;
+                try list.append(a, row);
+            }
+            // Para no teto: o resto nem e calculado (resultado em fluxo)
+            if (list.items.len == max_rows) {
+                grid.truncated = take < rows.size or try rows.next();
+                break;
             }
         }
         grid.columns = columns;
-        grid.rows = rows.items;
+        grid.rows = list.items;
         return grid;
     }
 
-    // Texto de uma celula. SELECTs chegam sempre como VARCHAR (ver run); os outros tipos so
-    // aparecem em comandos que nao sao SELECT (PRAGMA, CREATE...).
-    fn cellText(a: Allocator, ty: c.duckdb_type, data: ?*anyopaque, r: usize) Allocator.Error![]const u8 {
-        return switch (ty) {
-            c.DUCKDB_TYPE_VARCHAR => {
-                const s = &at(c.duckdb_string_t, data)[r];
-                return a.dupe(u8, c.duckdb_string_t_data(s)[0..c.duckdb_string_t_length(s.*)]);
-            },
-            c.DUCKDB_TYPE_BOOLEAN => if (at(bool, data)[r]) "true" else "false",
-            c.DUCKDB_TYPE_TINYINT => a.print("{d}", .{at(i8, data)[r]}),
-            c.DUCKDB_TYPE_SMALLINT => a.print("{d}", .{at(i16, data)[r]}),
-            c.DUCKDB_TYPE_INTEGER => a.print("{d}", .{at(i32, data)[r]}),
-            c.DUCKDB_TYPE_BIGINT => a.print("{d}", .{at(i64, data)[r]}),
-            c.DUCKDB_TYPE_UTINYINT => a.print("{d}", .{at(u8, data)[r]}),
-            c.DUCKDB_TYPE_USMALLINT => a.print("{d}", .{at(u16, data)[r]}),
-            c.DUCKDB_TYPE_UINTEGER => a.print("{d}", .{at(u32, data)[r]}),
-            c.DUCKDB_TYPE_UBIGINT => a.print("{d}", .{at(u64, data)[r]}),
-            c.DUCKDB_TYPE_FLOAT => a.print("{d}", .{at(f32, data)[r]}),
-            c.DUCKDB_TYPE_DOUBLE => a.print("{d}", .{at(f64, data)[r]}),
-            // shortcut: other types of non-SELECT statements (and of a SELECT with text after its
-            // final ";", which cannot be wrapped) are not decoded; wrap the statement
-            // in a SELECT (e.g. FROM pragma_xxx()) to see the values
-            else => "(not text)",
-        };
-    }
-
-    fn at(comptime T: type, data: ?*anyopaque) [*]T {
-        return @ptrCast(@alignCast(data.?));
-    }
-
     pub fn exec(self: *Db, sql: [:0]const u8) Error!void {
-        var g = try self.run(sql, &.{});
-        g.deinit();
+        var rows = try self.stream(sql, &.{}, .{ .wrap = false });
+        defer rows.deinit();
+        while (try rows.next()) {}
     }
 
     // !T: SHOW TABLES, cached; the cache is the whitelist for every table name used in SQL
@@ -242,6 +440,31 @@ pub const Db = struct {
         defer g.deinit();
         return std.fmt.parseInt(u64, g.rows[0][0] orelse "0", 10) catch 0;
     }
+
+    // Linhas de varias tabelas numa consulta so (UNION ALL): bem mais rapido que uma por tabela,
+    // principalmente no SQLite. Se falhar, conta uma por uma (tabela com erro fica 0).
+    pub fn countMany(self: *Db, names: []const []const u8, out: []u64) Error!void {
+        var sql: std.ArrayList(u8) = .empty;
+        defer sql.deinit(self.gpa);
+        for (names, 0..) |name, i| {
+            if (!query.contains(self.table_names, name)) return error.TableNotFound;
+            if (i > 0) try sql.appendSlice(self.gpa, " UNION ALL ");
+            try sql.print(self.gpa, "SELECT {d}, COUNT(*) FROM ", .{i});
+            try query.writeIdent(&sql, self.gpa, name);
+        }
+        try sql.append(self.gpa, 0);
+        @memset(out, 0);
+        var g = self.run(sql.items[0 .. sql.items.len - 1 :0], &.{}) catch |e| {
+            if (e == error.DuckDb and std.mem.indexOf(u8, self.lastError(), "nterrupt") != null) return e;
+            for (names, out) |name, *n| n.* = self.count(.{ .table = name, .tables = self.table_names, .columns = &.{} }) catch 0;
+            return;
+        };
+        defer g.deinit();
+        for (g.rows) |row| {
+            const i = std.fmt.parseInt(usize, row[0] orelse continue, 10) catch continue;
+            if (i < out.len) out[i] = std.fmt.parseInt(u64, row[1] orelse "0", 10) catch 0;
+        }
+    }
 };
 
 // -------------------------------------------------------------------- tests
@@ -255,6 +478,10 @@ test {
     _ = csv;
     _ = about;
     _ = gridtools;
+    _ = xlsx;
+    _ = exporter;
+    _ = access;
+    _ = settings;
 }
 
 // Cria um banco de teste gravavel e fecha
@@ -272,13 +499,23 @@ pub fn tmpPath(buf: []u8, tmp: *const std.testing.TmpDir, name: []const u8) [:0]
     return std.mem.printSentinel(buf, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, name }, 0) catch unreachable;
 }
 
+// Db de teste com a extensao sqlite: o teste roda numa pasta com a duckdb.dll e a extensao (build.zig)
+pub fn testDb() Db {
+    var db = Db.init(t.allocator);
+    db.sqlite_ext = "sqlite_scanner.duckdb_extension";
+    return db;
+}
+
 test "rejects bad extension and missing file" {
     var db = Db.init(t.allocator);
     defer db.close();
-    try t.expectError(error.UnsupportedExtension, db.openReadOnly("invalid.sqlite"));
+    try t.expectError(error.UnsupportedExtension, db.openReadOnly("invalid.txt"));
     try t.expectError(error.DuckDb, db.openReadOnly("definitely/not_exists.duckdb"));
     try t.expect(db.lastError().len > 0);
     try t.expect(!db.isOpen());
+    // sem a extensao ao lado do programa: mensagem clara, sem tentar baixar
+    try t.expectError(error.DuckDb, db.openReadOnly("x.sqlite"));
+    try t.expect(std.mem.indexOf(u8, db.lastError(), "sqlite_scanner") != null);
 }
 
 test "list tables, schema, paging, search, filter, sort, read-only" {
@@ -291,6 +528,7 @@ test "list tables, schema, paging, search, filter, sort, read-only" {
     var db = Db.init(t.allocator);
     defer db.close();
     try db.openReadOnly(path);
+    try t.expectEqual(.duckdb, db.source.?);
     try t.expectEqual(3, db.table_names.len);
     try t.expect(query.contains(db.table_names, "people"));
 
@@ -304,6 +542,11 @@ test "list tables, schema, paging, search, filter, sort, read-only" {
     try t.expectEqualStrings("INTEGER", sch.rows[0][1].?);
     try t.expectEqualStrings("NO", sch.rows[0][2].?);
     try t.expectEqualStrings("YES", sch.rows[1][2].?);
+    // a mesma consulta que main.zig usa para exportar o esquema (aba Schema -> CSV/xlsx)
+    var sch_export = try db.run("SELECT column_name AS \"Column\", column_type AS \"Type\", \"null\" AS \"Null\" FROM (DESCRIBE \"strict\")", &.{});
+    defer sch_export.deinit();
+    try t.expectEqualStrings("Column", sch_export.columns[0]);
+    try t.expectEqualStrings("NO", sch_export.rows[0][2].?);
 
     // paginacao: 250 linhas, pagina 3 de 100 tem 50
     const big_cols = [_][]const u8{"n"};
@@ -338,14 +581,21 @@ test "list tables, schema, paging, search, filter, sort, read-only" {
     try t.expect(nulls.rows[0][2] == null);
 }
 
-test "free SQL result is capped at max_rows" {
+test "free SQL result is capped at max_rows and streamed" {
     var db = Db.init(t.allocator);
     defer db.close();
-    try db.open(":memory:", false);
+    try db.start();
     var g = try db.run("SELECT * FROM range(10050)", &.{});
     defer g.deinit();
     try t.expectEqual(max_rows, g.rows.len);
-    try t.expectEqual(10050, g.total_rows);
+    try t.expect(g.truncated);
+    var exact = try db.run("SELECT * FROM range(10000)", &.{});
+    defer exact.deinit();
+    try t.expect(!exact.truncated and exact.rows.len == max_rows);
+    // um resultado enorme nao e materializado: so os primeiros blocos sao calculados
+    var huge = try db.run("SELECT a.range * 1000000 + b.range AS n FROM range(1000000) a, range(1000000) b", &.{});
+    defer huge.deinit();
+    try t.expect(huge.truncated and huge.rows.len == max_rows);
 
     // qualquer tipo chega como texto; ponto e virgula no fim nao quebra
     var v = try db.run("SELECT DATE '2026-07-14' AS d, 1.50::DECIMAL(5,2) AS m, TIMESTAMP '2026-07-14 10:00:00' AS ts, NULL AS n, [1, 2] AS l ;\n", &.{});
@@ -358,9 +608,18 @@ test "free SQL result is capped at max_rows" {
     try t.expectEqualStrings("[1, 2]", v.rows[0][4].?);
     try t.expectError(error.DuckDb, db.exec("SELEC nonsense"));
     try t.expect(std.mem.indexOf(u8, db.lastError(), "syntax error") != null);
+
+    // tipos originais, para a planilha saber o que e numero
+    var typed = try db.stream("SELECT 1::INTEGER AS i, 'x' AS s, 2.5::DECIMAL(4,1) AS d, true AS b", &.{}, .{ .types = true });
+    defer typed.deinit();
+    try t.expect(isNumericType(typed.types[0]) and !isNumericType(typed.types[1]) and isNumericType(typed.types[2]));
+    try t.expect(isBoolType(typed.types[3]));
+
+    // um parametro a mais falha no bind sem derrubar o programa
+    try t.expectError(error.DuckDb, db.run("SELECT 1", &.{"extra"}));
 }
 
-test "reopen closes the previous connection" {
+test "reopen closes the previous file" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var b1: [256]u8 = undefined;
@@ -378,4 +637,28 @@ test "reopen closes the previous connection" {
     var other = Db.init(t.allocator);
     defer other.close();
     try other.open(first, false);
+}
+
+test "sqlite file through the embedded DuckDB sqlite extension" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [256]u8 = undefined;
+    const path = tmpPath(&buf, &tmp, "sample.sqlite");
+    var db = testDb();
+    defer db.close();
+    try db.start();
+    try db.loadSqlite();
+    var sql_buf: [400]u8 = undefined;
+    try db.exec(try std.fmt.bufPrintSentinel(&sql_buf, "ATTACH '{s}' AS w (TYPE sqlite)", .{path}, 0));
+    try db.exec("CREATE TABLE w.people AS SELECT * FROM (VALUES (1, 'Ação', 10.5), (2, NULL, NULL)) v(id, name, score)");
+    try db.exec("DETACH w");
+
+    try db.openReadOnly(path);
+    try t.expectEqual(.sqlite, db.source.?);
+    try t.expectEqual(1, db.table_names.len);
+    var g = try db.run("SELECT * FROM people ORDER BY id", &.{});
+    defer g.deinit();
+    try t.expectEqualStrings("Ação", g.rows[0][1].?);
+    try t.expect(g.rows[1][1] == null);
+    try t.expectError(error.DuckDb, db.exec("CREATE TABLE nope (x INTEGER)")); // somente leitura
 }
