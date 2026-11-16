@@ -11,7 +11,7 @@ def test_about_lines() -> None:
     lines = about.about_lines()
 
     assert lines[0] == "MDB2SQL (Python + PyQt6)"
-    assert lines[1] == "Versao 1.1.0 - build dev"
+    assert lines[1] == "Versao 1.1.1 - build dev"
     assert lines[2] == "Abre bancos Access (.mdb/.accdb), SQLite e DuckDB e exporta para DuckDB, SQLite, Excel e CSV."
     assert re.fullmatch(
         r"Python [\d.]+\S*, PyQt6 [\d.]+, Qt [\d.]+, DuckDB [\d.]+\S*, XlsxWriter [\d.]+, pyodbc [\d.]+", lines[3]
@@ -37,5 +37,5 @@ def test_help_menu_opens_about(qtbot) -> None:
 
     box = win.findChild(QMessageBox)
     assert box.windowTitle() == "Sobre"
-    assert "Versao 1.1.0 - build dev" in box.text()
+    assert "Versao 1.1.1 - build dev" in box.text()
     box.close()

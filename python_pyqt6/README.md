@@ -3,17 +3,17 @@
 Windows desktop program that opens Microsoft Access (`.mdb`, `.accdb`), SQLite (`.sqlite`, `.sqlite3`)
 and DuckDB (`.duckdb`, `.db`) databases read-only, shows tables, schema and data, runs SQL, and exports
 the whole database to DuckDB, SQLite or Excel (one sheet per table), or the current table / SQL result
-to CSV or Excel. Version 1.1.0.
+to CSV or Excel. Version 1.1.1.
 
 ## Download: which file
 
-Release `python_pyqt6-v1.1.0`, the three files are the same program, pick one:
+Release `python_pyqt6-v1.1.1`, the three files are the same program, pick one:
 
 | File | What it is | When to use |
 | --- | --- | --- |
-| `mdb2sql-1.1.0-w11-amd64-python-pyqt6.exe` | Single exe. Double-click, nothing to install. At every start it unpacks itself into a temporary folder (a few seconds) and removes it on exit. | Try it, run from a USB stick or a shared folder. |
-| `mdb2sql-1.1.0-w11-amd64-python-pyqt6.zip` | The app folder (`mdb2sql.exe` + `_internal\`). Unzip anywhere, run `mdb2sql.exe`. Starts faster than the single exe. | Daily use without installing. |
-| `mdb2sql-1.1.0-w11-amd64-python-pyqt6-installer.exe` | Installer for the current user (no administrator): `%LOCALAPPDATA%\Programs\MDB2SQL (Python + PyQt6)`, Start menu shortcut, uninstaller in Settings > Apps. | Daily use, installed like any program. |
+| `mdb2sql-1.1.1-w11-amd64-python-pyqt6.exe` | Single exe. Double-click, nothing to install. At every start it unpacks itself into a temporary folder (a few seconds) and removes it on exit. | Try it, run from a USB stick or a shared folder. |
+| `mdb2sql-1.1.1-w11-amd64-python-pyqt6.zip` | The app folder (`mdb2sql.exe` + `_internal\`). Unzip anywhere, run `mdb2sql.exe`. Starts faster than the single exe. | Daily use without installing. |
+| `mdb2sql-1.1.1-w11-amd64-python-pyqt6-installer.exe` | Installer for the current user (no administrator): `%LOCALAPPDATA%\Programs\MDB2SQL (Python + PyQt6)`, Start menu shortcut, uninstaller in Settings > Apps. | Daily use, installed like any program. |
 
 Windows may show SmartScreen ("Windows protected your PC") because the files are not signed:
 More info > Run anyway.
@@ -38,11 +38,14 @@ Access files are copied into memory (DuckDB) when opened; the status bar shows "
 A 115 MB `.accdb` with 287 tables takes about 10-15 s by ODBC and 30-40 s by mdbtools.
 The source file is never changed.
 
-Left panel: list of tables with a filter box (Ctrl+L goes to the list). Tabs:
+Left panel: list of tables with a filter box (Ctrl+L goes to the list); the filter works like the search below.
+Tabs:
 
-- **Data** (Ctrl+1): first rows of the selected table; "Rows" in the toolbar sets how many (100, 1,000, 10,000).
-  Click a header to sort (numbers sort as numbers; third click returns to the original order). Search box
-  (Ctrl+F) filters the loaded rows in all columns. Long values are cut at 320 px; the tooltip shows the full text.
+- **Data** (Ctrl+1): first rows of the selected table; "Rows" in the toolbar sets how many (100 by default, 1,000,
+  10,000). Click a header to sort (numbers sort as numbers; third click returns to the original order). Search box
+  (Ctrl+F) filters the loaded rows: a row stays when one of its cells has all the words typed, in any order,
+  ignoring case and accents (`tensao campo` finds `EXCITAÇÃO TENSÃO DE CAMPO`; words that are only in different
+  cells do not match). Long values are cut at 320 px; the tooltip shows the full text.
 - **Schema** (Ctrl+2): columns, types and nullability.
 - **SQL** (Ctrl+3): free SQL (DuckDB dialect) over the open database, run with Ctrl+Enter or Run. Shows up to
   the "Rows" limit. Table names with spaces or symbols go in double quotes: `SELECT * FROM "My Table"`.
@@ -77,15 +80,19 @@ Real database "2026-07-14 DB4" (copies): 287 tables, 113,962 rows, RANGER_SOSTAT
 - `.sqlite` and `.duckdb`: 287 tables, all counts equal.
 - Export of the `.accdb` to `.duckdb`, `.sqlite` and `.xlsx`, reopened: 287 tables with equal counts; the `.xlsx`
   has 287 sheets with the right row counts.
-- 52 automatic tests (pytest + pytest-qt; 50 run in every build, 2 need local data: a real `.accdb` copy in
+- 54 automatic tests (pytest + pytest-qt; 52 run in every build, 2 need local data: a real `.accdb` copy in
   `MDB2SQL_TEST_ACCDB`, run here with DB4, and `data/sample.duckdb`): sheet names and split, reader order and
-  forcing, export formats, cancel, default folder, theme saving, SQL tab, menus, DECIMAL display.
+  forcing, export formats, cancel, default folder, theme saving, SQL tab, menus, DECIMAL display, search.
+- 1.1.1 search (2026-11-16, DB4 `.duckdb` copy): `tensao energ barra` finds RANGER_SOPERM "IOPI 62 - Não energizar
+  BARRA B4 com tensão maior que 525kV." (1.1.0 found nothing); on RANGER_SOSTAT, 10,000 loaded rows x 123 columns,
+  the first search takes ~1 s (text prepared once per load) and each next one 40-80 ms (1.1.0: up to 12 s).
 - Products checked: zip extracted, installer installed and uninstalled silently (no files, shortcut or registry key
   left); the exe, the zip folder and the installed folder have no path or name of the build machine.
 
 ## Known limits
 
-- Search and sort work on the loaded rows only (at most 10,000); use the SQL tab for the whole table.
+- Search and sort work on the loaded rows only (100 by default, at most 10,000): a row beyond the "Rows" limit is
+  not found. Raise "Rows" or use the SQL tab for the whole table.
 - mdbtools is slower than ODBC (~20 s for a 36,000-row table) and has the mdbtools limits: Access paths with
   characters outside the Windows ANSI code page, attachment and multi-value fields are not supported.
   Binary (OLE) columns are read as bytes; in Excel and CSV they are written as hexadecimal text.
