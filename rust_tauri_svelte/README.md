@@ -85,7 +85,7 @@ SQLite e mdbtools, e se o driver ODBC do Access esta instalado.
 ## O que o programa grava no computador
 
 - `%LOCALAPPDATA%\mdb2sql\rust-tauri-svelte-1.1.0\mdbtools\`: o mdbtools embutido, extraido na primeira vez que
-  um Access e aberto sem ODBC (3 exes + licenca GPL, ~0,7 MB). Pastas de versoes antigas deste programa sao
+  um Access e aberto sem ODBC (3 exes + licencas GPL e LGPL, ~0,7 MB). Pastas de versoes antigas deste programa sao
   apagadas sozinhas. Pode ser apagada a qualquer momento.
 - `%LOCALAPPDATA%\com.mdb2sql.app\`: dados do WebView2 e as preferencias (tema, ultima pasta).
 - `%TEMP%\mdb2sql-<n>-mdbtools.csv`: temporario durante a leitura pelo mdbtools, apagado em seguida.
@@ -175,5 +175,5 @@ pino fica em 1.99.1. A extensao sqlite do DuckDB nao e usada: tem 47 MB; o rusql
 
 O banco e aberto so para leitura (DuckDB por ATTACH READ_ONLY, SQLite com SQLITE_OPEN_READ_ONLY, Access com
 ReadOnly=1 no ODBC; o mdbtools so le). So extensoes de banco sao aceitas e os nomes de tabela sao conferidos
-contra a lista lida do banco antes de entrar no SQL. Licencas: o mdbtools e GPL/LGPL; o texto da GPL vai junto
-(`COPYING`) na pasta extraida.
+contra a lista lida do banco antes de entrar no SQL. Licencas: o mdbtools e GPL/LGPL; os textos (`COPYING`, `COPYING.LIB`) vao junto
+na pasta extraida.

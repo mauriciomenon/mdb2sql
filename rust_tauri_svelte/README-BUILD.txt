@@ -35,7 +35,7 @@ Requisitos (Windows):
     .tools\mdbtools-1.0.1-w11-amd64\
                              mdbtools estatico (release win-static-1.0.1 do mdbtools_custom, arquivo
                              mdbtools-1.0.1-w11-amd64.zip, sha256 e15c69b9da2f8218f8c1db18fe0147d242cb888522d6c481e8c7c9d97e0405de
-                             conferido); mdb-tables, mdb-schema, mdb-export, COPYING e VERSION.txt vao
+                             conferido); mdb-tables, mdb-schema, mdb-export, COPYING, COPYING.LIB e VERSION.txt vao
                              para dentro do exe (include_bytes! em src\backend\access.rs)
     node_modules             pnpm install --frozen-lockfile (pnpm-lock.yaml da raiz)
     NSIS e WiX               baixados pelo tauri-cli para %LOCALAPPDATA%\tauri na 1a vez (hash conferido)

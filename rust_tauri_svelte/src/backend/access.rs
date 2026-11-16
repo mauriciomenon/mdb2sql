@@ -187,11 +187,13 @@ fn import_odbc(duck: &duckdb::Connection, path: &str, progress: &mut dyn FnMut(u
 
 // NIVEL BASICO: mdbtools estatico dentro do exe (baixado pelo scripts\setup_tools.ps1, sha256 conferido)
 #[cfg(windows)]
-const MDBTOOLS_FILES: [(&str, &[u8]); 5] = [
+// COPYING (GPL, os exes) e COPYING.LIB (LGPL, a libmdb ligada neles) vao junto, como a licenca pede
+const MDBTOOLS_FILES: [(&str, &[u8]); 6] = [
     ("mdb-tables.exe", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/.tools/mdbtools-1.0.1-w11-amd64/mdb-tables.exe"))),
     ("mdb-schema.exe", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/.tools/mdbtools-1.0.1-w11-amd64/mdb-schema.exe"))),
     ("mdb-export.exe", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/.tools/mdbtools-1.0.1-w11-amd64/mdb-export.exe"))),
     ("COPYING", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/.tools/mdbtools-1.0.1-w11-amd64/COPYING"))),
+    ("COPYING.LIB", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/.tools/mdbtools-1.0.1-w11-amd64/COPYING.LIB"))),
     ("VERSION.txt", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/.tools/mdbtools-1.0.1-w11-amd64/VERSION.txt"))),
 ];
 
