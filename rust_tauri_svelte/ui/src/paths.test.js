@@ -5,7 +5,7 @@ import { baseName, defaultSaveDir, dirOf, joinPath, stem, suggestedName } from '
 
 test('save dialog starts in the folder of the open file, else in the last folder used', () => {
   assert.equal(defaultSaveDir('D:\\dados\\DB4.accdb', 'E:\\outra'), 'D:\\dados');
-  assert.equal(defaultSaveDir('/home/u/db/x.sqlite', '/tmp'), '/home/u/db');
+  assert.equal(defaultSaveDir('/srv/db/x.sqlite', '/tmp'), '/srv/db');
   assert.equal(defaultSaveDir('', 'E:\\outra'), 'E:\\outra');
   assert.equal(defaultSaveDir(null, null), '');
 });
