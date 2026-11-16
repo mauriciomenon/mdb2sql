@@ -733,7 +733,7 @@ const App = struct {
 
     fn drawTables(app: *App) void {
         ig.igSetNextItemWidth(-1);
-        _ = ig.igInputTextWithHint("##filter", "filter tables: all words, any order, ignores case and accents", &app.table_filter, app.table_filter.len + 1, 0, null, null);
+        _ = ig.igInputTextWithHint("##filter", "all words, any order, ignores case and accents", &app.table_filter, app.table_filter.len + 1, 0, null, null);
         const flags = ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_ScrollY | ig.ImGuiTableFlags_BordersInnerV;
         if (!ig.igBeginTable("tbl", 2, flags, .{ .x = 0, .y = 0 }, 0)) return;
         defer ig.igEndTable();
@@ -793,8 +793,8 @@ const App = struct {
         ig.igPushID_Int(@intCast(index));
         defer ig.igPopID();
 
-        ig.igSetNextItemWidth(420);
-        if (ig.igInputTextWithHint("##search", "search: all words, any order, ignores case and accents (Enter)",&app.search, app.search.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) {
+        ig.igSetNextItemWidth(264);
+        if (ig.igInputTextWithHint("##search", "all words, any order, ignores case and accents", &app.search, app.search.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) {
             app.page = 0;
             app.want_reload = true;
         }
@@ -848,8 +848,8 @@ const App = struct {
         ig.igSameLine(0, -1);
         if (running) ig.igTextDisabled("Running...") else if (app.sql_msg.len == 0) ig.igTextDisabled("the open file is read-only") else app.sql_msg.draw();
         const g = if (app.result) |*x| x else return;
-        ig.igSetNextItemWidth(420);
-        if (ig.igInputTextWithHint("##rfilter", "search the rows shown: all words, any order, ignores case and accents",&app.result_filter, app.result_filter.len + 1, 0, null, null)) app.refilter();
+        ig.igSetNextItemWidth(400);
+        if (ig.igInputTextWithHint("##rfilter", "search the rows shown: all words, any order, ignores case and accents", &app.result_filter, app.result_filter.len + 1, 0, null, null)) app.refilter();
         if (app.result_rows) |rows| {
             ig.igSameLine(0, -1);
             text("{d} of {d} rows match", .{ rows.len, g.rows.len });
