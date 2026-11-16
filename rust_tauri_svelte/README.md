@@ -93,10 +93,18 @@ SQLite e mdbtools, e se o driver ODBC do Access esta instalado.
 
 ## Testado
 
-Windows 11 Pro 10.0.26300 amd64, WebView2 RUNTIME_WEBVIEW2, driver ODBC do Access 64 bits instalado.
+Windows 11 Pro 10.0.26300 amd64, WebView2 157.0.4341.46, driver ODBC do Access 64 bits instalado
+(build: Rust 1.99.1, Tauri 2.12.5, DuckDB 2.0.0, SQLite 3.54.1, mdbtools 1.0.1).
 Com copias de bancos reais do NMR5 (287 tabelas; RANGER_SOSTAT com 36.754 linhas):
 
-RESULTADOS_TESTES
+| Teste (exe de release) | Resultado |
+| --- | --- |
+| Abrir `2026-07-14 DB4.accdb` (115 MB) pelo ODBC | 287 tabelas em ~7 s; "Opened via Access ODBC" |
+| Abrir o mesmo arquivo pelo mdbtools (`MDB2SQL_ACCESS_READER=mdbtools`) | 287 tabelas em ~55 s; "Opened via mdbtools" |
+| ODBC x mdbtools x conversao de referencia (`cargo test`, teste com Access real) | mesmas 287 tabelas e 113.962 linhas; os dois leitores iguais celula a celula |
+| Abrir `2026-07-14 DB4.sqlite` e `2026-07-14 DB4.duckdb` | 287 tabelas cada; "Opened via SQLite" / "Opened via DuckDB" |
+| Exportar o DB4 (aberto do .accdb) para .xlsx e reabrir com openpyxl | 287 abas com os nomes das tabelas; RANGER_SOSTAT 36.754, RANGER_SOANLG 4.460, RANGER_SOACCU 27 linhas |
+| Exportar o DB4 para .sqlite e .duckdb e contar as 287 tabelas | 287 tabelas em cada um; contagem de linhas igual a referencia nas 287 |
 
 ## Limites conhecidos
 

@@ -405,7 +405,7 @@
         <div class="sql">
           <textarea
             bind:value={sql}
-            aria-label="SQL"
+            aria-label="SQL query"
             spellcheck="false"
             placeholder={'SELECT * FROM "' + (selectedTable || 'table') + '" LIMIT 10   (Ctrl+Enter runs)'}
             onkeydown={(e) => e.ctrlKey && e.key === 'Enter' && runSql()}
@@ -425,7 +425,7 @@
       {:else if tab === 'schema'}
         <div class="table-bar"><h2>{selectedTable}</h2><span>{columns.length} columns</span></div>
         <Grid
-          columns={[{ name: '#', type: 'INTEGER' }, { name: 'Column', type: '' }, { name: 'Type', type: '' }, { name: 'Null', type: '' }]}
+          columns={[{ name: '#', type: '' }, { name: 'Column', type: '' }, { name: 'Type', type: '' }, { name: 'Null', type: '' }]}
           rows={columns.map((c, i) => ({ '#': i + 1, Column: c.name, Type: c.type, Null: c.null }))}
           label="Schema of {selectedTable}"
           onstatus={showStatus}
