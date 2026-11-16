@@ -452,7 +452,7 @@
             type="search"
             bind:value={search}
             aria-label="Search rows"
-            placeholder="Search loaded rows: all words, any order, ignores case and accents"
+            placeholder="Search: all words, any order, ignores case and accents"
           />
         </div>
         <Grid

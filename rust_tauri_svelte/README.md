@@ -48,9 +48,10 @@ A **barra de status** (embaixo) mostra a mensagem atual e por qual caminho o arq
 - **Tables** (esquerda): lista de tabelas; **Filter tables** filtra por nome, com a mesma regra da busca abaixo.
   Clique (ou setas) abre a tabela.
 - Aba **Data**: as primeiras linhas da tabela (quantas: **Row limit**, 100/500/1000; padrao 100) e o total de
-  linhas. **Search loaded rows** procura nas linhas carregadas (nao na tabela inteira): a linha aparece quando
-  uma mesma celula tem todas as palavras digitadas, em qualquer ordem e sem diferenciar maiusculas nem acentos
-  (`campo tensao` acha `EXCITAÇÃO TENSÃO DE CAMPO`; palavras que so aparecem em celulas diferentes nao contam).
+  linhas. O campo de busca (**Search: all words...**) procura nas linhas carregadas (nao na tabela inteira):
+  a linha aparece quando uma mesma celula tem todas as palavras digitadas, em qualquer ordem e sem diferenciar
+  maiusculas nem acentos (`campo tensao` acha `EXCITAÇÃO TENSÃO DE CAMPO`; palavras que so aparecem em celulas
+  diferentes nao contam).
 - Aba **Schema**: colunas da tabela, tipo e se aceita nulo.
 - Aba **SQL**: SQL livre do DuckDB sobre as tabelas abertas (ex.: `SELECT * FROM "RANGER_SOSTAT" WHERE RTUNO = 2`);
   **Run SQL** ou `Ctrl+Enter`. A grade mostra ate o Row limit; a exportacao do resultado leva todas as linhas.
@@ -149,7 +150,8 @@ A fonte unica e `version` em `Cargo.toml`. O `tauri.conf.json` nao tem `version`
 o dialogo About le a mesma constante, e `ui/package.json` repete o numero; `cargo test` falha se eles divergirem.
 Numero do build (`git rev-list --count HEAD`) e data entram no About pelo build oficial; fora dele, "build dev".
 
-- **1.1.1**: busca da aba Data e filtro de tabelas por palavras (todas numa mesma celula, qualquer ordem, sem
+- **1.1.1**: icone proprio do mdb2sql (exe, janela, instaladores) e versao na barra de titulo
+  (`mdb2sql 1.1.1 - Rust + Tauri + Svelte`); busca da aba Data e filtro de tabelas por palavras (todas numa mesma celula, qualquer ordem, sem
   maiusculas nem acentos). Antes a busca procurava o texto exato: texto com espacos repetidos (2.499 valores no
   DB4, que a grade mostra com um espaco so) nao era achado pelo que aparecia na tela, nem `tensao` achava `TENSÃO`.
 - **1.1.0**: abre .duckdb/.sqlite/.mdb/.accdb e exporta para DuckDB, SQLite, Excel e CSV.

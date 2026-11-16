@@ -157,6 +157,9 @@ fn cancel_export(state: State<'_, AppState>) {
     state.cancel_export.store(true, Ordering::SeqCst);
 }
 
+// Barra de titulo da janela; a versao vem do Cargo.toml (fonte unica)
+const WINDOW_TITLE: &str = concat!("mdb2sql ", env!("CARGO_PKG_VERSION"), " - Rust + Tauri + Svelte");
+
 // NIVEL BASICO: Linhas do dialogo Sobre; a versao vem do Cargo.toml (fonte unica),
 // numero e data do build vem do build oficial (build.rs)
 fn about_lines(runtimes: &str) -> Vec<String> {
@@ -211,14 +214,13 @@ fn main() {
             cancel_export,
             about
         ])
-        .setup(|_app| {
+        .setup(|app| {
             // NIVEL TECNICO: Setup hook, executa antes de mostrar janela
+            use tauri::Manager;
+            let window = app.get_webview_window("main").expect("main window");
+            window.set_title(WINDOW_TITLE)?;
             #[cfg(debug_assertions)]
-            {
-                use tauri::Manager;
-                let window = _app.get_webview_window("main").unwrap();
-                window.open_devtools();
-            }
+            window.open_devtools();
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -248,6 +250,11 @@ mod tests {
         assert!(!lines[3].contains("Rust unknown"));
         assert_eq!(lines[4], "Autor: Mauricio Menon");
         assert_eq!(lines[5], "Codigo: https://github.com/mauriciomenon/mdb2sql");
+    }
+
+    #[test]
+    fn window_title_shows_the_version() {
+        assert_eq!(WINDOW_TITLE, "mdb2sql 1.1.1 - Rust + Tauri + Svelte");
     }
 
     // Cargo.toml e a fonte unica: tauri.conf.json herda dele quando nao tem "version"
