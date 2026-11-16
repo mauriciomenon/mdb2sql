@@ -40,7 +40,7 @@ Requisitos (Windows):
 
 3. "MAKE CLEAN" - LIMPAR
 ------------------------
-  Windows:  .\clean.ps1          apaga build\, frontend\dist\, dist\.stage\ e as copias em backend\embedded\
+  Windows:  .\clean.ps1          apaga o gerado em build\ (fica o icone), frontend\dist\, dist\.stage\ e as copias em backend\embedded\
             .\clean.ps1 -Dist    idem e tambem dist\ (todos os produtos)
   Linux:    ./clean.sh           idem
             ./clean.sh --dist    idem e tambem dist/
@@ -69,7 +69,9 @@ Windows - dist\w11\amd64\
 5. PASTAS DE TRABALHO (podem ser apagadas; o build recria)
 ----------------------------------------------------------
   build\bin\          saida do wails build (mdb2sql.exe, mdb2sql-amd64-installer.exe)
-  build\windows\      icone, manifesto e projeto NSIS gerados pelo Wails a partir dos modelos dele
+  build\windows\      manifesto e projeto NSIS gerados pelo Wails a partir dos modelos dele
+  build\appicon.png, build\windows\icon.ico   icone do app (versionados, nao sao apagados): exe, janela,
+                      instalador e atalhos
   frontend\dist\      saida do Vite, embutida no exe (go:embed)
   backend\embedded\   copias de .tools embutidas no exe (go:embed; no git so o .gitkeep)
   dist\.stage\        produtos sendo montados antes de irem para dist\w11\amd64\

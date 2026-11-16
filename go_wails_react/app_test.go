@@ -10,8 +10,11 @@ import (
 
 func TestGetAppInfo(t *testing.T) {
 	info := NewApp().GetAppInfo()
-	if info.Version != "1.1.0" {
+	if info.Version != "1.1.1" {
 		t.Fatalf("version must come from wails.json info.productVersion, got %q", info.Version)
+	}
+	if got := windowTitle(); got != "mdb2sql 1.1.1 - Go + Wails + React" {
+		t.Fatalf("window title must carry the wails.json version, got %q", got)
 	}
 	if !regexp.MustCompile(`^\d+\.\d+`).MatchString(info.Go) {
 		t.Fatalf("unexpected Go version %q", info.Go)

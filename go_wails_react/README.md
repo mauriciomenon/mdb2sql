@@ -1,4 +1,4 @@
-# MDB2SQL (Go + Wails + React) 1.1.0
+# MDB2SQL (Go + Wails + React) 1.1.1
 
 Windows program to open, browse and convert databases: DuckDB, SQLite and Microsoft Access
 (`.mdb`, `.accdb`). It lists the tables, shows data and schema, runs SQL, and exports the whole database
@@ -7,15 +7,19 @@ it opens.
 
 ## Which file to download
 
-Release `go_wails_react-v1.1.0`, three files with the same program (Windows 11, 64-bit):
+Release `go_wails_react-v1.1.1`, three files with the same program (Windows 11, 64-bit):
 
 | File | What it is | When to use |
 | --- | --- | --- |
-| `mdb2sql-1.1.0-w11-amd64-go-wails-react.exe` | single executable, nothing to install | copy anywhere and double-click |
-| `mdb2sql-1.1.0-w11-amd64-go-wails-react.zip` | folder with `mdb2sql.exe` and `LEIAME.txt` | unzip to a folder (USB stick, shared drive) |
-| `mdb2sql-1.1.0-w11-amd64-go-wails-react-installer.exe` | NSIS installer: `Program Files\Mauricio Menon\MDB2SQL`, Start menu and desktop shortcuts, uninstaller | permanent install; asks for administrator rights |
+| `mdb2sql-1.1.1-w11-amd64-go-wails-react.exe` | single executable, nothing to install | copy anywhere and double-click |
+| `mdb2sql-1.1.1-w11-amd64-go-wails-react.zip` | folder with `mdb2sql.exe` and `LEIAME.txt` | unzip to a folder (USB stick, shared drive) |
+| `mdb2sql-1.1.1-w11-amd64-go-wails-react-installer.exe` | NSIS installer: `Program Files\Mauricio Menon\MDB2SQL`, Start menu and desktop shortcuts, uninstaller | permanent install; asks for administrator rights |
 
 Windows SmartScreen may warn because the files are not code-signed: "More info" > "Run anyway".
+
+Changes in 1.1.1: the row search and the table filter match every word typed, in any order, ignoring case
+and accents (before, the whole text had to appear as typed, accents included); own app icon (exe, window,
+installer, shortcuts) instead of the Wails default; the title bar shows the version; excelize 2.11.1.
 
 ## Requirements
 
@@ -37,10 +41,13 @@ environment variable `MDB2SQL_DB_PATH`; it then opens at start.
 
 Window parts:
 
-- Left: the tables; "Filter N tables" narrows the list.
+- Left: the tables; "Filter N tables" narrows the list (same word rule as the row search below).
 - Right, three tabs:
-  - Data: the first rows of the selected table (Rows: 100, 500 or 1000); every column is as wide as its
-    content (scroll sideways). "Search loaded rows" finds text in any column of the rows shown.
+  - Data: the first rows of the selected table (Rows: 100 by default, 500 or 1000); every column is as wide
+    as its content (scroll sideways). "Search loaded rows" keeps the rows that have one cell containing every
+    word typed, in any order, ignoring case and accents: `tensao campo` finds "EXCITAÇÃO TENSÃO DE CAMPO";
+    words found only in different cells of the row do not match. It searches only the rows loaded now
+    (raise Rows, or use the SQL tab with `WHERE`, to search the whole table).
   - Schema: column names, types and nullability.
   - SQL: any DuckDB SQL over the open database (`SELECT ... FROM "TABLE" WHERE ...`); Run or Ctrl+Enter.
 - Click a cell to select it; Ctrl+C copies the value. Right-click a cell: Copy value, Copy row,
@@ -74,7 +81,7 @@ message says what to install.
 
 Files the program creates on the user's computer (nothing else):
 
-- `%LOCALAPPDATA%\mdb2sql\go-wails-react-1.1.0-<build>\`: mdbtools and the SQLite extension, unpacked on
+- `%LOCALAPPDATA%\mdb2sql\go-wails-react-1.1.1-<build>\`: mdbtools and the SQLite extension, unpacked on
   first use; folders of older builds are deleted automatically.
 - `%LOCALAPPDATA%\mdb2sql\go-wails-react-webview\`: WebView2 data.
 - `%APPDATA%\mdb2sql\go-wails-react.json`: theme and last folder used.
@@ -97,6 +104,9 @@ RANGER_SOSTAT 36,754 rows, 130 columns):
   "Opened via mdbtools"), File and Export menus, Settings > Theme (dark and light), Help > About, SQL tab.
   The native save dialog itself was not driven (its file name field did not answer to UI Automation in the
   test session); the exports behind it were checked by the automatic tests above.
+- 1.1.1 search, release exe through UI Automation on the `.duckdb` copy: RANGER_SOMESG (100 of 10,000 rows
+  loaded), "banco numero" -> 1 match, the row "Número do banco invalido". Timing on 1000 rows x 123
+  columns of RANGER_SOSTAT: about 21 ms to prepare the rows once, 2-3 ms per search.
 
 ## Known limits
 
@@ -130,7 +140,7 @@ About shows "build dev".
 | DuckDB sqlite extension | v2.0.0, windows_amd64_mingw (embedded) | `scripts/setup_tools.ps1` (sha256) |
 | mdbtools (static, Access fallback reader) | 1.0.1, release `win-static-1.0.1` of mdbtools_custom (embedded) | `scripts/setup_tools.ps1` (sha256) |
 | alexbrainman/odbc (Access ODBC reader) | v0.0.0-20250601004241-49e6b2bc0cf0 | `go.mod` / `go.sum` |
-| excelize (xlsx export) | v2.11.0 | `go.mod` / `go.sum` |
+| excelize (xlsx export) | v2.11.1 | `go.mod` / `go.sum` |
 | WinLibs GCC (MinGW-w64 UCRT, for cgo) | 16.2.0, MinGW-w64 14.0.0, r3 | `scripts/setup_tools.ps1` |
 | NSIS (installer) | 3.12 | `scripts/setup_tools.ps1` (sha256) |
 | React / Vite / Vitest | 18.3 / 8.3 / 4.1 | `pnpm-lock.yaml` (repo root) |
@@ -140,9 +150,9 @@ so Go stays on 1.26.x; the CLI version matches the Wails module in `go.mod`. The
 MinGW build (`PRAGMA platform` = `windows_amd64_mingw`), so the sqlite extension is that platform's signed
 file, embedded and loaded from disk, never downloaded at run time. `alexbrainman/odbc` is the pure-Go (no cgo)
 ODBC driver for `database/sql`; its last commit is from 2025-06 and it is not archived; the two catalog calls it
-lacks (SQLTables, SQLColumns) are called on `odbc32.dll` directly. excelize 2.11.0 (2026-07) instead of 2.11.1
-(2026-11-02, under two weeks old at release time). To update a tool, change its version and sha256 together at
-the top of `scripts/setup_tools.ps1`.
+lacks (SQLTables, SQLColumns) are called on `odbc32.dll` directly. excelize 2.11.1 (2026-11-02) since 1.1.1
+(Dependabot PR #27; it also raised golang.org/x/crypto, x/net, x/sys, x/text and mscfb). To update a tool,
+change its version and sha256 together at the top of `scripts/setup_tools.ps1`.
 
 Without `.tools/` the scripts fall back to the system: `go` and `wails` from PATH with
 `GOTOOLCHAIN=go1.26.11`, GCC from `MDB2SQL_GCC_BIN` or `~\.local\winlibs-gcc-16.2.0-ucrt-r3\mingw64\bin`,

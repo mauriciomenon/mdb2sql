@@ -84,10 +84,25 @@ export function rowToTsv(columns: string[], row: Row, withHeader: boolean): stri
   return withHeader ? `${columns.map(tsvField).join('\t')}\r\n${line}` : line;
 }
 
-// Busca sem diferenciar maiusculas em todas as colunas das linhas carregadas
-export function searchRows(rows: Row[], columns: string[], query: string): Row[] {
-  const q = query.trim().toLowerCase();
-  return q ? rows.filter((r) => columns.some((c) => cellText(r[c]).toLowerCase().includes(q))) : rows;
+// Minusculas sem acentos (NFD e remove as marcas combinantes): "EXCITAÇÃO" -> "excitacao", "ñ" -> "n"
+export const normalizeText = (s: string) => s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+
+// Palavras da busca ja normalizadas; vazio = sem filtro
+export const searchWords = (query: string) => normalizeText(query).split(/\s+/).filter(Boolean);
+
+// Casa quando TODAS as palavras aparecem no texto (uma celula ou um nome de tabela), em qualquer ordem
+export const hasAllWords = (text: string, words: string[]) => words.every((w) => text.includes(w));
+
+// Celulas normalizadas de cada linha; montado uma vez por carga, nao a cada tecla
+export const rowSearchText = (rows: Row[], columns: string[]) =>
+  rows.map((r) => columns.map((c) => normalizeText(cellText(r[c]))));
+
+// Linha casa quando UMA celula contem todas as palavras (palavras so em celulas diferentes nao casam)
+export function searchRows(rows: Row[], columns: string[], query: string, index?: string[][]): Row[] {
+  const words = searchWords(query);
+  if (words.length === 0) return rows;
+  const cells = index ?? rowSearchText(rows, columns);
+  return rows.filter((_, i) => cells[i].some((cell) => hasAllWords(cell, words)));
 }
 
 // Go counts tables when it loads or exports a database and rows when it exports one table or result
@@ -319,15 +334,18 @@ function App() {
   ];
 
   const visibleTables = useMemo(() => {
-    const f = filter.trim().toLowerCase();
-    return f ? tables.filter((t) => t.toLowerCase().includes(f)) : tables;
+    const words = searchWords(filter);
+    return words.length ? tables.filter((t) => hasAllWords(normalizeText(t), words)) : tables;
   }, [tables, filter]);
 
   // schema order = database column order (Go maps reach JS sorted by key); also gives empty tables a header
-  const tableColumns = schema.length > 0 ? schema.map((c) => c.name) : Object.keys(rows[0] ?? {});
-  const gridColumns = view === 'sql' ? (result?.columns ?? []) : tableColumns;
-  const gridRows = view === 'sql' ? (result?.rows ?? []) : rows;
-  const visibleRows = useMemo(() => searchRows(gridRows, gridColumns, search), [gridRows, gridColumns, search]);
+  // memoized so the search index below is built once per load, not on every keystroke
+  const tableColumns = useMemo(() => (schema.length > 0 ? schema.map((c) => c.name) : Object.keys(rows[0] ?? {})), [schema, rows]);
+  const gridColumns = useMemo(() => (view === 'sql' ? (result?.columns ?? []) : tableColumns), [view, result, tableColumns]);
+  const gridRows = useMemo(() => (view === 'sql' ? (result?.rows ?? []) : rows), [view, result, rows]);
+  const searching = search.trim() !== '';
+  const searchIndex = useMemo(() => (searching ? rowSearchText(gridRows, gridColumns) : undefined), [searching, gridRows, gridColumns]);
+  const visibleRows = useMemo(() => searchRows(gridRows, gridColumns, search, searchIndex), [gridRows, gridColumns, search, searchIndex]);
   const copyCell = () => sel && copyText(cellText(sel.row[sel.col]), 'value');
   const copyRow = (withHeader: boolean) =>
     sel && copyText(rowToTsv(gridColumns, sel.row, withHeader), withHeader ? 'row with header' : 'row');
@@ -466,6 +484,7 @@ function App() {
           type="search"
           placeholder={`Filter ${tables.length} tables`}
           aria-label="Filter tables"
+          title="All words, any order, ignores case and accents"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           disabled={tables.length === 0}
@@ -504,9 +523,9 @@ function App() {
               <input
                 type="search"
                 className="search"
-                placeholder="Search loaded rows"
+                placeholder="Search loaded rows: all words, any order, ignores case and accents"
                 aria-label="Search rows"
-                title="Finds text in any column of the rows loaded now (see Rows)"
+                title="Shows the loaded rows (see Rows) with a cell that contains every word, in any order; ignores case and accents"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
