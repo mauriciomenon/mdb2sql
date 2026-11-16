@@ -126,6 +126,8 @@ NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 
   `mdb-export` processes at a time).
 - `DB4.sqlite` (about 8 s to open: the row count of 287 tables through the SQLite reader) and `DB4.duckdb`
   (about 1 s): 287 tables, RANGER_SOSTAT 36,754 rows.
+- Through the real window and save dialog (driven by UI Automation): `DB4.accdb` > Export > Database to Excel;
+  the dialog opened in the folder of the `.accdb` suggesting `DB4.xlsx`; 113,962 rows written in about 5 s.
 - DB4 exported to `.duckdb` and `.sqlite`, reopened: 287 tables, every count equal to the source.
 - DB4 exported to `.xlsx` (22 MB) and read back with openpyxl: 287 sheets; RANGER_SOSTAT 36,754,
   RANGER_SOANLG 4,460, RANGER_SOTEXT 3,516 and RANGER_SOACCU 27 data rows, numbers read as numbers.
