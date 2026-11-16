@@ -510,9 +510,19 @@ const App = struct {
             .result_csv, .result_xlsx => "query",
         };
         var file_buf: [600]u8 = undefined;
-        const file = settings.fileName(&file_buf, base, kind.ext());
+        var file = settings.fileName(&file_buf, base, kind.ext());
+        // DB4.duckdb exportado para .duckdb: o nome sugerido nao pode ser o do proprio arquivo aberto
+        if (std.ascii.eqlIgnoreCase(file, std.fs.path.basename(loaded))) {
+            var b2: [520]u8 = undefined;
+            file = settings.fileName(&file_buf, std.fmt.bufPrint(&b2, "{s}_export", .{base}) catch base, kind.ext());
+        }
         var sugg_buf: [4096]u8 = undefined;
-        const initial = settings.suggest(&sugg_buf, settings.defaultDir(loaded, app.prefs.lastDir()), file);
+        var dir = settings.defaultDir(loaded, app.prefs.lastDir());
+        // pasta que nao existe mais (apagada, pendrive removido): o dialogo recusaria abrir
+        if (dir.len > 0) std.Io.Dir.cwd().access(app.io, dir, .{}) catch {
+            dir = "";
+        };
+        const initial = settings.suggest(&sugg_buf, dir, file);
         const dkind: dialog.Kind = switch (kind) {
             .db_duckdb => .save_duckdb,
             .db_sqlite => .save_sqlite,

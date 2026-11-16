@@ -159,31 +159,57 @@ fn mdbtoolsImport(db: *Db, io: Io, path: []const u8, opts: Options, progress: *P
     const tables = try parseSchema(arena, schema.stdout);
     progress.begin(tables.len);
 
-    var csv_buf: [4096]u8 = undefined;
-    const csv_path = std.fmt.bufPrint(&csv_buf, "{s}\\mdb2sql-{x}.csv", .{ opts.temp_dir, randomU64(io) }) catch return error.NameTooLong;
-    defer Io.Dir.cwd().deleteFile(io, csv_path) catch {};
+    // Cada mdb-export le o catalogo do arquivo de novo (~0,5 s no DB4): roda varios ao mesmo tempo, um CSV
+    // temporario por processo, e carrega os CSVs no DuckDB um por um
+    const parallel = 8;
+    const tag = randomU64(io);
+    var csv_bufs: [parallel][4096]u8 = undefined;
+    var csv_paths: [parallel][]const u8 = undefined;
+    for (&csv_paths, &csv_bufs, 0..) |*p, *b, i|
+        p.* = std.fmt.bufPrint(b, "{s}\\mdb2sql-{x}-{d}.csv", .{ opts.temp_dir, tag, i }) catch return error.NameTooLong;
+    defer for (csv_paths) |p| Io.Dir.cwd().deleteFile(io, p) catch {};
 
     var sql: std.ArrayList(u8) = .empty;
     defer sql.deinit(gpa);
-    for (tables) |table| {
+    var start: usize = 0;
+    while (start < tables.len) : (start += parallel) {
         try progress.check();
-        {
-            const out = try Io.Dir.cwd().createFile(io, csv_path, .{});
-            defer out.close(io);
-            var child = std.process.spawn(io, .{
+        const batch = tables[start..@min(start + parallel, tables.len)];
+        var children: [parallel]?std.process.Child = @splat(null);
+        // nenhum processo fica para tras: em erro, os que ainda rodam sao encerrados
+        defer for (&children) |*ch| if (ch.*) |*child| child.kill(io);
+        for (batch, 0..) |table, i| {
+            const out = try Io.Dir.cwd().createFile(io, csv_paths[i], .{});
+            defer out.close(io); // o filho herdou o seu proprio handle
+            children[i] = std.process.spawn(io, .{
                 .argv = &.{ toolPath(&pb, opts.tools_dir, "mdb-export.exe"), "-D", "%Y-%m-%d %H:%M:%S", "-T", "%Y-%m-%d %H:%M:%S", "-b", "hex", path, table.name },
                 .stdin = .ignore,
                 .stdout = .{ .file = out },
                 .stderr = .ignore,
                 .create_no_window = true,
             }) catch |e| return failFmt(db, "mdb-export could not run: {t}", .{e});
-            const term = child.wait(io) catch |e| return failFmt(db, "mdb-export failed: {t}", .{e});
+        }
+        for (batch, 0..) |table, i| {
+            const term = children[i].?.wait(io) catch |e| return failFmt(db, "mdb-export failed: {t}", .{e});
+            children[i] = null;
             if (!term.success()) return failFmt(db, "mdb-export failed on table {s}", .{table.name});
         }
-        // CSV -> tabela com os tipos do Access; NULL = campo vazio sem aspas, "" = texto vazio
-        sql.clearRetainingCapacity();
-        try sql.appendSlice(gpa, "CREATE TABLE ");
-        try query.writeIdent(&sql, gpa, table.name);
+        for (batch, 0..) |table, i| {
+            try loadCsv(db, table, csv_paths[i], &sql);
+            progress.add(1);
+        }
+    }
+}
+
+// CSV do mdb-export -> tabela com os tipos do Access; NULL = campo vazio sem aspas, "" = texto vazio
+fn loadCsv(db: *Db, table: Table, csv_path: []const u8, sql: *std.ArrayList(u8)) !void {
+    const gpa = db.gpa;
+    sql.clearRetainingCapacity();
+    try sql.appendSlice(gpa, "CREATE TABLE ");
+    try query.writeIdent(sql, gpa, table.name);
+    if (table.columns.len == 0) {
+        try sql.appendSlice(gpa, " (empty_table_without_columns VARCHAR)");
+    } else {
         try sql.appendSlice(gpa, " AS SELECT * ");
         var any_blob = false;
         for (table.columns) |col| any_blob = any_blob or std.mem.eql(u8, col.ty, "BLOB");
@@ -194,35 +220,29 @@ fn mdbtoolsImport(db: *Db, io: Io, path: []const u8, opts: Options, progress: *P
                 if (!first) try sql.appendSlice(gpa, ", ");
                 first = false;
                 try sql.appendSlice(gpa, "from_hex(");
-                try query.writeIdent(&sql, gpa, col.name);
+                try query.writeIdent(sql, gpa, col.name);
                 try sql.appendSlice(gpa, ") AS ");
-                try query.writeIdent(&sql, gpa, col.name);
+                try query.writeIdent(sql, gpa, col.name);
             };
             try sql.appendSlice(gpa, ") ");
         }
         try sql.appendSlice(gpa, "FROM read_csv(");
-        try query.writeLiteral(&sql, gpa, csv_path);
+        try query.writeLiteral(sql, gpa, csv_path);
         try sql.appendSlice(gpa, ", header = true, auto_detect = false, delim = ',', quote = '\"', escape = '\"', " ++
             "allow_quoted_nulls = false, strict_mode = false, columns = {");
         for (table.columns, 0..) |col, i| {
             if (i > 0) try sql.appendSlice(gpa, ", ");
-            try query.writeLiteral(&sql, gpa, col.name);
+            try query.writeLiteral(sql, gpa, col.name);
             try sql.appendSlice(gpa, ": ");
             // o hex do binario chega como texto e vira BLOB no REPLACE acima
-            try query.writeLiteral(&sql, gpa, if (std.mem.eql(u8, col.ty, "BLOB")) "VARCHAR" else col.ty);
+            try query.writeLiteral(sql, gpa, if (std.mem.eql(u8, col.ty, "BLOB")) "VARCHAR" else col.ty);
         }
         try sql.appendSlice(gpa, "})");
-        if (table.columns.len == 0) {
-            sql.clearRetainingCapacity();
-            try sql.appendSlice(gpa, "CREATE TABLE ");
-            try query.writeIdent(&sql, gpa, table.name);
-            try sql.appendSlice(gpa, " (empty_table_without_columns VARCHAR)");
-        }
-        try sql.append(gpa, 0);
-        try db.exec(sql.items[0 .. sql.items.len - 1 :0]);
-        progress.add(1);
     }
+    try sql.append(gpa, 0);
+    try db.exec(sql.items[0 .. sql.items.len - 1 :0]);
 }
+
 
 fn randomU64(io: Io) u64 {
     var b: [8]u8 = undefined;
@@ -654,15 +674,17 @@ test "real Access file through both readers (optional)" {
         var db = Db.init(t.allocator);
         defer db.close();
         var p: Progress = .{};
+        const t0 = std.Io.Timestamp.now(t.io, .awake);
         const src = open(&db, t.io, path, .{ .forced = reader, .tools_dir = tools, .temp_dir = ".zig-cache" }, &p) catch |e| {
             std.debug.print("{s}: {s}\n", .{ reader, db.lastError() });
             return e;
         };
+        const ms = t0.durationTo(std.Io.Timestamp.now(t.io, .awake)).toMilliseconds();
         try t.expectEqual(if (i == 0) dbm.Source.access_odbc else dbm.Source.access_mdbtools, src);
         var total: u64 = 0;
         for (db.table_names) |name| total += try db.count(.{ .table = name, .tables = db.table_names, .columns = &.{} });
         counts[i] = total;
-        std.debug.print("{s}: {d} tables, {d} rows\n", .{ reader, db.table_names.len, total });
+        std.debug.print("{s}: {d} tables, {d} rows, converted in {d} ms\n", .{ reader, db.table_names.len, total, ms });
         if (i == 0) try exportAndCompare(&db, total);
     }
     try t.expectEqual(counts[0], counts[1]);

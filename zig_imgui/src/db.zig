@@ -542,6 +542,11 @@ test "list tables, schema, paging, search, filter, sort, read-only" {
     try t.expectEqualStrings("INTEGER", sch.rows[0][1].?);
     try t.expectEqualStrings("NO", sch.rows[0][2].?);
     try t.expectEqualStrings("YES", sch.rows[1][2].?);
+    // a mesma consulta que main.zig usa para exportar o esquema (aba Schema -> CSV/xlsx)
+    var sch_export = try db.run("SELECT column_name AS \"Column\", column_type AS \"Type\", \"null\" AS \"Null\" FROM (DESCRIBE \"strict\")", &.{});
+    defer sch_export.deinit();
+    try t.expectEqualStrings("Column", sch_export.columns[0]);
+    try t.expectEqualStrings("NO", sch_export.rows[0][2].?);
 
     // paginacao: 250 linhas, pagina 3 de 100 tem 50
     const big_cols = [_][]const u8{"n"};
