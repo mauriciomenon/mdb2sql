@@ -4,3 +4,6 @@ build/
 frontend/dist/
 frontend/package.json.md5
 /mdb2sql
+# filled from .tools by scripts/build_w11.ps1 (mdbtools, DuckDB sqlite extension)
+backend/embedded/*
+!backend/embedded/.gitkeep

@@ -4,20 +4,43 @@
 package backend
 
 import (
+	"bytes"
+	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
+	"math"
+	"math/big"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
 
-	_ "github.com/duckdb/duckdb-go/v2" // !T: Import for side effects (register DuckDB driver)
+	"github.com/duckdb/duckdb-go/v2"
 )
 
 // Struct que gerencia acesso aos bancos DuckDB - conectar, listar tabelas, queries
-// !T: Database manager with singleton pattern holding connection and current DB path
+// !T: Every format ends up in one in-memory DuckDB: DuckDB/SQLite files attached read-only as "src", Access imported
 type DBManager struct {
 	conn      *sql.DB // !T: Standard sql.DB interface from database/sql
 	currentDB string
+	source    string // reader used: DuckDB, SQLite, Access ODBC or mdbtools
 	tableSet  map[string]struct{}
 	tableList []string
 }
+
+// Progress reports long work (Access import, export): done of total steps; label = current table
+type Progress func(done, total int, label string)
+
+// Readers shown in the status bar
+const (
+	SourceDuckDB   = "DuckDB"
+	SourceSQLite   = "SQLite"
+	SourceODBC     = "Access ODBC"
+	SourceMdbtools = "mdbtools"
+)
 
 // Cria novo DBManager sem conectar - conexao sera feita com Connect()
 // !T: Factory function returning unconnected DBManager, lazy initialization pattern
@@ -25,40 +48,243 @@ func NewDBManager() *DBManager {
 	return &DBManager{}
 }
 
-// Conecta ao banco DuckDB especificado - fecha conexao anterior se existir
-// !T: Opens read-only connection with DSN format: path?access_mode=read_only
+// Connect abre o arquivo sem progresso nem cancelamento (testes e chamadas simples)
 func (m *DBManager) Connect(dbPath string) error {
-	// Fecha conexao anterior se existir
-	if m.conn != nil {
-		m.conn.Close()
-	}
+	return m.Open(context.Background(), dbPath, nil)
+}
 
-	// Abre conexao DuckDB com modo read-only
-	// !T: DSN format: path?access_mode=read_only prevents accidental writes
-	dsn := fmt.Sprintf("%s?access_mode=read_only", dbPath)
-	conn, err := sql.Open("duckdb", dsn)
+// Open fecha o banco anterior e abre dbPath pelo leitor do formato; Access e importado para a memoria
+func (m *DBManager) Open(ctx context.Context, dbPath string, progress Progress) error {
+	m.Close()
+	if progress == nil {
+		progress = func(int, int, string) {}
+	}
+	var conn *sql.DB
+	var source string
+	var err error
+	switch fileKind(dbPath) {
+	case "access":
+		conn, source, err = openAccess(ctx, dbPath, progress)
+	case "sqlite":
+		conn, err = openAttached(dbPath, true)
+		source = SourceSQLite
+	default:
+		conn, err = openAttached(dbPath, false)
+		source = SourceDuckDB
+	}
 	if err != nil {
+		return err
+	}
+	// attached files are only opened here, by the connection setup
+	if err := conn.PingContext(ctx); err != nil {
+		conn.Close()
 		return fmt.Errorf("failed to open database: %w", err)
 	}
-
-	// Testa se conexao funciona
-	if err := conn.Ping(); err != nil {
-		conn.Close()
-		return fmt.Errorf("failed to ping database: %w", err)
-	}
-
-	m.conn = conn
-	m.currentDB = dbPath
+	m.conn, m.currentDB, m.source = conn, dbPath, source
 
 	// Pre-carrega cache de tabelas para validar nomes sem overhead por chamada
 	if err := m.refreshTableCache(); err != nil {
-		// fecha conexao recem aberta para evitar estado inconsistente
-		conn.Close()
-		m.conn = nil
-		m.currentDB = ""
+		m.Close()
 		return fmt.Errorf("failed to load table cache: %w", err)
 	}
 	return nil
+}
+
+// Source returns the reader used for the open file ("" when nothing is open)
+func (m *DBManager) Source() string { return m.source }
+
+// fileKind: Access by extension; SQLite by its file header (a .db may be either); otherwise DuckDB
+func fileKind(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".mdb", ".accdb":
+		return "access"
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "duckdb" // the open error is reported by DuckDB
+	}
+	defer f.Close()
+	head := make([]byte, 16)
+	if n, _ := f.Read(head); n == 16 && bytes.Equal(head, []byte("SQLite format 3\x00")) {
+		return "sqlite"
+	}
+	return "duckdb"
+}
+
+// openAttached attaches the file read-only as "src" in an in-memory DuckDB, so exports can ATTACH writable files
+func openAttached(path string, sqlite bool) (*sql.DB, error) {
+	var setup []string
+	attach := "ATTACH IF NOT EXISTS " + quoteLiteral(path) + " AS src (READ_ONLY)"
+	if sqlite {
+		ext, err := sqliteExtension()
+		if err != nil {
+			return nil, err
+		}
+		setup = append(setup, "LOAD "+quoteLiteral(ext))
+		attach = "ATTACH IF NOT EXISTS " + quoteLiteral(path) + " AS src (TYPE sqlite, READ_ONLY)"
+	}
+	return openMemory(append(setup, attach, "USE src")...)
+}
+
+// openMemory opens an in-memory DuckDB; setup runs on every pooled connection because USE is per connection
+func openMemory(setup ...string) (*sql.DB, error) {
+	connector, err := duckdb.NewConnector("", func(execer driver.ExecerContext) error {
+		for _, q := range setup {
+			if _, err := execer.ExecContext(context.Background(), q, nil); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+	return sql.OpenDB(connector), nil
+}
+
+func quoteIdent(name string) string { return `"` + strings.ReplaceAll(name, `"`, `""`) + `"` }
+
+func quoteLiteral(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
+
+// jsonValue makes a scanned DuckDB value safe for the UI: JSON has no NaN, DECIMAL and BLOB need plain forms
+func jsonValue(v any) any {
+	switch x := v.(type) {
+	case duckdb.Decimal:
+		return x.Float64()
+	case *big.Int:
+		return x.String()
+	case float64:
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return fmt.Sprint(x)
+		}
+	case float32:
+		if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
+			return fmt.Sprint(x)
+		}
+	case []byte, time.Time, duckdb.UUID, duckdb.Map: // Map has non-string keys, which JSON cannot encode
+		return cellString(v)
+	}
+	return v
+}
+
+// cellString is the text form of a value for CSV, the UI and copy (dates without a zero time part)
+func cellString(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case duckdb.UUID:
+		return x.String() // String has a pointer receiver, so fmt alone would print the 16 bytes
+	case time.Time:
+		if x.Hour() == 0 && x.Minute() == 0 && x.Second() == 0 && x.Nanosecond() == 0 {
+			return x.Format("2006-01-02")
+		}
+		return x.Format("2006-01-02 15:04:05.999999")
+	case []byte:
+		if utf8.Valid(x) {
+			return string(x)
+		}
+		return fmt.Sprintf("%X", x)
+	case float64:
+		return formatFloat(x)
+	case float32:
+		return formatFloat(float64(x))
+	}
+	return fmt.Sprint(v)
+}
+
+// formatFloat avoids "1e+06" for ordinary numbers; keeps the exponent for very large or small ones
+func formatFloat(f float64) string {
+	if a := math.Abs(f); a == 0 || (a >= 1e-6 && a < 1e15) {
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	return fmt.Sprint(f)
+}
+
+// QueryResult is a free SQL result; Columns keeps the order (and duplicate names get a suffix)
+type QueryResult struct {
+	Columns []string         `json:"columns"`
+	Rows    []map[string]any `json:"rows"`
+	More    bool             `json:"more"` // more rows than the limit
+}
+
+// RunQuery executa SQL livre e devolve no maximo limit linhas
+func (m *DBManager) RunQuery(ctx context.Context, query string, limit int) (QueryResult, error) {
+	if m.conn == nil {
+		return QueryResult{}, fmt.Errorf("no database connected")
+	}
+	rows, err := m.conn.QueryContext(ctx, query)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		return QueryResult{}, err
+	}
+	uuids := uuidColumns(rows)
+	res := QueryResult{Columns: uniqueNames(cols), Rows: []map[string]any{}}
+	values := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range values {
+		ptrs[i] = &values[i]
+	}
+	for rows.Next() {
+		if len(res.Rows) == limit {
+			res.More = true
+			break
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return QueryResult{}, err
+		}
+		fixUUIDs(values, uuids)
+		row := make(map[string]any, len(cols))
+		for i, c := range res.Columns {
+			row[c] = jsonValue(values[i])
+		}
+		res.Rows = append(res.Rows, row)
+	}
+	return res, rows.Err()
+}
+
+// uuidColumns marks UUID columns: the driver hands them over as 16 raw bytes, which would look like a BLOB
+func uuidColumns(rows *sql.Rows) []bool {
+	types, err := rows.ColumnTypes()
+	if err != nil {
+		return nil
+	}
+	out := make([]bool, len(types))
+	for i, t := range types {
+		out[i] = t.DatabaseTypeName() == "UUID"
+	}
+	return out
+}
+
+func fixUUIDs(values []any, uuids []bool) {
+	for i, isUUID := range uuids {
+		if b, ok := values[i].([]byte); isUUID && ok && len(b) == 16 {
+			values[i] = fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+		}
+	}
+}
+
+// uniqueNames renames repeated result columns ("id", "id (2)") so each one keeps its own value
+func uniqueNames(cols []string) []string {
+	seen := map[string]int{}
+	out := make([]string, len(cols))
+	for i, c := range cols {
+		seen[c]++
+		out[i] = c
+		for n := seen[c]; n > 1; n++ {
+			if cand := fmt.Sprintf("%s (%d)", c, n); seen[cand] == 0 {
+				out[i] = cand
+				seen[cand] = 1
+				break
+			}
+		}
+	}
+	return out
 }
 
 // Retorna lista de nomes de tabelas no banco atual
@@ -108,7 +334,7 @@ func (m *DBManager) GetTableSchema(tableName string) ([]ColumnSchema, error) {
 
 	// PRAGMA table_info retorna metadata sem varrer dados
 	// !T: More efficient than DESCRIBE SELECT *
-	query := fmt.Sprintf(`PRAGMA table_info("%s")`, tableName)
+	query := fmt.Sprintf(`PRAGMA table_info(%s)`, quoteIdent(tableName))
 	rows, err := m.conn.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get table info: %w", err)
@@ -181,7 +407,7 @@ func (m *DBManager) QueryTable(tableName string, limit int) ([]map[string]interf
 
 	// SELECT com LIMIT parametrizado
 	// !T: Only limit is parameterized, table name is validated
-	query := fmt.Sprintf(`SELECT * FROM "%s" LIMIT ?`, tableName)
+	query := fmt.Sprintf(`SELECT * FROM %s LIMIT ?`, quoteIdent(tableName))
 	rows, err := m.conn.Query(query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query table: %w", err)
@@ -193,6 +419,7 @@ func (m *DBManager) QueryTable(tableName string, limit int) ([]map[string]interf
 	if err != nil {
 		return nil, fmt.Errorf("failed to get columns: %w", err)
 	}
+	uuids := uuidColumns(rows)
 
 	// Le cada row e converte para map
 	var results []map[string]interface{}
@@ -207,11 +434,12 @@ func (m *DBManager) QueryTable(tableName string, limit int) ([]map[string]interf
 		if err := rows.Scan(valuePtrs...); err != nil {
 			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
+		fixUUIDs(values, uuids)
 
 		// Cria map com nome_coluna -> valor
 		row := make(map[string]interface{})
 		for i, col := range columns {
-			row[col] = values[i]
+			row[col] = jsonValue(values[i])
 		}
 		results = append(results, row)
 	}
@@ -236,7 +464,7 @@ func (m *DBManager) GetRowCount(tableName string) (int, error) {
 
 	// COUNT(*) retorna total de linhas
 	// !T: Table name validated, safe to use in query
-	query := fmt.Sprintf(`SELECT COUNT(*) FROM "%s"`, tableName)
+	query := fmt.Sprintf(`SELECT COUNT(*) FROM %s`, quoteIdent(tableName))
 	var count int
 	if err = m.conn.QueryRow(query).Scan(&count); err != nil {
 		return 0, fmt.Errorf("failed to count rows: %w", err)
@@ -265,6 +493,7 @@ func (m *DBManager) Close() error {
 		err := m.conn.Close()
 		m.conn = nil
 		m.currentDB = ""
+		m.source = ""
 		m.tableSet = nil
 		m.tableList = nil
 		return err

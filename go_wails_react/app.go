@@ -11,6 +11,7 @@ import (
 	goruntime "runtime"
 	"runtime/debug"
 	"strings"
+	"sync"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -21,21 +22,34 @@ import (
 //go:embed wails.json
 var wailsJSON []byte
 
+// Numero e data do build, gravados por scripts\build_w11.ps1 (-ldflags -X); vazios = "build dev"
+var (
+	buildNumber string
+	buildDate   string
+)
+
 // App struct principal do Wails - contem contexto e DB manager
 // !T: Main Wails application struct holding context and database manager singleton
 type App struct {
 	ctx       context.Context
 	dbManager *backend.DBManager
 	dbName    string
+	dbPath    string // resolved path of the open file; default folder of the save dialogs
+	settings  Settings
+
+	jobMu  sync.Mutex
+	cancel context.CancelFunc // of the running load or export
 }
 
 // AppInfo alimenta o dialogo Sobre: versao do app e versoes de runtime lidas em execucao
 // !T: Data for the About dialog; React adds its own version on the frontend side
 type AppInfo struct {
-	Version string `json:"version"`
-	Go      string `json:"go"`
-	Wails   string `json:"wails"`
-	DuckDB  string `json:"duckdb"`
+	Version   string `json:"version"`
+	Build     string `json:"build"`
+	BuildDate string `json:"buildDate"`
+	Go        string `json:"go"`
+	Wails     string `json:"wails"`
+	DuckDB    string `json:"duckdb"`
 }
 
 func productVersion() string {
@@ -69,10 +83,12 @@ func (a *App) GetAppInfo() AppInfo {
 		duck = "unknown"
 	}
 	return AppInfo{
-		Version: productVersion(),
-		Go:      strings.TrimPrefix(goruntime.Version(), "go"),
-		Wails:   wailsVersion(),
-		DuckDB:  duck,
+		Version:   productVersion(),
+		Build:     buildNumber,
+		BuildDate: buildDate,
+		Go:        strings.TrimPrefix(goruntime.Version(), "go"),
+		Wails:     wailsVersion(),
+		DuckDB:    duck,
 	}
 }
 
@@ -82,11 +98,17 @@ func (a *App) DatabaseName() string {
 	return a.dbName
 }
 
+// SourceKind diz por qual leitor o arquivo foi aberto (DuckDB, SQLite, Access ODBC, mdbtools)
+func (a *App) SourceKind() string {
+	return a.dbManager.Source()
+}
+
 // Cria nova instancia App com DB manager inicializado
 // !T: Factory function returning App with initialized database manager singleton
 func NewApp() *App {
 	return &App{
 		dbManager: backend.NewDBManager(),
+		settings:  loadSettings(),
 	}
 }
 
@@ -96,15 +118,33 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 }
 
+// StartupPath: arquivo da linha de comando ou, sem ele, MDB2SQL_DB_PATH; "" = nada para abrir ao iniciar
+func (a *App) StartupPath() string {
+	for _, arg := range os.Args[1:] {
+		if !strings.HasPrefix(arg, "-") {
+			return arg
+		}
+	}
+	return os.Getenv("MDB2SQL_DB_PATH")
+}
+
 // SelectDatabase abre o seletor de arquivo nativo; retorna "" se o usuario cancelar
 // !T: Only returns a path; LoadDatabase still validates it
 func (a *App) SelectDatabase() (string, error) {
 	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Open database",
+		Title:            "Open database",
+		DefaultDirectory: existingDir(a.settings.LastDir),
 		Filters: []runtime.FileFilter{
-			{DisplayName: "DuckDB / SQLite (*.duckdb;*.db;*.sqlite;*.sqlite3)", Pattern: "*.duckdb;*.db;*.sqlite;*.sqlite3"},
+			{DisplayName: "Databases (*.duckdb;*.db;*.sqlite;*.sqlite3;*.mdb;*.accdb)", Pattern: "*.duckdb;*.db;*.sqlite;*.sqlite3;*.mdb;*.accdb"},
+			{DisplayName: "DuckDB (*.duckdb;*.db)", Pattern: "*.duckdb;*.db"},
+			{DisplayName: "SQLite (*.sqlite;*.sqlite3;*.db)", Pattern: "*.sqlite;*.sqlite3;*.db"},
+			{DisplayName: "Microsoft Access (*.mdb;*.accdb)", Pattern: "*.mdb;*.accdb"},
 		},
 	})
+}
+
+var allowedExts = map[string]struct{}{
+	".duckdb": {}, ".db": {}, ".sqlite": {}, ".sqlite3": {}, ".mdb": {}, ".accdb": {},
 }
 
 // Valida caminho do banco de dados com protecao contra path traversal
@@ -124,12 +164,6 @@ func (a *App) validateDatabasePath(dbPath string) (string, error) {
 	}
 
 	// Valida extensao do arquivo no caminho final
-	allowedExts := map[string]struct{}{
-		".duckdb":  {},
-		".db":      {},
-		".sqlite":  {},
-		".sqlite3": {},
-	}
 	ext := strings.ToLower(filepath.Ext(resolvedPath))
 	if _, ok := allowedExts[ext]; !ok {
 		return "", fmt.Errorf("unsupported database format: %s", ext)
@@ -147,32 +181,57 @@ func (a *App) validateDatabasePath(dbPath string) (string, error) {
 	return resolvedPath, nil
 }
 
-// LoadDatabase conecta ao banco DuckDB e retorna lista de tabelas
+// Progress is sent to the UI as the "progress" event during loads and exports
+type Progress struct {
+	Done  int    `json:"done"`
+	Total int    `json:"total"` // 0 = unknown
+	Label string `json:"label"`
+}
+
+func (a *App) progress(done, total int, label string) {
+	if a.ctx != nil { // nil in tests: the Wails runtime only works inside the app
+		runtime.EventsEmit(a.ctx, "progress", Progress{done, total, label})
+	}
+}
+
+// startJob gives a load or export its own cancellable context; CancelJob stops it
+func (a *App) startJob() (context.Context, func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	a.jobMu.Lock()
+	a.cancel = cancel
+	a.jobMu.Unlock()
+	return ctx, func() {
+		a.jobMu.Lock()
+		a.cancel = nil
+		a.jobMu.Unlock()
+		cancel()
+	}
+}
+
+// CancelJob cancela a carga ou exportacao em andamento (botao Cancelar)
+func (a *App) CancelJob() {
+	a.jobMu.Lock()
+	defer a.jobMu.Unlock()
+	if a.cancel != nil {
+		a.cancel()
+	}
+}
+
+// LoadDatabase abre o arquivo (Access e importado, com progresso) e retorna lista de tabelas
 // !T: Wails automatically exposes this to frontend via IPC
 func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 	// Se path vazio, tenta env var ou usa default
 	if dbPath == "" {
-		// !T: Check MDB2SQL_DB_PATH env var first
 		if envPath := os.Getenv("MDB2SQL_DB_PATH"); envPath != "" {
 			dbPath = envPath
 		} else {
-			// !T: Get executable directory for bundled app
-			exePath, err := os.Executable()
-			if err == nil {
-				// !T: In .app bundle, executable is in Contents/MacOS/
-				// data/ should be in Contents/Resources/data/
-				exeDir := filepath.Dir(exePath)
-				parentDir := filepath.Dir(exeDir) // Contents/
-				dbPath = filepath.Join(parentDir, "Resources", "data", "sample.duckdb")
-
-				// !T: Fallback to project root if Resources path doesn't exist
-				if _, err := os.Stat(dbPath); err != nil {
-					// Development mode - use project root
-					dbPath = filepath.Join("data", "sample.duckdb")
+			dbPath = filepath.Join("data", "sample.duckdb")
+			// !T: the macOS .app bundle keeps data/ in Contents/Resources/
+			if exePath, err := os.Executable(); err == nil {
+				bundled := filepath.Join(filepath.Dir(filepath.Dir(exePath)), "Resources", "data", "sample.duckdb")
+				if _, err := os.Stat(bundled); err == nil {
+					dbPath = bundled
 				}
-			} else {
-				// !T: Fallback to default relative path
-				dbPath = filepath.Join("data", "sample.duckdb")
 			}
 		}
 	}
@@ -184,12 +243,17 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 		return nil, err
 	}
 
-	// Conecta ao banco
-	if err := a.dbManager.Connect(validatedPath); err != nil {
-		a.dbName = "" // Connect ja fechou o banco anterior
+	ctx, done := a.startJob()
+	defer done()
+	a.dbName, a.dbPath = "", "" // Open closes the previous database first
+	if err := a.dbManager.Open(ctx, validatedPath, a.progress); err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("loading cancelled")
+		}
 		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
 	a.dbName = filepath.Base(validatedPath)
+	a.dbPath = validatedPath
 
 	// Lista tabelas disponiveis
 	tables, err := a.dbManager.ListTables()
@@ -220,4 +284,94 @@ func (a *App) GetRowCount(tableName string) (int, error) {
 // !T: Returns slice of ColumnSchema with name and type for each column
 func (a *App) GetTableSchema(tableName string) ([]backend.ColumnSchema, error) {
 	return a.dbManager.GetTableSchema(tableName)
+}
+
+// RunQuery executa SQL livre (aba SQL) e devolve no maximo limit linhas
+func (a *App) RunQuery(query string, limit int) (backend.QueryResult, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	return a.dbManager.RunQuery(context.Background(), query, limit)
+}
+
+var exportFilters = map[string]runtime.FileFilter{
+	"duckdb": {DisplayName: "DuckDB database (*.duckdb)", Pattern: "*.duckdb"},
+	"sqlite": {DisplayName: "SQLite database (*.sqlite)", Pattern: "*.sqlite"},
+	"xlsx":   {DisplayName: "Excel workbook (*.xlsx)", Pattern: "*.xlsx"},
+	"csv":    {DisplayName: "CSV UTF-8 (*.csv)", Pattern: "*.csv"},
+}
+
+// defaultSaveDir: pasta do arquivo aberto; sem arquivo aberto, a ultima pasta usada (se ainda existir)
+func defaultSaveDir(openFile, lastDir string) string {
+	if openFile != "" {
+		if dir := existingDir(filepath.Dir(openFile)); dir != "" {
+			return dir
+		}
+	}
+	return existingDir(lastDir)
+}
+
+func existingDir(dir string) string {
+	if info, err := os.Stat(dir); dir != "" && err == nil && info.IsDir() {
+		return dir
+	}
+	return ""
+}
+
+// saveDialog asks for the target file; "" = cancelled. The chosen folder becomes the last used folder.
+func (a *App) saveDialog(name, format string) (string, error) {
+	filter, ok := exportFilters[format]
+	if !ok {
+		return "", fmt.Errorf("unknown export format %q", format)
+	}
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:            "Export to " + strings.ToUpper(format),
+		DefaultDirectory: defaultSaveDir(a.dbPath, a.settings.LastDir),
+		DefaultFilename:  name + "." + format,
+		Filters:          []runtime.FileFilter{filter},
+	})
+	if err != nil || path == "" {
+		return "", err
+	}
+	if !strings.EqualFold(filepath.Ext(path), "."+format) {
+		path += "." + format
+	}
+	a.settings.LastDir = filepath.Dir(path)
+	a.saveSettings()
+	return path, nil
+}
+
+func (a *App) runExport(name, format string, export func(ctx context.Context, out string) error) (string, error) {
+	out, err := a.saveDialog(name, format)
+	if err != nil || out == "" {
+		return "", err
+	}
+	ctx, done := a.startJob()
+	defer done()
+	if err := export(ctx, out); err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+// ExportDatabase exporta todas as tabelas (format duckdb, sqlite ou xlsx); devolve o arquivo salvo ("" = cancelado)
+func (a *App) ExportDatabase(format string) (string, error) {
+	name := strings.TrimSuffix(a.dbName, filepath.Ext(a.dbName))
+	return a.runExport(name, format, func(ctx context.Context, out string) error {
+		return a.dbManager.ExportDatabase(ctx, format, out, a.progress)
+	})
+}
+
+// ExportTable exporta a tabela atual inteira (format csv ou xlsx)
+func (a *App) ExportTable(table, format string) (string, error) {
+	return a.runExport(table, format, func(ctx context.Context, out string) error {
+		return a.dbManager.ExportTable(ctx, table, format, out, a.progress)
+	})
+}
+
+// ExportQuery exporta o resultado completo do SQL (format csv ou xlsx)
+func (a *App) ExportQuery(query, format string) (string, error) {
+	return a.runExport("result", format, func(ctx context.Context, out string) error {
+		return a.dbManager.ExportQuery(ctx, query, format, out, a.progress)
+	})
 }

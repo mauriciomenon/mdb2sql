@@ -5,4 +5,10 @@
 go test ./...
 if ($LASTEXITCODE) { throw "go test falhou ($LASTEXITCODE)" }
 pnpm --dir frontend exec vitest run
-if ($LASTEXITCODE) { throw "vitest falhou ($LASTEXITCODE)" }
+if ($LASTEXITCODE) {
+    # com a maquina carregada o worker do vitest as vezes nao sobe a tempo ("Timeout waiting for worker");
+    # um teste quebrado de verdade falha de novo
+    'vitest falhou; repetindo uma vez'
+    pnpm --dir frontend exec vitest run
+    if ($LASTEXITCODE) { throw "vitest falhou ($LASTEXITCODE)" }
+}

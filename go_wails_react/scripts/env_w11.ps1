@@ -27,6 +27,10 @@ if (Test-Path (Join-Path $toolsGo 'go.exe')) {
     $env:GOTOOLCHAIN = 'go1.26.11'
 }
 if (Test-Path (Join-Path $toolsBin 'wails.exe')) { $env:PATH = "$toolsBin;$env:PATH" }
+# makensis para `wails build -nsis` (sem .tools vale o NSIS do sistema, se houver)
+$toolsNsis = Get-ChildItem (Join-Path $tools 'nsis') -Directory -Filter 'nsis-*' -ErrorAction Ignore | Select-Object -First 1
+if ($toolsNsis) { $env:PATH = "$($toolsNsis.FullName);$env:PATH" }
 "go:    $((Get-Command go).Source)"
 "gcc:   $((Get-Command gcc).Source)"
 "wails: $((Get-Command wails).Source)"
+"nsis:  $((Get-Command makensis -ErrorAction Ignore).Source)"

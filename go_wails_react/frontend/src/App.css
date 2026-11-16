@@ -63,19 +63,131 @@ body {
 
 .app {
   display: grid;
-  grid-template: auto minmax(0, 1fr) / 260px minmax(0, 1fr);
+  grid-template: auto minmax(0, 1fr) auto / 260px minmax(0, 1fr);
   height: 100%;
 }
 
-/* Toolbar */
-.toolbar {
+/* Menu bar + toolbar */
+.top {
   grid-column: 1 / -1;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.menubar {
+  display: flex;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.menubar > .menu-root > button {
+  border: 0;
+  border-radius: 4px;
+  padding: 3px 10px;
+  background: none;
+}
+
+.menubar > .menu-root > button[aria-expanded='true'],
+.menubar > .menu-root > button:hover {
+  background: var(--row-hover);
+}
+
+.menu-root {
+  position: relative;
+}
+
+.dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 240px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.dropdown button {
+  border: 0;
+  text-align: left;
+  white-space: nowrap;
+  background: none;
+}
+
+.dropdown button:hover:not(:disabled) {
+  background: var(--row-hover);
+}
+
+.dropdown hr {
+  width: 100%;
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.menu-title {
+  margin: 4px 12px 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.check {
+  display: inline-block;
+  width: 1.4em;
+}
+
+.toolbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 16px;
+  padding: 8px 16px;
+}
+
+/* Status bar: last action or error, and the reader that opened the file */
+.statusbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 4px 16px;
   background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+}
+
+.source {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.sql-bar {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.sql-bar textarea {
+  flex: 1;
+  min-height: 72px;
+  resize: vertical;
+  font: 13px/1.4 Consolas, 'Cascadia Mono', monospace;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.progress {
+  min-width: 380px;
+}
+
+.progress progress {
+  width: 100%;
+  margin-top: 12px;
 }
 
 h1 {
@@ -272,10 +384,8 @@ th,
 td {
   padding: 5px 10px;
   text-align: left;
+  /* no max-width: each column is as wide as its longest value (no cut fields) */
   white-space: nowrap;
-  max-width: 420px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   border-bottom: 1px solid var(--border);
 }
 

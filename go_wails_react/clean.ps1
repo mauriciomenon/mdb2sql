@@ -12,3 +12,8 @@ foreach ($target in $targets) {
         "removed $path"
     }
 }
+# copias de .tools embutidas no exe (o .gitkeep fica: go:embed precisa da pasta)
+Get-ChildItem (Join-Path $PSScriptRoot 'backend\embedded') -Exclude '.gitkeep' | ForEach-Object {
+    Remove-Item -Force -LiteralPath $_.FullName
+    "removed $($_.FullName)"
+}
