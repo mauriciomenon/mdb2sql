@@ -1,6 +1,6 @@
 [package]
 name = "mdb2sql"
-version = "1.0.1"
+version = "1.1.0"
 edition = "2021"
 
 [dependencies]
@@ -19,6 +19,13 @@ serde_json = "1.0"
 duckdb = { version = "1.1", features = ["bundled"] }
 
 # NIVEL TECNICO: duckdb bundled inclui biblioteca C estatica (no external deps)
+
+# SQLite (abrir e exportar) com a biblioteca C compilada dentro do exe: a extensao sqlite do DuckDB tem 47 MB
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+# .mdb/.accdb pelo driver ODBC do Access (odbc32.dll do Windows; sem driver cai no mdbtools embutido)
+odbc-api = { version = "29.3", default-features = false, features = ["odbc_version_3_80"] }
+# Excel .xlsx (uma aba por tabela)
+rust_xlsxwriter = { version = "0.102", features = ["constant_memory"] }
 
 [build-dependencies]
 # NIVEL BASICO: Tauri build script gera contexto em compile time

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissoes da janela principal: nucleo do Tauri, troca de tema da janela e o seletor de arquivo nativo (os comandos do app nao precisam de permissao extra)",
+  "description": "Permissoes da janela principal: nucleo do Tauri, troca de tema da janela, os eventos de progresso e os dialogos nativos de abrir e salvar (os comandos do app nao precisam de permissao extra)",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-set-theme", "dialog:allow-open"]
+  "permissions": ["core:default", "core:window:allow-set-theme", "core:event:default", "dialog:allow-open", "dialog:allow-save"]
 }

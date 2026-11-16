@@ -24,7 +24,7 @@ detalhes; aqui fica so o mapa. Nao ha build na raiz.
   Subprojeto          executavel unico   .zip      instalador
   python_pyqt6        sim                falta     falta
   go_wails_react      sim                falta     falta
-  rust_tauri_svelte   sim                falta     sim (NSIS .exe e MSI)
+  rust_tauri_svelte   sim                sim       sim (NSIS .exe e MSI)
   zig_imgui           falta              sim       falta
 
   O que falta entra no scripts\package_w11.ps1 de cada subprojeto (nomes ja definidos no README-BUILD.txt

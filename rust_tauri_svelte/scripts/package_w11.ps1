@@ -1,5 +1,5 @@
 # Monta os produtos em dist\.stage e so no fim troca dist\w11\amd64 (se algo falhar, os produtos anteriores ficam).
-# Hoje: executavel unico e instaladores NSIS e MSI. O zip entra aqui (ver README-BUILD.txt, secao 4).
+# Produtos: executavel unico, zip da pasta do app e instaladores NSIS e MSI (ver README-BUILD.txt, secao 4).
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path $PSScriptRoot
 Set-Location $Root
@@ -16,7 +16,15 @@ Copy-Item target\release\mdb2sql.exe (Join-Path $stage "$name.exe")
 # o Tauri nomeia os instaladores com a versao; o curinga pega so o desta versao
 Copy-Item "target\release\bundle\nsis\*_${version}_x64-setup.exe" (Join-Path $stage "$name-installer.exe")
 Copy-Item "target\release\bundle\msi\*_${version}_x64_*.msi" (Join-Path $stage "$name-installer.msi")
-if ((Get-ChildItem $stage).Count -ne 3) { throw "esperados 3 produtos em $stage; o nome dos instaladores do Tauri mudou?" }
+
+# zip da pasta do app: o exe (UI, DuckDB, SQLite e mdbtools dentro) e o README
+$appDir = Join-Path $stage $name
+New-Item -ItemType Directory $appDir | Out-Null
+Copy-Item target\release\mdb2sql.exe, README.md $appDir
+Compress-Archive -Path $appDir -DestinationPath (Join-Path $stage "$name.zip")
+Remove-Item -Recurse -Force $appDir
+
+if ((Get-ChildItem $stage).Count -ne 4) { throw "esperados 4 produtos em $stage; o nome dos instaladores do Tauri mudou?" }
 
 Remove-Item -Recurse -Force $out -ErrorAction Ignore
 Move-Item $stage $out
