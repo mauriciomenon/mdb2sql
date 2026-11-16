@@ -12,7 +12,7 @@ with its own README.md, README-BUILD.txt and one build command.
 | [python_pyqt6](python_pyqt6/README.md) | Python 3.12 | PyQt6 6.10, DuckDB 2.0, PyInstaller | 1.0.1 | single exe | `pwsh -NoProfile -File python_pyqt6\build_w11_amd64.ps1` |
 | [go_wails_react](go_wails_react/README.md) | Go 1.26 + TypeScript | Wails 2.13, React 18, duckdb-go (DuckDB 2.0) | 1.0.1 | single exe | `pwsh -NoProfile -File go_wails_react\build_w11_amd64.ps1` |
 | [rust_tauri_svelte](rust_tauri_svelte/README.md) | Rust 1.99 + JavaScript | Tauri 2.12, Svelte 5, duckdb crate (DuckDB 2.0) | 1.0.1 | single exe, NSIS and MSI installers | `pwsh -NoProfile -File rust_tauri_svelte\build_w11_amd64.ps1` |
-| [zig_imgui](zig_imgui/README.md) | Zig 0.17 | Dear ImGui 1.93, GLFW 3.4, libduckdb 2.0 | 1.0.1, Windows x64 only | zip of the app folder | `pwsh -NoProfile -File zig_imgui\build_w11_amd64.ps1` |
+| [zig_imgui](zig_imgui/README.md) | Zig 0.17 | Dear ImGui 1.93, GLFW 3.4, libduckdb 2.0 | 1.1.0, Windows x64 only | single exe, zip and NSIS installer | `pwsh -NoProfile -File zig_imgui\build_w11_amd64.ps1` |
 
 Every build command cleans, downloads its pinned tools into `<subproject>\.tools\` (sha256 checked),
 builds, runs the tests and puts the products in `<subproject>\dist\w11\amd64\`, named

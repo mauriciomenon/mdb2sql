@@ -1,164 +1,222 @@
 # MDB2SQL (Zig + Dear ImGui)
 
-Desktop viewer for the DuckDB files converted from Access, written in Zig with
-Dear ImGui (GLFW + OpenGL 3.3) and the DuckDB C API. Same core flows as `python_pyqt6`,
-plus paging, search, sort and a free SQL tab.
+Desktop program to open Microsoft Access (`.mdb`, `.accdb`), SQLite (`.sqlite`, `.sqlite3`) and DuckDB
+(`.duckdb`, `.db`) databases, browse and search their tables, run SQL, and export them to DuckDB, SQLite,
+Excel (`.xlsx`, one sheet per table) and CSV. Written in Zig with Dear ImGui (GLFW + OpenGL 3.3) and the
+DuckDB C API. Version **1.1.0**. Windows 10/11 x64.
 
-## Features
+The file you open is never changed: DuckDB and SQLite files are attached read-only, and an Access file is
+read once and converted into an in-memory DuckDB database.
 
-- Open a `.duckdb` / `.db` file (read-only): command line argument,
-  `MDB2SQL_DB_PATH` environment variable, **Browse...** / **File > Open...**
-  (native Windows dialog), path box + **Open**, or drop the file on the window.
-- Table list with row counts and a name filter.
-- **Data** tab: 100 rows per page, Prev/Next, search across all columns
-  (case- and accent-insensitive), click a column header to sort.
-- **Schema** tab: column, type, nullable.
-- **SQL** tab: run any SQL (Ctrl+Enter) and see the result grid; the first
-  10,000 rows are shown and the total is reported. A search box under the
-  buttons filters the rows shown, looking at every column.
-- Every grid (Data, Schema, SQL result): click a cell to select it, **Ctrl+C**
-  copies its value, right-click opens **Copy value** / **Copy row**. Copy row
-  puts the whole row on the clipboard separated by TAB, optionally with the
-  header line, in the format Excel uses (a value with a TAB, a line break or a
-  quote goes inside quotes), so it pastes into one spreadsheet row.
-- Opening a database, loading a table page and running SQL happen on a worker
-  thread: the window stays responsive, the status line shows what is running
-  and for how long, and **Cancel** interrupts a table load or a query.
-- **Export CSV...** (Data and SQL tabs, or **File > Export CSV...** for the
-  current tab, Schema included): writes the grid on screen (the current page,
-  or the SQL rows shown) to a file chosen in a save dialog. UTF-8 with BOM,
-  comma separated, CRLF, RFC 4180 quoting; NULL is an empty field and an empty
-  text is `""`.
-- **View > Theme**: dark (default) or light.
-- **Help > About MDB2SQL**: name, version (from `build.zig.zon`), purpose and
-  the versions of Zig, Dear ImGui, GLFW and DuckDB in the running program.
+## Which file to download
+
+Release `zig_imgui-v1.1.0`, all three contain the same program:
+
+| File | What it is | When to use it |
+| --- | --- | --- |
+| `mdb2sql-1.1.0-w11-amd64-zig-imgui.exe` | single executable (about 37 MB) | copy anywhere and double-click; nothing to install |
+| `mdb2sql-1.1.0-w11-amd64-zig-imgui.zip` | the program folder | unzip anywhere and run `mdb2sql-zig.exe`; keep the files together |
+| `mdb2sql-1.1.0-w11-amd64-zig-imgui-installer.exe` | installer (NSIS) | installs for the current user (no administrator), Start menu shortcut, uninstall in Settings > Apps |
+
+The single executable carries the program folder compressed inside it. On its first run it extracts the folder
+once to `%LOCALAPPDATA%\mdb2sql\zig-imgui-1.1.0-<hash>\` (about 110 MB, a few seconds) and starts the program
+from there; the next runs start at once. Older `zig-imgui-*` folders there are deleted automatically (other
+programs' folders in `%LOCALAPPDATA%\mdb2sql\` are left alone).
+
+The program folder (zip, installer, cache) holds `mdb2sql-zig.exe`, `duckdb.dll` (DuckDB 2.0.0),
+`sqlite_scanner.duckdb_extension` (DuckDB's SQLite reader, loaded from disk, never downloaded) and
+`mdbtools\` (static mdbtools 1.0.1: `mdb-tables`, `mdb-schema`, `mdb-export`, with their GPL/LGPL license
+files).
 
 ## Requirements
 
-- Windows x64.
-- Zig **0.17.1**: `scripts/setup_tools.ps1` downloads it into `zig_imgui/.tools/`
-  (ignored by git), so no system-wide Zig is needed. A `zig` 0.17.x on `PATH`
-  also works and is used when `.tools/` does not exist.
-- Stays on the system: PowerShell 7 (`pwsh`) to run the two scripts, and the
-  `tar.exe` that ships with Windows to extract the zip. No C/C++ compiler or
-  Windows SDK is needed: Zig compiles Dear ImGui and GLFW itself and carries
-  the Windows import libraries.
-- Internet on the first build: `zig build` downloads the pinned dependencies
-  into `zig-pkg/` (ignored by git) and checks their hashes.
+- Windows 10 or 11, 64 bits, with a graphics driver that supports OpenGL 3.3 (any normal PC; a remote desktop
+  session or a virtual machine without 3D may fail to start, and then a message says so).
+- Nothing else for DuckDB and SQLite files.
+- Access files (`.mdb`, `.accdb`) are read, in this order:
+  1. by the **Microsoft Access ODBC driver** "Microsoft Access Driver (*.mdb, *.accdb)", 64-bit, when it is
+     installed (it comes with 64-bit Office or with the free "Microsoft Access Database Engine 2016
+     Redistributable", x64). Optional;
+  2. otherwise by the **mdbtools** that ship with the program (no installation);
+  3. if neither is available (for example the `mdbtools` folder was deleted), a message tells what to install.
 
-## Build, run, test
+  The status line says which way was used ("opened with Access ODBC" or "opened with mdbtools").
+  `MDB2SQL_ACCESS_READER=odbc` or `=mdbtools` forces one of them (`auto` or unset: the order above).
 
-Release build from a clean clone (downloads Zig, builds, tests, packages):
+## How to use
+
+### Opening a file
+
+- **File > Open...** (Ctrl+O) or **Browse...**: Windows dialog, filtered by database type.
+- Type or paste the path in the box and press **Open** (or Enter).
+- Drag the file from Explorer onto the window.
+- Command line: `mdb2sql-zig.exe "C:\data\file.accdb"` (also works with the single exe and the shortcut).
+- Environment variable `MDB2SQL_DB_PATH`: opened at start when no file is given on the command line.
+
+While a file opens, the status line shows the time, a progress bar (tables converted or counted) and
+**Cancel**. When it is done it shows `Loaded: <file> (<n> tables) - opened with <DuckDB | SQLite | Access ODBC |
+mdbtools>`.
+
+### Window
+
+- **Table list** (left): every table with its row count; the box on top filters by name. Click a table to load it.
+- **Data** tab: 100 rows per page, **< Prev** / **Next >**, search box (Enter) that looks in every column
+  ignoring case and accents, click a column header to sort (click again: descending, again: no sort).
+  **Export CSV...** / **Export Excel...** export the whole table with the search and sort shown.
+- **Schema** tab: column, type, nullable.
+- **SQL** tab: write any SQL and press **Run** (or Ctrl+Enter). The first 10,000 rows are shown; a bigger
+  result says so, and its export writes all rows. The search box under the buttons filters the rows shown.
+  The open file is read-only: `CREATE`, `INSERT` and the like fail on it (an Access file is a copy in
+  memory, so changes there are possible but are lost when another file is opened).
+- Every grid: click a cell to select it, **Ctrl+C** copies the value, right-click opens **Copy value** /
+  **Copy row (TAB separated)**, with the option to include the header line. A copied row pastes into one Excel row.
+- Long work (opening, loading a table, SQL, export) runs in the background: the window stays responsive and
+  **Cancel** stops it.
+
+### Menus
+
+- **File**
+  - **Open...** (Ctrl+O).
+  - **Export** (also the **Export...** button next to Open):
+    - **Database to DuckDB (.duckdb)...** - every table, DuckDB types.
+    - **Database to SQLite (.sqlite)...** - every table.
+    - **Database to Excel (.xlsx, one sheet per table)...** - sheet name = table name, made valid for Excel
+      (at most 31 characters, without `\ / ? * [ ] :`, never repeated); header on row 1, frozen; numbers
+      stay numbers. A table with more than 1,048,575 rows continues in sheets `<name> (2)`, `<name> (3)`...
+    - **Current table / Current table schema / Current SQL result to CSV...** - UTF-8 with BOM (Excel shows
+      the accents), comma separated, CRLF, quotes doubled; NULL is an empty field, empty text is `""`.
+    - **... to Excel (.xlsx)...** - one sheet (split as above if needed).
+    - Export to `.mdb`/`.accdb` is **not** available (there is no reliable library to write Access files).
+  - **Exit**.
+- **Settings > Theme**: **System** (follows the Windows light/dark setting), **Light**, **Dark**. Saved.
+- **Help > About MDB2SQL**: version, build number and date, what the program does, the versions of Zig,
+  Dear ImGui, GLFW and DuckDB, author and source code link.
+
+The save dialog opens in the folder of the open file and suggests a name (file or table name). An export first
+writes `<chosen file>.part` and only replaces the chosen file when everything worked; on error or Cancel the
+`.part` file is deleted and an existing file keeps its old content. The program refuses to export over the
+file that is open.
+
+### Saved settings
+
+`%APPDATA%\mdb2sql\zig-imgui.ini`: theme and the last folder used (the dialogs start there when no file is
+open). Delete it to go back to the defaults.
+
+### Command line
+
+```
+mdb2sql-zig.exe [file] [--table NAME] [--sql "SELECT ..."] [--search TEXT] [--cell ROW,COL]
+                [--theme system|light|dark] [--about] [--menu File|Settings|Help|Export] [--export KIND]
+```
+
+`--table` selects a table, `--sql` runs a statement and shows the SQL tab, `--search` fills the Data search,
+`--cell ROW,COL` (from 1) selects a cell and opens its copy menu, `--theme` picks the colors for this run only,
+`--about` opens About, `--menu` opens that menu, `--export db_duckdb|db_sqlite|db_xlsx|table_csv|table_xlsx|
+result_csv|result_xlsx` opens the save dialog of that export. They exist for scripts and screenshots; an
+unknown flag shows this text in a message box.
+
+## Tested
+
+On Windows 11 Pro x64 (build 26300), release build (ReleaseSafe) of this version, Zig 0.17.1,
+DuckDB 2.0.0, Dear ImGui 1.93.0, GLFW 3.4, Microsoft Access ODBC driver installed. With copies of the real
+NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 rows):
+
+- `DB4.accdb` through Access ODBC and, forced, through mdbtools: 287 tables, 113,962 rows both ways, every
+  table count equal. Conversion time: about 3 s with ODBC, about 45 s with mdbtools.
+- `DB4.sqlite` (about 12 s to open: the row count of 287 tables through the SQLite reader) and `DB4.duckdb`
+  (about 1 s): 287 tables, RANGER_SOSTAT 36,754 rows.
+- DB4 exported to `.duckdb` and `.sqlite`, reopened: 287 tables, every count equal to the source.
+- DB4 exported to `.xlsx` (22 MB) and read back with openpyxl: 287 sheets; RANGER_SOSTAT 36,754,
+  RANGER_SOANLG 4,460, RANGER_SOTEXT 3,516 and RANGER_SOACCU 27 data rows, numbers read as numbers.
+- Unit tests (`zig build test`, 36): SQL building and whitelists, paging, streaming results, sheet names and
+  splitting, the xlsx zip read back by Zig's zip reader (CRC and headers checked), CSV, Access reader choice,
+  Access type mapping and `mdb-schema` parsing, settings file and default dialog folder, worker thread jobs,
+  cancel, and a long session (25 rounds of reopen, SQL errors, a 10-billion-row result, exports and cancels)
+  with the leak-checking allocator.
+
+### Stability
+
+The previous version could fail in these ways; 1.1.0 fixes them:
+
+- A free SQL statement with a big result (for example a join without condition) was materialized whole in
+  memory before the first 10,000 rows were shown: memory grew until the program died. Results now stream; only
+  the rows shown are computed (`SELECT * FROM RANGER_SOSTAT a, RANGER_SOSTAT b`, 1.35 billion rows, shows its
+  first 10,000 rows at once and memory stays flat).
+- A start error (for example no OpenGL 3.3) or an internal error closed the release program without any
+  message (it has no console). Both now show a message box.
+- Closing the window while a file was opening waited until the whole open finished (a hang of minutes on a
+  big Access file). Opening, like every other job, can now be canceled and stops between tables.
+- A cancel pressed while switching databases could interrupt a connection that was being closed. The DuckDB
+  connection now lives for the whole run, so Cancel is always safe.
+- A failed parameter bind destroyed an uninitialized DuckDB result.
+- During this work, the new Excel export crashed on the real DB4 (buffer full in the middle of a row); fixed
+  before release and covered by a test with random cell sizes.
+
+## Known limits
+
+- Windows x64 only (only the Windows libduckdb is pinned).
+- An Access file is converted entirely into memory when opened (DB4: about 350 MB of RAM with ODBC). Files of
+  several GB need as much memory.
+- The Access ODBC driver may create a `.laccdb` lock file next to the `.accdb` while it reads it (normal
+  Access behavior); it is removed when the reading ends.
+- mdbtools reads Access 97 `.mdb` text as Latin-1: characters 0x80-0x9F of Windows-1252 may come out wrong.
+  Access 2000 and later files are fine.
+- Opening a large SQLite file is slower than DuckDB (the row count of every table is computed when it opens).
+- The single executable needs `%LOCALAPPDATA%` to be writable (it extracts there).
+- The save and open dialogs are the classic Windows ones and block the window while open (running work continues).
+- The SQL result search ignores ASCII case only (the Data search, done by DuckDB, also ignores accents).
+  Copy works on one cell or one row.
+- SQL tab: values are shown as text. A statement that cannot be wrapped in a `SELECT` (PRAGMA, SET, ...) runs as
+  written and only text, integer, float and boolean columns are decoded; others show `(not text)`.
+- An `.xlsx` sheet is limited to 4 GB of XML (no ZIP64); far beyond DB4 (whole DB4: 22 MB).
+- Excel keeps at most 32,767 characters per cell: longer texts are cut in the `.xlsx` (not in CSV/DuckDB/SQLite).
+- Grids show at most 512 columns (Dear ImGui limit); exports write all of them.
+- The GUI itself has no automated tests (Dear ImGui exposes no UI Automation tree); it was checked with
+  screenshots of the release program on the real DB4 files, driven by the command line flags.
+
+## Build
+
+One command from a clean clone (downloads the pinned tools, builds, tests, makes the three files):
 
 ```powershell
-pwsh -NoProfile -File build_w11_amd64.ps1   # -> dist\w11\amd64\mdb2sql-<version>-w11-amd64-zig-imgui.zip
+pwsh -NoProfile -File build_w11_amd64.ps1   # -> dist\w11\amd64\
 ```
 
-Commands, products, work folders and cleaning: [README-BUILD.txt](README-BUILD.txt).
+Everything about building, products, folders and cleaning: [README-BUILD.txt](README-BUILD.txt).
 
-`scripts/setup_tools.ps1` pins the Zig version and the sha256 published in
-<https://ziglang.org/download/index.json>; the zip is extracted only when the
-hash matches. 0.17.1 (released 2026-11-02) is the current stable release and
-the one this code was written and tested with.
+## Dependencies
 
-Day to day, with `zig` on `PATH` or `.tools/zig-x86_64-windows-0.17.1/zig.exe`:
+| Dependency | Version | Use | How it is pinned |
+|---|---|---|---|
+| [Zig](https://ziglang.org) | 0.17.1 | compiler | sha256 in `scripts/setup_tools.ps1` |
+| [Dear ImGui](https://github.com/ocornut/imgui) | 1.93.0 docking, commit `6d32174` | UI, GLFW and OpenGL3 backends | hash in `build.zig.zon` |
+| [cimgui](https://github.com/cimgui/cimgui) | tag `1.93dock`, commit `2a6a93f` | C API of Dear ImGui | hash in `build.zig.zon` |
+| [zglfw](https://github.com/zig-gamedev/zglfw) | commit `2450fe3` (GLFW 3.4) | window, input, OpenGL context | hash in `build.zig.zon` |
+| [libduckdb](https://github.com/duckdb/duckdb/releases/tag/v2.0.0) | 2.0.0, `duckdb-shared-libs-windows-amd64.tar.gz` | database engine (`duckdb.dll`) | hash in `build.zig.zon` |
+| DuckDB `sqlite_scanner` extension | v2.0.0 windows_amd64 (signed by DuckDB) | SQLite read and write | sha256 in `scripts/setup_tools.ps1` |
+| [mdbtools_custom](https://github.com/mauriciomenon/mdbtools_custom/releases/tag/win-static-1.0.1) | 1.0.1 static, `mdbtools-1.0.1-w11-amd64.zip` | Access reader without ODBC | sha256 in `scripts/setup_tools.ps1` |
+| [NSIS](https://nsis.sourceforge.io) | 3.13 | installer | sha256 in `scripts/setup_tools.ps1` |
 
-```bash
-cd zig_imgui
-zig build -Doptimize=ReleaseSafe          # zig-out/bin/mdb2sql-zig.exe + duckdb.dll
-zig build run -Doptimize=ReleaseSafe -- "C:/path/to/file.duckdb"
-zig build test --summary all              # unit tests
-zig build -Doptimize=ReleaseSafe -Dconsole=true   # release exe that keeps a console
-```
-
-Release builds are Windows GUI programs: no console window opens with them.
-Debug builds (`zig build`) keep the console, so stderr is visible;
-`-Dconsole=true|false` overrides either way.
-
-`.\clean.ps1` removes the build intermediates (`-Dist` also the products).
-
-The first build is slow (about 2 minutes for each `translate-c` of `duckdb.h`
-and `cimgui.h`, plus the C++ compile of Dear ImGui); later builds use the cache.
-
-Optional start state, useful for scripts and screenshots:
-
-```bash
-mdb2sql-zig.exe file.duckdb --table RANGER_SOSTAT --sql "SELECT COUNT(*) FROM RANGER_SOSTAT"
-mdb2sql-zig.exe file.duckdb --theme light --about
-mdb2sql-zig.exe file.duckdb --table RANGER_SOSTAT --search "rele 86"
-mdb2sql-zig.exe file.duckdb --table RANGER_SOSTAT --cell 4,4
-```
-
-`--table NAME` selects a table, `--sql "..."` runs a statement and shows the
-SQL tab, `--search TEXT` fills the Data tab search, `--cell ROW,COL` (from 1)
-selects a grid cell and opens its copy menu, `--theme dark|light` picks the
-colors and `--about` opens the About window. An unknown flag shows the usage text (in a message box in the release
-build, which has no console).
-
-## Dependencies (pinned by hash in `build.zig.zon`)
-
-| Dependency | Version | Use |
-|---|---|---|
-| [Dear ImGui](https://github.com/ocornut/imgui) | 1.93.0 docking, commit `6d32174` | UI, GLFW and OpenGL3 backends, built from source |
-| [cimgui](https://github.com/cimgui/cimgui) | tag `1.93dock`, commit `2a6a93f` | C API of Dear ImGui, read by `translate-c` |
-| [zglfw](https://github.com/zig-gamedev/zglfw) | commit `2450fe3` (GLFW 3.4) | window, input, OpenGL context |
-| [libduckdb](https://github.com/duckdb/duckdb/releases/tag/v2.0.0) | 2.0.0, official `duckdb-shared-libs-windows-amd64.tar.gz` | database engine |
-
-The Dear ImGui commit is the one the cimgui tag points to as its submodule.
-zgui was not used: its `main` branch does not build with Zig 0.17.
-
-DuckDB 2.0.0 is required by the data: the NMR5 `.duckdb` files were written by
-DuckDB 2.0.0 (storage version 69) and libduckdb 1.5.6 refuses to open them.
-
-DuckDB is linked **dynamically**: the build links `duckdb.lib` (import library)
-and installs `duckdb.dll` next to the exe in `zig-out/bin`. Keep the two files
-together when you copy the program. ImGui, cimgui and GLFW are linked statically.
-
-The program version (1.0.1) has one source, `.version` in `build.zig.zon`;
-`build.zig` passes it to the code as a build option and the About window shows
-it.
+The NMR5 `.duckdb` files were written by DuckDB 2.0.0 (storage version 69); older libduckdb versions refuse them.
+The DuckDB extension must be the same version as `duckdb.dll`. The Excel writer (zip + XML) and the gzip
+payload of the single executable use only Zig's standard library.
 
 ## Layout
 
-- `src/query.zig` - pure logic: extension check, SQL builder with bound
-  parameters and whitelisted identifiers, paging math. Has unit tests.
-- `src/db.zig` - DuckDB C API wrapper: open read-only, tables, schema, page,
-  count, free SQL. Has unit tests that create real databases.
-- `src/worker.zig` - the database jobs (open, select table, reload page, SQL)
-  and the one-job-at-a-time thread slot that the GUI polls. Has unit tests.
-- `src/csv.zig` - CSV writer. Has unit tests for the quoting.
-- `src/gridtools.zig` - TAB-separated row copy and the filter over loaded
-  rows. Has unit tests for the escaping.
-- `src/about.zig` - About text. Has a unit test.
-- `src/dialog.zig` - Windows open/save dialogs (`comdlg32`).
-- `src/main.zig` - the GUI: menu, themes, tabs, grids.
-- `src/shim.c` - three small C functions for ImGui struct fields that Zig's
-  `translate-c` cannot expose.
+- `src/query.zig` - extension check, SQL builder with bound parameters and whitelisted identifiers, paging.
+- `src/db.zig` - DuckDB C API: the program's in-memory instance, read-only `ATTACH` of the file, streaming
+  results, tables, schema, page, counts.
+- `src/access.zig` - Access reader: ODBC (odbc32) and mdbtools, reader choice, type mapping.
+- `src/exporter.zig` - exports to DuckDB, SQLite, xlsx and CSV, with progress and cancel.
+- `src/xlsx.zig` - streaming `.xlsx` writer (deflated zip, inline strings) and sheet names.
+- `src/csv.zig`, `src/gridtools.zig` - CSV and TAB-separated row copy, filter of the loaded rows.
+- `src/worker.zig` - the background jobs (open, table, page, SQL, export) and the thread slot the UI polls.
+- `src/settings.zig` - saved settings, default dialog folder, Windows theme.
+- `src/about.zig` - About text. `src/dialog.zig` - Windows open/save dialogs.
+- `src/main.zig` - the GUI. `src/shim.c` - three ImGui struct fields `translate-c` cannot reach.
+- `src/launcher.zig`, `src/pack.zig` - the single executable and the build tool that compresses its payload.
+- `scripts/installer.nsi` - the NSIS installer.
 
-## Gaps
+## License
 
-- Windows x64 only: the build stops on other targets, because only the Windows
-  libduckdb is pinned.
-- No `.mdb` to DuckDB conversion.
-- CSV export writes what the grid holds: one page of 100 rows in the Data tab,
-  at most 10,000 rows in the SQL tab. There is no whole-table export.
-- The theme choice is not saved: the program starts dark unless
-  `--theme light` is given.
-- The file dialogs are the classic `GetOpenFileNameW` / `GetSaveFileNameW`
-  ones and block the window while they are open (a running query continues).
-- The SQL result search ignores ASCII case only (the Data tab search, done by
-  DuckDB over the whole table, also ignores accents). There is no multi-cell
-  selection: copy works on one cell or one row.
-- One database job at a time: a click made while a job runs is applied when
-  it ends. Opening a database cannot be cancelled (table loads and SQL can).
-- SQL tab: values are shown as text because the statement is wrapped in
-  `SELECT CAST(COLUMNS(*) AS VARCHAR) FROM (...)`. A statement that cannot be
-  wrapped (PRAGMA, SET, or a SELECT with a comment after its final `;`) runs
-  as written, and then only text, integer, float and boolean columns are
-  decoded; other types show `(not text)`.
-- `query.zig` supports per-column criteria (AND/OR), but the GUI exposes only
-  the global search and the sort.
-- The GUI itself has no automated tests (Dear ImGui exposes no UI Automation
-  tree); it was checked with screenshots of the real NMR5 DB4 database, driven
-  by the start flags.
-- Long cell text is cut at the column width; drag the column border to widen.
+Proprietary - All rights reserved. mdbtools (in `mdbtools\`) is GPL/LGPL, DuckDB is MIT.
