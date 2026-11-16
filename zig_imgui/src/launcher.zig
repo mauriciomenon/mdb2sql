@@ -44,7 +44,10 @@ fn run(init: std.process.Init) !void {
     const marker = try std.fs.path.join(arena, &.{ dir, ".complete" });
 
     const cwd = Io.Dir.cwd();
-    if (cwd.access(io, marker, .{})) |_| {} else |_| {
+    // extraido e inteiro (o exe pode ter sido apagado por antivirus ou limpeza)? senao extrai de novo
+    const ready = if (cwd.access(io, marker, .{})) |_| (if (cwd.access(io, exe, .{})) |_| true else |_| false) else |_| false;
+    if (!ready) {
+        cwd.deleteTree(io, dir) catch {};
         try cwd.createDirPath(io, root);
         // extrai numa pasta temporaria e so depois renomeia: dois inicios ao mesmo tempo nao se atrapalham
         const tmp = try std.fmt.allocPrint(arena, "{s}.tmp-{x}", .{ dir, randomU64(io) });
@@ -107,7 +110,13 @@ fn cleanOld(io: Io, root: []const u8, keep: []const u8) void {
         lens[n] = entry.name.len;
         n += 1;
     }
-    for (names[0..n], lens[0..n]) |*nm, len| dir.deleteTree(io, nm[0..len]) catch {};
+    for (names[0..n], lens[0..n]) |*nm, len| {
+        // exe preso = uma janela daquela versao ainda aberta: a pasta fica inteira para a proxima vez
+        var exe_buf: [160]u8 = undefined;
+        const old_exe = std.fmt.bufPrint(&exe_buf, "{s}\\mdb2sql-zig.exe", .{nm[0..len]}) catch continue;
+        dir.deleteFile(io, old_exe) catch |e| if (e != error.FileNotFound) continue;
+        dir.deleteTree(io, nm[0..len]) catch {};
+    }
 }
 
 fn randomU64(io: Io) u64 {

@@ -38,6 +38,11 @@ pub const Options = struct {
 
 // Abre o arquivo Access e devolve o caminho usado. Erro error.Failed: texto em db.lastError().
 pub fn open(db: *Db, io: Io, path: []const u8, opts: Options, progress: *Progress) !dbm.Source {
+    // o arquivo tem de existir (o driver ODBC daria uma mensagem confusa)
+    Io.Dir.cwd().access(io, path, .{}) catch {
+        db.setErrorText("File not found");
+        return error.Failed;
+    };
     const tools_ok = opts.tools_dir.len > 0 and mdbtoolsPresent(io, opts.tools_dir);
     const reader = choose(opts.forced, odbcDriverInstalled(), tools_ok) catch |e| {
         db.setErrorText(switch (e) {
@@ -49,18 +54,22 @@ pub fn open(db: *Db, io: Io, path: []const u8, opts: Options, progress: *Progres
         });
         return error.Failed;
     };
-    // o arquivo tem de existir (o driver ODBC daria uma mensagem confusa)
-    Io.Dir.cwd().access(io, path, .{}) catch {
-        db.setErrorText("File not found");
-        return error.Failed;
-    };
     try db.beginMemory();
     errdefer db.closeSource();
+    var used = reader;
     switch (reader) {
-        .odbc => try odbcImport(db, path, progress),
+        .odbc => odbcImport(db, path, progress) catch |e| {
+            // driver presente mas com falha (instalacao quebrada, arquivo que ele recusa): tenta o mdbtools,
+            // a nao ser que o ODBC tenha sido forcado ou o usuario tenha cancelado
+            if (e == error.Canceled or progress.cancel.load(.monotonic) or opts.forced.len > 0 and
+                !std.ascii.eqlIgnoreCase(opts.forced, "auto") or !tools_ok) return e;
+            try db.beginMemory();
+            used = .mdbtools;
+            try mdbtoolsImport(db, io, path, opts, progress);
+        },
         .mdbtools => try mdbtoolsImport(db, io, path, opts, progress),
     }
-    const source: dbm.Source = if (reader == .odbc) .access_odbc else .access_mdbtools;
+    const source: dbm.Source = if (used == .odbc) .access_odbc else .access_mdbtools;
     try db.finishMemory(source);
     return source;
 }
@@ -543,6 +552,23 @@ test "Access reader choice: ODBC first, mdbtools as fallback, forced by the vari
     try t.expectError(error.NoAccessReader, choose("odbc", false, true));
     try t.expectError(error.BadReaderName, choose("jet", true, true));
     _ = odbcDriverInstalled(); // a deteccao real roda sem quebrar, com ou sem o driver
+}
+
+test "a file that is not Access fails with a message, through every reader available" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var b: [256]u8 = undefined;
+    const path = dbm.tmpPath(&b, &tmp, "fake.accdb");
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = path, .data = "not an access file" });
+    var db = Db.init(t.allocator);
+    defer db.close();
+    var p: Progress = .{};
+    const tools = t.environ.getAlloc(t.allocator, "MDB2SQL_TEST_MDBTOOLS") catch try t.allocator.dupe(u8, "");
+    defer t.allocator.free(tools);
+    try t.expectError(error.Failed, open(&db, t.io, path, .{ .tools_dir = tools, .temp_dir = ".zig-cache" }, &p));
+    try t.expect(db.lastError().len > 0 and !db.isOpen());
+    try t.expectError(error.Failed, open(&db, t.io, "nao/existe.accdb", .{ .tools_dir = tools }, &p));
+    try t.expectEqualStrings("File not found", db.lastError());
 }
 
 test "Access types from mdb-schema" {

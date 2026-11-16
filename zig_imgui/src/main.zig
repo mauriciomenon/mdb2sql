@@ -579,7 +579,7 @@ const App = struct {
         ig.igSameLine(0, -1);
         if (button("Open") or enter) app.want_open = true;
         ig.igSameLine(0, -1);
-        ig.igBeginDisabled(!app.db.isOpen() or app.opening());
+        ig.igBeginDisabled(app.opening() or !app.db.isOpen());
         if (button("Export...") or app.takeStartMenu(.Export)) _ = ig.igOpenPopup_Str("export_menu", 0);
         // o menu abre logo abaixo do botao (e nao onde o mouse estiver)
         const below_x = ig.igGetItemRectMin().x;
@@ -605,7 +605,7 @@ const App = struct {
 
     // Itens de exportacao (menu Arquivo > Exportar e botao Export...)
     fn exportItems(app: *App) void {
-        const can_db = app.db.isOpen() and !app.opening();
+        const can_db = !app.opening() and app.db.isOpen();
         if (ig.igMenuItem_Bool("Database to DuckDB (.duckdb)...", null, false, can_db)) app.want_export = .db_duckdb;
         if (ig.igMenuItem_Bool("Database to SQLite (.sqlite)...", null, false, can_db)) app.want_export = .db_sqlite;
         if (ig.igMenuItem_Bool("Database to Excel (.xlsx, one sheet per table)...", null, false, can_db)) app.want_export = .db_xlsx;
@@ -639,7 +639,7 @@ const App = struct {
             defer ig.igEndMenu();
             if (ig.igMenuItem_Bool("Open...", "Ctrl+O", false, true)) app.want_browse = true;
             if (open_file) _ = ig.igOpenPopup_Str("Export", 0);
-            if (ig.igBeginMenu("Export", app.db.isOpen() and !app.opening())) {
+            if (ig.igBeginMenu("Export", !app.opening() and app.db.isOpen())) {
                 defer ig.igEndMenu();
                 app.exportItems();
             }
