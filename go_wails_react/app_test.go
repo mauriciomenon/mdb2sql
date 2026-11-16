@@ -10,7 +10,7 @@ import (
 
 func TestGetAppInfo(t *testing.T) {
 	info := NewApp().GetAppInfo()
-	if info.Version != "1.0.1" {
+	if info.Version != "1.1.0" {
 		t.Fatalf("version must come from wails.json info.productVersion, got %q", info.Version)
 	}
 	if !regexp.MustCompile(`^\d+\.\d+`).MatchString(info.Go) {
@@ -48,7 +48,7 @@ func TestLoadDatabase_ReportsRealFileNameFromEnv(t *testing.T) {
 func TestValidateDatabasePath_AllowsSupportedExts(t *testing.T) {
 	app := NewApp()
 
-	exts := []string{".duckdb", ".db", ".sqlite", ".sqlite3"}
+	exts := []string{".duckdb", ".db", ".sqlite", ".sqlite3", ".mdb", ".accdb"}
 	for _, ext := range exts {
 		t.Run(ext, func(t *testing.T) {
 			tmp, err := os.CreateTemp("", "mdb2sql_*"+ext)
@@ -89,5 +89,43 @@ func TestValidateDatabasePath_RejectsUnsupportedExt(t *testing.T) {
 
 	if _, err := app.validateDatabasePath(tmp.Name()); err == nil {
 		t.Fatalf("expected error for unsupported extension")
+	}
+}
+
+// Pasta padrao do dialogo de salvar: a do arquivo aberto; sem ele, a ultima usada; pastas que sumiram nao valem
+func TestDefaultSaveDir(t *testing.T) {
+	open := t.TempDir()
+	last := t.TempDir()
+	gone := filepath.Join(last, "removed")
+	cases := []struct{ file, last, want string }{
+		{filepath.Join(open, "db.accdb"), last, open},
+		{"", last, last},
+		{"", gone, ""},
+		{filepath.Join(gone, "db.duckdb"), last, last},
+		{"", "", ""},
+	}
+	for _, c := range cases {
+		if got := defaultSaveDir(c.file, c.last); got != c.want {
+			t.Errorf("defaultSaveDir(%q, %q) = %q, want %q", c.file, c.last, got, c.want)
+		}
+	}
+}
+
+// Tema e ultima pasta sobrevivem a um reinicio; valor desconhecido e recusado
+func TestSettingsPersist(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())         // Windows
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // Linux
+	app := NewApp()
+	if app.GetTheme() != "system" {
+		t.Fatalf("default theme %q", app.GetTheme())
+	}
+	if err := app.SetTheme("dark"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.SetTheme("blue"); err == nil {
+		t.Fatal("unknown theme accepted")
+	}
+	if got := NewApp().GetTheme(); got != "dark" {
+		t.Fatalf("theme after restart %q", got)
 	}
 }

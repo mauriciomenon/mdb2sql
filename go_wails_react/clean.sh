@@ -16,3 +16,5 @@ for target in "${targets[@]}"; do
         echo "removed $root_dir/$target"
     fi
 done
+# copies of .tools embedded in the exe (.gitkeep stays: go:embed needs the folder)
+find "${root_dir:?}/backend/embedded" -maxdepth 1 -type f ! -name .gitkeep -print -delete

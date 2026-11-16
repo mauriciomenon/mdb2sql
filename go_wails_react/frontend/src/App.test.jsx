@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, beforeEach } from 'vitest';
-import App, { rowToTsv, searchRows, tsvField } from './App.tsx';
+import App, { aboutLines, progressText, rowToTsv, searchRows, tsvField } from './App.tsx';
 
 const tables = ['RANGER_SOACCU', 'RANGER_SOGEN'];
 const rows = [
@@ -85,19 +85,22 @@ describe('App IPC flow', () => {
     expect(bridge.LoadDatabase).toHaveBeenCalledWith('');
   });
 
-  it('shows the About dialog with app and runtime versions, and closes it', async () => {
-    const GetAppInfo = vi.fn(async () => ({ version: '1.0.1', go: '1.26.10', wails: 'v2.13.0', duckdb: 'v2.0.0' }));
+  it('shows Help > About with version, build and runtime versions, and closes it', async () => {
+    const GetAppInfo = vi.fn(async () => ({
+      version: '1.1.0', build: '412', buildDate: '2026-11-15', go: '1.26.10', wails: 'v2.13.0', duckdb: 'v2.0.0',
+    }));
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetAppInfo } } } });
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'About' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Help' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'About' }));
 
     const dialog = await screen.findByRole('dialog', { name: 'MDB2SQL (Go + Wails + React)' });
     const lines = [...dialog.querySelectorAll('h2, p')].map((el) => el.textContent);
     expect(lines).toEqual([
       'MDB2SQL (Go + Wails + React)',
-      'Versao 1.0.1',
-      'Visualizador de bancos DuckDB convertidos de Microsoft Access: tabelas, esquema, dados e consultas.',
+      'Versao 1.1.0 - build 412 (2026-11-15)',
+      'Visualiza e exporta bancos DuckDB, SQLite e Microsoft Access: tabelas, esquema, dados e SQL.',
       `Go 1.26.10, Wails 2.13.0, DuckDB 2.0.0, React ${React.version}`,
       'Autor: Mauricio Menon',
       'Codigo: https://github.com/mauriciomenon/mdb2sql',
@@ -105,6 +108,69 @@ describe('App IPC flow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(aboutLines({ version: '1.1.0', go: '1', wails: '2', duckdb: '3' })[1]).toBe('Versao 1.1.0 - build dev');
+  });
+
+  it('opens the startup file and shows the reader in the status bar', async () => {
+    const StartupPath = vi.fn(async () => 'C:\\data\\DB4.accdb');
+    const SourceKind = vi.fn(async () => 'Access ODBC');
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, StartupPath, SourceKind } } } });
+    render(<App />);
+
+    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenCalledWith('C:\\data\\DB4.accdb'));
+    expect(await screen.findByText('Opened via Access ODBC')).toBeInTheDocument();
+    expect(screen.getByText(/Loaded: DB4\.accdb \(2 tables\)/)).toBeInTheDocument();
+  });
+
+  it('keeps the theme in Settings > Theme and saves the choice', async () => {
+    const SetTheme = vi.fn(async () => {});
+    const GetTheme = vi.fn(async () => 'light');
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SetTheme, GetTheme } } } });
+    render(<App />);
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe('light'));
+    expect(screen.queryByRole('combobox', { name: /Theme/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.getByRole('menuitemradio', { name: /Light/ })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /Dark/ }));
+
+    expect(SetTheme).toHaveBeenCalledWith('dark');
+    expect(document.documentElement.dataset.theme).toBe('dark');
+  });
+
+  it('exports from File > Export and the Export button, and runs SQL', async () => {
+    const ExportDatabase = vi.fn(async () => 'C:\\out\\db.xlsx');
+    const ExportQuery = vi.fn(async () => 'C:\\out\\r.csv');
+    const RunQuery = vi.fn(async () => ({ columns: ['n', 'n (2)'], rows: [{ n: 1, 'n (2)': 'x' }], more: true }));
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, ExportDatabase, ExportQuery, RunQuery } } } });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'File' }));
+    expect(screen.getByRole('menuitem', { name: /Database as Excel/ })).toBeDisabled(); // nothing open yet
+    fireEvent.click(screen.getByRole('button', { name: 'Sample data' }));
+    await screen.findByText('Alpha');
+
+    fireEvent.click(screen.getByRole('button', { name: 'File' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Database as Excel/ }));
+    await waitFor(() => expect(ExportDatabase).toHaveBeenCalledWith('xlsx'));
+    expect(await screen.findByText(/Exported .* to C:\\out\\db\.xlsx/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'SQL' }));
+    fireEvent.change(screen.getByLabelText('SQL'), { target: { value: 'select 1' } });
+    fireEvent.keyDown(screen.getByLabelText('SQL'), { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(RunQuery).toHaveBeenCalledWith('select 1', 100));
+    expect(await screen.findByText('n (2)')).toBeInTheDocument();
+    expect(screen.getByText(/1 rows \(limit 100/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'SQL result as CSV' }));
+    await waitFor(() => expect(ExportQuery).toHaveBeenCalledWith('select 1', 'csv'));
+  });
+
+  it('describes progress by table or by row', () => {
+    expect(progressText('Loading', null)).toBe('Loading...');
+    expect(progressText('Loading', { done: 12, total: 287, label: 'RANGER_SOSTAT' })).toBe('Loading RANGER_SOSTAT - 12 of 287');
+    expect(progressText('Exporting', { done: 5000, total: 0, label: 'Result' })).toBe('Exporting Result - 5000');
   });
 
   it('formats a row as TAB-separated text that pastes right in Excel', () => {

@@ -3,7 +3,15 @@
 import {main} from '../models';
 import {backend} from '../models';
 
+export function CancelJob():Promise<void>;
+
 export function DatabaseName():Promise<string>;
+
+export function ExportDatabase(arg1:string):Promise<string>;
+
+export function ExportQuery(arg1:string,arg2:string):Promise<string>;
+
+export function ExportTable(arg1:string,arg2:string):Promise<string>;
 
 export function GetAppInfo():Promise<main.AppInfo>;
 
@@ -13,6 +21,16 @@ export function GetTableData(arg1:string,arg2:number):Promise<Array<Record<strin
 
 export function GetTableSchema(arg1:string):Promise<Array<backend.ColumnSchema>>;
 
+export function GetTheme():Promise<string>;
+
 export function LoadDatabase(arg1:string):Promise<Array<string>>;
 
+export function RunQuery(arg1:string,arg2:number):Promise<backend.QueryResult>;
+
 export function SelectDatabase():Promise<string>;
+
+export function SetTheme(arg1:string):Promise<void>;
+
+export function SourceKind():Promise<string>;
+
+export function StartupPath():Promise<string>;

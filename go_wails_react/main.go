@@ -5,33 +5,53 @@ package main
 
 import (
 	"embed"
+	"os"
+	"path/filepath"
+
+	"mdb2sql/backend"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
 // Embute diretorio frontend/dist no binario final
 // !T: go:embed directive bundles frontend assets into single executable
+//
 //go:embed all:frontend/dist
 var assets embed.FS
 
 func main() {
+	build := buildNumber
+	if build == "" {
+		build = "dev"
+	}
+	// one cache folder per build: %LOCALAPPDATA%\mdb2sql\go-wails-react-<version>-<build>
+	backend.CacheTag = "go-wails-react-" + productVersion() + "-" + build
+
 	// Cria instancia da struct App com DB manager
 	// !T: NewApp() initializes App struct with DBManager singleton
 	app := NewApp()
 
+	winOpts := &windows.Options{}
+	if dir, err := os.UserCacheDir(); err == nil {
+		// fixed WebView2 data folder: the default one is named after the exe, so each exe name would get its own
+		winOpts.WebviewUserDataPath = filepath.Join(dir, "mdb2sql", "go-wails-react-webview")
+	}
+
 	// Configura e inicia aplicacao Wails com opcoes de janela e bindings
 	// !T: Wails.Run starts WebView window with IPC bridge to Go methods
 	err := wails.Run(&options.App{
-		Title:  "mdb2sql",
-		Width:  1024,
-		Height: 768,
+		Title:  "MDB2SQL (Go + Wails + React)",
+		Width:  1280,
+		Height: 800,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		OnStartup:        app.startup,
+		Windows:          winOpts,
 		Bind: []interface{}{
 			app,
 		},
