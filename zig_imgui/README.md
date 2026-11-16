@@ -3,23 +3,23 @@
 Desktop program to open Microsoft Access (`.mdb`, `.accdb`), SQLite (`.sqlite`, `.sqlite3`) and DuckDB
 (`.duckdb`, `.db`) databases, browse and search their tables, run SQL, and export them to DuckDB, SQLite,
 Excel (`.xlsx`, one sheet per table) and CSV. Written in Zig with Dear ImGui (GLFW + OpenGL 3.3) and the
-DuckDB C API. Version **1.1.0**. Windows 10/11 x64.
+DuckDB C API. Version **1.1.1**. Windows 10/11 x64.
 
 The file you open is never changed: DuckDB and SQLite files are attached read-only, and an Access file is
 read once and converted into an in-memory DuckDB database.
 
 ## Which file to download
 
-Release `zig_imgui-v1.1.0`, all three contain the same program:
+Release `zig_imgui-v1.1.1`, all three contain the same program:
 
 | File | What it is | When to use it |
 | --- | --- | --- |
-| `mdb2sql-1.1.0-w11-amd64-zig-imgui.exe` | single executable (about 37 MB) | copy anywhere and double-click; nothing to install |
-| `mdb2sql-1.1.0-w11-amd64-zig-imgui.zip` | the program folder | unzip anywhere and run `mdb2sql-zig.exe`; keep the files together |
-| `mdb2sql-1.1.0-w11-amd64-zig-imgui-installer.exe` | installer (NSIS) | installs for the current user (no administrator), Start menu shortcut, uninstall in Settings > Apps |
+| `mdb2sql-1.1.1-w11-amd64-zig-imgui.exe` | single executable (about 37 MB) | copy anywhere and double-click; nothing to install |
+| `mdb2sql-1.1.1-w11-amd64-zig-imgui.zip` | the program folder | unzip anywhere and run `mdb2sql-zig.exe`; keep the files together |
+| `mdb2sql-1.1.1-w11-amd64-zig-imgui-installer.exe` | installer (NSIS) | installs for the current user (no administrator), Start menu shortcut, uninstall in Settings > Apps |
 
 The single executable carries the program folder compressed inside it. On its first run it extracts the folder
-once to `%LOCALAPPDATA%\mdb2sql\zig-imgui-1.1.0-<hash>\` (about 110 MB, a few seconds) and starts the program
+once to `%LOCALAPPDATA%\mdb2sql\zig-imgui-1.1.1-<hash>\` (about 110 MB, a few seconds) and starts the program
 from there; the next runs start at once. Older `zig-imgui-*` folders there are deleted automatically (other
 programs' folders in `%LOCALAPPDATA%\mdb2sql\` are left alone).
 
@@ -59,13 +59,19 @@ mdbtools>`.
 
 ### Window
 
-- **Table list** (left): every table with its row count; the box on top filters by name. Click a table to load it.
-- **Data** tab: 100 rows per page, **< Prev** / **Next >**, search box (Enter) that looks in every column
-  ignoring case and accents, click a column header to sort (click again: descending, again: no sort).
-  **Export CSV...** / **Export Excel...** export the whole table with the search and sort shown.
+- **Table list** (left): every table with its row count; the box on top filters by name (same word rule as
+  the searches). Click a table to load it.
+- **Data** tab: 100 rows per page, **< Prev** / **Next >**, search box (Enter), click a column header to sort
+  (click again: descending, again: no sort). The search runs in the database over the whole table, not only
+  the page shown. **Export CSV...** / **Export Excel...** export the whole table with the search and sort shown.
 - **Schema** tab: column, type, nullable.
 - **SQL** tab: write any SQL and press **Run** (or Ctrl+Enter). The first 10,000 rows are shown; a bigger
-  result says so, and its export writes all rows. The search box under the buttons filters the rows shown.
+  result says so, and its export writes all rows. The search box under the buttons filters the rows shown
+  (only those 10,000 loaded rows).
+- **Search rule** (Data search, SQL result search and table filter): the text is split into words; a row
+  matches when one cell holds every word, in any order, ignoring case and accents. `tensao de campo` and
+  `campo tensao` both find `EXCITAÇÃO TENSÃO DE CAMPO`; words found only in different cells of the row do
+  not match. An empty search shows every row.
   The open file is read-only: `CREATE`, `INSERT` and the like fail on it (an Access file is a copy in
   memory, so changes there are possible but are lost when another file is opened).
 - Every grid: click a cell to select it, **Ctrl+C** copies the value, right-click opens **Copy value** /
@@ -131,11 +137,25 @@ NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 
 - DB4 exported to `.duckdb` and `.sqlite`, reopened: 287 tables, every count equal to the source.
 - DB4 exported to `.xlsx` (22 MB) and read back with openpyxl: 287 sheets; RANGER_SOSTAT 36,754,
   RANGER_SOANLG 4,460, RANGER_SOTEXT 3,516 and RANGER_SOACCU 27 data rows, numbers read as numbers.
-- Unit tests (`zig build test`, 38; the real-Access one runs only when `MDB2SQL_TEST_ACCDB` is set): SQL building and whitelists, paging, streaming results, sheet names and
+- Search in DB4.duckdb, table RANGER_SOSTAT (36,754 rows, 123 columns): `freios supervisao` finds the 3 rows
+  `SUPERVISÃO DE FREIOS UG 12 - ...` (1.1.0 found none: it looked for the whole text as one piece). Time on that
+  table: about 0.15 s for one word, 0.2 to 0.4 s for two to six words. The SQL result search over 10,000 real
+  rows x 123 columns takes about 10 ms per keystroke.
+- Unit tests (`zig build test`, 41; the real-Access one runs only when `MDB2SQL_TEST_ACCDB` is set): SQL building and whitelists, paging, streaming results, sheet names and
   splitting, the xlsx zip read back by Zig's zip reader (CRC and headers checked), CSV, Access reader choice,
   Access type mapping and `mdb-schema` parsing, settings file and default dialog folder, worker thread jobs,
   cancel, and a long session (25 rounds of reopen, SQL errors, a 10-billion-row result, exports and cancels)
-  with the leak-checking allocator.
+  with the leak-checking allocator. Search: every word in one cell, any order, case and accents
+  (`EXCITACAO` finds `Excitação`), words only in different cells, empty search, invalid or cut UTF-8.
+
+### Changes in 1.1.1
+
+- Search by words: the Data search, the SQL result search and the table filter split the text into words and
+  find a cell that holds all of them, in any order, ignoring case and accents. Before, the whole text had to
+  appear as one piece, so `tensao de campo` did not find `EXCITAÇÃO TENSÃO DE CAMPO`; the SQL result search
+  and the table filter also did not ignore accents. The search hints say so.
+- Program icon on the exe, the window, the single executable and the installer; the window title shows the
+  version (`mdb2sql 1.1.1 - Zig + Dear ImGui`).
 
 ### Stability
 
@@ -167,7 +187,8 @@ The previous version could fail in these ways; 1.1.0 fixes them:
 - Opening a large SQLite file is slower than DuckDB (the row count of every table is computed when it opens).
 - The single executable needs `%LOCALAPPDATA%` to be writable (it extracts there).
 - The save and open dialogs are the classic Windows ones and block the window while open (running work continues).
-- The SQL result search ignores ASCII case only (the Data search, done by DuckDB, also ignores accents).
+- The SQL result search and the table filter ignore case and accents of ASCII and Latin-1 letters (á, Ç, Ñ,
+  ÿ...) only; other scripts are compared as written. The Data search, done by DuckDB, covers all of Unicode.
   Copy works on one cell or one row.
 - SQL tab: values are shown as text. A statement that cannot be wrapped in a `SELECT` (PRAGMA, SET, ...) runs as
   written and only text, integer, float and boolean columns are decoded; others show `(not text)`.
@@ -212,13 +233,13 @@ payload of the single executable use only Zig's standard library.
 - `src/access.zig` - Access reader: ODBC (odbc32) and mdbtools, reader choice, type mapping.
 - `src/exporter.zig` - exports to DuckDB, SQLite, xlsx and CSV, with progress and cancel.
 - `src/xlsx.zig` - streaming `.xlsx` writer (deflated zip, inline strings) and sheet names.
-- `src/csv.zig`, `src/gridtools.zig` - CSV and TAB-separated row copy, filter of the loaded rows.
+- `src/csv.zig`, `src/gridtools.zig` - CSV and TAB-separated row copy, word search (case and accent folding).
 - `src/worker.zig` - the background jobs (open, table, page, SQL, export) and the thread slot the UI polls.
 - `src/settings.zig` - saved settings, default dialog folder, Windows theme.
 - `src/about.zig` - About text. `src/dialog.zig` - Windows open/save dialogs.
 - `src/main.zig` - the GUI. `src/shim.c` - three ImGui struct fields `translate-c` cannot reach.
 - `src/launcher.zig`, `src/pack.zig` - the single executable and the build tool that compresses its payload.
-- `scripts/installer.nsi` - the NSIS installer.
+- `scripts/installer.nsi` - the NSIS installer. `assets/` - the program icon and its Windows resource file.
 
 ## License
 
