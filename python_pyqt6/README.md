@@ -77,8 +77,11 @@ Real database "2026-07-14 DB4" (copies): 287 tables, 113,962 rows, RANGER_SOSTAT
 - `.sqlite` and `.duckdb`: 287 tables, all counts equal.
 - Export of the `.accdb` to `.duckdb`, `.sqlite` and `.xlsx`, reopened: 287 tables with equal counts; the `.xlsx`
   has 287 sheets with the right row counts.
-- 52 automatic tests (pytest + pytest-qt): sheet names and split, readers order and forcing, export formats,
-  cancel, default folder, theme saving, SQL tab, menus.
+- 52 automatic tests (pytest + pytest-qt; 50 run in every build, 2 need local data: a real `.accdb` copy in
+  `MDB2SQL_TEST_ACCDB`, run here with DB4, and `data/sample.duckdb`): sheet names and split, reader order and
+  forcing, export formats, cancel, default folder, theme saving, SQL tab, menus, DECIMAL display.
+- Products checked: zip extracted, installer installed and uninstalled silently (no files, shortcut or registry key
+  left); the exe, the zip folder and the installed folder have no path or name of the build machine.
 
 ## Known limits
 
