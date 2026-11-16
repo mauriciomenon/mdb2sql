@@ -25,6 +25,8 @@ VIAddVersionKey "FileDescription" "${APPNAME} installer"
 VIAddVersionKey "LegalCopyright" "Mauricio Menon"
 
 !define MUI_ABORTWARNING
+!define MUI_ICON "..\assets\mdb2sql.ico"
+!define MUI_UNICON "..\assets\mdb2sql.ico"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\mdb2sql-zig.exe"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
@@ -38,7 +40,7 @@ Section "Install"
   SetOutPath "$INSTDIR"
   File /r "${APPDIR}\*.*"
   WriteUninstaller "$INSTDIR\uninstall.exe"
-  CreateShortcut "$SMPROGRAMS\${APPNAME}.lnk" "$INSTDIR\mdb2sql-zig.exe"
+  CreateShortcut "$SMPROGRAMS\${APPNAME}.lnk" "$INSTDIR\mdb2sql-zig.exe" "" "$INSTDIR\mdb2sql-zig.exe" 0
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${APPNAME}"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "Mauricio Menon"

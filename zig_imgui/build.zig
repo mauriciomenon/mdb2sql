@@ -115,6 +115,9 @@ pub fn build(b: *std.Build) void {
     exe.root_module.linkLibrary(imgui_lib);
     exe.root_module.linkLibrary(zglfw.artifact("glfw"));
     exe.root_module.linkSystemLibrary("opengl32", .{});
+    // Icone do exe e da janela (mesmo .ico no executavel unico e no instalador)
+    const icon_rc: std.Build.Module.RcSourceFile = .{ .file = b.path("assets/mdb2sql.rc"), .include_paths = &.{b.path("assets")} };
+    exe.root_module.addWin32ResourceFile(icon_rc);
     b.installArtifact(exe);
 
     // Pasta do app em zig-out/bin: exe + duckdb.dll + extensao sqlite + mdbtools\ (tudo junto)
@@ -158,6 +161,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     onefile.subsystem = .windows;
+    onefile.root_module.addWin32ResourceFile(icon_rc);
     b.step("onefile", "Single-file exe (zig-out/onefile/)").dependOn(&b.addInstallArtifact(onefile, .{ .dest_dir = .{ .override = .{ .custom = "onefile" } } }).step);
 
     const run = b.addRunArtifact(exe);

@@ -1059,7 +1059,7 @@ fn run(init: std.process.Init) !void {
     glfw.windowHint(.context_version_major, 3);
     glfw.windowHint(.context_version_minor, 3);
     glfw.windowHint(.opengl_profile, .opengl_core_profile);
-    const window = try glfw.Window.create(1280, 800, "MDB2SQL (Zig + Dear ImGui)", null, null);
+    const window = try glfw.Window.create(1280, 800, "mdb2sql " ++ dbm.about.version ++ " - Zig + Dear ImGui", null, null);
     defer window.destroy();
     glfw.makeContextCurrent(window);
     glfw.swapInterval(1);
