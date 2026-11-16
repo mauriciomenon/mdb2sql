@@ -1,10 +1,15 @@
 <script>
-  // NIVEL BASICO: Visualizador de tabelas DuckDB (abre banco, lista tabelas, mostra linhas)
+  // NIVEL BASICO: Visualizador e conversor de bancos (DuckDB, SQLite, Access)
+  // Menus: File (abrir, exportar), Settings (tema), Help (sobre). Abas: Data, Schema, SQL.
   // NIVEL TECNICO: Svelte 5 runes; every backend call goes through Tauri invoke()
 
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { cellText, rowMatches, rowToTsv } from './grid.js';
+  import { onMount } from 'svelte';
+  import Grid from './Grid.svelte';
+  import { rowMatches } from './grid.js';
+  import { defaultSaveDir, dirOf, joinPath, stem, suggestedName } from './paths.js';
 
   const LIMITS = [100, 500, 1000];
   // null devolve a janela (barra de titulo e webview) ao tema do sistema
@@ -13,15 +18,55 @@
     ['Light', 'light'],
     ['Dark', 'dark'],
   ];
+  // File > Export: [texto, scope, format]
+  const EXPORTS = [
+    ['Database to DuckDB (.duckdb)...', 'database', 'duckdb'],
+    ['Database to SQLite (.sqlite)...', 'database', 'sqlite'],
+    ['Database to Excel (.xlsx, one sheet per table)...', 'database', 'xlsx'],
+    ['Current table to CSV...', 'table', 'csv'],
+    ['Current table to Excel (.xlsx)...', 'table', 'xlsx'],
+    ['SQL result to CSV...', 'sql', 'csv'],
+    ['SQL result to Excel (.xlsx)...', 'sql', 'xlsx'],
+  ];
+  const FILTERS = {
+    duckdb: 'DuckDB database',
+    sqlite: 'SQLite database',
+    xlsx: 'Excel workbook',
+    csv: 'CSV, UTF-8',
+  };
+  const OPEN_EXTENSIONS = ['duckdb', 'db', 'sqlite', 'sqlite3', 'mdb', 'accdb'];
+  // preferencias gravadas no WebView2 (ficam entre execucoes)
+  const THEME_KEY = 'mdb2sql.theme';
+  const LAST_DIR_KEY = 'mdb2sql.lastDir';
 
-  let search = $state('');
-  let selected = $state.raw(null); // { row, col }: celula escolhida para copiar
-  let menu = $state.raw(null); // { x, y } do menu de copia aberto
+  function loadSetting(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null; // sem armazenamento: vale o padrao
+    }
+  }
+
+  function saveSetting(key, value) {
+    try {
+      if (value) localStorage.setItem(key, value);
+      else localStorage.removeItem(key);
+    } catch {
+      // sem armazenamento: a escolha vale so ate fechar o app
+    }
+  }
+
+  let openMenu = $state(null); // 'file' | 'settings' | 'help' | 'export'
+  let tab = $state('data');
   let themeIndex = $state(0);
   let aboutDialog;
   let aboutLines = $state([]);
+  let progressDialog;
+  let progress = $state.raw(null); // { label, done, total, item } da exportacao em andamento
 
   let dbPath = $state('');
+  let openedPath = $state('');
+  let source = $state('');
   let tables = $state([]);
   let filter = $state('');
   let selectedTable = $state('');
@@ -29,63 +74,58 @@
   let rows = $state([]);
   let rowCount = $state(0);
   let limit = $state(LIMITS[0]);
+  let search = $state('');
   let busy = $state(false);
   let status = $state('No database open');
   let error = $state('');
 
+  let sql = $state('');
+  let sqlResult = $state.raw(null); // { columns, rows, truncated }
+  let lastSql = ''; // SQL que gerou sqlResult (o que a exportacao repete)
+
   let visibleTables = $derived(
     tables.filter((t) => t.toLowerCase().includes(filter.trim().toLowerCase()))
   );
-
   let visibleRows = $derived(rows.filter((row) => rowMatches(row, search)));
 
-  // NIVEL BASICO: Celula sob o clique (td tem o indice da coluna, tr o da linha visivel)
-  function selectCell(event) {
-    const td = event.target.closest('td[data-c]');
-    if (td) selected = { row: visibleRows[td.parentElement.dataset.r], col: columns[td.dataset.c].name };
+  const showStatus = (text) => {
+    error = '';
+    status = text;
+  };
+  const showError = (text) => (error = text);
+
+  function canExport(scope) {
+    if (busy || !openedPath) return false;
+    if (scope === 'table') return !!selectedTable;
+    if (scope === 'sql') return !!sqlResult?.columns.length;
+    return true;
   }
 
-  function openMenu(event) {
-    event.preventDefault();
-    selectCell(event);
-    if (!selected) return;
-    // a tecla de menu do teclado nao tem posicao de mouse: abre no canto da grade
-    const box = event.currentTarget.getBoundingClientRect();
-    menu = { x: event.clientX || box.left + 40, y: event.clientY || box.top + 40 };
+  function toggleMenu(event, name) {
+    event.stopPropagation();
+    openMenu = openMenu === name ? null : name;
   }
 
-  // NIVEL BASICO: kind = 'value' (celula), 'row' ou 'row-header' (linha separada por TAB)
-  async function copy(kind) {
-    menu = null;
-    if (!selected) return;
-    const names = columns.map((col) => col.name);
-    const text =
-      kind === 'value'
-        ? cellText(selected.row[selected.col])
-        : rowToTsv(names, selected.row, kind === 'row-header');
-    try {
-      await navigator.clipboard.writeText(text);
-      error = '';
-      status =
-        kind === 'value'
-          ? `Copied value of ${selected.col}`
-          : `Copied row (${names.length} columns${kind === 'row-header' ? ', with header' : ''})`;
-    } catch (err) {
-      error = `Copy failed: ${err}`;
-    }
-  }
-
-  function gridKey(event) {
-    // com texto selecionado pelo mouse vale o Ctrl+C normal do navegador
-    if (event.ctrlKey && event.key.toLowerCase() === 'c' && selected && !String(getSelection())) {
-      event.preventDefault();
-      copy('value');
-    }
-  }
-
-  const focusNow = (node) => node.focus();
-
-  const isNumeric =(type) => /INT|DOUBLE|FLOAT|DECIMAL|REAL|NUMERIC/i.test(type);
+  onMount(() => {
+    const stored = THEMES.findIndex(([, value]) => value === loadSetting(THEME_KEY));
+    if (stored > 0) setTheme(stored);
+    const stops = [
+      listen('open-progress', ({ payload }) => {
+        status = `Reading table ${payload.done + 1} of ${payload.total}: ${payload.item}`;
+      }),
+      listen('export-progress', ({ payload }) => {
+        if (progress) progress = { ...progress, ...payload };
+      }),
+    ];
+    // caminho da linha de comando ou de MDB2SQL_DB_PATH
+    invoke('startup_path').then((path) => {
+      if (path) {
+        dbPath = path;
+        openDatabase();
+      }
+    });
+    return () => stops.forEach((stop) => stop.then((unlisten) => unlisten()));
+  });
 
   // NIVEL BASICO: Abre o banco; caminho vazio usa MDB2SQL_DB_PATH ou data/sample.duckdb
   async function openDatabase(event) {
@@ -93,20 +133,22 @@
     // "Copiar como caminho" do Windows cola o caminho entre aspas
     const path = dbPath.trim().replace(/^"(.*)"$/, '$1');
     busy = true;
-    error = '';
-    status = 'Opening database...';
+    showStatus('Opening database...');
     try {
-      tables = await invoke('load_database', { dbPath: path });
+      const opened = await invoke('load_database', { dbPath: path });
+      tables = opened.tables;
+      openedPath = opened.path;
+      source = opened.source;
+      dbPath = opened.path;
       filter = '';
-      status = `${path || 'Default database'}: ${tables.length} tables`;
-      if (tables.length > 0) {
-        await openTable(tables[0]);
-      } else {
-        selectedTable = '';
-        columns = [];
-        rows = [];
-        rowCount = 0;
-      }
+      sqlResult = null;
+      saveSetting(LAST_DIR_KEY, dirOf(opened.path));
+      showStatus(`${opened.path}: ${tables.length} tables`);
+      selectedTable = '';
+      columns = [];
+      rows = [];
+      rowCount = 0;
+      if (tables.length > 0) await openTable(tables[0]);
     } catch (err) {
       error = String(err);
       status = 'Could not open database';
@@ -118,39 +160,45 @@
   // NIVEL BASICO: Seletor de arquivo nativo; o arquivo escolhido e aberto em seguida
   // NIVEL TECNICO: calls the dialog plugin command directly, no npm package for one call
   async function browse() {
+    openMenu = null;
     try {
       const picked = await invoke('plugin:dialog|open', {
         options: {
-          title: 'Open DuckDB database',
-          filters: [{ name: 'DuckDB database', extensions: ['duckdb', 'db'] }],
+          title: 'Open database',
+          defaultPath: defaultSaveDir(openedPath, loadSetting(LAST_DIR_KEY)) || undefined,
+          filters: [
+            { name: 'Databases (DuckDB, SQLite, Access)', extensions: OPEN_EXTENSIONS },
+            { name: 'All files', extensions: ['*'] },
+          ],
         },
       });
       if (!picked) return; // cancelado
       dbPath = String(picked);
       await openDatabase();
     } catch (err) {
-      error = String(err);
+      showError(String(err));
     }
   }
 
-  async function cycleTheme() {
-    const next = (themeIndex + 1) % THEMES.length;
+  async function setTheme(index) {
+    openMenu = null;
     try {
-      await getCurrentWindow().setTheme(THEMES[next][1]);
-      themeIndex = next;
+      await getCurrentWindow().setTheme(THEMES[index][1]);
+      themeIndex = index;
+      saveSetting(THEME_KEY, THEMES[index][1]);
     } catch (err) {
-      error = String(err);
+      showError(String(err));
     }
   }
 
   // NIVEL TECNICO: __SVELTE_VERSION__ is the bundled Svelte version, injected by vite.config.js
   async function showAbout() {
+    openMenu = null;
     try {
-      const svelteVersion = __SVELTE_VERSION__;
-      aboutLines = await invoke('about', { svelteVersion });
+      aboutLines = await invoke('about', { svelteVersion: __SVELTE_VERSION__ });
       aboutDialog.showModal();
     } catch (err) {
-      error = String(err);
+      showError(String(err));
     }
   }
 
@@ -158,7 +206,6 @@
   async function openTable(tableName) {
     if (!tableName) return;
     if (tableName !== selectedTable) search = '';
-    selected = null;
     selectedTable = tableName;
     busy = true;
     error = '';
@@ -179,9 +226,94 @@
       busy = false;
     }
   }
+
+  // NIVEL BASICO: SQL livre; mostra ate o Row limit
+  async function runSql() {
+    if (!sql.trim()) return;
+    busy = true;
+    try {
+      const query = sql;
+      sqlResult = await invoke('run_sql', { sql: query, limit });
+      lastSql = query;
+      showStatus(
+        sqlResult.columns.length
+          ? `Query returned ${sqlResult.rows.length.toLocaleString()}${sqlResult.truncated ? '+ (Row limit; export gets all)' : ''} rows`
+          : 'Statement executed'
+      );
+    } catch (err) {
+      showError(String(err));
+    } finally {
+      busy = false;
+    }
+  }
+
+  // NIVEL BASICO: Pergunta onde salvar (pasta do arquivo aberto, senao a ultima usada) e exporta
+  // fora da thread da interface, com barra de progresso e Cancelar
+  async function startExport(scope, format, label) {
+    openMenu = null;
+    if (!canExport(scope)) return;
+    const base = scope === 'database' ? stem(openedPath) : scope === 'table' ? selectedTable : 'query';
+    const dir = defaultSaveDir(openedPath, loadSetting(LAST_DIR_KEY));
+    try {
+      const path = await invoke('plugin:dialog|save', {
+        options: {
+          title: `Export ${label.replace('...', '')}`,
+          defaultPath: joinPath(dir, suggestedName(base, format, openedPath)),
+          filters: [{ name: FILTERS[format], extensions: [format] }],
+        },
+      });
+      if (!path) return; // cancelado
+      saveSetting(LAST_DIR_KEY, dirOf(path));
+      progress = { label: label.replace('...', ''), done: 0, total: 0, item: '' };
+      progressDialog.showModal();
+      showStatus(await invoke('export', { scope, format, path, table: selectedTable || null, sql: lastSql || null }));
+    } catch (err) {
+      showError(String(err));
+    } finally {
+      progress = null;
+      progressDialog.close();
+    }
+  }
 </script>
 
 <div class="app">
+  <div class="menubar" role="menubar" aria-label="Main menu">
+    <div class="menu-root">
+      <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openMenu === 'file'} onclick={(e) => toggleMenu(e, 'file')}>File</button>
+      {#if openMenu === 'file'}
+        <div class="dropdown" role="menu" aria-label="File">
+          <button type="button" role="menuitem" onclick={browse} disabled={busy}>Open...</button>
+          <div class="separator" role="separator"></div>
+          <span class="group">Export</span>
+          {#each EXPORTS as [label, scope, format]}
+            <button type="button" role="menuitem" disabled={!canExport(scope)} onclick={() => startExport(scope, format, label)}>{label}</button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+    <div class="menu-root">
+      <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openMenu === 'settings'} onclick={(e) => toggleMenu(e, 'settings')}>Settings</button>
+      {#if openMenu === 'settings'}
+        <div class="dropdown" role="menu" aria-label="Settings">
+          <span class="group">Theme</span>
+          {#each THEMES as [name], i}
+            <button type="button" role="menuitemradio" aria-checked={themeIndex === i} onclick={() => setTheme(i)}>
+              <span class="check">{themeIndex === i ? '●' : ''}</span>{name}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+    <div class="menu-root">
+      <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openMenu === 'help'} onclick={(e) => toggleMenu(e, 'help')}>Help</button>
+      {#if openMenu === 'help'}
+        <div class="dropdown" role="menu" aria-label="Help">
+          <button type="button" role="menuitem" onclick={showAbout}>About MDB2SQL</button>
+        </div>
+      {/if}
+    </div>
+  </div>
+
   <header>
     <h1>MDB2SQL</h1>
     <form onsubmit={openDatabase}>
@@ -190,17 +322,23 @@
         id="db-path"
         type="text"
         bind:value={dbPath}
-        placeholder="Path to a .duckdb file (empty: MDB2SQL_DB_PATH or data/sample.duckdb)"
+        placeholder="Path to a .duckdb, .db, .sqlite, .sqlite3, .mdb or .accdb file"
         spellcheck="false"
         autocomplete="off"
       />
       <button type="button" class="secondary" onclick={browse} disabled={busy}>Browse...</button>
       <button type="submit" disabled={busy}>Open database</button>
     </form>
-    <button type="button" class="secondary" onclick={cycleTheme}>
-      Theme: {THEMES[themeIndex][0]}
-    </button>
-    <button type="button" class="secondary" onclick={showAbout}>About</button>
+    <div class="menu-root">
+      <button type="button" class="secondary" aria-haspopup="menu" aria-expanded={openMenu === 'export'} disabled={!canExport('database')} onclick={(e) => toggleMenu(e, 'export')}>Export...</button>
+      {#if openMenu === 'export'}
+        <div class="dropdown right" role="menu" aria-label="Export">
+          {#each EXPORTS as [label, scope, format]}
+            <button type="button" role="menuitem" disabled={!canExport(scope)} onclick={() => startExport(scope, format, label)}>{label}</button>
+          {/each}
+        </div>
+      {/if}
+    </div>
   </header>
 
   <dialog bind:this={aboutDialog} aria-labelledby="about-title">
@@ -214,9 +352,15 @@
     <button type="button" onclick={() => aboutDialog.close()}>Close</button>
   </dialog>
 
-  <p class="status" class:error role="status" aria-live="polite">
-    {error || status}
-  </p>
+  <!-- Esc nao fecha: a exportacao para pelo botao Cancel -->
+  <dialog bind:this={progressDialog} class="progress" aria-labelledby="progress-title" oncancel={(e) => e.preventDefault()}>
+    {#if progress}
+      <h2 id="progress-title">{progress.label}</h2>
+      <progress max={progress.total || 1} value={progress.total ? progress.done : 0}></progress>
+      <p>{progress.total ? `${progress.done} of ${progress.total}` : 'Starting'}{progress.item ? `: ${progress.item}` : ''}</p>
+      <button type="button" class="secondary" onclick={() => invoke('cancel_export')}>Cancel</button>
+    {/if}
+  </dialog>
 
   <div class="workspace">
     <nav aria-label="Tables">
@@ -244,7 +388,50 @@
     </nav>
 
     <main aria-busy={busy}>
-      {#if selectedTable}
+      <div class="tabs" role="tablist" aria-label="View">
+        {#each [['data', 'Data'], ['schema', 'Schema'], ['sql', 'SQL']] as [id, name]}
+          <button type="button" role="tab" aria-selected={tab === id} class:active={tab === id} onclick={() => (tab = id)}>{name}</button>
+        {/each}
+        <span class="spacer"></span>
+        <label for="row-limit">Row limit</label>
+        <select id="row-limit" bind:value={limit} onchange={() => openTable(selectedTable)}>
+          {#each LIMITS as option}
+            <option value={option}>{option}</option>
+          {/each}
+        </select>
+      </div>
+
+      {#if tab === 'sql'}
+        <div class="sql">
+          <textarea
+            bind:value={sql}
+            aria-label="SQL"
+            spellcheck="false"
+            placeholder={'SELECT * FROM "' + (selectedTable || 'table') + '" LIMIT 10   (Ctrl+Enter runs)'}
+            onkeydown={(e) => e.ctrlKey && e.key === 'Enter' && runSql()}
+          ></textarea>
+          <div class="table-bar">
+            <button type="button" onclick={runSql} disabled={busy || !openedPath || !sql.trim()}>Run SQL</button>
+            {#if sqlResult}
+              <span>{sqlResult.rows.length.toLocaleString()}{sqlResult.truncated ? '+' : ''} rows, {sqlResult.columns.length} columns</span>
+            {/if}
+          </div>
+        </div>
+        {#if sqlResult?.columns.length}
+          <Grid columns={sqlResult.columns} rows={sqlResult.rows} label="SQL result" emptyText="No rows" onstatus={showStatus} onerror={showError} />
+        {/if}
+      {:else if !selectedTable}
+        <p class="empty">Open a database (.duckdb, .sqlite, .mdb, .accdb) to browse its tables.</p>
+      {:else if tab === 'schema'}
+        <div class="table-bar"><h2>{selectedTable}</h2><span>{columns.length} columns</span></div>
+        <Grid
+          columns={[{ name: '#', type: 'INTEGER' }, { name: 'Column', type: '' }, { name: 'Type', type: '' }, { name: 'Null', type: '' }]}
+          rows={columns.map((c, i) => ({ '#': i + 1, Column: c.name, Type: c.type, Null: c.null }))}
+          label="Schema of {selectedTable}"
+          onstatus={showStatus}
+          onerror={showError}
+        />
+      {:else}
         <div class="table-bar">
           <h2>{selectedTable}</h2>
           <span>
@@ -262,93 +449,30 @@
             aria-label="Search rows"
             placeholder="Search loaded rows (all columns)"
           />
-          <label for="row-limit">Row limit</label>
-          <select id="row-limit" bind:value={limit} onchange={() => openTable(selectedTable)}>
-            {#each LIMITS as option}
-              <option value={option}>{option}</option>
-            {/each}
-          </select>
         </div>
-
-        <!-- tabindex: a area rolavel precisa de foco para rolar pelo teclado -->
-        <!-- clique seleciona a celula; botao direito ou tecla de menu abre o menu de copia; Ctrl+C copia o valor -->
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
-        <div
-          class="grid"
-          tabindex="0"
-          role="region"
-          aria-label="Rows of {selectedTable}"
-          onclick={selectCell}
-          oncontextmenu={openMenu}
-          onkeydown={gridKey}
-        >
-          <table>
-            <thead>
-              <tr>
-                {#each columns as col (col.name)}
-                  <th scope="col" class:num={isNumeric(col.type)}>
-                    {col.name}
-                    <small>{col.type}</small>
-                  </th>
-                {/each}
-              </tr>
-            </thead>
-            <tbody>
-              {#each visibleRows as row, r}
-                <tr data-r={r}>
-                  {#each columns as col, c (col.name)}
-                    {@const value = row[col.name]}
-                    {@const isSelected = selected?.row === row && selected.col === col.name}
-                    {#if value === null || value === undefined}
-                      <td data-c={c} class="null" class:selected={isSelected}>NULL</td>
-                    {:else}
-                      <td
-                        data-c={c}
-                        class:num={isNumeric(col.type)}
-                        class:selected={isSelected}
-                        title={String(value)}>{value}</td
-                      >
-                    {/if}
-                  {/each}
-                </tr>
-              {:else}
-                <tr>
-                  <td class="null" colspan={Math.max(columns.length, 1)}>
-                    {rows.length ? 'No loaded row matches the search' : 'Table is empty'}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {:else}
-        <p class="empty">Open a DuckDB database to browse its tables.</p>
+        <Grid
+          {columns}
+          rows={visibleRows}
+          label="Rows of {selectedTable}"
+          emptyText={rows.length ? 'No loaded row matches the search' : 'Table is empty'}
+          onstatus={showStatus}
+          onerror={showError}
+        />
       {/if}
     </main>
   </div>
 
-  {#if menu}
-    <div class="menu" role="menu" aria-label="Copy" style="left: {menu.x}px; top: {menu.y}px">
-      <button type="button" role="menuitem" use:focusNow onclick={() => copy('value')}>
-        Copy value <kbd>Ctrl+C</kbd>
-      </button>
-      <button type="button" role="menuitem" onclick={() => copy('row')}>Copy row</button>
-      <button type="button" role="menuitem" onclick={() => copy('row-header')}>
-        Copy row with header
-      </button>
-    </div>
-  {/if}
-
-  <footer>Rust + Tauri v2 + Svelte</footer>
+  <footer class="statusbar" class:error role="status" aria-live="polite">
+    <span class="message">{error || status}</span>
+    {#if source}<span class="source" title="How the file was read">Opened via {source}</span>{/if}
+    <span class="stack">Rust + Tauri v2 + Svelte</span>
+  </footer>
 </div>
 
-<svelte:window
-  onclick={() => (menu = null)}
-  onkeydown={(event) => event.key === 'Escape' && (menu = null)}
-/>
+<svelte:window onclick={() => (openMenu = null)} onkeydown={(e) => e.key === 'Escape' && (openMenu = null)} />
 
 <style>
-  /* NIVEL BASICO: Cores em variaveis; tema claro/escuro segue o sistema operacional */
+  /* NIVEL BASICO: Cores em variaveis; o tema (Settings > Theme) troca o esquema da janela */
   :global(:root) {
     color-scheme: light dark;
     --bg: #f6f7f9;
@@ -398,8 +522,85 @@
     flex-direction: column;
     height: 100%;
     box-sizing: border-box;
-    padding: 12px 16px 6px;
+    padding: 0 16px 6px;
     gap: 10px;
+  }
+
+  .menubar {
+    display: flex;
+    gap: 2px;
+    margin: 0 -16px;
+    padding: 2px 8px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .menubar > .menu-root > button {
+    background: none;
+    border-color: transparent;
+    color: var(--text);
+    font-weight: 400;
+    padding: 4px 10px;
+  }
+
+  .menubar > .menu-root > button:hover,
+  .menubar > .menu-root > button[aria-expanded='true'] {
+    background: var(--row-hover);
+  }
+
+  .menu-root {
+    position: relative;
+  }
+
+  .dropdown {
+    position: absolute;
+    z-index: 20;
+    top: 100%;
+    left: 0;
+    display: flex;
+    flex-direction: column;
+    min-width: 240px;
+    padding: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgb(0 0 0 / 0.3);
+  }
+
+  .dropdown.right {
+    left: auto;
+    right: 0;
+  }
+
+  .dropdown button {
+    background: none;
+    border-color: transparent;
+    color: var(--text);
+    font-weight: 400;
+    text-align: left;
+  }
+
+  .dropdown button:hover:not(:disabled),
+  .dropdown button:focus-visible {
+    background: var(--row-hover);
+  }
+
+  .dropdown .group {
+    padding: 4px 10px 2px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .dropdown .separator {
+    margin: 4px 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .check {
+    display: inline-block;
+    width: 1.4em;
+    color: var(--accent);
   }
 
   header {
@@ -430,7 +631,8 @@
 
   input,
   select,
-  button {
+  button,
+  textarea {
     font: inherit;
     color: inherit;
     background: var(--surface);
@@ -450,9 +652,6 @@
     color: var(--accent-text);
     font-weight: 600;
     cursor: pointer;
-  }
-
-  button {
     white-space: nowrap;
   }
 
@@ -463,7 +662,7 @@
   }
 
   dialog {
-    max-width: 560px;
+    max-width: 640px;
     padding: 20px 24px;
     background: var(--surface);
     color: var(--text);
@@ -490,6 +689,15 @@
     margin: 16px 0 0 auto;
   }
 
+  dialog.progress {
+    width: 460px;
+  }
+
+  dialog.progress progress {
+    width: 100%;
+    margin-top: 12px;
+  }
+
   button:disabled,
   select:disabled,
   input:disabled {
@@ -497,26 +705,9 @@
     cursor: not-allowed;
   }
 
-  :is(input, select, button, .grid):focus-visible {
+  :is(input, select, button, textarea):focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 1px;
-  }
-
-  .status {
-    margin: 0;
-    padding: 6px 10px;
-    border-radius: 6px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--muted);
-    font-size: 13px;
-    overflow-wrap: anywhere;
-  }
-
-  .status.error {
-    background: var(--error-bg);
-    border-color: var(--error-text);
-    color: var(--error-text);
   }
 
   .workspace {
@@ -553,6 +744,34 @@
     gap: 8px;
   }
 
+  .tabs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tabs button {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    color: var(--muted);
+  }
+
+  .tabs button.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+
+  .tabs .spacer {
+    flex: 1;
+  }
+
+  .tabs select {
+    padding: 3px 6px;
+  }
+
   .table-bar {
     display: flex;
     align-items: baseline;
@@ -574,111 +793,17 @@
     padding: 3px 8px;
   }
 
-  td.selected {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
-    background: var(--row-hover);
-  }
-
-  .menu {
-    position: fixed;
-    z-index: 10;
+  .sql {
     display: flex;
     flex-direction: column;
-    min-width: 200px;
-    padding: 4px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    box-shadow: 0 6px 18px rgb(0 0 0 / 0.3);
+    gap: 8px;
   }
 
-  .menu button {
-    display: flex;
-    justify-content: space-between;
-    gap: 16px;
-    background: none;
-    border-color: transparent;
-    color: var(--text);
-    font-weight: 400;
-    text-align: left;
-  }
-
-  .menu button:hover,
-  .menu button:focus-visible {
-    background: var(--row-hover);
-  }
-
-  .menu kbd {
-    color: var(--muted);
-    font: inherit;
-    font-size: 12px;
-  }
-
-  .table-bar select {
-    padding: 3px 6px;
-  }
-
-  .grid {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-  }
-
-  table {
-    border-collapse: separate;
-    border-spacing: 0;
+  .sql textarea {
+    min-height: 90px;
+    resize: vertical;
+    font-family: Consolas, 'Cascadia Mono', monospace;
     font-size: 13px;
-    font-variant-numeric: tabular-nums;
-  }
-
-  th {
-    position: sticky;
-    top: 0;
-    background: var(--surface);
-    border-bottom: 2px solid var(--border);
-    padding: 6px 10px;
-    text-align: left;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
-  th small {
-    display: block;
-    color: var(--muted);
-    font-size: 10px;
-    font-weight: 500;
-    letter-spacing: 0.04em;
-  }
-
-  td {
-    padding: 4px 10px;
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 320px;
-  }
-
-  tbody tr:nth-child(even) {
-    background: var(--row-alt);
-  }
-
-  tbody tr:hover {
-    background: var(--row-hover);
-  }
-
-  .num {
-    text-align: right;
-  }
-
-  .null {
-    color: var(--muted);
-    font-style: italic;
-    opacity: 0.7;
   }
 
   .empty {
@@ -686,9 +811,39 @@
     color: var(--muted);
   }
 
-  footer {
+  .statusbar {
+    display: flex;
+    gap: 16px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
     color: var(--muted);
-    font-size: 11px;
-    text-align: right;
+    font-size: 12px;
+  }
+
+  .statusbar.error {
+    background: var(--error-bg);
+    border-color: var(--error-text);
+    color: var(--error-text);
+  }
+
+  .statusbar .message {
+    flex: 1;
+    overflow-wrap: anywhere;
+  }
+
+  .statusbar .source {
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  .statusbar.error .source {
+    color: inherit;
+  }
+
+  .statusbar .stack {
+    white-space: nowrap;
   }
 </style>

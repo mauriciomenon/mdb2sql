@@ -9,3 +9,7 @@ $env:RUSTFLAGS = "--remap-path-prefix=$HOME=~ --remap-path-prefix=$Root=."
 # o duckdb bundled e C++ compilado pelo MSVC (crate cc le CFLAGS/CXXFLAGS); /d1trimfile tira o prefixo do __FILE__
 $env:CFLAGS = "/d1trimfile:$Root\"
 $env:CXXFLAGS = "/d1trimfile:$Root\"
+
+# numero e data do build no dialogo Sobre (build.rs); o mesmo valor no build e no teste evita recompilar
+$env:MDB2SQL_BUILD_NUMBER = (git rev-list --count HEAD)
+$env:MDB2SQL_BUILD_DATE = Get-Date -Format 'yyyy-MM-dd'
