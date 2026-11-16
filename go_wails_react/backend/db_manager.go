@@ -161,7 +161,7 @@ func jsonValue(v any) any {
 		if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
 			return fmt.Sprint(x)
 		}
-	case []byte, time.Time:
+	case []byte, time.Time, duckdb.UUID, duckdb.Map: // Map has non-string keys, which JSON cannot encode
 		return cellString(v)
 	}
 	return v
@@ -174,6 +174,8 @@ func cellString(v any) string {
 		return ""
 	case string:
 		return x
+	case duckdb.UUID:
+		return x.String() // String has a pointer receiver, so fmt alone would print the 16 bytes
 	case time.Time:
 		if x.Hour() == 0 && x.Minute() == 0 && x.Second() == 0 && x.Nanosecond() == 0 {
 			return x.Format("2006-01-02")
@@ -221,6 +223,7 @@ func (m *DBManager) RunQuery(ctx context.Context, query string, limit int) (Quer
 	if err != nil {
 		return QueryResult{}, err
 	}
+	uuids := uuidColumns(rows)
 	res := QueryResult{Columns: uniqueNames(cols), Rows: []map[string]any{}}
 	values := make([]any, len(cols))
 	ptrs := make([]any, len(cols))
@@ -235,6 +238,7 @@ func (m *DBManager) RunQuery(ctx context.Context, query string, limit int) (Quer
 		if err := rows.Scan(ptrs...); err != nil {
 			return QueryResult{}, err
 		}
+		fixUUIDs(values, uuids)
 		row := make(map[string]any, len(cols))
 		for i, c := range res.Columns {
 			row[c] = jsonValue(values[i])
@@ -242,6 +246,27 @@ func (m *DBManager) RunQuery(ctx context.Context, query string, limit int) (Quer
 		res.Rows = append(res.Rows, row)
 	}
 	return res, rows.Err()
+}
+
+// uuidColumns marks UUID columns: the driver hands them over as 16 raw bytes, which would look like a BLOB
+func uuidColumns(rows *sql.Rows) []bool {
+	types, err := rows.ColumnTypes()
+	if err != nil {
+		return nil
+	}
+	out := make([]bool, len(types))
+	for i, t := range types {
+		out[i] = t.DatabaseTypeName() == "UUID"
+	}
+	return out
+}
+
+func fixUUIDs(values []any, uuids []bool) {
+	for i, isUUID := range uuids {
+		if b, ok := values[i].([]byte); isUUID && ok && len(b) == 16 {
+			values[i] = fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+		}
+	}
 }
 
 // uniqueNames renames repeated result columns ("id", "id (2)") so each one keeps its own value
@@ -394,6 +419,7 @@ func (m *DBManager) QueryTable(tableName string, limit int) ([]map[string]interf
 	if err != nil {
 		return nil, fmt.Errorf("failed to get columns: %w", err)
 	}
+	uuids := uuidColumns(rows)
 
 	// Le cada row e converte para map
 	var results []map[string]interface{}
@@ -408,6 +434,7 @@ func (m *DBManager) QueryTable(tableName string, limit int) ([]map[string]interf
 		if err := rows.Scan(valuePtrs...); err != nil {
 			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
+		fixUUIDs(values, uuids)
 
 		// Cria map com nome_coluna -> valor
 		row := make(map[string]interface{})

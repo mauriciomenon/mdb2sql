@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -141,6 +142,30 @@ func TestUniqueNamesAndCellString(t *testing.T) {
 	}
 }
 
+// every SQL result must reach the UI as JSON (Wails encodes it); MAP keys, NaN and UUID used to break or print bytes
+func TestRunQueryResultsAreJSON(t *testing.T) {
+	m := NewDBManager()
+	if err := m.Connect(fixtureDB(t)); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	res, err := m.RunQuery(context.Background(), `SELECT MAP {1: 'a'} AS m, 'nan'::DOUBLE AS d, 12.5::DECIMAL(5,2) AS dec,
+		'0e7f1b43-9d2c-4f1a-8a50-6f3c3f0b1a2c'::UUID AS u, [1, 2] AS l, {'k': 1} AS s, '\xC3\xA9'::BLOB AS b,
+		TIMESTAMP '2026-07-14 10:20:30' AS ts, 1 AS id, 2 AS id`, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(res)
+	if err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	for _, want := range []string{`"d":"NaN"`, `"dec":12.5`, `"u":"0e7f1b43-9d2c-4f1a-8a50-6f3c3f0b1a2c"`, `"ts":"2026-07-14 10:20:30"`, `"id (2)":2`, `"b":"é"`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("%s missing in %s", want, data)
+		}
+	}
+}
+
 // fixture: a DuckDB file with the types the readers produce, accents and NULLs
 func fixtureDB(t *testing.T) string {
 	t.Helper()
@@ -191,6 +216,12 @@ func TestExportXLSXSplitsSheets(t *testing.T) {
 		rows, err := f.GetRows(sheet)
 		if err != nil || len(rows) != n+1 || rows[0][0] == "" {
 			t.Errorf("sheet %q: %d rows (want header + %d) %v", sheet, len(rows), n, err)
+		}
+	}
+	// the dimension must cover the data: openpyxl read-only (pandas) trusts it
+	for sheet, want := range map[string]string{"Pontos A": "A1:F4", "seven": "A1:A4", "seven (3)": "A1:A2", "vazia": "A1:A1"} {
+		if got, _ := f.GetSheetDimension(sheet); got != want {
+			t.Errorf("dimension of %q = %q, want %q", sheet, got, want)
 		}
 	}
 	// numbers stay numbers; text with accents survives

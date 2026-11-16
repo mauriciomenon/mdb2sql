@@ -131,6 +131,9 @@ func TestRealDB_ExportRoundTrip(t *testing.T) {
 		want[tb] = n
 	}
 	out := t.TempDir()
+	if keep := os.Getenv("MDB2SQL_TEST_OUT_DIR"); keep != "" {
+		out = keep // keep the exported files to check them with other tools (openpyxl)
+	}
 	noProgress := func(int, int, string) {}
 	for _, format := range []string{"duckdb", "sqlite"} {
 		path := filepath.Join(out, "db4."+format)

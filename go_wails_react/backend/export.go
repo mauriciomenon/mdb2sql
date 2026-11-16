@@ -214,6 +214,7 @@ func (m *DBManager) writeCSV(ctx context.Context, path string, it exportItem, pr
 	if err != nil {
 		return err
 	}
+	uuids := uuidColumns(rows)
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -233,6 +234,7 @@ func (m *DBManager) writeCSV(ctx context.Context, path string, it exportItem, pr
 		if err := rows.Scan(ptrs...); err != nil {
 			return err
 		}
+		fixUUIDs(values, uuids)
 		for i, v := range values {
 			record[i] = cellString(v)
 		}
@@ -298,6 +300,12 @@ func (m *DBManager) writeSheets(ctx context.Context, f *excelize.File, used map[
 	if err != nil {
 		return err
 	}
+	uuids := uuidColumns(rows)
+	total := -1 // row count for the sheet dimension; unknown (-1) if the query cannot be counted
+	countQuery := "SELECT count(*) FROM (" + strings.TrimRight(strings.TrimSpace(it.query), "; \t\r\n") + ")"
+	if err := m.conn.QueryRowContext(ctx, countQuery).Scan(&total); err != nil {
+		total = -1
+	}
 	header := make([]any, len(cols))
 	for i, c := range cols {
 		header[i] = c
@@ -320,6 +328,13 @@ func (m *DBManager) writeSheets(ctx context.Context, f *excelize.File, used map[
 		} else if _, err := f.NewSheet(name); err != nil {
 			return err
 		}
+		// the stream writer leaves <dimension ref="A1">; openpyxl read-only (and so pandas) would then see one cell
+		if total >= 0 {
+			last, _ := excelize.CoordinatesToCellName(max(len(cols), 1), min(total-(part-1)*MaxExcelDataRows, MaxExcelDataRows)+1)
+			if err := f.SetSheetDimension(name, "A1:"+last); err != nil {
+				return err
+			}
+		}
 		if sw, err = f.NewStreamWriter(name); err != nil {
 			return err
 		}
@@ -340,6 +355,7 @@ func (m *DBManager) writeSheets(ctx context.Context, f *excelize.File, used map[
 		if err := rows.Scan(ptrs...); err != nil {
 			return err
 		}
+		fixUUIDs(values, uuids)
 		for i, v := range values {
 			cells[i] = xlsxValue(v)
 		}
