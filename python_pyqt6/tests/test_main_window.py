@@ -83,6 +83,8 @@ def test_table_filter_hides_non_matching(window: MainWindow) -> None:
 
     hidden = {window.table_list.item(i).text(): window.table_list.item(i).isHidden() for i in range(2)}
     assert hidden == {"empty_table": True, "people": False}
+    window.table_filter.setText("TABLE Émpty")  # todas as palavras, qualquer ordem, sem caixa nem acento
+    assert [window.table_list.item(i).isHidden() for i in range(2)] == [False, True]
 
 
 def test_row_limit_reloads_table(qtbot, window: MainWindow) -> None:

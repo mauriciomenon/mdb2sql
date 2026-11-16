@@ -9,7 +9,6 @@ from PyQt6.QtCore import (
     QObject,
     QRunnable,
     QSettings,
-    QSortFilterProxyModel,
     Qt,
     QThreadPool,
     QTimer,
@@ -53,7 +52,7 @@ from backend.db_manager import DBManager
 from backend.export import Cancelled, default_save_dir, export_database, export_result
 from shared.about import about_html
 from shared.tsv import rows_to_tsv
-from ui.table_model import SORT_ROLE, TableModel
+from ui.table_model import SORT_ROLE, SearchProxyModel, TableModel, fold, search_words
 
 APP_TITLE = "MDB2SQL - Database Viewer"
 # shortcut: search and sort run in the UI thread over the loaded rows, so the limit stops at 10 000;
@@ -289,13 +288,11 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.tabs)
         self.setCentralWidget(self.stack)
 
-    def _create_table_view(self, model: TableModel, name: str) -> tuple[QSortFilterProxyModel, QTableView]:
-        proxy = QSortFilterProxyModel(self)
+    def _create_table_view(self, model: TableModel, name: str) -> tuple[SearchProxyModel, QTableView]:
+        proxy = SearchProxyModel(self)
         proxy.setSourceModel(model)
         proxy.setSortRole(SORT_ROLE)
         proxy.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        proxy.setFilterKeyColumn(-1)  # busca em todas as colunas
 
         view = QTableView()
         view.setAccessibleName(name)
@@ -322,6 +319,7 @@ class MainWindow(QMainWindow):
         self.table_filter.setPlaceholderText("Filter tables")
         self.table_filter.setClearButtonEnabled(True)
         self.table_filter.setAccessibleName("Filter tables")
+        self.table_filter.setToolTip("Tables whose name has all the words, in any order; ignores case and accents")
         self.table_filter.textChanged.connect(self._filter_tables)
 
         self.table_list = QListWidget()
@@ -384,10 +382,15 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(spacer)
 
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Search loaded rows (Ctrl+F)")
+        self.search_edit.setPlaceholderText("Search: all words, any order, ignores case and accents (Ctrl+F)")
+        self.search_edit.setToolTip(
+            "Shows the loaded rows with a cell that has every word, in any order.\n"
+            "Ignores case and accents: tensao campo finds EXCITAÇÃO TENSÃO DE CAMPO."
+        )
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.setAccessibleName("Search loaded rows")
-        self.search_edit.setMaximumWidth(320)
+        self.search_edit.setMinimumWidth(380)
+        self.search_edit.setMaximumWidth(420)
         self.search_edit.textChanged.connect(lambda _text: self.search_timer.start())
         toolbar.addWidget(self.search_edit)
 
@@ -504,10 +507,11 @@ class MainWindow(QMainWindow):
         self.sql_edit.setFocus()
 
     def _filter_tables(self, text: str) -> None:
-        needle = text.strip().lower()
+        words = search_words(text)
         for row in range(self.table_list.count()):
             item = self.table_list.item(row)
-            item.setHidden(needle not in item.text().lower())
+            name = fold(item.text())
+            item.setHidden(not all(word in name for word in words))
 
     def _current_view(self) -> QTableView | None:
         page = self.tabs.currentWidget()
@@ -683,8 +687,7 @@ class MainWindow(QMainWindow):
             self._set_message(self.info_label, f"Error loading table: {message}", error=True)
 
     def _apply_search(self) -> None:
-        text = self.search_edit.text()
-        self.data_proxy.setFilterFixedString(text)
+        self.data_proxy.set_query(self.search_edit.text())
         if self.loaded_table is None:
             return
 
@@ -692,7 +695,7 @@ class MainWindow(QMainWindow):
         loaded = self.table_model.rowCount()
         if not loaded:
             message = f"{table_name}: 0 rows"
-        elif text:
+        elif self.data_proxy.words:
             message = (
                 f"{table_name}: {self.data_proxy.rowCount():,} of {loaded:,} loaded rows match"
                 f" ({total_rows:,} rows in table)"
