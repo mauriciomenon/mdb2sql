@@ -422,7 +422,9 @@ td[aria-selected='true'] {
 }
 
 .search {
-  width: 200px;
+  /* wide enough for the whole placeholder; shrinks before the tabs do */
+  flex: 0 1 470px;
+  min-width: 180px;
   padding: 4px 8px;
 }
 

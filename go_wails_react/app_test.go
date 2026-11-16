@@ -10,7 +10,7 @@ import (
 
 func TestGetAppInfo(t *testing.T) {
 	info := NewApp().GetAppInfo()
-	if info.Version != "1.1.0" {
+	if info.Version != "1.1.1" {
 		t.Fatalf("version must come from wails.json info.productVersion, got %q", info.Version)
 	}
 	if !regexp.MustCompile(`^\d+\.\d+`).MatchString(info.Go) {

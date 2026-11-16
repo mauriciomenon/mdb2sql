@@ -87,7 +87,7 @@ describe('App IPC flow', () => {
 
   it('shows Help > About with version, build and runtime versions, and closes it', async () => {
     const GetAppInfo = vi.fn(async () => ({
-      version: '1.1.0', build: '412', buildDate: '2026-11-15', go: '1.26.10', wails: 'v2.13.0', duckdb: 'v2.0.0',
+      version: '1.1.1', build: '412', buildDate: '2026-11-15', go: '1.26.10', wails: 'v2.13.0', duckdb: 'v2.0.0',
     }));
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetAppInfo } } } });
     render(<App />);
@@ -99,7 +99,7 @@ describe('App IPC flow', () => {
     const lines = [...dialog.querySelectorAll('h2, p')].map((el) => el.textContent);
     expect(lines).toEqual([
       'MDB2SQL (Go + Wails + React)',
-      'Versao 1.1.0 - build 412 (2026-11-15)',
+      'Versao 1.1.1 - build 412 (2026-11-15)',
       'Visualiza e exporta bancos DuckDB, SQLite e Microsoft Access: tabelas, esquema, dados e SQL.',
       `Go 1.26.10, Wails 2.13.0, DuckDB 2.0.0, React ${React.version}`,
       'Autor: Mauricio Menon',
@@ -108,7 +108,7 @@ describe('App IPC flow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(aboutLines({ version: '1.1.0', go: '1', wails: '2', duckdb: '3' })[1]).toBe('Versao 1.1.0 - build dev');
+    expect(aboutLines({ version: '1.1.1', go: '1', wails: '2', duckdb: '3' })[1]).toBe('Versao 1.1.1 - build dev');
   });
 
   it('opens the startup file and shows the reader in the status bar', async () => {
@@ -186,6 +186,40 @@ describe('App IPC flow', () => {
     expect(searchRows(rows, ['ID', 'NAME'], ' BET ')).toEqual([rows[1]]);
     expect(searchRows(rows, ['ID', 'NAME'], '1')).toEqual([rows[0]]);
     expect(searchRows(rows, ['ID', 'NAME'], '')).toBe(rows);
+  });
+
+  it('finds rows with one cell holding every word, in any order, ignoring accents', () => {
+    const pts = [
+      { ID: 1, PNTNAM: 'EXCITAÇÃO TENSÃO DE CAMPO', SUB: 'U9A' },
+      { ID: 2, PNTNAM: 'TENSÃO BARRA', SUB: 'CAMPO NOVO' },
+      { ID: 3, PNTNAM: 'Excitação', SUB: 'Peña' },
+      { ID: 4, PNTNAM: 'TENSÃO DE LINHA', SUB: 'U18A' },
+    ];
+    const cols = ['ID', 'PNTNAM', 'SUB'];
+    const ids = (q) => searchRows(pts, cols, q).map((r) => r.ID);
+    expect(ids('tensao de campo')).toEqual([1]);
+    expect(ids('campo tensao')).toEqual([1]); // row 2 has the words only in two different cells: no match
+    expect(ids('barra tensao')).toEqual([2]);
+    expect(ids('EXCITAÇÃO TENSÃO DE CAMPO')).toEqual([1]); // the exact phrase still matches
+    expect(ids('tensao de campo u18a')).toEqual([]); // one missing word excludes the row
+    expect(ids('EXCITACAO')).toEqual([1, 3]);
+    expect(ids('pena')).toEqual([3]);
+    expect(searchRows(pts, cols, '   ')).toBe(pts);
+  });
+
+  it('filters the table list with the same word rule', async () => {
+    global.window = Object.assign(window, {
+      go: { main: { App: { ...bridge, LoadDatabase: vi.fn(async () => ['RANGER_SOACCU', 'RANGER_SOGEN', 'TENSÃO_CAMPO']) } } },
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Sample data' }));
+    await screen.findByText('Alpha');
+    fireEvent.change(screen.getByLabelText('Filter tables'), { target: { value: 'gen ranger' } });
+    expect(screen.queryByRole('button', { name: 'RANGER_SOACCU' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'RANGER_SOGEN' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Filter tables'), { target: { value: 'campo tensao' } });
+    expect(screen.getByRole('button', { name: 'TENSÃO_CAMPO' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'RANGER_SOGEN' })).not.toBeInTheDocument();
   });
 
   it('copies the selected value and row from the context menu and Ctrl+C, and filters rows', async () => {
