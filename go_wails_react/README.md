@@ -18,7 +18,8 @@ Release `go_wails_react-v1.1.1`, three files with the same program (Windows 11, 
 Windows SmartScreen may warn because the files are not code-signed: "More info" > "Run anyway".
 
 Changes in 1.1.1: the row search and the table filter match every word typed, in any order, ignoring case
-and accents (before, the whole text had to appear as typed, accents included); excelize 2.11.1.
+and accents (before, the whole text had to appear as typed, accents included); own app icon (exe, window,
+installer, shortcuts) instead of the Wails default; the title bar shows the version; excelize 2.11.1.
 
 ## Requirements
 

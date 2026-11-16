@@ -3,7 +3,9 @@
 param([switch]$Dist)
 $ErrorActionPreference = 'Stop'
 
-$targets = 'build', 'frontend\dist', 'dist\.stage'
+# build\appicon.png e build\windows\icon.ico ficam (versionados); o resto de build\ e gerado pelo wails build
+$targets = 'build\bin', 'build\windows\installer', 'build\windows\info.json', 'build\windows\wails.exe.manifest',
+    'frontend\dist', 'dist\.stage'
 if ($Dist) { $targets += 'dist' }
 foreach ($target in $targets) {
     $path = Join-Path $PSScriptRoot $target

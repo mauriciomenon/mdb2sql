@@ -22,6 +22,11 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// Barra de titulo com a versao de wails.json: "mdb2sql 1.1.1 - Go + Wails + React"
+func windowTitle() string {
+	return "mdb2sql " + productVersion() + " - Go + Wails + React"
+}
+
 func main() {
 	build := buildNumber
 	if build == "" {
@@ -43,7 +48,7 @@ func main() {
 	// Configura e inicia aplicacao Wails com opcoes de janela e bindings
 	// !T: Wails.Run starts WebView window with IPC bridge to Go methods
 	err := wails.Run(&options.App{
-		Title:  "MDB2SQL (Go + Wails + React)",
+		Title:  windowTitle(),
 		Width:  1280,
 		Height: 800,
 		AssetServer: &assetserver.Options{
