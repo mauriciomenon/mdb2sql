@@ -3,8 +3,8 @@
 
 [project]
 name = "mdb2sql"
-version = "1.0.1"
-description = "DuckDB-backed desktop database viewer"
+version = "1.1.0"
+description = "Desktop viewer and exporter for Access, SQLite and DuckDB databases"
 authors = [
     {name = "Maurício Menon", email = "54405514+mauriciomenon@users.noreply.github.com"}
 ]
@@ -13,12 +13,14 @@ requires-python = ">=3.11"
 dependencies = [
     # NIVEL BASICO: PyQt6 para interfaces graficas nativas cross-platform
     "PyQt6>=6.7.0",
-
     # NIVEL BASICO: DuckDB banco embedded otimizado para analytics
     "duckdb>=2.0.0",
-
     # NIVEL BASICO: pandas para manipulacao de dados (DuckDB retorna DataFrames)
     "pandas>=2.2.0",
+    # .mdb/.accdb pelo driver ODBC do Access (5.3.0: 5.4/5.5 tem menos de 2 semanas)
+    "pyodbc==5.3.0",
+    # .xlsx em modo streaming (constant_memory), uma aba por tabela
+    "xlsxwriter==3.3.1",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +36,7 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "openpyxl==3.1.5",
     "pyinstaller>=6.22.3",
     "pytest>=9.0.3",
     "pytest-qt>=4.5.0",

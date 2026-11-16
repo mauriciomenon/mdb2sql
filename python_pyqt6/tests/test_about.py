@@ -11,11 +11,11 @@ def test_about_lines() -> None:
     lines = about.about_lines()
 
     assert lines[0] == "MDB2SQL (Python + PyQt6)"
-    assert lines[1] == "Versao 1.0.1"
-    assert lines[2] == (
-        "Visualizador de bancos DuckDB convertidos de Microsoft Access: tabelas, esquema, dados e consultas."
+    assert lines[1] == "Versao 1.1.0 - build dev"
+    assert lines[2] == "Abre bancos Access (.mdb/.accdb), SQLite e DuckDB e exporta para DuckDB, SQLite, Excel e CSV."
+    assert re.fullmatch(
+        r"Python [\d.]+\S*, PyQt6 [\d.]+, Qt [\d.]+, DuckDB [\d.]+\S*, XlsxWriter [\d.]+, pyodbc [\d.]+", lines[3]
     )
-    assert re.fullmatch(r"Python [\d.]+\S*, PyQt6 [\d.]+, Qt [\d.]+, DuckDB [\d.]+\S*", lines[3])
     assert lines[4:] == ["Autor: Mauricio Menon", "Codigo: https://github.com/mauriciomenon/mdb2sql"]
     assert "@" not in "".join(lines)
 
@@ -25,6 +25,9 @@ def test_version_from_frozen_bundle(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
 
     assert about.app_version() == "9.9.9"
+    assert about.build_info() == "build dev"  # exe sem BUILD
+    (tmp_path / "BUILD").write_text("123 2026-11-15\n", encoding="utf-8")
+    assert about.build_info() == "build 123 (2026-11-15)"
 
 
 def test_help_menu_opens_about(qtbot) -> None:
@@ -34,5 +37,5 @@ def test_help_menu_opens_about(qtbot) -> None:
 
     box = win.findChild(QMessageBox)
     assert box.windowTitle() == "Sobre"
-    assert "Versao 1.0.1" in box.text()
+    assert "Versao 1.1.0 - build dev" in box.text()
     box.close()

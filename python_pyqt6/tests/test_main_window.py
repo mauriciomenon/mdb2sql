@@ -1,8 +1,9 @@
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtWidgets import QApplication, QFileDialog
 
 from ui.main_window import MainWindow
 
@@ -49,7 +50,7 @@ def test_open_lists_tables_and_loads_first(window: MainWindow) -> None:
     names = [window.table_list.item(i).text() for i in range(window.table_list.count())]
 
     assert names == ["empty_table", "people"]
-    assert window.status_label.text() == "Loaded: people.duckdb (2 tables)"
+    assert window.status_label.text() == "Loaded: people.duckdb (2 tables) via DuckDB"
     assert window.stack.currentWidget() is window.tabs
     # tabela vazia ainda mostra as colunas do schema
     assert window.info_label.text() == "empty_table: 0 rows"
@@ -91,3 +92,73 @@ def test_row_limit_reloads_table(qtbot, window: MainWindow) -> None:
     qtbot.waitUntil(lambda: window._table_request > request and window._busy == 0, timeout=10000)
 
     assert window.info_label.text() == "people: Showing 3 of 3 rows"
+
+
+def _menu(win: MainWindow, title: str):
+    return next(a.menu() for a in win.menuBar().actions() if a.text() == title)
+
+
+def test_menus_have_export_and_settings_theme(window: MainWindow) -> None:
+    titles = [a.text() for a in window.menuBar().actions()]
+    assert titles == ["&File", "&Edit", "&View", "&Settings", "&Help"]  # Exportar fica dentro de File
+    file_items = [a.text() for a in _menu(window, "&File").actions()]
+    assert "&Export" in file_items
+    theme = _menu(window, "&Settings").actions()[0].menu()
+    assert [a.text() for a in theme.actions()] == ["&System", "&Light", "&Dark"]
+    assert window.export_button.isEnabled()
+
+
+def test_theme_is_saved(qtbot, window: MainWindow, monkeypatch) -> None:
+    # a plataforma offscreen ignora setColorScheme: confere o esquema pedido ao Qt
+    applied = []
+    monkeypatch.setattr(QGuiApplication.styleHints(), "setColorScheme", applied.append, raising=False)
+    window.theme_actions["dark"].trigger()
+    assert QSettings().value("theme") == "dark"
+    assert applied == [Qt.ColorScheme.Dark]
+
+    again = MainWindow()  # nova execucao le o tema gravado
+    qtbot.addWidget(again)
+    assert again.theme_actions["dark"].isChecked()
+    window.theme_actions["system"].trigger()
+    assert QSettings().value("theme") == "system"
+
+
+def test_sql_tab_runs_query_and_copies(qtbot, window: MainWindow) -> None:
+    window.sql_edit.setPlainText("SELECT id, name AS n, name AS n FROM people ORDER BY id DESC")
+    window.run_sql()
+    qtbot.waitUntil(lambda: window.sql_model.rowCount() == 3, timeout=10000)
+
+    assert window.sql_model.columns == ["id", "n", "n_2"]
+    assert window.info_label.text() == "SQL: 3 rows"
+    window.sql_table.setCurrentIndex(window.sql_proxy.index(0, 1))
+    window.copy_action.trigger()
+    assert QApplication.clipboard().text() == "carla"
+    assert window.current_result() == (window.sql_query, "SQL")
+
+    window.sql_edit.setPlainText("SELECT * FROM missing_table")
+    window.run_sql()
+    qtbot.waitUntil(lambda: window.info_label.text().startswith("SQL error"), timeout=10000)
+
+
+def test_export_actions_write_files_next_to_source(qtbot, window: MainWindow, people_db: Path, monkeypatch) -> None:
+    asked = []
+
+    def fake_save(_parent, _title, suggested, _filter):
+        asked.append(suggested)
+        return str(people_db.parent / f"out{Path(suggested).suffix}"), ""
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", fake_save)
+    _select_table(qtbot, window, "people")
+
+    for action in window.export_db_actions + window.export_result_actions:
+        action.trigger()
+        qtbot.waitUntil(lambda: window.info_label.text().startswith("Export"), timeout=20000)
+        assert window.info_label.text().startswith("Exported"), window.info_label.text()
+        window.info_label.setText("")
+
+    # pasta sugerida = pasta do banco aberto; o proprio banco nunca e sugerido
+    assert [Path(s).parent for s in asked] == [people_db.parent] * 5
+    assert Path(asked[0]).name == "people_export.duckdb"
+    assert Path(asked[3]).name == "people.csv"
+    assert sorted(p.name for p in people_db.parent.glob("out.*")) == ["out.csv", "out.duckdb", "out.sqlite", "out.xlsx"]
+    assert QSettings().value("last_dir") == str(people_db.parent)

@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from typing import Any, TypedDict
 
+from backend.access import Progress
 from backend.db_manager import DBManager
 
 
@@ -23,15 +24,19 @@ def database_path_from_env() -> Path:
     return default_database_path()
 
 
-def list_tables(db_path: Path) -> tuple[Path, list[str]]:
-    with DBManager(str(db_path)) as manager:
-        return db_path, manager.list_tables()
+def open_database(db_path: Path, progress: Progress | None = None) -> tuple[DBManager, list[str]]:
+    # o manager fica aberto (o Access vive so na memoria dele); quem chama fecha com close()
+    manager = DBManager()
+    manager.connect(str(db_path), progress)
+    try:
+        return manager, manager.list_tables()
+    except Exception:
+        manager.close()
+        raise
 
 
-def load_table_payload(db_path: Path, table_name: str, limit: int = 100) -> TablePayload:
-    with DBManager(str(db_path)) as manager:
-        rows = manager.query_table(table_name, limit=limit)
-        total_rows = manager.get_row_count(table_name)
-        schema = manager.get_table_schema(table_name)
-
+def load_table_payload(manager: DBManager, table_name: str, limit: int = 100) -> TablePayload:
+    rows = manager.query_table(table_name, limit=limit)
+    total_rows = manager.get_row_count(table_name)
+    schema = manager.get_table_schema(table_name)
     return {"table_name": table_name, "rows": rows, "total_rows": total_rows, "schema": schema}

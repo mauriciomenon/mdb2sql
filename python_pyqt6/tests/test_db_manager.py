@@ -25,7 +25,7 @@ def test_validate_database_path_allows_duckdb(tmp_path: Path) -> None:
     assert manager.current_db == str(db_file.resolve())
 
 
-@pytest.mark.parametrize("suffix", [".txt", ".sqlite", ".mdb"])
+@pytest.mark.parametrize("suffix", [".txt", ".csv", ".xlsx"])
 def test_validate_database_path_rejects_bad_ext(tmp_path: Path, suffix: str) -> None:
     bad_file = tmp_path / f"invalid{suffix}"
     bad_file.touch()

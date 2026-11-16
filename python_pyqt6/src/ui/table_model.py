@@ -68,6 +68,10 @@ class TableModel(QAbstractTableModel):
             return side | Qt.AlignmentFlag.AlignVCenter
         if role == Qt.ItemDataRole.FontRole:
             return self._fixed_font if self.numeric[column] else None
+        if role == Qt.ItemDataRole.ToolTipRole:
+            # coluna limitada a MAX_COLUMN_WIDTH: texto longo cortado na grade aparece inteiro na dica
+            text = display_text(self.rows[index.row()].get(self.columns[column]))
+            return text if len(text) > 40 else None
         if role not in (Qt.ItemDataRole.DisplayRole, SORT_ROLE):
             return None
 

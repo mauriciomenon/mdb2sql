@@ -1,44 +1,55 @@
-# Janela principal: barra de ferramentas, painel de tabelas, abas Data/Schema e barra de status
-# !T: QMainWindow with toolbar + table sidebar + data/schema views; DuckDB work runs on QThreadPool
+# Janela principal: barra de ferramentas, painel de tabelas, abas Data/Schema/SQL e barra de status
+# !T: QMainWindow with toolbar + table sidebar + data/schema/SQL views; database work runs on QThreadPool
 
+import threading
 from pathlib import Path
 from typing import Callable
 
 from PyQt6.QtCore import (
     QObject,
     QRunnable,
+    QSettings,
     QSortFilterProxyModel,
     Qt,
     QThreadPool,
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QGuiApplication, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QGuiApplication, QKeySequence
 from PyQt6.QtWidgets import (
     QComboBox,
     QDockWidget,
     QFileDialog,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QProgressBar,
+    QProgressDialog,
+    QPushButton,
     QSizePolicy,
+    QSplitter,
     QStackedWidget,
     QTableView,
     QTabWidget,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from backend.access import quote
 from backend.database_tasks import (
     TablePayload,
     database_path_from_env,
-    list_tables,
     load_table_payload,
+    open_database,
 )
+from backend.db_manager import DBManager
+from backend.export import Cancelled, default_save_dir, export_database, export_result
 from shared.about import about_html
 from shared.tsv import rows_to_tsv
 from ui.table_model import SORT_ROLE, TableModel
@@ -50,20 +61,39 @@ ROW_LIMITS = (100, 1_000, 10_000)
 MAX_COLUMN_WIDTH = 320
 EMPTY_HINT = (
     "No database loaded.\n\n"
-    "Open a DuckDB file with File > Open Database (Ctrl+O),\n"
+    "Open a DuckDB, SQLite or Access file with File > Open Database (Ctrl+O),\n"
     "or set MDB2SQL_DB_PATH and press F5."
 )
+OPEN_FILTER = (
+    "Databases (*.duckdb *.db *.sqlite *.sqlite3 *.mdb *.accdb);;DuckDB (*.duckdb *.db);;"
+    "SQLite (*.sqlite *.sqlite3);;Access (*.mdb *.accdb);;All files (*)"
+)
+FILE_TYPES = {
+    ".duckdb": "DuckDB database (*.duckdb)",
+    ".sqlite": "SQLite database (*.sqlite)",
+    ".xlsx": "Excel workbook (*.xlsx)",
+    ".csv": "CSV UTF-8 (*.csv)",
+}
+# Configuracoes > Tema: valor gravado em QSettings -> esquema de cores do Qt
+THEMES = {"system": Qt.ColorScheme.Unknown, "light": Qt.ColorScheme.Light, "dark": Qt.ColorScheme.Dark}
+
+
+def apply_theme(name: str) -> None:
+    # !T: Unknown = follow the system; Qt 6.8+ restyles every window when the scheme changes
+    QGuiApplication.styleHints().setColorScheme(THEMES.get(name, Qt.ColorScheme.Unknown))
 
 
 class _WorkerSignals(QObject):
     success = pyqtSignal(int, object)
     error = pyqtSignal(int, str)
+    progress = pyqtSignal(int, int, str)
     finished = pyqtSignal()
 
 
 class _DatabaseWorker(QRunnable):
     # request_id volta junto com o resultado para descartar respostas antigas
-    def __init__(self, request_id: int, task: Callable[[], object]):
+    # task recebe a funcao de progresso (feitas, total, texto), que chega a UI por sinal
+    def __init__(self, request_id: int, task: Callable[[Callable[[int, int, str], None]], object]):
         super().__init__()
         self.request_id = request_id
         self.task = task
@@ -71,9 +101,9 @@ class _DatabaseWorker(QRunnable):
 
     def run(self) -> None:
         try:
-            result = self.task()
+            result = self.task(self.signals.progress.emit)
         except Exception as exc:
-            self.signals.error.emit(self.request_id, str(exc))
+            self.signals.error.emit(self.request_id, str(exc) or type(exc).__name__)
         else:
             self.signals.success.emit(self.request_id, result)
         finally:
@@ -83,10 +113,14 @@ class _DatabaseWorker(QRunnable):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.settings = QSettings()
+        self.manager: DBManager | None = None
         self.current_db_path: Path | None = None
         self.pending_table_name: str | None = None
         self.loaded_table: tuple[str, int] | None = None  # (name, total rows in the table)
+        self.sql_query: str | None = None  # ultima consulta da aba SQL que deu certo (para exportar)
         self._table_request = 0
+        self._sql_request = 0
         self._busy = 0
         self.thread_pool: QThreadPool = QThreadPool.globalInstance() or QThreadPool(self)
 
@@ -115,6 +149,7 @@ class MainWindow(QMainWindow):
         self._create_toolbar()
         self._create_menus()
         self._create_status_bar()
+        self._update_export_actions()
 
         # Ordem do Tab: filtro de tabelas, lista, busca, dados
         QWidget.setTabOrder(self.table_filter, self.table_list)
@@ -124,7 +159,7 @@ class MainWindow(QMainWindow):
     def _create_actions(self) -> None:
         self.open_action = QAction("&Open Database...", self)
         self.open_action.setShortcut(QKeySequence.StandardKey.Open)
-        self.open_action.setToolTip("Open a DuckDB database file (Ctrl+O)")
+        self.open_action.setToolTip("Open a DuckDB, SQLite or Access database file (Ctrl+O)")
         self.open_action.triggered.connect(self.choose_database)
 
         self.reload_action = QAction("&Reload", self)
@@ -135,6 +170,22 @@ class MainWindow(QMainWindow):
         self.quit_action = QAction("&Quit", self)
         self.quit_action.setShortcut(QKeySequence("Ctrl+Q"))
         self.quit_action.triggered.connect(self.close)
+
+        # Exportar: banco inteiro (.duckdb, .sqlite, .xlsx com uma aba por tabela) e tabela/resultado atual
+        self.export_db_actions = []
+        for suffix, text in (
+            (".duckdb", "Database to &DuckDB..."),
+            (".sqlite", "Database to &SQLite..."),
+            (".xlsx", "Database to &Excel (one sheet per table)..."),
+        ):
+            action = QAction(text, self)
+            action.triggered.connect(lambda _checked=False, s=suffix: self.export_database_as(s))
+            self.export_db_actions.append(action)
+        self.export_result_actions = []
+        for suffix, text in ((".csv", "Current Table/Result to &CSV..."), (".xlsx", "Current Table/Result to E&xcel...")):
+            action = QAction(text, self)
+            action.triggered.connect(lambda _checked=False, s=suffix: self.export_result_as(s))
+            self.export_result_actions.append(action)
 
         self.copy_action = QAction("&Copy Value", self)
         self.copy_action.setShortcut(QKeySequence.StandardKey.Copy)
@@ -166,20 +217,65 @@ class MainWindow(QMainWindow):
         self.schema_tab_action.setShortcut(QKeySequence("Ctrl+2"))
         self.schema_tab_action.triggered.connect(lambda: self.tabs.setCurrentIndex(1))
 
+        self.sql_tab_action = QAction("S&QL", self)
+        self.sql_tab_action.setShortcut(QKeySequence("Ctrl+3"))
+        self.sql_tab_action.triggered.connect(self._focus_sql)
+
+        self.run_sql_action = QAction("&Run SQL", self)
+        self.run_sql_action.setShortcut(QKeySequence("Ctrl+Return"))
+        self.run_sql_action.setToolTip("Run the SQL of the SQL tab (Ctrl+Enter)")
+        self.run_sql_action.triggered.connect(self.run_sql)
+
+        # Configuracoes > Tema: Sistema, Claro, Escuro (gravado entre execucoes)
+        self.theme_group = QActionGroup(self)
+        self.theme_actions: dict[str, QAction] = {}
+        saved = str(self.settings.value("theme", "system"))
+        for name, text in (("system", "&System"), ("light", "&Light"), ("dark", "&Dark")):
+            action = QAction(text, self, checkable=True)
+            action.setChecked(name == saved)
+            action.triggered.connect(lambda _checked=False, n=name: self.set_theme(n))
+            self.theme_group.addAction(action)
+            self.theme_actions[name] = action
+
     def _create_central(self) -> None:
         self.table_model = TableModel(self)
         self.data_proxy, self.data_table = self._create_table_view(self.table_model, "Table data")
         self.schema_model = TableModel(self)
         self.schema_proxy, self.schema_table = self._create_table_view(self.schema_model, "Table schema")
+        self.sql_model = TableModel(self)
+        self.sql_proxy, self.sql_table = self._create_table_view(self.sql_model, "SQL result")
+
+        self.sql_edit = QPlainTextEdit()
+        self.sql_edit.setAccessibleName("SQL")
+        self.sql_edit.setPlaceholderText("SELECT * FROM ...   (Ctrl+Enter runs; read-only database)")
+        self.sql_edit.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.sql_edit.addAction(self.run_sql_action)
+        run_button = QPushButton("Run")
+        run_button.setAccessibleName("Run SQL")
+        run_button.setToolTip(self.run_sql_action.toolTip())
+        run_button.clicked.connect(self.run_sql)
+        sql_bar = QHBoxLayout()
+        sql_bar.addStretch(1)
+        sql_bar.addWidget(run_button)
+        editor = QWidget()
+        editor_layout = QVBoxLayout(editor)
+        editor_layout.setContentsMargins(0, 0, 0, 0)
+        editor_layout.addWidget(self.sql_edit)
+        editor_layout.addLayout(sql_bar)
+        self.sql_page = QSplitter(Qt.Orientation.Vertical)
+        self.sql_page.addWidget(editor)
+        self.sql_page.addWidget(self.sql_table)
+        self.sql_page.setSizes([160, 480])
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
         self.tabs.addTab(self.data_table, "Data")
         self.tabs.addTab(self.schema_table, "Schema")
+        self.tabs.addTab(self.sql_page, "SQL")
         # !T: On the tabs for the shortcut scope, on each view for its right-click menu
         copy_actions = [self.copy_action, self.copy_row_action, self.copy_row_header_action]
         self.tabs.addActions(copy_actions)
-        for view in (self.data_table, self.schema_table):
+        for view in (self.data_table, self.schema_table, self.sql_table):
             view.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
             view.addActions(copy_actions)
 
@@ -256,11 +352,24 @@ class MainWindow(QMainWindow):
 
         toolbar.addAction(self.open_action)
         toolbar.addAction(self.reload_action)
+
+        # botao Exportar com o mesmo menu de Arquivo > Exportar
+        self.export_menu = self.menuBar().addMenu("&Export")  # recolocado dentro de File em _create_menus
+        self.export_menu.addActions(self.export_db_actions)
+        self.export_menu.addSeparator()
+        self.export_menu.addActions(self.export_result_actions)
+        self.export_button = QToolButton()
+        self.export_button.setText("Export")
+        self.export_button.setAccessibleName("Export")
+        self.export_button.setToolTip("Export the database, the current table or the SQL result")
+        self.export_button.setMenu(self.export_menu)
+        self.export_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        toolbar.addWidget(self.export_button)
         toolbar.addSeparator()
 
         self.limit_combo = QComboBox()
         self.limit_combo.setAccessibleName("Rows to load")
-        self.limit_combo.setToolTip("Maximum number of rows loaded from the selected table")
+        self.limit_combo.setToolTip("Maximum number of rows loaded from the selected table or SQL result")
         for limit in ROW_LIMITS:
             self.limit_combo.addItem(f"{limit:,}", limit)
         self.limit_combo.currentIndexChanged.connect(self.reload_table)
@@ -283,9 +392,12 @@ class MainWindow(QMainWindow):
 
     def _create_menus(self) -> None:
         menu_bar = self.menuBar()
+        menu_bar.clear()  # tira o menu Exportar provisorio da barra; ele vai dentro de File
         file_menu = menu_bar.addMenu("&File")
         file_menu.addAction(self.open_action)
         file_menu.addAction(self.reload_action)
+        file_menu.addSeparator()
+        file_menu.addMenu(self.export_menu)
         file_menu.addSeparator()
         file_menu.addAction(self.quit_action)
 
@@ -304,6 +416,12 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
         view_menu.addAction(self.data_tab_action)
         view_menu.addAction(self.schema_tab_action)
+        view_menu.addAction(self.sql_tab_action)
+        view_menu.addAction(self.run_sql_action)
+
+        self.settings_menu = menu_bar.addMenu("&Settings")
+        theme_menu = self.settings_menu.addMenu("&Theme")
+        theme_menu.addActions(list(self.theme_actions.values()))
 
         help_menu = menu_bar.addMenu("&Help")
         help_menu.addAction("&Sobre", self.show_about)
@@ -313,6 +431,11 @@ class MainWindow(QMainWindow):
         box = QMessageBox(QMessageBox.Icon.NoIcon, "Sobre", about_html(), QMessageBox.StandardButton.Ok, self)
         box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         box.open()
+
+    def set_theme(self, name: str) -> None:
+        self.settings.setValue("theme", name)
+        self.theme_actions[name].setChecked(True)
+        apply_theme(name)
 
     def _create_status_bar(self) -> None:
         self.status_label = QLabel("No database loaded")
@@ -342,13 +465,16 @@ class MainWindow(QMainWindow):
     def _run(
         self,
         request_id: int,
-        task: Callable[[], object],
+        task: Callable[[Callable[[int, int, str], None]], object],
         on_success: Callable[[int, object], None],
         on_error: Callable[[int, str], None],
+        on_progress: Callable[[int, int, str], None] | None = None,
     ) -> None:
         worker = _DatabaseWorker(request_id, task)
         worker.signals.success.connect(on_success)
         worker.signals.error.connect(on_error)
+        if on_progress is not None:
+            worker.signals.progress.connect(on_progress)
         worker.signals.finished.connect(self._on_worker_finished)
         self._busy += 1
         self.progress.show()
@@ -373,16 +499,26 @@ class MainWindow(QMainWindow):
         self.tables_dock.show()
         self.table_list.setFocus()
 
+    def _focus_sql(self) -> None:
+        self.tabs.setCurrentWidget(self.sql_page)
+        self.sql_edit.setFocus()
+
     def _filter_tables(self, text: str) -> None:
         needle = text.strip().lower()
         for row in range(self.table_list.count()):
             item = self.table_list.item(row)
             item.setHidden(needle not in item.text().lower())
 
+    def _current_view(self) -> QTableView | None:
+        page = self.tabs.currentWidget()
+        if page is self.sql_page:
+            return self.sql_table
+        return page if isinstance(page, QTableView) else None
+
     def copy_selection(self) -> None:
         # Copia o valor da celula; com varias celulas selecionadas, texto separado por TAB
-        view = self.tabs.currentWidget()
-        if not isinstance(view, QTableView):
+        view = self._current_view()
+        if view is None:
             return
         indexes = sorted(view.selectedIndexes(), key=lambda i: (i.row(), i.column()))
         if len(indexes) == 1:
@@ -396,8 +532,8 @@ class MainWindow(QMainWindow):
 
     def copy_rows(self, header: bool = False) -> None:
         # Copia as linhas inteiras das celulas selecionadas (todas as colunas), separadas por TAB
-        view = self.tabs.currentWidget()
-        if not isinstance(view, QTableView):
+        view = self._current_view()
+        if view is None:
             return
         model = view.model()
         columns = range(model.columnCount())
@@ -411,12 +547,14 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------ database
 
+    def _remember_dir(self, path: Path) -> None:
+        self.settings.setValue("last_dir", str(path.parent))
+
     def choose_database(self) -> None:
-        start_dir = str(self.current_db_path.parent) if self.current_db_path else str(Path.home())
-        file_name, _ = QFileDialog.getOpenFileName(
-            self, "Open Database", start_dir, "DuckDB databases (*.duckdb *.db);;All files (*)"
-        )
+        start_dir = default_save_dir(self.current_db_path, self.settings.value("last_dir"))
+        file_name, _ = QFileDialog.getOpenFileName(self, "Open Database", str(start_dir), OPEN_FILTER)
         if file_name:
+            self._remember_dir(Path(file_name))
             self.open_database(Path(file_name))
 
     def load_database(self):
@@ -432,12 +570,26 @@ class MainWindow(QMainWindow):
         self.open_action.setEnabled(False)
         self.reload_action.setEnabled(False)
         self._set_message(self.status_label, f"Loading: {db_path.name}")
-        self._run(0, lambda: list_tables(db_path), self._on_database_loaded, self._on_database_error)
+
+        def progress(done: int, total: int, table: str) -> None:
+            if total and table:
+                self._set_message(self.status_label, f"Converting {db_path.name}: table {done + 1} of {total} ({table})")
+
+        self._run(
+            0,
+            lambda report: (db_path, *open_database(db_path, report)),
+            self._on_database_loaded,
+            self._on_database_error,
+            progress,
+        )
 
     def _on_database_loaded(self, _request_id: int, result: object) -> None:
-        db_path, tables = result  # type: ignore[misc]
+        db_path, manager, tables = result  # type: ignore[misc]
         previous = self.table_list.currentItem().text() if self.table_list.currentItem() else None
+        # !T: No close() on the old manager: a table/SQL worker may still use it; the last reference closes it
+        self.manager = manager
         self.current_db_path = db_path
+        self.sql_query = None
         self.setWindowTitle(f"{db_path.name} - {APP_TITLE}")
         self.stack.setCurrentWidget(self.tabs)
 
@@ -447,9 +599,11 @@ class MainWindow(QMainWindow):
         self.table_list.blockSignals(False)
         self._filter_tables(self.table_filter.text())
 
-        self._set_message(self.status_label, f"Loaded: {db_path.name} ({len(tables)} tables)")
+        # o caminho usado para abrir (DuckDB, SQLite, Access ODBC, mdbtools) fica visivel na barra de status
+        self._set_message(self.status_label, f"Loaded: {db_path.name} ({len(tables)} tables) via {manager.reader}")
         self.open_action.setEnabled(True)
         self.reload_action.setEnabled(True)
+        self._update_export_actions()
 
         if tables:
             # !T: Keep the selected table across a reload; setCurrentRow triggers on_table_selected
@@ -475,7 +629,7 @@ class MainWindow(QMainWindow):
     def on_table_selected(self, table_name: str):
         # Chamado quando usuario seleciona tabela na lista
         # !T: Loads table data and displays in QTableView
-        if not table_name or self.current_db_path is None:
+        if not table_name or self.manager is None:
             return
 
         self.pending_table_name = table_name
@@ -483,20 +637,27 @@ class MainWindow(QMainWindow):
         self.table_load_timer.start()
 
     def _start_table_worker(self) -> None:
-        if self.current_db_path is None or not self.pending_table_name:
+        if self.manager is None or not self.pending_table_name:
             return
 
-        db_path = self.current_db_path
+        manager = self.manager
         table_name = self.pending_table_name
         limit = self.limit_combo.currentData()
         self.pending_table_name = None
         self._table_request += 1
         self._run(
             self._table_request,
-            lambda: load_table_payload(db_path, table_name, limit),
+            lambda _report: load_table_payload(manager, table_name, limit),
             self._on_table_loaded,
             self._on_table_error,
         )
+
+    def _fit_columns(self, view: QTableView) -> None:
+        view.sortByColumn(-1, Qt.SortOrder.AscendingOrder)  # volta para a ordem do backend
+        view.resizeColumnsToContents()
+        for column in range(view.model().columnCount()):
+            if view.columnWidth(column) > MAX_COLUMN_WIDTH:
+                view.setColumnWidth(column, MAX_COLUMN_WIDTH)
 
     def _on_table_loaded(self, request_id: int, result: object) -> None:
         if request_id != self._table_request:
@@ -513,12 +674,9 @@ class MainWindow(QMainWindow):
         self.loaded_table = (payload["table_name"], payload["total_rows"])
 
         for view in (self.data_table, self.schema_table):
-            view.sortByColumn(-1, Qt.SortOrder.AscendingOrder)  # volta para a ordem do backend
-            view.resizeColumnsToContents()
-            for column in range(view.model().columnCount()):
-                if view.columnWidth(column) > MAX_COLUMN_WIDTH:
-                    view.setColumnWidth(column, MAX_COLUMN_WIDTH)
+            self._fit_columns(view)
         self._apply_search()
+        self._update_export_actions()
 
     def _on_table_error(self, request_id: int, message: str) -> None:
         if request_id == self._table_request:
@@ -542,3 +700,130 @@ class MainWindow(QMainWindow):
         else:
             message = f"{table_name}: Showing {loaded:,} of {total_rows:,} rows"
         self._set_message(self.info_label, message)
+
+    # ----------------------------------------------------------------- SQL
+
+    def run_sql(self) -> None:
+        query = self.sql_edit.toPlainText().strip()
+        if self.manager is None or not query:
+            return
+        manager = self.manager
+        limit = self.limit_combo.currentData()
+        self._sql_request += 1
+        self.tabs.setCurrentWidget(self.sql_page)
+        self._set_message(self.info_label, "Running SQL...")
+        self._run(
+            self._sql_request,
+            lambda _report: (query, *manager.execute_query(query, limit)),
+            self._on_sql_done,
+            self._on_sql_error,
+        )
+
+    def _on_sql_done(self, request_id: int, result: object) -> None:
+        if request_id != self._sql_request:
+            return
+        query, columns, rows, more = result  # type: ignore[misc]
+        self.sql_model.set_rows(rows, columns)
+        self._fit_columns(self.sql_table)
+        self.sql_query = query if columns else None
+        shown = f"first {len(rows):,} rows shown" if more else f"{len(rows):,} rows"
+        self._set_message(self.info_label, f"SQL: {shown}" if columns else "SQL: done (no result rows)")
+        self._update_export_actions()
+
+    def _on_sql_error(self, request_id: int, message: str) -> None:
+        if request_id == self._sql_request:
+            self._set_message(self.info_label, f"SQL error: {message}", error=True)
+
+    # -------------------------------------------------------------- export
+
+    def _update_export_actions(self) -> None:
+        for action in self.export_db_actions:
+            action.setEnabled(self.manager is not None)
+        for action in self.export_result_actions:
+            action.setEnabled(self.manager is not None and (self.loaded_table is not None or self.sql_query is not None))
+        self.export_button.setEnabled(self.manager is not None)
+
+    def current_result(self) -> tuple[str, str] | None:
+        """(consulta, titulo) do que esta na tela: o resultado da aba SQL ou a tabela atual inteira."""
+        if self.tabs.currentWidget() is self.sql_page and self.sql_query:
+            return self.sql_query, "SQL"
+        if self.loaded_table is not None:
+            return f"SELECT * FROM {quote(self.loaded_table[0])}", self.loaded_table[0]
+        if self.sql_query:
+            return self.sql_query, "SQL"
+        return None
+
+    def _ask_save_path(self, title: str, name: str, suffix: str) -> Path | None:
+        # pasta padrao: a do arquivo aberto; sem ele, a ultima pasta usada
+        folder = default_save_dir(self.current_db_path, self.settings.value("last_dir"))
+        target = folder / f"{name}{suffix}"
+        if self.current_db_path is not None and target == self.current_db_path:
+            target = folder / f"{name}_export{suffix}"  # nunca sugerir o proprio banco aberto
+        file_name, _ = QFileDialog.getSaveFileName(self, title, str(target), FILE_TYPES[suffix])
+        if not file_name:
+            return None
+        path = Path(file_name)
+        if path.suffix.lower() != suffix:
+            path = path.with_name(path.name + suffix)
+        self._remember_dir(path)
+        return path
+
+    def export_database_as(self, suffix: str) -> None:
+        if self.manager is None or self.current_db_path is None:
+            return
+        out = self._ask_save_path("Export Database", self.current_db_path.stem, suffix)
+        if out is not None:
+            manager = self.manager
+            self._start_export(out, lambda report, cancel: export_database(manager, out, report, cancel), "tables")
+
+    def export_result_as(self, suffix: str) -> None:
+        current = self.current_result()
+        if self.manager is None or current is None:
+            return
+        query, title = current
+        name = title if title != "SQL" else f"{self.current_db_path.stem}_sql" if self.current_db_path else "sql"
+        out = self._ask_save_path("Export Current Table/Result", name, suffix)
+        if out is not None:
+            manager = self.manager
+            self._start_export(
+                out, lambda report, cancel: export_result(manager, query, title, out, report, cancel), "rows"
+            )
+
+    def _start_export(self, out: Path, task: Callable, unit: str) -> None:
+        # exportacao em thread: dialogo modal com progresso e Cancelar (apaga o arquivo parcial)
+        cancel = threading.Event()
+        dialog = QProgressDialog(f"Exporting to {out.name}...", "Cancel", 0, 0, self)
+        dialog.setWindowTitle("Export")
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.setMinimumDuration(0)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.canceled.connect(cancel.set)
+        dialog.show()
+        self.export_dialog = dialog
+
+        def progress(done: int, total: int, text: str) -> None:
+            if total:
+                dialog.setRange(0, total)
+                dialog.setValue(done)
+            if text:
+                dialog.setLabelText(f"Exporting to {out.name}: {text}")
+
+        def finished(message: str, error: bool = False) -> None:
+            dialog.canceled.disconnect(cancel.set)
+            dialog.close()
+            self._set_message(self.info_label, message, error=error)
+
+        def cancelled_or_done(_request_id: int, count: object) -> None:
+            if count is None:
+                finished(f"Export cancelled: {out.name} not written")
+            else:
+                finished(f"Exported {count:,} {unit} to {out}")
+
+        def run(report):
+            try:
+                return task(report, cancel)
+            except Cancelled:
+                return None
+
+        self._run(0, run, cancelled_or_done, lambda _id, message: finished(f"Export failed: {message}", True), progress)

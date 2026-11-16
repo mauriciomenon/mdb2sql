@@ -1,20 +1,38 @@
-# Gerenciador de conexoes DuckDB - carrega bancos, lista tabelas, executa queries
-# !T: DuckDB connection manager with read-only mode and metadata caching
+# Gerenciador de conexoes DuckDB - abre .duckdb/.db, .sqlite/.sqlite3 e .mdb/.accdb, lista tabelas, executa queries
+# !T: Every format ends up in one DuckDB connection: DuckDB file read-only, SQLite attached read-only through the
+# !T: bundled sqlite extension, Access copied into an in-memory database. Each call uses its own cursor (threads)
+
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import duckdb
-from pathlib import Path
-from typing import Optional, List, Dict, Any
 
-# !T: DuckDB connection manager with read-only mode
-# !T: Handles multiple database attachments and metadata caching
+from backend.access import Progress, load_access, quote
+from shared.bundle import bundled
+
+DUCKDB_EXT = {".duckdb", ".db"}
+SQLITE_EXT = {".sqlite", ".sqlite3"}
+ACCESS_EXT = {".mdb", ".accdb"}
+SUPPORTED_EXT = DUCKDB_EXT | SQLITE_EXT | ACCESS_EXT
+SQLITE_EXTENSION = "duckdb_ext/sqlite_scanner.duckdb_extension"
+
+
+def sql_string(text: str) -> str:
+    return "'" + text.replace("'", "''") + "'"
+
+
+def load_sqlite_extension(conn: duckdb.DuckDBPyConnection) -> None:
+    # extensao embutida no exe (offline); fora dele, a de .tools\ ou a instalada no DuckDB do usuario
+    path = bundled(SQLITE_EXTENSION)
+    conn.execute(f"LOAD {sql_string(path.as_posix()) if path.is_file() else 'sqlite'}")
 
 
 class DBManager:
     """
-    Classe que gerencia acesso aos bancos DuckDB convertidos.
+    Classe que gerencia acesso aos bancos (todos lidos por uma conexao DuckDB).
 
     Funcionalidades:
-    - Conectar ao banco principal (ultimo convertido)
+    - Conectar ao banco (DuckDB, SQLite ou Access)
     - Listar tabelas disponiveis
     - Executar queries e retornar resultados como lista de dicts
     - Fechar conexao de forma segura
@@ -24,28 +42,52 @@ class DBManager:
         # Inicializa manager sem conectar - db_path pode ser None
         self.conn: Optional[duckdb.DuckDBPyConnection] = None
         self.current_db: Optional[str] = None
+        self.reader = ""  # caminho usado para abrir: DuckDB, SQLite, Access ODBC ou mdbtools
+        self._catalog: Optional[str] = None  # banco anexado (SQLite) que cada cursor usa
+        self._tables: Optional[List[str]] = None
 
         if db_path:
             self.connect(db_path)
 
-    def connect(self, db_path: str) -> None:
+    def connect(self, db_path: str, progress: Optional[Progress] = None) -> None:
         """
-        Conecta ao banco DuckDB especificado - fecha conexao anterior se existir.
+        Abre o banco especificado - fecha conexao anterior se existir.
 
         Args:
-            db_path: Caminho para arquivo .duckdb
+            db_path: Caminho para .duckdb/.db, .sqlite/.sqlite3 ou .mdb/.accdb
+            progress: chamado (feitas, total, tabela) durante a conversao do Access
         """
         # !T: Close existing connection to avoid resource leak
-        if self.conn:
-            self.conn.close()
+        self.close()
 
         # Valida caminho do banco
         # !T: Prevent path traversal and validate file extension
         validated_path = self._validate_database_path(db_path)
+        suffix = Path(validated_path).suffix.lower()
+        if suffix == ".db":
+            # .db e usado pelos dois formatos: decide pelo cabecalho do arquivo
+            with open(validated_path, "rb") as handle:
+                if handle.read(16) == b"SQLite format 3\x00":
+                    suffix = ".sqlite"
 
-        # Abre conexao read-only para nao modificar dados
-        # !T: read_only=True prevents accidental writes
-        self.conn = duckdb.connect(validated_path, read_only=True)
+        # read_only / READ_ONLY: o arquivo de origem nunca e modificado
+        if suffix in DUCKDB_EXT:
+            conn = duckdb.connect(validated_path, read_only=True)
+            self.reader = "DuckDB"
+        else:
+            conn = duckdb.connect(":memory:")
+            try:
+                if suffix in SQLITE_EXT:
+                    load_sqlite_extension(conn)
+                    conn.execute(f"ATTACH {sql_string(validated_path)} AS source_db (TYPE sqlite, READ_ONLY)")
+                    self._catalog = "source_db"
+                    self.reader = "SQLite"
+                else:
+                    self.reader = load_access(Path(validated_path), conn, progress)
+            except Exception:
+                conn.close()
+                raise
+        self.conn = conn
         self.current_db = validated_path
 
     def _validate_database_path(self, db_path: str) -> str:
@@ -53,23 +95,18 @@ class DBManager:
         Valida caminho do banco de dados contra path traversal.
         !T: Prevents path traversal and validates file extension.
 
-        Args:
-            db_path: Caminho para validar
-
-        Returns:
-            Caminho absoluto validado
-
         Raises:
-            ValueError: Se caminho invalido
+            ValueError: Se extensao nao suportada
             FileNotFoundError: Se arquivo nao existe
         """
         # Converte para caminho absoluto
         abs_path = Path(db_path).resolve()
 
         # Valida extensao do arquivo
-        # !T: Only .duckdb and .db files allowed
-        if abs_path.suffix not in [".duckdb", ".db"]:
-            raise ValueError(f"Only .duckdb and .db files are supported, got: {abs_path.suffix}")
+        if abs_path.suffix.lower() not in SUPPORTED_EXT:
+            raise ValueError(
+                f"Only {', '.join(sorted(SUPPORTED_EXT))} files are supported, got: {abs_path.suffix}"
+            )
 
         # Verifica se arquivo existe
         if not abs_path.exists():
@@ -77,33 +114,32 @@ class DBManager:
 
         return str(abs_path)
 
+    def cursor(self) -> duckdb.DuckDBPyConnection:
+        # !T: A DuckDB connection must not be shared between threads; a cursor is a new connection to the same db
+        if not self.conn:
+            raise RuntimeError("No database open")
+        cursor = self.conn.cursor()
+        if self._catalog:
+            cursor.execute(f"USE {self._catalog}")
+        return cursor
+
     def list_tables(self) -> List[str]:
         """
         Retorna lista de nomes de tabelas no banco atual.
-
-        Returns:
-            Lista de strings com nomes das tabelas
         """
         if not self.conn:
             return []
 
-        # Query SHOW TABLES retorna DataFrame
-        # !T: DuckDB returns pandas DataFrame by default
-        result = self.conn.execute("SHOW TABLES").df()
-
-        # Converte coluna 'name' para lista Python
-        return result["name"].tolist()
+        # lida uma vez por conexao: no SQLite anexado cada SHOW TABLES custa dezenas de ms
+        if self._tables is None:
+            with self.cursor() as cursor:
+                self._tables = [row[0] for row in cursor.execute("SHOW TABLES").fetchall()]
+        return list(self._tables)
 
     def _validate_table_name(self, table_name: str) -> None:
         """
         Valida se tableName existe no banco.
         !T: Prevents SQL injection by checking against known tables.
-
-        Args:
-            table_name: Nome da tabela para validar
-
-        Raises:
-            ValueError: Se tabela nao existir
         """
         tables = self.list_tables()
         if table_name not in tables:
@@ -112,12 +148,6 @@ class DBManager:
     def get_table_schema(self, table_name: str) -> List[Dict[str, Any]]:
         """
         Retorna schema de uma tabela (colunas, tipos, nullable).
-
-        Args:
-            table_name: Nome da tabela
-
-        Returns:
-            Lista de dicts com column_name, column_type, null
         """
         if not self.conn:
             return []
@@ -127,13 +157,9 @@ class DBManager:
         self._validate_table_name(table_name)
 
         # PRAGMA table_info retorna metadata sem varrer dados
-        # !T: More efficient than DESCRIBE SELECT *
-        result = self.conn.execute(
-            f'PRAGMA table_info("{table_name}")'
-        ).fetchall()
-
-        # Converte tuplas em lista de dicts
         # !T: PRAGMA returns: cid, name, type, notnull, dflt_value, pk
+        with self.cursor() as cursor:
+            result = cursor.execute(f"PRAGMA table_info({sql_string(table_name)})").fetchall()
         return [
             {
                 "column_name": row[1],  # name
@@ -143,74 +169,53 @@ class DBManager:
             for row in result
         ]
 
-    def query_table(
-        self, table_name: str, limit: int = 100
-    ) -> List[Dict[str, Any]]:
+    def query_table(self, table_name: str, limit: int = 100) -> List[Dict[str, Any]]:
         """
-        Executa SELECT na tabela e retorna resultados.
-
-        Args:
-            table_name: Nome da tabela
-            limit: Numero maximo de linhas (padrao 100)
-
-        Returns:
-            Lista de dicts, cada dict = uma linha
+        Executa SELECT na tabela e retorna ate limit linhas.
         """
         if not self.conn:
             return []
 
-        # Valida tableName contra lista de tabelas
-        # !T: Prevent SQL injection by validating input
         self._validate_table_name(table_name)
 
         # SELECT com LIMIT para nao carregar tabela inteira
-        # !T: Table name validated, safe to use in query
-        query = f'SELECT * FROM "{table_name}" LIMIT {limit}'
-        result = self.conn.execute(query).df()
-
-        # Converte DataFrame pandas para lista de dicts
         # !T: to_dict('records') returns list of row dicts
+        with self.cursor() as cursor:
+            result = cursor.execute(f"SELECT * FROM {quote(table_name)} LIMIT {int(limit)}").df()
         return result.to_dict("records")
 
-    def execute_query(self, query: str) -> List[Dict[str, Any]]:
+    def execute_query(self, query: str, limit: int = 1000) -> tuple[List[str], List[Dict[str, Any]], bool]:
         """
-        Executa query SQL customizada.
-
-        Args:
-            query: Query SQL completa
-
-        Returns:
-            Lista de dicts com resultados
+        Executa SQL livre; devolve (colunas, ate limit linhas, ha mais linhas).
         """
         if not self.conn:
-            return []
+            return [], [], False
 
-        # !T: Execute arbitrary SQL and return as records
-        result = self.conn.execute(query).df()
-        return result.to_dict("records")
+        with self.cursor() as cursor:
+            cursor.execute(query)
+            if cursor.description is None:  # comando sem resultado (SET, CREATE ...)
+                return [], [], False
+            columns: list[str] = []
+            for name in (column[0] for column in cursor.description):
+                # nomes repetidos (SELECT a, a) viram a, a_2: as linhas sao dicts por nome
+                unique, n = name, 2
+                while unique in columns:
+                    unique, n = f"{name}_{n}", n + 1
+                columns.append(unique)
+            rows = cursor.fetchmany(limit + 1)
+        return columns, [dict(zip(columns, row)) for row in rows[:limit]], len(rows) > limit
 
     def get_row_count(self, table_name: str) -> int:
         """
         Retorna numero total de linhas em uma tabela.
-
-        Args:
-            table_name: Nome da tabela
-
-        Returns:
-            Numero de linhas (int)
         """
         if not self.conn:
             return 0
 
-        # Valida tableName contra lista de tabelas
-        # !T: Prevent SQL injection by validating input
         self._validate_table_name(table_name)
 
-        # COUNT(*) retorna total de linhas
-        # !T: Table name validated, safe to use in query
-        query = f'SELECT COUNT(*) as count FROM "{table_name}"'
-        result = self.conn.execute(query).fetchone()
-
+        with self.cursor() as cursor:
+            result = cursor.execute(f"SELECT COUNT(*) FROM {quote(table_name)}").fetchone()
         return result[0] if result else 0
 
     def close(self) -> None:
@@ -220,8 +225,11 @@ class DBManager:
         if self.conn:
             # !T: Explicitly close connection to release file handle
             self.conn.close()
-            self.conn = None
-            self.current_db = None
+        self.conn = None
+        self.current_db = None
+        self.reader = ""
+        self._catalog = None
+        self._tables = None
 
     def __enter__(self):
         # Suporte a context manager (with statement)

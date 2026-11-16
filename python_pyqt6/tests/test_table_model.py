@@ -38,6 +38,9 @@ def test_model_roles(qtbot) -> None:
     assert model.data(model.index(0, 0), Qt.ItemDataRole.FontRole) is not None
     assert model.data(model.index(0, 1), Qt.ItemDataRole.FontRole) is None
     assert model.headerData(1, Qt.Orientation.Horizontal) == "name"
+    model.set_rows([{"note": "x" * 50}, {"note": "short"}])
+    assert model.data(model.index(0, 0), Qt.ItemDataRole.ToolTipRole) == "x" * 50
+    assert model.data(model.index(1, 0), Qt.ItemDataRole.ToolTipRole) is None
 
 
 def test_model_keeps_columns_for_empty_table(qtbot) -> None:

@@ -7,10 +7,11 @@
 import sys
 from pathlib import Path
 
+from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QApplication
 
 from backend.database_tasks import database_path_from_env
-from ui.main_window import MainWindow
+from ui.main_window import MainWindow, apply_theme
 
 # !T: sys.argv permite passar argumentos via linha de comando
 # !T: QApplication gerencia event loop, temas, recursos do sistema
@@ -28,6 +29,8 @@ def main():
     # !T: The Windows 10 style ("windowsvista") has no dark mode; Fusion follows the system scheme
     if app.style().objectName() == "windowsvista":
         app.setStyle("Fusion")
+    # Configuracoes > Tema gravado na execucao anterior (sistema, claro ou escuro)
+    apply_theme(str(QSettings().value("theme", "system")))
 
     # Cria e mostra janela principal
     window = MainWindow()
