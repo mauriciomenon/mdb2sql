@@ -1,6 +1,7 @@
 # Varre o exe do PyInstaller (bootloader + cada arquivo embutido, descompactado) atras de dados da maquina de build
 # !T: Entries are zlib-compressed inside the exe, so a plain byte search of the file would miss them
-# Uso: python scripts/scan_exe.py build/dist/mdb2sql-pyqt.exe   (sai com 1 se achar caminho local; "gmail" so e listado)
+# Uso: python scripts/scan_exe.py <exe ou pasta> ...   (sai com 1 se achar caminho local; "gmail" so e listado)
+# Uma pasta (app onedir, zip ou instalador extraidos) e varrida arquivo por arquivo.
 
 import os
 import re
@@ -28,6 +29,15 @@ def scan(exe: Path) -> dict[re.Pattern[bytes], list[str]]:
                 for match in pattern.finditer(blob):
                     found.add(f"{name}: {blob[max(0, match.start() - 40) : match.end() + 40]!r}")
 
+    if exe.is_dir():
+        # pasta do app (onedir): cada arquivo; o exe dela tem o PYZ embutido, varrido abaixo
+        for path in sorted(p for p in exe.rglob("*") if p.is_file()):
+            check(str(path.relative_to(exe)), path.read_bytes())
+            if path.suffix.lower() == ".exe" and path.parent == exe and path.name != "uninstall.exe":
+                for pattern, found in scan(path).items():
+                    hits[pattern].update(found)
+        return {pattern: sorted(found) for pattern, found in hits.items()}
+
     archive = CArchiveReader(str(exe))
     first_entry = min(entry[0] for entry in archive.toc.values())
     check("<bootloader>", exe.read_bytes()[: archive._start_offset + first_entry])
@@ -42,10 +52,13 @@ def scan(exe: Path) -> dict[re.Pattern[bytes], list[str]]:
 
 
 if __name__ == "__main__":
-    result = scan(Path(sys.argv[1]))
-    for line in result[LOCAL]:
-        print("LOCAL", line)
-    for line in result[CREDITS]:
-        print("terceiros", line)
-    print(f"scan: {len(result[LOCAL])} caminhos/dados locais, {len(result[CREDITS])} 'gmail' de terceiros a conferir")
-    sys.exit(1 if result[LOCAL] else 0)
+    failed = False
+    for target in map(Path, sys.argv[1:]):
+        result = scan(target)
+        for line in result[LOCAL]:
+            print("LOCAL", line)
+        for line in result[CREDITS]:
+            print("terceiros", line)
+        print(f"scan {target}: {len(result[LOCAL])} caminhos/dados locais, {len(result[CREDITS])} 'gmail' de terceiros")
+        failed = failed or bool(result[LOCAL])
+    sys.exit(1 if failed else 0)
