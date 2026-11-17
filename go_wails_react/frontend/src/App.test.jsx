@@ -111,7 +111,7 @@ describe('App IPC flow', () => {
       ['Banco', 'DuckDB 2.0.0'],
       ['Leitor Access', 'ODBC do Microsoft Access (driver instalado); reserva: mdbtools embutido'],
       ['Autor', 'Mauricio Menon'],
-      ['Licenca', 'Proprietaria, todos os direitos reservados (mdbtools embutido: GPL/LGPL)'],
+      ['Licenca', 'GPL v2 ou posterior'],
       ['GitHub', 'https://github.com/mauriciomenon/mdb2sql'],
       ['GitLab', 'https://gitlab.com/mauricio.menon/mdb2sql'],
     ]);
@@ -312,6 +312,18 @@ describe('App IPC flow', () => {
     expect(all).toContain('Database as Excel (.xlsx, one sheet per table)');
     expect(all).toContain('Limpar filtros');
     expect(all).toContain('Colunas...');
+  });
+
+  it('selects a cell by focus and opens its menu from the keyboard', async () => {
+    render(<App />);
+    menu('File', 'Open sample data');
+    const cell = await screen.findByText('Beta');
+    fireEvent.focus(cell);
+    expect(cell).toHaveAttribute('aria-selected', 'true');
+    fireEvent.contextMenu(cell); // menu key: no mouse position
+    expect(screen.getByRole('menu', { name: 'Cell' }).style.left).not.toBe('0px');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Filtrar por este valor' }));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [{ column: 'NAME', value: 'Beta' }]));
   });
 
   it('describes progress by table or by row', () => {

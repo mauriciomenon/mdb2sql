@@ -5,8 +5,32 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
+
+// GPL v2 text shipped in the zip and the installer; package metadata says GPL-2.0-or-later
+func TestLicense(t *testing.T) {
+	read := func(name string) string {
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	if text := read("LICENSE"); !regexp.MustCompile(`^\s*GNU GENERAL PUBLIC LICENSE\s+Version 2, June 1991`).MatchString(text) {
+		t.Errorf("LICENSE must be the GPL v2 text, starts with %q", text[:min(80, len(text))])
+	}
+	if !strings.Contains(read("frontend/package.json"), `"license": "GPL-2.0-or-later"`) {
+		t.Error(`frontend/package.json must say "license": "GPL-2.0-or-later"`)
+	}
+	if !strings.Contains(read("build/windows/installer/project.nsi"), `File "..\..\..\LICENSE"`) {
+		t.Error("the installer must install LICENSE")
+	}
+	if !strings.Contains(read("scripts/package_w11.ps1"), `Copy-Item build\bin\mdb2sql.exe, LICENSE $appDir`) {
+		t.Error("the zip must carry LICENSE")
+	}
+}
 
 func TestGetAppInfo(t *testing.T) {
 	info := NewApp().GetAppInfo()

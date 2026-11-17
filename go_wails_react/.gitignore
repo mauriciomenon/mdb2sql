@@ -7,6 +7,10 @@ build/*
 !build/windows/
 build/windows/*
 !build/windows/icon.ico
+# the NSIS project is versioned (wails keeps an existing one): it also installs LICENSE
+!build/windows/installer/
+build/windows/installer/*
+!build/windows/installer/project.nsi
 frontend/dist/
 frontend/package.json.md5
 /mdb2sql

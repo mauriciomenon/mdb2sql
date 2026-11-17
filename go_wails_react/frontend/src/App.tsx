@@ -71,7 +71,7 @@ export function aboutRows(info: AppInfo): [string, string][] {
     ['Banco', `DuckDB ${v(info.duckdb)}`],
     ['Leitor Access', ACCESS_READERS[info.access ?? ''] ?? 'indisponivel neste computador'],
     ['Autor', 'Mauricio Menon'],
-    ['Licenca', 'Proprietaria, todos os direitos reservados (mdbtools embutido: GPL/LGPL)'],
+    ['Licenca', 'GPL v2 ou posterior'],
     ['GitHub', 'https://github.com/mauriciomenon/mdb2sql'],
     ['GitLab', 'https://gitlab.com/mauricio.menon/mdb2sql'],
   ];
@@ -432,12 +432,16 @@ function App() {
                 key={col}
                 className={typeof row[col] === 'number' ? 'num' : undefined}
                 aria-selected={sel?.row === row && sel.col === col ? 'true' : undefined}
+                tabIndex={-1} // focusable: keyboard and UI Automation can select a cell and open its menu (menu key)
+                onFocus={() => setSel({ row, col })}
                 onClick={() => setSel({ row, col })}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setOpenMenu(null);
                   setSel({ row, col });
-                  setMenu({ x: e.clientX, y: e.clientY });
+                  // the menu key may report no position: open the menu under the cell
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setMenu(e.clientX || e.clientY ? { x: e.clientX, y: e.clientY } : { x: r.left + 8, y: r.bottom });
                 }}
               >
                 {cellText(row[col])}
