@@ -1,5 +1,6 @@
 // Roda com: pnpm --filter mdb2sql-ui test  (node --test, sem dependencias)
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import {
   cellText,
@@ -31,6 +32,15 @@ test('several columns are hidden at once and shown again, order kept', () => {
   assert.equal(hiddenStatus(hidden.size), '1 coluna oculta');
   assert.equal(hiddenStatus(0), '');
   assert.deepEqual(visibleColumns(columns, new Set(['id', 'SIGLA', 'note'])), []);
+});
+
+// a grade mostra cellText: igual as outras stacks, DOUBLE inteiro sem ".0" e NULL vazio
+test('grid shows whole doubles without .0 and NULL as an empty cell', () => {
+  const row = JSON.parse('{"RTUNO": 2.0, "PNTNO": 2316.0, "x": 0.1, "big": "9007199254740993", "n": null}');
+  assert.deepEqual(Object.values(row).map(cellText), ['2', '2316', '0.1', '9007199254740993', '']);
+  const grid = readFileSync(new URL('./Grid.svelte', import.meta.url), 'utf8');
+  assert.match(grid, /<td data-c=\{c\}[^>]*>\{cellText\(value\)\}<\/td>/);
+  assert.doesNotMatch(grid, />NULL</);
 });
 
 test('Columns... cell fits the longest name and type', () => {

@@ -111,11 +111,8 @@
           {#each columns as col, c (c)}
             {@const value = row[col.name]}
             {@const isSelected = selected?.row === row && selected.col === col.name}
-            {#if value === null || value === undefined}
-              <td data-c={c} class="null" class:selected={isSelected}>NULL</td>
-            {:else}
-              <td data-c={c} class:num={isNumeric(col.type)} class:selected={isSelected}>{value}</td>
-            {/if}
+            <!-- como nas outras stacks: NULL e celula vazia, DOUBLE inteiro sem ".0" (o JSON 2.0 chega como 2) -->
+            <td data-c={c} class:num={isNumeric(col.type)} class:selected={isSelected}>{cellText(value)}</td>
           {/each}
         </tr>
       {:else}
