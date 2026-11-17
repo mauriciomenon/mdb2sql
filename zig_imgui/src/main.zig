@@ -185,6 +185,26 @@ fn button(label: [*:0]const u8) bool {
     return ig.igButton(label, .{ .x = 0, .y = 0 });
 }
 
+fn textWidth(s: []const u8) f32 {
+    return ig.igCalcTextSize(s.ptr, s.ptr + s.len, true, -1).x; // true: sem o "##id" do rotulo
+}
+
+fn tooltip(s: []const u8) void {
+    ig.igSetTooltip("%.*s", @as(c_int, @intCast(@min(s.len, 4096))), s.ptr);
+}
+
+fn buttonWidth(label: [:0]const u8) f32 {
+    return textWidth(label) + 2 * ig.igGetStyle().*.FramePadding.x;
+}
+
+// Proximo item na mesma linha se `width` ainda cabe ate a borda da janela; senao ele desce (nunca e cortado)
+fn sameLineIfFits(width: f32, spacing: f32) void {
+    const st = ig.igGetStyle();
+    const gap = if (spacing < 0) st.*.ItemSpacing.x else spacing;
+    const right = ig.igGetWindowPos().x + ig.igGetWindowWidth() - st.*.WindowPadding.x;
+    if (ig.igGetItemRectMax().x + gap + width <= right) ig.igSameLine(0, spacing);
+}
+
 fn zstr(buf: anytype) [:0]u8 {
     return std.mem.sliceTo(buf, 0);
 }
@@ -837,12 +857,15 @@ const App = struct {
             // "##" + PushID: o rotulo fica vazio e o nome (que nao termina em 0) vai por textSlice
             if (ig.igSelectable_Bool("##t", app.selected == i, ig.ImGuiSelectableFlags_SpanAllColumns, .{ .x = 0, .y = 0 }))
                 app.want_select = i;
+            const hovered = ig.igIsItemHovered(0);
             ig.igPopID();
             if (app.selected == i and app.reveal_selected) {
                 ig.igSetScrollHereY(0.5);
                 app.reveal_selected = false;
             }
             ig.igSameLine(0, 0);
+            // nome mais largo que a coluna (painel estreito): o nome inteiro aparece no tooltip
+            if (hovered and textWidth(name) > ig.igGetContentRegionAvail().x) tooltip(name);
             textSlice(name);
             _ = ig.igTableNextColumn();
             if (i < app.counts.len) text("{d}", .{app.counts[i]});
@@ -905,30 +928,32 @@ const App = struct {
         const shown = if (app.data) |g| g.rows.len else 0;
         var hidden_buf: [48]u8 = undefined;
         ig.igAlignTextToFramePadding();
+        // nome da tabela e contagem: quebra na borda da janela em vez de ser cortado
+        ig.igPushTextWrapPos(0);
         text("{s}: page {d} of {d} | rows {d}-{d} of {d}{s}{s}", .{
             app.db.table_names[index],                     app.page + 1,  pages,
             if (shown == 0) 0 else first + 1,              first + shown, app.total,
             if (app.applied_search[0] != 0 or app.filters.items.len > 0) " (filtered)" else "",
             hiddenText(&hidden_buf, &app.data_sel, if (app.data) |g| g.columns.len else 0),
         });
+        ig.igPopTextWrapPos();
 
-        // Filtros ativos: um botao por filtro (clicar remove) e Clear filters
-        const right_edge = ig.igGetWindowPos().x + ig.igGetWindowWidth();
+        // Filtros ativos: um botao por filtro (clicar remove) e Clear filters; o que nao cabe desce de linha
         for (app.filters.items, 0..) |f, i| {
+            var label: [200]u8 = undefined;
+            const chip = dbm.gridtools.filterLabel(&label, f);
             if (i == 0) {
-                ig.igSameLine(0, 24);
+                sameLineIfFits(textWidth("Filters:") + ig.igGetStyle().*.ItemSpacing.x + buttonWidth(chip), 24);
                 ig.igTextDisabled("Filters:");
             }
-            // continua na mesma linha enquanto couber um botao medio; senao desce
-            if (ig.igGetItemRectMax().x + 220 < right_edge) ig.igSameLine(0, -1);
-            var label: [200]u8 = undefined;
+            sameLineIfFits(buttonWidth(chip), -1);
             ig.igPushID_Int(@intCast(i));
-            if (button(dbm.gridtools.filterLabel(&label, f))) app.want_unfilter = i;
+            if (button(chip)) app.want_unfilter = i;
             ig.igSetItemTooltip("%s", "Remove this filter");
             ig.igPopID();
         }
         if (app.filters.items.len > 0) {
-            ig.igSameLine(0, -1);
+            sameLineIfFits(buttonWidth("Clear filters"), -1);
             if (button("Clear filters")) app.want_clear_filters = true;
         }
 
@@ -1062,9 +1087,12 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         ig.igTableNextRow(ig.ImGuiTableRowFlags_Headers, ig.igTableGetHeaderRowHeight());
         for (g.columns[0..n_cols], 0..) |name, c| {
             if (!ig.igTableSetColumnIndex(@intCast(c))) continue;
+            const avail = ig.igGetContentRegionAvail().x;
             ig.igPushID_Int(@intCast(c));
             ig.igTableHeader(name.ptr);
             ig.igPopID();
+            // a largura inicial ja inclui o cabecalho (auto-fit do ImGui); estreitada a mao, o nome vai no tooltip
+            if (ig.igIsItemHovered(0) and textWidth(name) > avail) tooltip(name);
             if (ig.igIsMouseReleased_Nil(1) and ig.igIsItemHovered(0)) {
                 sel.header_col = c;
                 open_header = true;
