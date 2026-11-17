@@ -1149,7 +1149,9 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
                 }
                 ig.igPopID();
                 ig.igSameLine(0, 0);
-                if (cell) |s| textSlice(s) else ig.igTextDisabled("NULL");
+                // DOUBLE inteiro sem ".0" so na tela; a celula (copia, filtro) segue com o texto original
+                const float = c < g.float_cols.len and g.float_cols[c];
+                if (cell) |s| textSlice(if (float) dbm.gridtools.wholeFloatText(s) else s) else ig.igTextDisabled("NULL");
             }
         }
     }

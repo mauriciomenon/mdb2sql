@@ -135,6 +135,17 @@ pub fn filterLabel(buf: []u8, f: query.Criterion) [:0]const u8 {
         std.fmt.bufPrintSentinel(buf, "{s} = '{s}{s}'  x###f", .{ column, value, if (value.len < f.value.len) "..." else "" }, 0)) catch "filter  x###f";
 }
 
+// Texto na tela de um DOUBLE/FLOAT inteiro sem a parte decimal ("2316.0" -> "2316"), igual a stack Go; o resto
+// (2.5, 1e+20, inf, nan) fica como veio. So para desenhar: copia, filtro e exportacao usam o valor original.
+pub fn wholeFloatText(s: []const u8) []const u8 {
+    if (!std.mem.endsWith(u8, s, ".0")) return s;
+    const int = s[0 .. s.len - 2];
+    const digits = if (std.mem.startsWith(u8, int, "-")) int[1..] else int;
+    if (digits.len == 0) return s;
+    for (digits) |ch| if (!std.ascii.isDigit(ch)) return s;
+    return int;
+}
+
 // Dialogo Columns: ~65% da largura da janela principal, entre 420 e 900 px, e nunca maior que a propria janela
 pub fn columnsDialogWidth(main_w: f32) f32 {
     return @max(0, @min(std.math.clamp(main_w * 0.65, 420, 900), main_w - 16));
@@ -147,6 +158,15 @@ pub fn checkboxGridColumns(avail: f32, cell: f32) usize {
 }
 
 // -------------------------------------------------------------------- tests
+
+test "whole DOUBLE values are shown without .0, the rest as it came" {
+    try t.expectEqualStrings("2", wholeFloatText("2.0"));
+    try t.expectEqualStrings("2316", wholeFloatText("2316.0"));
+    try t.expectEqualStrings("-7", wholeFloatText("-7.0"));
+    try t.expectEqualStrings("0", wholeFloatText("0.0"));
+    for ([_][]const u8{ "2.5", "2.05", "1e+20", "1.0e+20", "inf", "-inf", "nan", ".0", "-.0", "x.0", "", "10" }) |s|
+        try t.expectEqualStrings(s, wholeFloatText(s));
+}
 
 test "Columns dialog: width follows the main window within 420..900, grid of 1 to 6 columns" {
     try t.expectEqual(@as(f32, 832), columnsDialogWidth(1280)); // tamanho padrao do app

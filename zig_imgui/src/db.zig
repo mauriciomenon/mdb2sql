@@ -43,6 +43,7 @@ pub const Grid = struct {
     columns: []const [:0]const u8 = &.{},
     rows: []const []?[]const u8 = &.{},
     truncated: bool = false, // o resultado tinha mais que max_rows linhas (as outras nao foram lidas)
+    float_cols: []const bool = &.{}, // colunas DOUBLE/FLOAT: a grade mostra 2.0 como 2 (so na tela, como no Go)
 
     pub fn deinit(self: *Grid) void {
         self.arena.deinit();
@@ -369,7 +370,7 @@ pub const Db = struct {
 
     // Executa SQL com parametros '?' e devolve tudo como texto (no maximo max_rows linhas)
     pub fn run(self: *Db, sql: [:0]const u8, params: []const []const u8) Error!Grid {
-        var rows = try self.stream(sql, params, .{});
+        var rows = try self.stream(sql, params, .{ .types = true });
         defer rows.deinit();
 
         var grid: Grid = .{ .arena = .init(self.gpa) };
@@ -377,6 +378,9 @@ pub const Db = struct {
         const a = grid.arena.allocator();
         const columns = try a.alloc([:0]const u8, rows.n_cols);
         for (columns, 0..) |*col, i| col.* = try a.dupeSentinel(u8, rows.name(i), 0);
+        const floats = try a.alloc(bool, rows.n_cols);
+        for (floats, 0..) |*f, i| f.* = i < rows.types.len and (rows.types[i] == c.DUCKDB_TYPE_DOUBLE or rows.types[i] == c.DUCKDB_TYPE_FLOAT);
+        grid.float_cols = floats;
 
         var list: std.ArrayList([]?[]const u8) = .empty;
         var buf: [64]u8 = undefined;
@@ -652,6 +656,19 @@ test "exact value filter on DuckDB, SQLite and the in-memory Access copy" {
     try db.exec(try std.fmt.bufPrintSentinel(&sql_buf, "CREATE TABLE {s}" ++ filter_ddl, .{ident.items}, 0));
     try db.finishMemory(.access_odbc);
     try expectExactFilters(&db);
+}
+
+test "grid marks DOUBLE/FLOAT columns and keeps their original text" {
+    var db = Db.init(t.allocator);
+    defer db.close();
+    try db.start();
+    var g = try db.run("SELECT 2316.0::DOUBLE AS d, 2.5::DOUBLE AS e, '2.0' AS s, 2::FLOAT AS f, 2 AS i, 2.0::DECIMAL(4,1) AS m", &.{});
+    defer g.deinit();
+    try t.expectEqualSlices(bool, &.{ true, true, false, true, false, false }, g.float_cols);
+    // a celula guarda o texto do banco: copia e "Filter by this value" (CAST AS VARCHAR = ?) continuam iguais
+    try t.expectEqualStrings("2316.0", g.rows[0][0].?);
+    try t.expectEqualStrings("2.0", g.rows[0][2].?);
+    try t.expectEqualStrings("2.0", g.rows[0][3].?);
 }
 
 test "free SQL result is capped at max_rows and streamed" {
