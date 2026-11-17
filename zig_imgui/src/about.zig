@@ -72,6 +72,15 @@ test "about texts: build, stack with versions, Access engine" {
     try std.testing.expect(std.mem.startsWith(u8, access_engine, "Microsoft Access ODBC driver or mdbtools 1."));
 }
 
+test "UI texts: one Export button, no copyright line, no lecturing hints" {
+    const ui = @embedFile("main.zig");
+    try std.testing.expectEqual(1, std.mem.count(u8, ui, "button(\"Export")); // o Export... da barra de cima
+    try std.testing.expectEqual(1, std.mem.count(u8, ui, "button(\"Columns...\")"));
+    for ([_][]const u8{ "Copyright", "(C) 20", "read-only\")", "not available\")", "any order, ignores", "Remember", "Please ", "Make sure" }) |bad| {
+        try std.testing.expect(std.mem.indexOf(u8, ui, bad) == null);
+    }
+}
+
 test "license: GPL v2 or later in About, LICENSE file is the GPL v2 text" {
     try std.testing.expectEqualStrings("GPL v2 or later (GPL-2.0-or-later)", license);
     const text = @embedFile("LICENSE"); // o mesmo arquivo que vai no zip e no instalador

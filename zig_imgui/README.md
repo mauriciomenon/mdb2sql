@@ -82,7 +82,7 @@ mdbtools>`.
 - **Search rule** (Data search, SQL result search and table filter): the text is split into words; a row
   matches when one cell holds every word, in any order, ignoring case and accents. `tensao de campo` and
   `campo tensao` both find `EXCITAÇÃO TENSÃO DE CAMPO`; words found only in different cells of the row do
-  not match. An empty search shows every row.
+  not match. An empty search shows every row. The search boxes show this rule in a one-line tooltip.
   The open file is read-only: `CREATE`, `INSERT` and the like fail on it (an Access file is a copy in
   memory, so changes there are possible but are lost when another file is opened).
 - Every grid: click a cell to select it, **Ctrl+C** copies the value, right-click opens **Copy value** /
@@ -154,7 +154,7 @@ NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 
   `SUPERVISÃO DE FREIOS UG 12 - ...` (1.1.0 found none: it looked for the whole text as one piece). Time on that
   table: about 0.15 s for one word, 0.2 to 0.4 s for two to six words. The SQL result search over 10,000 real
   rows x 123 columns takes about 10 ms per keystroke.
-- Unit tests (`zig build test`, 47 plus 1 of the single-exe packer; the real-Access one runs only when `MDB2SQL_TEST_ACCDB` is set): SQL building and whitelists, paging, streaming results, sheet names and
+- Unit tests (`zig build test`, 49 plus 1 of the single-exe packer; the real-Access one runs only when `MDB2SQL_TEST_ACCDB` is set): SQL building and whitelists, paging, streaming results, sheet names and
   splitting, the xlsx zip read back by Zig's zip reader (CRC and headers checked), CSV, Access reader choice,
   Access type mapping and `mdb-schema` parsing, settings file and default dialog folder, worker thread jobs,
   cancel, and a long session (25 rounds of reopen, SQL errors, a 10-billion-row result, exports and cancels)
@@ -173,6 +173,9 @@ NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 
 - One export action per place: the **Export CSV...** / **Export Excel...** buttons of the Data and SQL tabs
   repeated the **Export...** menu (same items) and were removed.
 - Slightly smaller text: Segoe UI at 16 px instead of 17 (about 6%); the About title stays 1.4 times the text.
+- Shorter texts on screen: the search boxes say only `search`, `filter tables` and `search the rows shown`
+  (the word rule moved to a tooltip); the read-only note of the SQL tab and the "Export to .mdb/.accdb: not
+  available" line of the Export menu were removed (the README says it).
 - Nothing cut on a narrow window: the table name and row count line wraps, filter buttons move to the next line
   when they do not fit, and a table name or column header narrower than its text shows the full name as a
   tooltip. Grid columns start at the width of their header and content (no maximum width).
@@ -278,7 +281,6 @@ payload of the single executable use only Zig's standard library.
 ## License
 
 GPL v2 or later (`GPL-2.0-or-later`), full text in [LICENSE](LICENSE).
-Copyright (C) 2026 Mauricio Menon.
 
 Third-party parts keep their own licenses: mdbtools (in `mdbtools\`) is GPL/LGPL, DuckDB is MIT, Dear ImGui is
 MIT, GLFW is zlib.

@@ -22,7 +22,7 @@ VIAddVersionKey "ProductName" "${APPNAME}"
 VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "FileDescription" "${APPNAME} installer"
-VIAddVersionKey "LegalCopyright" "Mauricio Menon"
+VIAddVersionKey "LegalCopyright" "GPL-2.0-or-later"
 
 !define MUI_ABORTWARNING
 !define MUI_ICON "..\assets\mdb2sql.ico"

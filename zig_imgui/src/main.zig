@@ -181,6 +181,9 @@ fn text(comptime fmt: []const u8, args: anytype) void {
     textSlice(std.fmt.bufPrint(&buf, fmt, args) catch &buf);
 }
 
+// Regra das buscas, uma linha no tooltip das caixas de busca
+const search_rule = "All words, any order, ignoring case and accents";
+
 fn button(label: [*:0]const u8) bool {
     return ig.igButton(label, .{ .x = 0, .y = 0 });
 }
@@ -652,7 +655,7 @@ const App = struct {
 
         // Barra superior: caminho + Browse + Open + Export + status (tambem aceita arrastar o arquivo para a janela)
         ig.igSetNextItemWidth(ig.igGetContentRegionAvail().x * 0.40);
-        const enter = ig.igInputTextWithHint("##path", "path to .duckdb / .sqlite / .accdb / .mdb (or drop the file here)", &app.path, app.path.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null);
+        const enter = ig.igInputTextWithHint("##path", "database file (.duckdb, .sqlite, .accdb, .mdb)", &app.path, app.path.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null);
         ig.igSameLine(0, -1);
         if (button("Browse...")) app.want_browse = true;
         ig.igSameLine(0, -1);
@@ -701,8 +704,6 @@ const App = struct {
         const l2 = std.fmt.bufPrintSentinel(&b2, "{s} to Excel (.xlsx)...", .{what}, 0) catch "Excel...";
         if (ig.igMenuItem_Bool(l1, null, false, cur)) app.want_export = if (app.tab == .sql) .result_csv else .table_csv;
         if (ig.igMenuItem_Bool(l2, null, false, cur)) app.want_export = if (app.tab == .sql) .result_xlsx else .table_xlsx;
-        ig.igSeparator();
-        ig.igTextDisabled("Export to .mdb/.accdb: not available");
     }
 
     fn drawMenu(app: *App) void {
@@ -838,7 +839,8 @@ const App = struct {
 
     fn drawTables(app: *App) void {
         ig.igSetNextItemWidth(-1);
-        _ = ig.igInputTextWithHint("##filter", "all words, any order, ignores case and accents", &app.table_filter, app.table_filter.len + 1, 0, null, null);
+        _ = ig.igInputTextWithHint("##filter", "filter tables", &app.table_filter, app.table_filter.len + 1, 0, null, null);
+        ig.igSetItemTooltip("%s", search_rule);
         const flags = ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_ScrollY | ig.ImGuiTableFlags_BordersInnerV;
         if (!ig.igBeginTable("tbl", 2, flags, .{ .x = 0, .y = 0 }, 0)) return;
         defer ig.igEndTable();
@@ -902,10 +904,11 @@ const App = struct {
         defer ig.igPopID();
 
         ig.igSetNextItemWidth(264);
-        if (ig.igInputTextWithHint("##search", "all words, any order, ignores case and accents", &app.search, app.search.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) {
+        if (ig.igInputTextWithHint("##search", "search", &app.search, app.search.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) {
             app.page = 0;
             app.want_reload = true;
         }
+        ig.igSetItemTooltip("%s", search_rule);
         ig.igSameLine(0, -1);
         ig.igBeginDisabled(app.page == 0);
         if (button("< Prev")) {
@@ -986,10 +989,11 @@ const App = struct {
         if (button("Run (Ctrl+Enter)") or enter) app.want_run = true;
         ig.igEndDisabled();
         ig.igSameLine(0, -1);
-        if (running) ig.igTextDisabled("Running...") else if (app.sql_msg.len == 0) ig.igTextDisabled("the open file is read-only") else app.sql_msg.draw();
+        if (running) ig.igTextDisabled("Running...") else app.sql_msg.draw();
         const g = if (app.result) |*x| x else return;
         ig.igSetNextItemWidth(400);
-        if (ig.igInputTextWithHint("##rfilter", "search the rows shown: all words, any order, ignores case and accents", &app.result_filter, app.result_filter.len + 1, 0, null, null)) app.refilter();
+        if (ig.igInputTextWithHint("##rfilter", "search the rows shown", &app.result_filter, app.result_filter.len + 1, 0, null, null)) app.refilter();
+        ig.igSetItemTooltip("%s", search_rule);
         ig.igSameLine(0, -1);
         columnsButton(&app.result_sel);
         var hidden_buf: [48]u8 = undefined;
@@ -1008,7 +1012,7 @@ const App = struct {
 // Botao "Columns..." da barra da grade: o dialogo e desenhado por drawGrid
 fn columnsButton(sel: *GridSel) void {
     if (button("Columns...")) sel.open_columns = true;
-    ig.igSetItemTooltip("%s", "Show or hide several columns at once.\nHidden columns are still searched, and exports still write every column.");
+    ig.igSetItemTooltip("%s", "Hidden columns are still searched and exported.");
 }
 
 // " | 3 columns hidden" ou vazio
@@ -1223,7 +1227,6 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         const full = ig.igGetContentRegionAvail().x;
         ig.igAlignTextToFramePadding();
         text("{d} of {d} shown", .{ n_cols - sel.hiddenCount(n_cols), n_cols });
-        ig.igSetItemTooltip("%s", "Hidden columns are still searched and exported.");
         ig.igSameLine(st.*.WindowPadding.x + full - 3 * bw - 2 * st.*.ItemSpacing.x, -1);
         if (ig.igButton("Show all", .{ .x = bw, .y = 0 })) sel.hidden = .empty;
         ig.igSameLine(0, -1);
