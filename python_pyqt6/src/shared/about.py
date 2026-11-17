@@ -69,7 +69,7 @@ def about_fields() -> list[tuple[str, str]]:
         ("Bibliotecas", f"DuckDB {duckdb.__version__}, XlsxWriter {xlsxwriter.__version__}, pyodbc {pyodbc.version}"),
         ("Leitura do Access", access_engine()),
         ("Autor", "Mauricio Menon"),
-        ("Licenca", "Proprietaria, todos os direitos reservados"),
+        ("Licenca", "GPL v2 ou posterior"),
     ]
 
 

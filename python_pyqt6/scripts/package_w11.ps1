@@ -15,6 +15,7 @@ New-Item -ItemType Directory -Force $stage, (Split-Path $out) | Out-Null
 Copy-Item build\dist\mdb2sql-pyqt.exe (Join-Path $stage "$name.exe")
 
 $appDir = Join-Path $Root 'build\dist\mdb2sql'
+Copy-Item (Join-Path $Root 'LICENSE') $appDir  # GPL v2 ou posterior: vai no zip e no instalador
 $zipDir = Join-Path $stage $name
 Copy-Item -Recurse $appDir $zipDir
 Compress-Archive -Path $zipDir -DestinationPath (Join-Path $stage "$name.zip") -CompressionLevel Optimal

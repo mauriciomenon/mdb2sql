@@ -52,6 +52,7 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\${APP_NAME}.lnk"
   ; so o que o instalador gravou: a pasta so some se ficar vazia
   Delete "$INSTDIR\${APP_EXE}"
+  Delete "$INSTDIR\LICENSE"
   RMDir /r "$INSTDIR\_internal"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"

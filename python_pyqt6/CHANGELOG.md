@@ -16,6 +16,8 @@
   still respects "Rows". Several filters add up (AND) and combine with the word search. Active filters are shown
   above the grid, one button each (click removes it), plus "Limpar filtros". Changing table clears them.
   Column names are always quoted and values are always bound parameters.
+- Licenca: GPL v2 ou posterior (antes: sem licenca, "proprietaria"). `LICENSE` goes in the zip and the installed
+  folder; `pyproject.toml` says `GPL-2.0-or-later`.
 - Nothing duplicated: the "Colunas..." and "Limpar filtros" buttons are the same actions as their menu items, the
   toolbar Export button and File > Export share one menu, and each export deletes its progress window when done
   (a test counts buttons, menu items and right-click items by name).

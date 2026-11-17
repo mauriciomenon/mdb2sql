@@ -134,5 +134,10 @@ Layout: `src/main.py` entry point; `src/ui/` window, dialogs and table model; `s
 bundled files; `tests/`; `mdb2sql.spec` PyInstaller spec (single exe and app folder); `scripts/` build steps and
 `installer.nsi`.
 
-License: proprietary, all rights reserved. mdbtools (GPL/LGPL, license files inside the program, folder
-`mdbtools`) is run as a separate program.
+## Licenca
+
+Licenca: GPL v2 ou posterior (`GPL-2.0-or-later`, text in [LICENSE](LICENSE); the zip and the installed folder
+carry it). Copyright (C) 2026 Mauricio Menon.
+
+Third-party parts keep their own licenses: Qt and PyQt6, DuckDB, XlsxWriter, pyodbc, and mdbtools (GPL/LGPL,
+license files inside the program, folder `mdbtools`, run as a separate program).

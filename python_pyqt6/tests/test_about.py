@@ -1,5 +1,7 @@
 import re
 import sys
+import tomllib
+from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel
@@ -10,6 +12,17 @@ from ui.main_window import MainWindow
 
 GITHUB = "https://github.com/mauriciomenon/mdb2sql"
 GITLAB = "https://gitlab.com/mauricio.menon/mdb2sql"
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_license_is_gpl2_or_later() -> None:
+    text = (ROOT / "LICENSE").read_text(encoding="utf-8")
+    assert text.split()[:5] == ["GNU", "GENERAL", "PUBLIC", "LICENSE", "Version"] and text.split()[5] == "2,"
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert project["license"] == "GPL-2.0-or-later"
+    assert dict(about.about_fields())["Licenca"] == "GPL v2 ou posterior"
+    # o pacote (zip e instalador) leva o LICENSE
+    assert "'LICENSE'" in (ROOT / "scripts" / "package_w11.ps1").read_text(encoding="utf-8")
 
 
 def test_title_is_short_and_uses_the_single_version_source() -> None:
