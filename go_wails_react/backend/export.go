@@ -1,5 +1,6 @@
 // Exportacao: banco inteiro para .duckdb/.sqlite/.xlsx; tabela ou resultado de SQL para .csv/.xlsx
-// !T: Writes to "<name>.partial.<ext>" and renames at the end, so a cancelled or failed export leaves no half file
+// !T: Writes into a new private folder next to the target and renames at the end, so a cancelled or failed export
+// leaves no half file and never touches another file or the old target
 
 package backend
 
@@ -135,27 +136,22 @@ func (m *DBManager) writeAtomically(out string, write func(tmp string) error) er
 	if same, _ := filepath.Abs(out); m.currentDB != "" && strings.EqualFold(same, m.currentDB) {
 		return fmt.Errorf("cannot export over the open database file")
 	}
-	ext := filepath.Ext(out)
-	tmp := strings.TrimSuffix(out, ext) + ".partial" + ext
-	removeFiles(tmp)
+	// a folder of our own (unique name, same disk as the target): a user file named "x.partial.csv" is never
+	// overwritten or deleted, and the .wal/-journal side files of the engines stay inside it
+	dir, err := os.MkdirTemp(filepath.Dir(out), ".mdb2sql-export-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	tmp := filepath.Join(dir, filepath.Base(out))
 	if err := write(tmp); err != nil {
-		removeFiles(tmp)
 		if errors.Is(err, context.Canceled) {
 			return fmt.Errorf("export cancelled")
 		}
 		return err
 	}
-	if err := os.Remove(out); err != nil && !os.IsNotExist(err) {
-		removeFiles(tmp)
-		return err
-	}
+	// Rename replaces the old target in one step (MoveFileEx REPLACE_EXISTING); if it fails the old target stays
 	return os.Rename(tmp, out)
-}
-
-func removeFiles(path string) {
-	for _, p := range []string{path, path + ".wal", path + "-journal"} {
-		_ = os.Remove(p)
-	}
 }
 
 // copyDatabase attaches the target file and copies each table with CREATE TABLE AS (DuckDB maps the types)

@@ -37,8 +37,10 @@ type App struct {
 	dbPath    string // resolved path of the open file; default folder of the save dialogs
 	settings  Settings
 
-	jobMu  sync.Mutex
-	cancel context.CancelFunc // of the running load or export
+	jobMu       sync.Mutex
+	cancel      context.CancelFunc // of the running load or export
+	queryCancel context.CancelFunc // of the running SQL tab query (one at a time)
+	querySeq    int
 }
 
 // AppInfo alimenta o dialogo Sobre: versao do app e versoes de runtime lidas em execucao
@@ -210,12 +212,24 @@ func (a *App) startJob() (context.Context, func()) {
 	}
 }
 
-// CancelJob cancela a carga ou exportacao em andamento (botao Cancelar)
+// CancelJob cancela a carga, exportacao ou consulta SQL em andamento (botao Cancelar)
 func (a *App) CancelJob() {
 	a.jobMu.Lock()
 	defer a.jobMu.Unlock()
 	if a.cancel != nil {
 		a.cancel()
+	}
+	if a.queryCancel != nil {
+		a.queryCancel()
+	}
+}
+
+// cancelQuery stops the running SQL tab query, if any (a new query or another file replaces it)
+func (a *App) cancelQuery() {
+	a.jobMu.Lock()
+	defer a.jobMu.Unlock()
+	if a.queryCancel != nil {
+		a.queryCancel()
 	}
 }
 
@@ -245,6 +259,7 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 		return nil, err
 	}
 
+	a.cancelQuery() // a query on the previous file must not outlive it
 	ctx, done := a.startJob()
 	defer done()
 	a.dbName, a.dbPath = "", "" // Open closes the previous database first
@@ -288,12 +303,34 @@ func (a *App) GetTableSchema(tableName string) ([]backend.ColumnSchema, error) {
 	return a.dbManager.GetTableSchema(tableName)
 }
 
-// RunQuery executa SQL livre (aba SQL) e devolve no maximo limit linhas
+// RunQuery executa SQL livre (aba SQL) e devolve no maximo limit linhas; uma consulta por vez: a nova cancela a
+// anterior, e CancelJob ou abrir outro arquivo tambem a cancelam
 func (a *App) RunQuery(query string, limit int) (backend.QueryResult, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	return a.dbManager.RunQuery(context.Background(), query, limit)
+	ctx, cancel := context.WithCancel(context.Background())
+	a.jobMu.Lock()
+	if a.queryCancel != nil {
+		a.queryCancel()
+	}
+	a.querySeq++
+	seq := a.querySeq
+	a.queryCancel = cancel
+	a.jobMu.Unlock()
+	defer func() {
+		a.jobMu.Lock()
+		if a.querySeq == seq {
+			a.queryCancel = nil
+		}
+		a.jobMu.Unlock()
+		cancel()
+	}()
+	res, err := a.dbManager.RunQuery(ctx, query, limit)
+	if ctx.Err() != nil {
+		return backend.QueryResult{}, fmt.Errorf("query cancelled")
+	}
+	return res, err
 }
 
 var exportFilters = map[string]runtime.FileFilter{

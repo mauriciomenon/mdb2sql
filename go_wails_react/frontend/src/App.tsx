@@ -166,6 +166,10 @@ function App() {
   const [result, setResult] = useState<QueryResult | null>(null);
   const [resultSql, setResultSql] = useState(''); // SQL of the result shown (what "Export SQL result" writes)
   const started = useRef(false);
+  // request numbers: an answer that is not the latest one (another table, query or file since) is dropped
+  const tableReq = useRef(0);
+  const sqlReq = useRef(0);
+  const [querying, setQuerying] = useState(false);
 
   useEffect(() => {
     if (!menu && !openMenu) return;
@@ -262,11 +266,18 @@ function App() {
     setStatus('Loading...');
     try {
       const bridge = getWailsBridge();
+      // nothing of the previous file may survive: pending answers, rows, SQL result and what Export would write
+      tableReq.current++;
+      sqlReq.current++;
+      setQuerying(false);
       setTables([]);
       setSelectedTable('');
       setRows([]);
       setSchema([]);
+      setFilters([]);
+      setSel(null);
       setResult(null);
+      setResultSql('');
       const tableList = (await bridge.LoadDatabase(path)) ?? [];
       // Go knows which file an empty path resolved to (MDB2SQL_DB_PATH or the bundled sample)
       const name = (await bridge.DatabaseName?.()) || path.split(/[\\/]/).pop() || 'sample.duckdb';
@@ -291,6 +302,7 @@ function App() {
   // keep = filtros a manter (mesma tabela: novo limite ou filtro); sem keep e outra tabela: filtros e colunas ocultas zeram
   async function loadTable(tableName: string, rowLimit: number, keep?: Filter[]) {
     const tableFilters = keep ?? [];
+    const req = ++tableReq.current;
     try {
       setError('');
       setSelectedTable(tableName);
@@ -306,12 +318,13 @@ function App() {
         bridge.GetTableSchema ? bridge.GetTableSchema(tableName) : Promise.resolve([]),
         tableFilters.length > 0 ? bridge.GetRowCount(tableName, []) : null,
       ]);
+      if (req !== tableReq.current) return;
       setRows(data ?? []); // Go sends null for an empty table
       setRowCount(count);
       setTotalCount(total ?? count);
       setSchema(cols ?? []);
     } catch (err) {
-      fail(err);
+      if (req === tableReq.current) fail(err);
     }
   }
 
@@ -335,15 +348,23 @@ function App() {
     if (!sql.trim()) return;
     setError('');
     setSel(null);
+    // Go runs one query at a time: this one cancels the previous, whose answer is dropped here
+    const req = ++sqlReq.current;
+    setQuerying(true);
     try {
       const bridge = getWailsBridge();
       if (!bridge.RunQuery) throw new Error('IPC bridge not available');
       const res = await bridge.RunQuery(sql, rowLimit);
+      if (req !== sqlReq.current) return;
       setResult({ columns: res.columns ?? [], rows: res.rows ?? [], more: res.more });
       setResultSql(sql);
     } catch (err) {
+      if (req !== sqlReq.current) return;
       setResult(null);
+      setResultSql('');
       fail(err);
+    } finally {
+      if (req === sqlReq.current) setQuerying(false);
     }
   }
 
@@ -627,9 +648,13 @@ function App() {
                     }
                   }}
                 />
-                <button className="primary" onClick={() => runSql()} title="Ctrl+Enter">
-                  Run
-                </button>
+                {querying ? (
+                  <button onClick={() => bridge?.CancelJob?.()}>Cancel</button>
+                ) : (
+                  <button className="primary" onClick={() => runSql()} title="Ctrl+Enter">
+                    Run
+                  </button>
+                )}
               </div>
             )}
 

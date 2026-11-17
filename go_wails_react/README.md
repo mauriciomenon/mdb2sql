@@ -44,6 +44,18 @@ Changes in 1.2.0:
   writes all rows", "Open a database...") are gone; tooltips keep one short line.
 - Licenca: GPL v2 ou posterior (antes: proprietaria). The zip and the installer carry `LICENSE`.
 
+Corrigido in 1.2.0 (external audit):
+
+- Export no longer deletes a file of yours named `<name>.partial.<ext>` (or its `.wal`): it writes into a
+  private `.mdb2sql-export-*` folder and replaces the target in one rename, so a failure at any step keeps
+  the old target.
+- Opening another file drops every pending answer of the previous one, and "SQL result as..." no longer
+  exports the previous file's query; a late answer of an older table or query never replaces the newer one.
+- Integers beyond 2^53 (BIGINT, UBIGINT, HUGEINT) and decimals a double cannot hold keep every digit in the
+  grid, the copy and the filters (9007199254740993 showed as ...992).
+- One SQL query at a time: a new query, Cancel (the Run button while a query runs) or opening another file
+  stops the running one.
+
 Changes in 1.1.1: the row search and the table filter match every word typed, in any order, ignoring case
 and accents (before, the whole text had to appear as typed, accents included); own app icon (exe, window,
 installer, shortcuts) instead of the Wails default; the title bar shows the version; excelize 2.11.1.
@@ -228,8 +240,8 @@ How it works: every format ends in one in-memory DuckDB. DuckDB and SQLite files
 `src` (`.db` is told apart by the SQLite file header); Access tables are imported (ODBC: types from
 SQLColumns, rows through the DuckDB appender; mdbtools: `mdb-schema ... access` for the types, `mdb-export`
 CSV loaded with `read_csv`). Exports attach the target file (`.duckdb`/`.sqlite`) and copy each table with
-`CREATE TABLE AS`, or stream rows to excelize / `encoding/csv`, writing `<name>.partial.<ext>` and renaming
-at the end.
+`CREATE TABLE AS`, or stream rows to excelize / `encoding/csv`, writing into a new private folder
+(`.mdb2sql-export-*`) next to the target and renaming over the target at the end.
 
 ### Layout
 

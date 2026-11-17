@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // GPL v2 text shipped in the zip and the installer; package metadata says GPL-2.0-or-later
@@ -46,6 +47,52 @@ func TestGetAppInfo(t *testing.T) {
 	if !regexp.MustCompile(`^v\d+\.\d+\.\d+`).MatchString(info.DuckDB) {
 		t.Fatalf("unexpected DuckDB version %q", info.DuckDB)
 	}
+}
+
+// audit item 16: a long SQL tab query ignored Cancel and a second one ran beside it. Now a new query, CancelJob
+// and opening another file stop the running one, which returns "query cancelled".
+func TestRunQueryOneAtATime(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "q.duckdb")
+	db, err := sql.Open("duckdb", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("CREATE TABLE t (id INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	app := NewApp()
+	t.Cleanup(func() { _ = app.dbManager.Close() })
+	if _, err := app.LoadDatabase(dbPath); err != nil {
+		t.Fatal(err)
+	}
+	const slow = "SELECT sum(a.range * b.range) FROM range(1000000000) a, range(1000) b" // minutes if not stopped
+	stopped := func(stop func()) {
+		t.Helper()
+		errc := make(chan error, 1)
+		go func() { _, err := app.RunQuery(slow, 10); errc <- err }()
+		time.Sleep(300 * time.Millisecond)
+		stop()
+		select {
+		case err := <-errc:
+			if err == nil || !strings.Contains(err.Error(), "cancelled") {
+				t.Errorf("slow query: %v, want cancelled", err)
+			}
+		case <-time.After(20 * time.Second):
+			t.Fatal("slow query was not stopped")
+		}
+	}
+	stopped(func() {
+		if res, err := app.RunQuery("SELECT 42 AS n", 10); err != nil || len(res.Rows) != 1 {
+			t.Errorf("second query: %v %v", res, err)
+		}
+	})
+	stopped(app.CancelJob)
+	stopped(func() {
+		if _, err := app.LoadDatabase(dbPath); err != nil {
+			t.Errorf("reopen: %v", err)
+		}
+	})
 }
 
 // "Sample data" com MDB2SQL_DB_PATH deve informar o nome real do arquivo, nao "sample.duckdb"

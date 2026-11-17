@@ -130,3 +130,47 @@ func TestTableFilters(t *testing.T) {
 		})
 	}
 }
+
+// audit item 12: 9007199254740993 reached the UI as 9007199254740992 (JS Number); big values go as text,
+// keep every digit and still filter back to their own row
+func TestBigNumbersKeepDigits(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "big.duckdb")
+	db, err := sql.Open("duckdb", src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE big (i BIGINT, u UBIGINT, d DECIMAL(38,2), small DECIMAL(10,2), n INTEGER);
+		INSERT INTO big VALUES (9007199254740993, 18446744073709551615, 123456789012345678.91, 12.30, 7),
+			(-9007199254740993, 1, 0.10, -1.5, NULL);`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewDBManager()
+	if err := m.Connect(src); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	rows, err := m.QueryTable("big", 10)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("rows %d %v", len(rows), err)
+	}
+	want := map[string]any{"i": "9007199254740993", "u": "18446744073709551615", "d": "123456789012345678.91", "small": 12.3, "n": 7.0}
+	for col, w := range want {
+		if got := uiValue(t, rows[0][col]); got != w {
+			t.Errorf("%s: UI gets %#v, want %#v", col, got, w)
+		}
+	}
+	if got := uiValue(t, rows[1]["i"]); got != "-9007199254740993" {
+		t.Errorf("negative: %#v", got)
+	}
+	res, err := m.RunQuery(context.Background(), "SELECT i FROM big ORDER BY i DESC LIMIT 1", 10)
+	if err != nil || uiValue(t, res.Rows[0]["i"]) != "9007199254740993" {
+		t.Errorf("SQL tab: %v %v", res.Rows, err)
+	}
+	for _, col := range []string{"i", "u", "d"} {
+		if n, err := m.GetRowCount("big", Filter{col, uiValue(t, rows[0][col])}); err != nil || n != 1 {
+			t.Errorf("filter %s: %d rows %v", col, n, err)
+		}
+	}
+}

@@ -147,10 +147,26 @@ func quoteIdent(name string) string { return `"` + strings.ReplaceAll(name, `"`,
 func quoteLiteral(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
 // jsonValue makes a scanned DuckDB value safe for the UI: JSON has no NaN, DECIMAL and BLOB need plain forms
+// Integers beyond 2^53 and decimals a float64 cannot hold go as text: a JS Number would change their digits.
 func jsonValue(v any) any {
+	const maxSafe = 1<<53 - 1 // Number.MAX_SAFE_INTEGER
 	switch x := v.(type) {
+	case int64:
+		if x > maxSafe || x < -maxSafe {
+			return strconv.FormatInt(x, 10)
+		}
+	case uint64:
+		if x > maxSafe {
+			return strconv.FormatUint(x, 10)
+		}
 	case duckdb.Decimal:
-		return x.Float64()
+		f := x.Float64()
+		exact, ok1 := new(big.Rat).SetString(x.String())
+		shown, ok2 := new(big.Rat).SetString(strconv.FormatFloat(f, 'g', -1, 64))
+		if ok1 && ok2 && exact.Cmp(shown) != 0 {
+			return x.String()
+		}
+		return f
 	case *big.Int:
 		return x.String()
 	case float64:

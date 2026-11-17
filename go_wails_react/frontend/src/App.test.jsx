@@ -363,6 +363,57 @@ describe('App IPC flow', () => {
     expect(cells + rule('th')).not.toMatch(/max-width|text-overflow|overflow: hidden/);
   });
 
+  // audit items 3 and 16: late answers of an older table, query or file must not show, and Export must not
+  // keep the SQL of the previous file
+  it('drops late answers and forgets the previous file', async () => {
+    const later = () => {
+      let resolve;
+      const promise = new Promise((r) => (resolve = r));
+      return { promise, resolve };
+    };
+    const slowTable = later();
+    const slowQuery = later();
+    const GetTableData = vi.fn(async (table) => (table === 'RANGER_SOGEN' && slowTable.armed ? slowTable.promise : rows));
+    const RunQuery = vi.fn((q) => (q === 'slow' ? slowQuery.promise : Promise.resolve({ columns: ['n'], rows: [{ n: 'fast' }], more: false })));
+    const CancelJob = vi.fn(async () => {});
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, RunQuery, CancelJob } } } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+
+    // table B answers late, after table A was chosen again: A stays
+    slowTable.armed = true;
+    fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
+    fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOACCU' }));
+    await waitFor(() => expect(GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, []));
+    slowTable.resolve([{ ID: 9, NAME: 'Late' }]);
+    await screen.findByText('Alpha');
+    expect(screen.queryByText('Late')).not.toBeInTheDocument();
+
+    // a slow query replaced by a fast one: Cancel while running, the late slow answer is dropped
+    fireEvent.click(screen.getByRole('tab', { name: 'SQL' }));
+    fireEvent.change(screen.getByLabelText('SQL'), { target: { value: 'slow' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+    expect(CancelJob).toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('SQL'), { target: { value: 'fast' } });
+    fireEvent.keyDown(screen.getByLabelText('SQL'), { key: 'Enter', ctrlKey: true });
+    expect(await screen.findByText('fast')).toBeInTheDocument();
+    slowQuery.resolve({ columns: ['n'], rows: [{ n: 'slow answer' }], more: false });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Run' })).toBeInTheDocument());
+    expect(screen.queryByText('slow answer')).not.toBeInTheDocument();
+
+    // another file: the SQL result of the previous one can no longer be exported
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+    expect(screen.getByRole('menuitem', { name: 'SQL result as CSV' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+    menu('File', 'Open sample data');
+    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenCalledTimes(2));
+    await screen.findByText('Alpha');
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+    expect(screen.getByRole('menuitem', { name: 'SQL result as CSV' })).toBeDisabled();
+  });
+
   it('describes progress by table or by row', () => {
     expect(progressText('Loading', null)).toBe('Loading...');
     expect(progressText('Loading', { done: 12, total: 287, label: 'RANGER_SOSTAT' })).toBe('Loading RANGER_SOSTAT - 12 of 287');
