@@ -154,7 +154,7 @@ NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 
   `SUPERVISÃO DE FREIOS UG 12 - ...` (1.1.0 found none: it looked for the whole text as one piece). Time on that
   table: about 0.15 s for one word, 0.2 to 0.4 s for two to six words. The SQL result search over 10,000 real
   rows x 123 columns takes about 10 ms per keystroke.
-- Unit tests (`zig build test`, 49 plus 1 of the single-exe packer; the real-Access one runs only when `MDB2SQL_TEST_ACCDB` is set): SQL building and whitelists, paging, streaming results, sheet names and
+- Unit tests (`zig build test`, 51 plus 1 of the single-exe packer; the real-Access one runs only when `MDB2SQL_TEST_ACCDB` is set): SQL building and whitelists, paging, streaming results, sheet names and
   splitting, the xlsx zip read back by Zig's zip reader (CRC and headers checked), CSV, Access reader choice,
   Access type mapping and `mdb-schema` parsing, settings file and default dialog folder, worker thread jobs,
   cancel, and a long session (25 rounds of reopen, SQL errors, a 10-billion-row result, exports and cancels)
@@ -179,6 +179,10 @@ NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 
 - Nothing cut on a narrow window: the table name and row count line wraps, filter buttons move to the next line
   when they do not fit, and a table name or column header narrower than its text shows the full name as a
   tooltip. Grid columns start at the width of their header and content (no maximum width).
+- Excel export fixes: a table name of 22 or more non-ASCII characters (for example Japanese) stopped the
+  program while naming the sheet; sheet names are now sized for any Unicode text (characters above U+FFFF count
+  as 2, as in Excel). Texts cut at 32,767 characters and columns past 16,384 are now counted and shown in the
+  status line at the end of the export (they were dropped without a word).
 - License: GPL v2 or later (before: proprietary, all rights reserved). `LICENSE` goes in the zip and the installer.
 - Tested: unit tests for the exact filter SQL (quoted column, bound value, quotes and an injection attempt in the
   value, NULL, empty text, AND with the search, row limit) on DuckDB, SQLite and the in-memory Access copy, the
@@ -230,7 +234,8 @@ The previous version could fail in these ways; 1.1.0 fixes them:
 - SQL tab: values are shown as text. A statement that cannot be wrapped in a `SELECT` (PRAGMA, SET, ...) runs as
   written and only text, integer, float and boolean columns are decoded; others show `(not text)`.
 - An `.xlsx` sheet is limited to 4 GB of XML (no ZIP64); far beyond DB4 (whole DB4: 22 MB).
-- Excel keeps at most 32,767 characters per cell: longer texts are cut in the `.xlsx` (not in CSV/DuckDB/SQLite).
+- Excel keeps at most 32,767 characters per cell and 16,384 columns per sheet: longer texts are cut and extra
+  columns left out in the `.xlsx` (not in CSV/DuckDB/SQLite); the status line says how many after the export.
 - Grids show at most 512 columns (Dear ImGui limit); exports write all of them.
 - The GUI itself has no automated tests (Dear ImGui exposes no UI Automation tree); it was checked with
   screenshots of the release program on the real DB4 files, driven by the command line flags.

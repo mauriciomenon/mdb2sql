@@ -458,8 +458,14 @@ const App = struct {
             },
             .export_ => if (out.err == null) {
                 const r = &app.slot.req;
-                app.status.set(false, "Exported {d} {s} to {s}", .{
-                    out.exported, if (r.export_kind.countsTables()) "tables" else "rows", std.fs.path.basename(r.destPath()),
+                // .xlsx: o que o Excel nao comporta aparece na mesma linha, em destaque (nada some calado)
+                const p = &app.slot.progress;
+                var cells_buf: [64]u8 = undefined;
+                var cols_buf: [64]u8 = undefined;
+                const cells_s = if (p.cut_cells > 0) std.fmt.bufPrint(&cells_buf, " | {d} cells cut to 32,767 characters", .{p.cut_cells}) catch "" else "";
+                const cols_s = if (p.cut_cols > 0) std.fmt.bufPrint(&cols_buf, " | {d} columns past 16,384 left out", .{p.cut_cols}) catch "" else "";
+                app.status.set(cells_s.len + cols_s.len > 0, "Exported {d} {s} to {s}{s}{s}", .{
+                    out.exported, if (r.export_kind.countsTables()) "tables" else "rows", std.fs.path.basename(r.destPath()), cells_s, cols_s,
                 });
             },
         }
