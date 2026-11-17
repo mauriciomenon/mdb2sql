@@ -3,23 +3,23 @@
 Desktop program to open Microsoft Access (`.mdb`, `.accdb`), SQLite (`.sqlite`, `.sqlite3`) and DuckDB
 (`.duckdb`, `.db`) databases, browse and search their tables, run SQL, and export them to DuckDB, SQLite,
 Excel (`.xlsx`, one sheet per table) and CSV. Written in Zig with Dear ImGui (GLFW + OpenGL 3.3) and the
-DuckDB C API. Version **1.1.1**. Windows 10/11 x64.
+DuckDB C API. Version **1.2.0**. Windows 10/11 x64.
 
 The file you open is never changed: DuckDB and SQLite files are attached read-only, and an Access file is
 read once and converted into an in-memory DuckDB database.
 
 ## Which file to download
 
-Release `zig_imgui-v1.1.1`, all three contain the same program:
+Release `zig_imgui-v1.2.0`, all three contain the same program:
 
 | File | What it is | When to use it |
 | --- | --- | --- |
-| `mdb2sql-1.1.1-w11-amd64-zig-imgui.exe` | single executable (about 37 MB) | copy anywhere and double-click; nothing to install |
-| `mdb2sql-1.1.1-w11-amd64-zig-imgui.zip` | the program folder | unzip anywhere and run `mdb2sql-zig.exe`; keep the files together |
-| `mdb2sql-1.1.1-w11-amd64-zig-imgui-installer.exe` | installer (NSIS) | installs for the current user (no administrator), Start menu shortcut, uninstall in Settings > Apps |
+| `mdb2sql-1.2.0-w11-amd64-zig-imgui.exe` | single executable (about 37 MB) | copy anywhere and double-click; nothing to install |
+| `mdb2sql-1.2.0-w11-amd64-zig-imgui.zip` | the program folder | unzip anywhere and run `mdb2sql-zig.exe`; keep the files together |
+| `mdb2sql-1.2.0-w11-amd64-zig-imgui-installer.exe` | installer (NSIS) | installs for the current user (no administrator), Start menu shortcut, uninstall in Settings > Apps |
 
 The single executable carries the program folder compressed inside it. On its first run it extracts the folder
-once to `%LOCALAPPDATA%\mdb2sql\zig-imgui-1.1.1-<hash>\` (about 110 MB, a few seconds) and starts the program
+once to `%LOCALAPPDATA%\mdb2sql\zig-imgui-1.2.0-<hash>\` (about 110 MB, a few seconds) and starts the program
 from there; the next runs start at once. Older `zig-imgui-*` folders there are deleted automatically (other
 programs' folders in `%LOCALAPPDATA%\mdb2sql\` are left alone).
 
@@ -63,7 +63,18 @@ mdbtools>`.
   the searches). Click a table to load it.
 - **Data** tab: 100 rows per page, **< Prev** / **Next >**, search box (Enter), click a column header to sort
   (click again: descending, again: no sort). The search runs in the database over the whole table, not only
-  the page shown. **Export CSV...** / **Export Excel...** export the whole table with the search and sort shown.
+  the page shown. **Export...** (top bar) > **Current table to CSV / Excel** exports the whole table with the
+  search, filters and sort shown.
+- **Columns...** (Data tab and SQL result): one check box per column, **Show all**, **Hide all** and a box to
+  find a column by name; tick or untick several and close. Right-click a column header: **Hide this column**,
+  **Columns...**, **Show all**. Hidden columns last until another table, result or file is loaded; the line
+  above the grid says `N columns hidden`. The search still looks at every column and exports still write
+  every column.
+- **Filter by this value** (right-click a cell of the Data tab): adds `column = value` to the database query
+  (exact text as shown; a NULL cell filters `IS NULL`), so it finds rows beyond the page loaded and the row
+  count and pages follow it. Several filters add up (AND) and combine with the search. Each active filter is a
+  button above the grid (`SUBNAM = 'U02'  x`, click to remove it); **Clear filters** removes all. Choosing
+  another table clears them. The column name is quoted and the value is a bound parameter, never SQL text.
 - **Schema** tab: column, type, nullable.
 - **SQL** tab: write any SQL and press **Run** (or Ctrl+Enter). The first 10,000 rows are shown; a bigger
   result says so, and its export writes all rows. The search box under the buttons filters the rows shown
@@ -75,7 +86,8 @@ mdbtools>`.
   The open file is read-only: `CREATE`, `INSERT` and the like fail on it (an Access file is a copy in
   memory, so changes there are possible but are lost when another file is opened).
 - Every grid: click a cell to select it, **Ctrl+C** copies the value, right-click opens **Copy value** /
-  **Copy row (TAB separated)**, with the option to include the header line. A copied row pastes into one Excel row.
+  **Copy row (TAB separated)**, with the option to include the header line (Data tab: also **Filter by this
+  value** and **Clear filters**). A copied row pastes into one Excel row.
 - Long work (opening, loading a table, SQL, export) runs in the background: the window stays responsive and
   **Cancel** stops it.
 
@@ -95,8 +107,9 @@ mdbtools>`.
     - Export to `.mdb`/`.accdb` is **not** available (there is no reliable library to write Access files).
   - **Exit**.
 - **Settings > Theme**: **System** (follows the Windows light/dark setting), **Light**, **Dark**. Saved.
-- **Help > About MDB2SQL**: version, build number and date, what the program does, the versions of Zig,
-  Dear ImGui, GLFW and DuckDB, author and source code link.
+- **Help > About mdb2sql**: name and version, what the program does, build number and date, the stack with
+  versions (Zig, Dear ImGui, GLFW + OpenGL, DuckDB), the Access reader (ODBC or mdbtools), author, license and
+  two links that open in the default browser: GitHub and GitLab (only these two fixed addresses can be opened).
 
 The save dialog opens in the folder of the open file and suggests a name (file or table name). An export first
 writes `<chosen file>.part` and only replaces the chosen file when everything worked; on error or Cancel the
@@ -141,12 +154,26 @@ NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 
   `SUPERVISÃO DE FREIOS UG 12 - ...` (1.1.0 found none: it looked for the whole text as one piece). Time on that
   table: about 0.15 s for one word, 0.2 to 0.4 s for two to six words. The SQL result search over 10,000 real
   rows x 123 columns takes about 10 ms per keystroke.
-- Unit tests (`zig build test`, 41; the real-Access one runs only when `MDB2SQL_TEST_ACCDB` is set): SQL building and whitelists, paging, streaming results, sheet names and
+- Unit tests (`zig build test`, 46 plus 1 of the single-exe packer; the real-Access one runs only when `MDB2SQL_TEST_ACCDB` is set): SQL building and whitelists, paging, streaming results, sheet names and
   splitting, the xlsx zip read back by Zig's zip reader (CRC and headers checked), CSV, Access reader choice,
   Access type mapping and `mdb-schema` parsing, settings file and default dialog folder, worker thread jobs,
   cancel, and a long session (25 rounds of reopen, SQL errors, a 10-billion-row result, exports and cancels)
   with the leak-checking allocator. Search: every word in one cell, any order, case and accents
   (`EXCITACAO` finds `Excitação`), words only in different cells, empty search, invalid or cut UTF-8.
+
+### Changes in 1.2.0
+
+- Short window title: `mdb2sql 1.2.0 - Zig`; the details moved to Help > About, now laid out as a table with
+  the stack versions and clickable GitHub and GitLab links.
+- **Columns...** and the column header right-click menu hide or show several columns at once.
+- Right-click a cell > **Filter by this value**: exact-value filter in the database query, shown as removable
+  buttons, with **Clear filters**.
+- One export action per place: the **Export CSV...** / **Export Excel...** buttons of the Data and SQL tabs
+  repeated the **Export...** menu (same items) and were removed.
+- Tested: unit tests for the exact filter SQL (quoted column, bound value, quotes and an injection attempt in the
+  value, NULL, empty text, AND with the search, row limit) on DuckDB, SQLite and the in-memory Access copy, the
+  filter list and its button label, the short title and the two allowed links. Screenshots of the release
+  program on a copy of DB4.duckdb: title and table, About, Columns with several hidden, an active filter.
 
 ### Changes in 1.1.1
 
@@ -233,10 +260,10 @@ payload of the single executable use only Zig's standard library.
 - `src/access.zig` - Access reader: ODBC (odbc32) and mdbtools, reader choice, type mapping.
 - `src/exporter.zig` - exports to DuckDB, SQLite, xlsx and CSV, with progress and cancel.
 - `src/xlsx.zig` - streaming `.xlsx` writer (deflated zip, inline strings) and sheet names.
-- `src/csv.zig`, `src/gridtools.zig` - CSV and TAB-separated row copy, word search (case and accent folding).
+- `src/csv.zig`, `src/gridtools.zig` - CSV and TAB-separated row copy, word search (case and accent folding), right-click filters.
 - `src/worker.zig` - the background jobs (open, table, page, SQL, export) and the thread slot the UI polls.
 - `src/settings.zig` - saved settings, default dialog folder, Windows theme.
-- `src/about.zig` - About text. `src/dialog.zig` - Windows open/save dialogs.
+- `src/about.zig` - window title, About data and the two links it may open. `src/dialog.zig` - Windows open/save dialogs.
 - `src/main.zig` - the GUI. `src/shim.c` - three ImGui struct fields `translate-c` cannot reach.
 - `src/launcher.zig`, `src/pack.zig` - the single executable and the build tool that compresses its payload.
 - `scripts/installer.nsi` - the NSIS installer. `assets/` - the program icon and its Windows resource file.
