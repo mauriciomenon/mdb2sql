@@ -9,6 +9,7 @@
   import { onMount } from 'svelte';
   import Grid from './Grid.svelte';
   import {
+    columnCellWidth,
     filterLabel,
     fold,
     hasAllWords,
@@ -108,6 +109,11 @@
     return rows.filter((row) => rowMatches(row, words));
   });
   let shownColumns = $derived(visibleColumns(columns, hidden));
+  let columnSearch = $state(''); // busca do dialogo Colunas...
+  let listedColumns = $derived.by(() => {
+    const words = searchWords(columnSearch);
+    return columns.filter((col) => hasAllWords(fold(col.name), words));
+  });
 
   const showStatus = (text) => {
     error = '';
@@ -407,24 +413,34 @@
     <button type="button" onclick={() => aboutDialog.close()}>Close</button>
   </dialog>
 
-  <!-- marcar/desmarcar vale na hora; da para trocar varias colunas e fechar -->
-  <dialog bind:this={columnsDialog} class="columns" aria-labelledby="columns-title">
+  <!-- marcar/desmarcar vale na hora; da para trocar varias colunas e fechar. A grade de caixas tem quantas
+       colunas couberem (1 a 6) pelo nome mais longo; so rola na vertical -->
+  <dialog
+    bind:this={columnsDialog}
+    class="columns"
+    aria-labelledby="columns-title"
+    onclose={() => (columnSearch = '')}
+    style="--cell: {columnCellWidth(columns)}"
+  >
     <h2 id="columns-title">Colunas de {selectedTable}</h2>
+    <input class="column-search" type="search" bind:value={columnSearch} aria-label="Procurar coluna" placeholder="Procurar coluna" />
+    <div class="column-list" role="group" aria-label="Colunas visiveis">
+      {#each listedColumns as col (col.name)}
+        <label title="{col.name} ({col.type})">
+          <input type="checkbox" checked={!hidden.has(col.name)} onchange={() => (hidden = toggleHidden(hidden, col.name))} />
+          <span>{col.name}</span>
+          <small>{col.type}</small>
+        </label>
+      {:else}
+        <p class="none">Nenhuma coluna com esse nome</p>
+      {/each}
+    </div>
     <div class="actions">
       <button type="button" class="secondary" onclick={() => (hidden = new Set())}>Mostrar todas</button>
       <button type="button" class="secondary" onclick={() => (hidden = new Set(columns.map((c) => c.name)))}>Ocultar todas</button>
       <span>{shownColumns.length} de {columns.length} visiveis</span>
+      <button type="button" class="close" onclick={() => columnsDialog.close()}>Fechar</button>
     </div>
-    <div class="column-list" role="group" aria-label="Colunas visiveis">
-      {#each columns as col (col.name)}
-        <label>
-          <input type="checkbox" checked={!hidden.has(col.name)} onchange={() => (hidden = toggleHidden(hidden, col.name))} />
-          {col.name}
-          <small>{col.type}</small>
-        </label>
-      {/each}
-    </div>
-    <button type="button" onclick={() => columnsDialog.close()}>Fechar</button>
   </dialog>
 
   <!-- Esc nao fecha: a exportacao para pelo botao Cancel -->
@@ -849,9 +865,22 @@
     outline-offset: 2px;
   }
 
-  /* Colunas...: lista rolavel de caixas de selecao */
+  /* Colunas...: ~65% da janela (420 a 900 px), ate 70% da altura; titulo, busca e botoes fixos, so a lista rola */
   dialog.columns {
-    width: 420px;
+    box-sizing: border-box;
+    width: clamp(420px, 65vw, 900px);
+    max-width: calc(100vw - 32px);
+    max-height: 70vh;
+  }
+
+  dialog.columns[open] {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .column-search {
+    padding: 4px 8px;
   }
 
   dialog .actions {
@@ -859,21 +888,26 @@
     align-items: center;
     gap: 8px;
     color: var(--muted);
-    font-size: 11px;
   }
 
   dialog .actions button {
     margin: 0;
-    padding: 3px 10px;
+    padding: 4px 12px;
   }
 
+  dialog .actions .close {
+    margin-left: auto;
+  }
+
+  /* grade responsiva: cada caixa tem a largura do nome mais longo (--cell, de columnCellWidth), de 1 a 6 por linha */
   .column-list {
-    display: flex;
-    flex-direction: column;
-    max-height: 50vh;
-    margin-top: 10px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, max(var(--cell), calc((100% - 5 * 4px) / 6))), 1fr));
+    align-content: start;
+    gap: 2px 4px;
+    min-height: 0;
     padding: 4px;
-    overflow: auto;
+    overflow: hidden auto;
     border: 1px solid var(--border);
     border-radius: 6px;
   }
@@ -882,12 +916,19 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    min-width: 0;
     padding: 3px 6px;
     border-radius: 4px;
     color: var(--text);
-    font-size: 12px;
+    font-size: inherit;
     font-weight: 400;
     cursor: pointer;
+  }
+
+  .column-list label span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .column-list label:hover {
@@ -897,8 +938,14 @@
   .column-list small {
     margin-left: auto;
     color: var(--muted);
-    font-size: 10px;
+    font-size: 11px;
     letter-spacing: 0.04em;
+  }
+
+  .column-list .none {
+    grid-column: 1 / -1;
+    margin: 8px;
+    color: var(--muted);
   }
 
   dialog.progress progress {

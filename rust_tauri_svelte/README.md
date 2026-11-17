@@ -53,7 +53,8 @@ A **barra de status** (embaixo) mostra a mensagem atual e por qual caminho o arq
   maiusculas nem acentos (`campo tensao` acha `EXCITAÇÃO TENSÃO DE CAMPO`; palavras que so aparecem em celulas
   diferentes nao contam).
 - **Colunas...** (ou botao direito no cabecalho > **Ocultar esta coluna** / **Colunas...** / **Mostrar todas**):
-  marque e desmarque varias colunas de uma vez, com **Mostrar todas** e **Ocultar todas**. A barra de status mostra
+  marque e desmarque varias colunas de uma vez (busca por nome no topo, caixas em grade que acompanha o tamanho
+  da janela), com **Mostrar todas** e **Ocultar todas**. A barra de status mostra
   "N colunas ocultas". Vale para a tabela aberta (trocar de tabela ou de arquivo mostra todas de novo). A busca
   continua olhando todas as colunas e a exportacao sai com todas.
 - **Filtrar por este valor** (botao direito numa celula da aba Data): filtra a tabela por coluna = valor exato na

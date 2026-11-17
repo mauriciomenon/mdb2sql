@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   cellText,
+  columnCellWidth,
   filterLabel,
   fold,
   hasAllWords,
@@ -30,6 +31,12 @@ test('several columns are hidden at once and shown again, order kept', () => {
   assert.equal(hiddenStatus(hidden.size), '1 coluna oculta');
   assert.equal(hiddenStatus(0), '');
   assert.deepEqual(visibleColumns(columns, new Set(['id', 'SIGLA', 'note'])), []);
+});
+
+test('Columns... cell fits the longest name and type', () => {
+  const columns = [{ name: 'RTUNO', type: 'DOUBLE' }, { name: 'PNTNAM', type: 'VARCHAR' }];
+  assert.equal(columnCellWidth(columns), 'calc(7.2ch + 7ch + 44px)');
+  assert.equal(columnCellWidth([]), 'calc(1.2ch + 1ch + 44px)'); // tabela sem colunas nao quebra o CSS
 });
 
 test('hidden columns are still searched', () => {

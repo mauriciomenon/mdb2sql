@@ -59,6 +59,20 @@ test('grid cells, NULL included, keep full contrast', () => {
   }
 });
 
+// regra do dono: ~65% da janela entre 420 e 900 px, ate 70% da altura, grade de 1 a 6 colunas, so rola na vertical,
+// fonte base na lista, busca no topo
+test('Columns... dialog is proportional to the window', () => {
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  const rule = (sel) => app.match(new RegExp(`\\n  ${sel.replace(/[.[\]]/g, '\\$&')} \\{([^}]*)\\}`))[1];
+  assert.match(rule('dialog.columns'), /width: clamp\(420px, 65vw, 900px\);[\s\S]*max-height: 70vh;/);
+  const list = rule('.column-list');
+  assert.match(list, /repeat\(auto-fill, minmax\(min\(100%, max\(var\(--cell\), calc\(\(100% - 5 \* 4px\) \/ 6\)\)\), 1fr\)\)/);
+  assert.match(list, /overflow: hidden auto;/);
+  assert.match(rule('.column-list label'), /font-size: inherit;/);
+  const dialog = markup('./App.svelte').match(/<dialog\s+bind:this=\{columnsDialog\}[\s\S]*?<\/dialog>/)[0];
+  assert.ok(dialog.indexOf('column-search') < dialog.indexOf('column-list'), 'busca acima da lista');
+});
+
 test('the table name above the grid is never squeezed', () => {
   const css = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
   assert.match(css, /\.table-bar h2,\s*\.table-bar \.columns-button\s*\{\s*flex-shrink:\s*0;/);

@@ -25,6 +25,13 @@ export function visibleColumns(columns, hidden) {
   return columns.filter((col) => !hidden.has(col.name));
 }
 
+// largura de uma caixa do dialogo Colunas... (CSS): caixa + nome mais longo + tipo mais longo. Em `ch` (largura
+// do "0"): maiusculas do Segoe UI tem ~1,2ch e o tipo, menor, ~1ch por letra
+export function columnCellWidth(columns) {
+  const longest = (key) => Math.max(1, ...columns.map((col) => String(col[key] ?? '').length));
+  return `calc(${(longest('name') * 1.2).toFixed(1)}ch + ${longest('type')}ch + 44px)`;
+}
+
 // novo Set com a coluna trocada de lado (oculta <-> visivel); o Set antigo nao muda
 export function toggleHidden(hidden, name) {
   const next = new Set(hidden);
