@@ -8,7 +8,7 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount } from 'svelte';
   import Grid from './Grid.svelte';
-  import { rowMatches } from './grid.js';
+  import { fold, hasAllWords, rowMatches, searchWords } from './grid.js';
   import { defaultSaveDir, dirOf, joinPath, stem, suggestedName } from './paths.js';
 
   const LIMITS = [100, 500, 1000];
@@ -71,7 +71,8 @@
   let filter = $state('');
   let selectedTable = $state('');
   let columns = $state([]); // [{ name, type, null }] na ordem real da tabela
-  let rows = $state([]);
+  // raw: linhas so sao trocadas inteiras; sem proxy por celula, e a busca guarda o texto por linha
+  let rows = $state.raw([]);
   let rowCount = $state(0);
   let limit = $state(LIMITS[0]);
   let search = $state('');
@@ -83,10 +84,14 @@
   let sqlResult = $state.raw(null); // { columns, rows, truncated }
   let lastSql = ''; // SQL que gerou sqlResult (o que a exportacao repete)
 
-  let visibleTables = $derived(
-    tables.filter((t) => t.toLowerCase().includes(filter.trim().toLowerCase()))
-  );
-  let visibleRows = $derived(rows.filter((row) => rowMatches(row, search)));
+  let visibleTables = $derived.by(() => {
+    const words = searchWords(filter);
+    return tables.filter((t) => hasAllWords(fold(t), words));
+  });
+  let visibleRows = $derived.by(() => {
+    const words = searchWords(search);
+    return rows.filter((row) => rowMatches(row, words));
+  });
 
   const showStatus = (text) => {
     error = '';
@@ -370,7 +375,7 @@
         aria-label="Filter tables"
         type="search"
         bind:value={filter}
-        placeholder="Filter tables"
+        placeholder="Filter tables: all words, any order"
         disabled={tables.length === 0}
       />
       <!-- NIVEL TECNICO: native listbox gives arrow keys and type-ahead for free -->
@@ -447,7 +452,7 @@
             type="search"
             bind:value={search}
             aria-label="Search rows"
-            placeholder="Search loaded rows (all columns)"
+            placeholder="Search: all words, any order, ignores case and accents"
           />
         </div>
         <Grid
@@ -789,7 +794,7 @@
 
   .table-bar .search {
     margin-left: auto;
-    width: 240px;
+    width: 400px;
     padding: 3px 8px;
   }
 

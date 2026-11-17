@@ -187,7 +187,7 @@ pub(crate) fn write_sheets(
         }
         sheets.last_mut().expect("sheet just added").1 += 1;
         total += 1;
-        if total % ROWS_PER_TICK == 0 {
+        if total.is_multiple_of(ROWS_PER_TICK) {
             tick()?;
         }
     }
@@ -220,7 +220,7 @@ fn write_csv(conn: &Connection, select: &str, path: &Path, tick: &mut dyn FnMut(
             .map_err(|e| e.to_string())?;
         write!(out, "{}\r\n", fields.join(",")).map_err(io)?;
         count += 1;
-        if count % ROWS_PER_TICK == 0 {
+        if count.is_multiple_of(ROWS_PER_TICK) {
             tick()?;
         }
     }

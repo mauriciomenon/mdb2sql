@@ -1,7 +1,7 @@
 // Roda com: pnpm --filter mdb2sql-ui test  (node --test, sem dependencias)
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { cellText, rowMatches, rowToTsv, tsvField } from './grid.js';
+import { cellText, fold, hasAllWords, rowMatches, rowToTsv, searchWords, tsvField } from './grid.js';
 
 test('plain values are copied unchanged, NULL as empty', () => {
   assert.equal(tsvField('abc'), 'abc');
@@ -26,12 +26,52 @@ test('row is TAB-separated in column order, header optional', () => {
   assert.equal(rowToTsv(names, row, true), 'id\tname\tnote\r\n1\t\t"x\ty"');
 });
 
-test('search looks in every column, ignoring case', () => {
-  const row = { id: 42, name: 'Ranger', when: '2026-07-14 10:00:00', gone: null };
-  assert.ok(rowMatches(row, ''));
-  assert.ok(rowMatches(row, '  rang '));
-  assert.ok(rowMatches(row, '42'));
-  assert.ok(rowMatches(row, '07-14'));
-  assert.ok(!rowMatches(row, 'null'));
-  assert.ok(!rowMatches(row, 'zzz'));
+const matches = (row, query) => rowMatches(row, searchWords(query));
+
+test('search looks in every column as displayed, ignoring case', () => {
+  const row = { id: 42, name: 'Ranger', when: '2026-07-14 10:00:00', on: false, ratio: 0.5, gone: null };
+  assert.ok(matches(row, '  rang '));
+  assert.ok(matches(row, '42'));
+  assert.ok(matches(row, '07-14 10:00'));
+  assert.ok(matches(row, 'false'));
+  assert.ok(matches(row, '0.5'));
+  assert.ok(!matches(row, 'null')); // NULL e so marcador da grade, nao dado
+  assert.ok(!matches(row, 'zzz'));
+});
+
+test('empty query returns every row', () => {
+  const rows = [{ a: 'x' }, { a: null }, {}];
+  assert.equal(rows.filter((row) => matches(row, '')).length, 3);
+  assert.equal(rows.filter((row) => matches(row, ' \t ')).length, 3);
+});
+
+test('all words, any order, ignoring case and accents, inside one cell', () => {
+  const row = { id: 7, PNTNAM: 'EXCITAÇÃO TENSÃO DE CAMPO' };
+  assert.ok(matches(row, 'tensao de campo'));
+  assert.ok(matches(row, 'campo tensao'));
+  assert.ok(matches(row, 'EXCITAÇÃO TENSÃO DE CAMPO')); // a frase exata continua achando
+  assert.ok(matches({ x: 'Excitação' }, 'EXCITACAO'));
+  assert.ok(matches({ x: 'Año de la señal' }, 'ano senal'));
+  assert.ok(!matches(row, 'tensao rotor')); // falta uma palavra: fora
+});
+
+test('words found only in different cells do not match', () => {
+  const row = { RTUNAM: 'U18A TENSÃO', PNTNAM: 'CAMPO' };
+  assert.ok(!matches(row, 'tensao campo'));
+  assert.ok(matches(row, 'tensao u18a'));
+});
+
+// causa do "nao achou": a grade junta espacos seguidos num so; quem busca pelo texto que ve nao achava nada
+test('text with repeated spaces is found by the single-spaced text the grid shows', () => {
+  const row = { TMPNAM: 'BP_50   TEMPERATURA AMBIENTE ELEV 144', PNTNAM: 'GERADOR  FREQUENCIA\nDA UNIDADE' };
+  assert.ok(matches(row, 'BP_50 TEMPERATURA AMBIENTE'));
+  assert.ok(matches(row, 'gerador frequencia da unidade'));
+});
+
+test('table filter uses the same words rule', () => {
+  const tables = ['RANGER_SOANLG', 'RANGER_SOSTAT', 'Medição Área'];
+  const pick = (query) => tables.filter((t) => hasAllWords(fold(t), searchWords(query)));
+  assert.deepEqual(pick('anlg ranger'), ['RANGER_SOANLG']);
+  assert.deepEqual(pick('area medicao'), ['Medição Área']);
+  assert.deepEqual(pick(''), tables);
 });

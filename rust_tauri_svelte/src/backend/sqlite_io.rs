@@ -176,7 +176,7 @@ pub fn export(
                     .map_err(|e| e.to_string())?;
                 insert.execute(params_from_iter(values)).map_err(|e| format!("{table}: {e}"))?;
                 n += 1;
-                if n % 10_000 == 0 {
+                if n.is_multiple_of(10_000) {
                     progress(i, tables.len(), table)?;
                 }
             }
