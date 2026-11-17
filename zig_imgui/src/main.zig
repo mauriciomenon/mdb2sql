@@ -784,7 +784,9 @@ const App = struct {
         ig.igSpacing();
         ig.igSeparator();
         ig.igSpacing();
-        if (button("Close")) ig.igCloseCurrentPopup();
+        // Close a direita, do mesmo tamanho do Close do dialogo Columns
+        ig.igSetCursorPosX(ig.igGetCursorPosX() + ig.igGetContentRegionAvail().x - 88);
+        if (ig.igButton("Close", .{ .x = 88, .y = 0 })) ig.igCloseCurrentPopup();
     }
 
     // Status, ou o trabalho em andamento (com progresso e Cancelar) quando ele ja demora o bastante para ser notado
