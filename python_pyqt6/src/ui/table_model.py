@@ -106,8 +106,8 @@ class TableModel(QAbstractTableModel):
             return None
         if role == Qt.ItemDataRole.DisplayRole:
             return self.columns[section]
-        if role == Qt.ItemDataRole.ToolTipRole and self.column_tips:
-            return self.column_tips[section]
+        if role == Qt.ItemDataRole.ToolTipRole:  # nome inteiro mesmo se a coluna ficar estreita
+            return self.column_tips[section] if self.column_tips else self.columns[section]
         return None
 
     def set_rows(

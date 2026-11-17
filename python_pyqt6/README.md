@@ -39,15 +39,19 @@ A 115 MB `.accdb` with 287 tables takes about 10-15 s by ODBC and 30-40 s by mdb
 The source file is never changed.
 
 Left panel: list of tables with a filter box (Ctrl+L goes to the list); the filter works like the search below.
+Names are never cut: the panel opens as wide as the longest name (up to 35% of the window, then it scrolls).
 Tabs:
 
 - **Data** (Ctrl+1): first rows of the selected table; "Rows" in the toolbar sets how many (100 by default, 1,000,
   10,000). Click a header to sort (numbers sort as numbers; third click returns to the original order). Search box
   (Ctrl+F) filters the loaded rows: a row stays when one of its cells has all the words typed, in any order,
   ignoring case and accents (`tensao campo` finds `EXCITAÇÃO TENSÃO DE CAMPO`; words that are only in different
-  cells do not match). Long values are cut at 320 px; the tooltip shows the full text.
-  - **Colunas...** (button above the grid): one check box per column, "Mostrar todas", "Ocultar todas"; with
-    several rows selected, checking one checks them all. Right-click on a column header: "Ocultar esta coluna",
+  cells do not match). Columns fit the header name and the values; long values are cut at 320 px (the tooltip
+  shows the full text), column names are never cut below 640 px (header tooltip: name and type).
+  - **Colunas...** (button above the grid): check boxes in a grid that follows the dialog width (1 to 6 per row,
+    4 at the default window size), a search field on top, "Mostrar todas" / "Ocultar todas" (only the columns the
+    search shows) and "Fechar"; each change applies at once. With several boxes selected, checking one checks them
+    all. The dialog is about 65% of the window (420 to 900 px wide). Right-click on a column header: "Ocultar esta coluna",
     "Colunas...", "Mostrar todas". The status bar shows "N colunas ocultas". Hidden columns last until another
     table or file is selected. Search still looks at every column and exports still write every column.
   - **Filtrar por este valor** (right-click on a cell, or Edit menu): shows only the rows of the table where that
@@ -105,7 +109,7 @@ Real database "2026-07-14 DB4" (copies): 287 tables, 113,962 rows, RANGER_SOSTAT
 - 1.2.0 (2026-11-17, release exe, DB4 `.duckdb` copy, driven by UI Automation): RANGER_SOSTAT, "Colunas..." with
   5 columns hidden (status "5 colunas ocultas"); right-click on SUBNAM `U02` > Filtrar por este valor shows
   "Showing 100 of 604 filtered rows (36,754 rows in table)"; the filter round trip (filter by each value of a row
-  gives that row back) passes on the DB4 `.accdb` copy with ODBC and with mdbtools. 78 automatic tests (74 run in
+  gives that row back) passes on the DB4 `.accdb` copy with ODBC and with mdbtools. 83 automatic tests (79 run in
   every build).
 - Products checked: zip extracted, installer installed and uninstalled silently (no files, shortcut or registry key
   left); the exe, the zip folder and the installed folder have no path or name of the build machine.
@@ -142,7 +146,7 @@ bundled files; `tests/`; `mdb2sql.spec` PyInstaller spec (single exe and app fol
 ## Licenca
 
 Licenca: GPL v2 ou posterior (`GPL-2.0-or-later`, text in [LICENSE](LICENSE); the zip and the installed folder
-carry it). Copyright (C) 2026 Mauricio Menon.
+carry it).
 
 Third-party parts keep their own licenses: Qt and PyQt6, DuckDB, XlsxWriter, pyodbc, and mdbtools (GPL/LGPL,
 license files inside the program, folder `mdbtools`, run as a separate program).

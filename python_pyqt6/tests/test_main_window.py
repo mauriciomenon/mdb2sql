@@ -1,11 +1,11 @@
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtCore import QSettings, QSize, Qt
 from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtWidgets import QAbstractButton, QApplication, QFileDialog, QProgressDialog
+from PyQt6.QtWidgets import QAbstractButton, QApplication, QFileDialog, QProgressDialog, QWidget
 
-from ui.dialogs import ColumnsDialog
+from ui.dialogs import ColumnsDialog, grid_columns
 from ui.main_window import MainWindow
 
 
@@ -35,7 +35,7 @@ def test_starts_empty(qtbot) -> None:
 
     assert win.stack.currentWidget() is win.empty_label
     assert win.windowTitle() == "mdb2sql 1.2.0 - Python"
-    assert win.status_label.text() == "No database loaded"
+    assert win.empty_label.text() == "No database loaded" and win.status_label.text() == ""
     assert win.progress.isHidden()
 
 
@@ -214,6 +214,68 @@ def _repeated(texts: list[str]) -> list[str]:
     return sorted({text for text in texts if texts.count(text) > 1})
 
 
+def test_column_headers_and_table_names_are_not_cut(qtbot, tmp_path: Path) -> None:
+    import duckdb
+
+    long_name = "CIM_PROGRESS_START_DATE_" + "x" * 25  # mais largo que o limite de 320 px, menos que 640
+    table = "RANGER_TABLE_WITH_A_VERY_LONG_NAME_FOR_THE_PANEL_" + "Y" * 30
+    db_file = tmp_path / "wide.duckdb"
+    with duckdb.connect(str(db_file)) as conn:
+        conn.execute(f'CREATE TABLE "{table}" (A INTEGER, CIM_PROGRESS_START_DATE INTEGER, "{long_name}" INTEGER, T VARCHAR)')
+        conn.execute(f"INSERT INTO \"{table}\" VALUES (1, 2, 3, '{'z' * 400}')")
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.show()
+    win.open_database(db_file)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=10000)
+
+    header = win.data_table.horizontalHeader()
+    metrics = header.fontMetrics()
+    for column, name in enumerate(win.table_model.columns[:3]):
+        # largura da secao >= largura do nome da coluna (o valor 1 e curto: so o nome define a largura)
+        assert win.data_table.columnWidth(column) >= metrics.horizontalAdvance(name), name
+        assert win.table_model.headerData(column, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole).startswith(name)
+    assert win.data_table.columnWidth(3) == 320  # conteudo longo continua limitado (texto inteiro na dica)
+    assert win.table_list.item(0).toolTip() == table
+    # nome de tabela nunca vira "...": o painel cabe o nome mais longo do DB4 inteiro; acima de 35% da janela,
+    # rolagem horizontal na lista (o nome continua inteiro)
+    assert win.table_list.textElideMode() == Qt.TextElideMode.ElideNone
+    list_metrics = win.table_list.fontMetrics()
+    for name in ("RANGER_SOSTAT", "RANGER_SOM_AIN_DAY"):
+        assert win.tables_panel_width([name]) >= list_metrics.horizontalAdvance(name) + 40
+    qtbot.waitUntil(lambda: win.tables_dock.width() >= round(win.width() * 0.35) - 8, timeout=3000)
+    assert list_metrics.horizontalAdvance(table) > win.tables_dock.width()  # nome maior que o limite
+    qtbot.waitUntil(lambda: win.table_list.horizontalScrollBar().maximum() > 0, timeout=3000)
+    assert win.info_label.toolTip() == win.info_label.text()
+
+
+def test_results_of_the_previous_database_are_dropped(qtbot, window: MainWindow, people_db: Path, monkeypatch) -> None:
+    # auditoria externa item 3: consulta pendente do banco A nao pode aparecer depois de abrir o banco B
+    import duckdb
+
+    from backend.database_tasks import load_table_payload, open_database
+
+    _select_table(qtbot, window, "people")
+    window.sql_edit.setPlainText("SELECT * FROM people")
+    window.run_sql()
+    qtbot.waitUntil(lambda: window.sql_model.rowCount() == 3, timeout=10000)
+    stale_table = (window._table_request, load_table_payload(window.manager, "people"))
+    stale_open = (people_db, *open_database(people_db))  # abertura lenta de A que termina depois de B
+
+    other = people_db.parent / "other.duckdb"
+    with duckdb.connect(str(other)) as conn:
+        conn.execute("CREATE TABLE b_only AS SELECT 1 AS x")
+    monkeypatch.setattr(window.table_load_timer, "start", lambda *_a: None)  # B ainda nao carregou a tabela
+    window.open_database(other)
+    qtbot.waitUntil(lambda: window.current_db_path == other and window._busy == 0, timeout=10000)
+
+    assert window.sql_model.rowCount() == 0 and window.sql_query is None  # resultado SQL de A some
+    window._on_table_loaded(*stale_table)
+    assert window.loaded_table is None and window.table_model.rowCount() == 0  # tabela de A descartada
+    window._on_database_loaded(0, stale_open)
+    assert window.current_db_path == other and window.windowTitle().startswith("other.duckdb")
+
+
 def test_nothing_duplicated(qtbot, points_window: MainWindow) -> None:
     # estado mais cheio da tela: tabela, filtro ativo (botao do filtro + Limpar filtros) e coluna oculta
     win = points_window
@@ -249,15 +311,15 @@ def _reloaded(qtbot, win: MainWindow, action) -> None:
 
 def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None:
     _select_table(qtbot, window, "people")
-    assert "Exportar continua exportando todas as colunas" in window.columns_button.toolTip()
+    assert window.columns_button.toolTip() == "Exportar leva todas as colunas"
 
     window.columns_button.click()
     dialog = window.findChild(ColumnsDialog)
     assert [dialog.list.item(i).text() for i in range(3)] == ["id", "name", "score"]
-    dialog.set_all(False)  # "Ocultar todas"
+    dialog.set_all(False)  # "Ocultar todas": vale na hora
+    assert _hidden(window) == [True, True, True]
     dialog.list.item(1).setCheckState(Qt.CheckState.Checked)
-    assert _hidden(window) == [False, False, False]  # nada muda antes do OK
-    dialog.accept()
+    dialog.accept()  # Fechar
 
     assert _hidden(window) == [True, False, True]
     assert window.hidden_columns == {"id", "score"}
@@ -292,6 +354,42 @@ def test_columns_dialog_checks_all_selected_rows(qtbot) -> None:
     dialog.list.clearSelection()
     dialog.list.item(3).setCheckState(Qt.CheckState.Checked)
     assert dialog.hidden() == {"a", "b", "c"}
+
+    # busca no topo: Mostrar todas so marca as encontradas
+    dialog.search.setText("B")
+    assert [dialog.list.item(r).isHidden() for r in range(4)] == [True, False, True, True]
+    dialog.set_all(True)
+    assert dialog.hidden() == {"a", "c"}
+
+
+def test_columns_dialog_grid_is_proportional(qtbot) -> None:
+    assert [grid_columns(w, 170) for w in (100, 170, 700, 5000)] == [1, 1, 4, 6]
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    names = ["RTUNO", "PNTNO", "SUBNAM", "PNTNAM", "CTLOPS"] + [f"COL{i:03}" for i in range(118)]  # 123 colunas
+
+    # tamanho padrao do app e maximizada; no Windows (Segoe UI 9) da 4 e 5 colunas, conferido nas capturas
+    # !T: The offscreen test platform has a wider fallback font, so the count is checked against the formula
+    shown = []
+    for size in (QSize(1200, 800), QSize(1920, 1040)):
+        parent.resize(size)
+        dialog = ColumnsDialog(names, set(), parent)
+        dialog.show()
+        qtbot.waitExposed(dialog)
+        assert 420 <= dialog.width() <= 900 and dialog.width() == min(900, round(size.width() * 0.65))
+        assert dialog.height() <= round(size.height() * 0.7)
+        assert dialog.columns_shown == grid_columns(dialog.list.viewport().width() - 4, dialog.cell)
+        shown.append(dialog.columns_shown)
+        assert dialog.list.font().pointSizeF() == QApplication.font().pointSizeF()  # fonte base, nao encolhe
+        assert dialog.list.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        dialog.close()
+    assert shown[0] <= shown[1]
+
+    dialog = ColumnsDialog(names, set(), parent)
+    dialog.show()
+    dialog.resize(420, 400)  # redimensionar recalcula a grade
+    qtbot.waitUntil(lambda: dialog.columns_shown <= 2, timeout=2000)
+    dialog.close()
 
 
 def test_header_menu_hides_one_column_and_table_switch_resets(qtbot, window: MainWindow) -> None:

@@ -122,6 +122,58 @@ def test_cancel_removes_partial_file(manager: DBManager, tmp_path: Path) -> None
     assert not (tmp_path / "c.csv").exists()
 
 
+OLD = b"previous export, must survive"
+
+
+def _previous(path: Path) -> Path:
+    path.write_bytes(OLD)
+    return path
+
+
+def test_failed_or_cancelled_export_keeps_previous_file(manager: DBManager, tmp_path: Path) -> None:
+    # auditoria externa item 1: erro ou cancelamento nao pode apagar o arquivo que ja existia com esse nome
+    cancel = threading.Event()
+    cancel.set()
+    for suffix in (".duckdb", ".sqlite", ".xlsx"):
+        out = _previous(tmp_path / f"db{suffix}")
+        with pytest.raises(Cancelled):
+            export_database(manager, out, _noop, cancel)
+        assert out.read_bytes() == OLD
+    for suffix in (".csv", ".xlsx"):
+        out = _previous(tmp_path / f"r{suffix}")
+        with pytest.raises(Cancelled):
+            export_result(manager, "SELECT * FROM people", "people", out, _noop, cancel)
+        assert out.read_bytes() == OLD
+        with pytest.raises(duckdb.Error):
+            export_result(manager, "SELECT * FROM missing_table", "x", out, _noop)
+        assert out.read_bytes() == OLD
+    # nenhum temporario sobra; o sucesso troca o arquivo antigo pelo novo
+    assert [p.name for p in tmp_path.iterdir() if "partial" in p.name or p.suffix == ".wal"] == []
+    export_result(manager, "SELECT * FROM people", "people", tmp_path / "r.csv", _noop)
+    assert (tmp_path / "r.csv").read_text(encoding="utf-8-sig").startswith("id,name,score")
+
+
+def test_cancel_during_last_table_or_chunk_is_a_cancel(manager: DBManager, tmp_path: Path) -> None:
+    # auditoria externa item 9: Cancelar durante a ultima tabela terminava como sucesso
+    for suffix in (".duckdb", ".sqlite", ".xlsx"):
+        cancel = threading.Event()
+        out = _previous(tmp_path / f"last{suffix}")
+
+        def on_last_table(_done, _total, table, cancel=cancel) -> None:
+            if table == "people":  # ultima tabela (empty_table, people)
+                cancel.set()
+
+        with pytest.raises(Cancelled):
+            export_database(manager, out, on_last_table, cancel)
+        assert out.read_bytes() == OLD
+    for suffix in (".csv", ".xlsx"):
+        cancel = threading.Event()
+        out = _previous(tmp_path / f"last_r{suffix}")
+        with pytest.raises(Cancelled):  # cancelado depois do ultimo bloco de linhas
+            export_result(manager, "SELECT * FROM people", "people", out, lambda *_a, c=cancel: c.set(), cancel)
+        assert out.read_bytes() == OLD
+
+
 def test_export_refuses_to_overwrite_open_database(manager: DBManager) -> None:
     with pytest.raises(ValueError, match="proprio banco"):
         export_database(manager, Path(manager.current_db), _noop)
