@@ -1,4 +1,4 @@
-# MDB2SQL (Rust + Tauri + Svelte) 1.1.1
+# MDB2SQL (Rust + Tauri + Svelte) 1.2.0
 
 Programa de Windows para abrir bancos Microsoft Access (`.mdb`, `.accdb`), DuckDB (`.duckdb`, `.db`) e SQLite
 (`.sqlite`, `.sqlite3`), ver tabelas, esquema e dados, rodar SQL e exportar o banco inteiro para DuckDB, SQLite
@@ -8,14 +8,14 @@ Backend em Rust (DuckDB 2.0 embutido), janela Tauri 2 (WebView2 do Windows) e in
 
 ## Qual arquivo baixar
 
-Release `rust_tauri_svelte-v1.1.1` (pasta `dist\w11\amd64\` do build). Os quatro fazem a mesma coisa:
+Release `rust_tauri_svelte-v1.2.0` (pasta `dist\w11\amd64\` do build). Os quatro fazem a mesma coisa:
 
 | Arquivo | Para quem |
 | --- | --- |
-| `mdb2sql-1.1.1-w11-amd64-rust-tauri-svelte.exe` | **Executavel unico**: baixe e de dois cliques. Nao instala nada. |
-| `mdb2sql-1.1.1-w11-amd64-rust-tauri-svelte.zip` | O mesmo exe e este README numa pasta; extraia e rode `mdb2sql.exe`. |
-| `mdb2sql-1.1.1-w11-amd64-rust-tauri-svelte-installer.exe` | Instalador NSIS: atalho no menu Iniciar e desinstalador. Nao pede administrador. |
-| `mdb2sql-1.1.1-w11-amd64-rust-tauri-svelte-installer.msi` | Instalador MSI (WiX), para distribuicao por politica/GPO. |
+| `mdb2sql-1.2.0-w11-amd64-rust-tauri-svelte.exe` | **Executavel unico**: baixe e de dois cliques. Nao instala nada. |
+| `mdb2sql-1.2.0-w11-amd64-rust-tauri-svelte.zip` | O mesmo exe, este README e o LICENSE numa pasta; extraia e rode `mdb2sql.exe`. |
+| `mdb2sql-1.2.0-w11-amd64-rust-tauri-svelte-installer.exe` | Instalador NSIS: atalho no menu Iniciar e desinstalador. Nao pede administrador. |
+| `mdb2sql-1.2.0-w11-amd64-rust-tauri-svelte-installer.msi` | Instalador MSI (WiX), para distribuicao por politica/GPO. |
 
 O exe nao e assinado digitalmente: na primeira execucao o SmartScreen pode avisar ("Mais informacoes" >
 "Executar assim mesmo").
@@ -35,7 +35,7 @@ O exe nao e assinado digitalmente: na primeira execucao o SmartScreen pode avisa
 ## Como usar
 
 **Abrir um banco** (qualquer um dos jeitos):
-- **File > Open...** ou o botao **Browse...**: dialogo do Windows (abre na pasta do ultimo banco aberto);
+- botao **Browse...**: dialogo do Windows (abre na pasta do ultimo banco aberto);
 - digitar ou colar o caminho no campo **Database** e **Open database** (aspas do "Copiar como caminho" sao aceitas);
 - linha de comando: `mdb2sql.exe "D:\dados\banco.accdb"`; ou a variavel `MDB2SQL_DB_PATH` com o caminho.
 
@@ -48,20 +48,30 @@ A **barra de status** (embaixo) mostra a mensagem atual e por qual caminho o arq
 - **Tables** (esquerda): lista de tabelas; **Filter tables** filtra por nome, com a mesma regra da busca abaixo.
   Clique (ou setas) abre a tabela.
 - Aba **Data**: as primeiras linhas da tabela (quantas: **Row limit**, 100/500/1000; padrao 100) e o total de
-  linhas. O campo de busca (**Search: all words...**) procura nas linhas carregadas (nao na tabela inteira):
+  linhas. O campo de busca (**Search loaded rows**) procura nas linhas carregadas (nao na tabela inteira):
   a linha aparece quando uma mesma celula tem todas as palavras digitadas, em qualquer ordem e sem diferenciar
   maiusculas nem acentos (`campo tensao` acha `EXCITAÇÃO TENSÃO DE CAMPO`; palavras que so aparecem em celulas
   diferentes nao contam).
+- **Colunas...** (ou botao direito no cabecalho > **Ocultar esta coluna** / **Colunas...** / **Mostrar todas**):
+  marque e desmarque varias colunas de uma vez (busca por nome no topo, caixas em grade que acompanha o tamanho
+  da janela), com **Mostrar todas** e **Ocultar todas**. A barra de status mostra
+  "N colunas ocultas". Vale para a tabela aberta (trocar de tabela ou de arquivo mostra todas de novo). A busca
+  continua olhando todas as colunas e a exportacao sai com todas.
+- **Filtrar por este valor** (botao direito numa celula da aba Data): filtra a tabela por coluna = valor exato na
+  consulta ao banco (`WHERE "coluna" = ?`, valor como parametro; celula NULL, que aparece vazia, vira `IS NULL`), entao acha linhas
+  alem das carregadas, ainda limitadas pelo Row limit. Varios filtros somam (E); filtrar de novo a mesma coluna
+  troca o valor. Os filtros ativos aparecem acima da grade (`Filtro: SIGLA = 'U9A' x`), com remover um a um e
+  **Limpar filtros**; a contagem vira "Showing N of M filtered rows (T in the table)". A busca por palavras
+  continua valendo sobre as linhas filtradas. Trocar de tabela limpa os filtros.
 - Aba **Schema**: colunas da tabela, tipo e se aceita nulo.
 - Aba **SQL**: SQL livre do DuckDB sobre as tabelas abertas (ex.: `SELECT * FROM "RANGER_SOSTAT" WHERE RTUNO = 2`);
   **Run SQL** ou `Ctrl+Enter`. A grade mostra ate o Row limit; a exportacao do resultado leva todas as linhas.
 - **Grade** (Data, Schema e SQL): clique seleciona a celula; `Ctrl+C` copia o valor; botao direito (ou a tecla de
   menu) abre **Copy value**, **Copy row**, **Copy row with header** (linha separada por TAB, pronta para colar no
-  Excel). As colunas se ajustam ao conteudo, nada e cortado; role na horizontal para ver tudo.
+  Excel); na aba Data tambem **Filtrar por este valor** e **Limpar filtros**. As colunas se ajustam ao conteudo,
+  nada e cortado; role na horizontal para ver tudo.
 
-**Menu File**
-- **Open...**: abre um banco.
-- **Export** (tambem no botao **Export...** ao lado do campo Database):
+**Menu File > Export**:
   - **Database to DuckDB (.duckdb)** / **Database to SQLite (.sqlite)**: todas as tabelas, com os tipos
     (DECIMAL, TIMESTAMP, DOUBLE, texto...). No SQLite datas vao como texto ISO e o tipo DuckDB fica declarado
     na coluna, de modo que o arquivo reabre com os mesmos tipos.
@@ -75,20 +85,26 @@ A **barra de status** (embaixo) mostra a mensagem atual e por qual caminho o arq
   - O dialogo de salvar abre na pasta do banco aberto (sem banco aberto, na ultima pasta usada) e nao sugere o
     nome do proprio arquivo aberto; gravar por cima do banco aberto e recusado.
   - A exportacao roda em segundo plano com barra de progresso e **Cancel**. O arquivo e gravado como
-    `<nome>.partial` e so recebe o nome final no fim: cancelar ou dar erro nunca deixa arquivo pela metade.
+    temporario `<nome>.<n>.partial` (nome novo a cada exportacao, nunca um arquivo que ja existe) e so recebe o
+    nome final no fim: cancelar ou dar erro nunca deixa arquivo pela metade nem mexe no arquivo anterior.
+  - No .sqlite, decimais com mais de 15 digitos e inteiros de 128 bits/UBIGINT ficam como texto exato (tipo
+    declarado `TEXT_DECIMAL(p,s)`, `TEXT_HUGE128`, `TEXT_UHUGE128`, `TEXT_UBIG64`); o mdb2sql reabre com o tipo DuckDB.
   - **Gerar .mdb/.accdb: nao.** Nao ha biblioteca confiavel para gravar Access; exporte para DuckDB/SQLite/Excel.
 
 **Menu Settings > Theme**: System (segue o Windows), Light ou Dark; a escolha fica gravada.
 
-**Menu Help > About MDB2SQL**: versao, numero e data do build, versoes de Tauri, WebView2, Rust, Svelte, DuckDB,
-SQLite e mdbtools, e se o driver ODBC do Access esta instalado.
+**Menu Help > About MDB2SQL**: nome e versao, numero e data do build, stack (Rust + Tauri + Svelte com versoes),
+WebView2, DuckDB, SQLite, leitor do Access (driver ODBC ou mdbtools), autor, licenca e os links do codigo no
+GitHub e no GitLab (abrem no navegador padrao; o app so tem permissao para abrir esses dois enderecos).
+
+A barra de titulo fica curta (`mdb2sql 1.2.0 - Rust`); os detalhes estao no About.
 
 **Variaveis de ambiente** (opcionais): `MDB2SQL_DB_PATH` = banco aberto ao iniciar;
 `MDB2SQL_ACCESS_READER=odbc` ou `=mdbtools` forca o leitor de .mdb/.accdb.
 
 ## O que o programa grava no computador
 
-- `%LOCALAPPDATA%\mdb2sql\rust-tauri-svelte-1.1.1\mdbtools\`: o mdbtools embutido, extraido na primeira vez que
+- `%LOCALAPPDATA%\mdb2sql\rust-tauri-svelte-1.2.0\mdbtools\`: o mdbtools embutido, extraido na primeira vez que
   um Access e aberto sem ODBC (3 exes + licencas GPL e LGPL, ~0,7 MB). Pastas de versoes antigas deste programa sao
   apagadas sozinhas. Pode ser apagada a qualquer momento.
 - `%LOCALAPPDATA%\com.mdb2sql.app\`: dados do WebView2 e as preferencias (tema, ultima pasta).
@@ -135,12 +151,13 @@ Use sempre esse comando (ou `cargo tauri build`): um `cargo build --release` pur
 servidor de desenvolvimento e abre uma janela vazia.
 
 Testes: `cargo test` nesta pasta (abrir os tres formatos, exportar e reabrir, nomes e divisao de abas do Excel,
-CSV, escolha do leitor Access, tipos, Sobre, versoes) e `pnpm --filter mdb2sql-ui test` (`node --test`: copia da
-grade, busca, pasta padrao e nome sugerido dos dialogos de salvar). Com `MDB2SQL_TEST_ACCDB` (copia de um .accdb) e
+CSV, escolha do leitor Access, tipos, filtros no DuckDB e no SQLite, titulo, Sobre, links liberados, versoes) e
+`pnpm --filter mdb2sql-ui test` (`node --test`: copia da grade, busca, colunas ocultas, filtros, pasta padrao e
+nome sugerido dos dialogos de salvar, nenhum botao ou item de menu repetido). Com `MDB2SQL_TEST_ACCDB` (copia de um .accdb) e
 `MDB2SQL_TEST_DUCKDB` (conversao de referencia) o `cargo test` tambem abre o Access pelos dois leitores, confere
 tabelas e linhas contra a referencia e compara ODBC x mdbtools celula a celula.
 
-Stack: Rust 1.99.1, tauri 2.12 (tauri-cli 2.12.4, tauri-plugin-dialog 2.8), crate duckdb 1.20000.2
+Stack: Rust 1.99.1, tauri 2.12 (tauri-cli 2.12.4, tauri-plugin-dialog 2.8, tauri-plugin-opener 2.7), crate duckdb 1.20000.2
 (DuckDB 2.0.0 bundled), rusqlite 0.41.1 (SQLite bundled), odbc-api 29.3, rust_xlsxwriter 0.102, mdbtools 1.0.1
 estatico, Svelte 5.57 + Vite 8.3. Versoes exatas: `rust-toolchain.toml`, `Cargo.lock` e `pnpm-lock.yaml` (raiz).
 
@@ -150,11 +167,7 @@ A fonte unica e `version` em `Cargo.toml`. O `tauri.conf.json` nao tem `version`
 o dialogo About le a mesma constante, e `ui/package.json` repete o numero; `cargo test` falha se eles divergirem.
 Numero do build (`git rev-list --count HEAD`) e data entram no About pelo build oficial; fora dele, "build dev".
 
-- **1.1.1**: icone proprio do mdb2sql (exe, janela, instaladores) e versao na barra de titulo
-  (`mdb2sql 1.1.1 - Rust + Tauri + Svelte`); busca da aba Data e filtro de tabelas por palavras (todas numa mesma celula, qualquer ordem, sem
-  maiusculas nem acentos). Antes a busca procurava o texto exato: texto com espacos repetidos (2.499 valores no
-  DB4, que a grade mostra com um espaco so) nao era achado pelo que aparecia na tela, nem `tensao` achava `TENSÃO`.
-- **1.1.0**: abre .duckdb/.sqlite/.mdb/.accdb e exporta para DuckDB, SQLite, Excel e CSV.
+Historico de versoes: [CHANGELOG.md](CHANGELOG.md).
 
 ## Ferramentas com versao fixa
 
@@ -187,5 +200,13 @@ pino fica em 1.99.1. A extensao sqlite do DuckDB nao e usada: tem 47 MB; o rusql
 
 O banco e aberto so para leitura (DuckDB por ATTACH READ_ONLY, SQLite com SQLITE_OPEN_READ_ONLY, Access com
 ReadOnly=1 no ODBC; o mdbtools so le). So extensoes de banco sao aceitas e os nomes de tabela sao conferidos
-contra a lista lida do banco antes de entrar no SQL. Licencas: o mdbtools e GPL/LGPL; os textos (`COPYING`, `COPYING.LIB`) vao junto
-na pasta extraida.
+contra a lista lida do banco antes de entrar no SQL. No **Filtrar por este valor** o nome da coluna vai entre
+aspas duplas (aspas internas dobradas) e o valor sempre como parametro da consulta, nunca no texto do SQL. O
+plugin opener so pode abrir os dois links do About (`capabilities/default.json`; o `cargo test` confere).
+Licencas: o mdbtools e GPL/LGPL; os textos (`COPYING`, `COPYING.LIB`) vao junto na pasta extraida.
+
+## Licenca
+
+GPL v2 ou posterior (SPDX `GPL-2.0-or-later`), texto em [LICENSE](LICENSE), que vai no zip e e instalado junto
+pelos instaladores. Componentes de terceiros (Tauri, DuckDB, SQLite, mdbtools
+etc.) mantem as licencas deles.

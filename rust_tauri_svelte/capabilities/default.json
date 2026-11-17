@@ -1,7 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissoes da janela principal: nucleo do Tauri, troca de tema da janela, os eventos de progresso e os dialogos nativos de abrir e salvar (os comandos do app nao precisam de permissao extra)",
+  "description": "Permissoes da janela principal: nucleo do Tauri, troca de tema da janela, os eventos de progresso, os dialogos nativos de abrir e salvar e abrir no navegador padrao so os dois links do Sobre (os comandos do app nao precisam de permissao extra)",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-set-theme", "core:event:default", "dialog:allow-open", "dialog:allow-save"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-theme",
+    "core:event:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://github.com/mauriciomenon/mdb2sql" }, { "url": "https://gitlab.com/mauricio.menon/mdb2sql" }]
+    }
+  ]
 }

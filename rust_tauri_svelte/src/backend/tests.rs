@@ -2,7 +2,8 @@
 #[allow(clippy::module_inception)] // backend::tests::tests: the wrapper keeps the cfg(test) in this file
 mod tests {
     use crate::backend::access::{Reader, choose_reader, parse_pg_schema, pg_to_duck};
-    use crate::backend::db_manager::DBManager;
+    use crate::backend::db_manager::{DBManager, Filter, where_clause};
+    use serde_json::json;
     use crate::backend::export::{self, EXCEL_MAX_DATA_ROWS, SheetNamer, Source};
     use crate::backend::sqlite_io::duck_type;
     use std::fs::File;
@@ -54,9 +55,9 @@ mod tests {
         manager.connect(path.to_str().unwrap(), &mut no_progress()).expect("connect sample");
         let tables = manager.list_tables().expect("list tables");
         assert!(!tables.is_empty(), "expected tables in sample.duckdb, got none");
-        let rows = manager.query_table(&tables[0], 2).expect("query rows");
+        let rows = manager.query_table(&tables[0], 2, &[]).expect("query rows");
         assert!(!rows.is_empty());
-        assert!(manager.get_row_count(&tables[0]).unwrap() >= rows.len() as i64);
+        assert!(manager.get_row_count(&tables[0], &[]).unwrap() >= rows.len() as i64);
     }
 
     // Nao depende de data/sample.duckdb (ignorado pelo git): cria o banco no teste
@@ -69,13 +70,13 @@ mod tests {
         let source = manager.connect(path.to_str().unwrap(), &mut no_progress()).expect("connect");
         assert_eq!(source, "DuckDB");
         assert_eq!(manager.list_tables().unwrap(), vec!["Other table", "points"]);
-        assert_eq!(manager.get_row_count("points").unwrap(), 2);
+        assert_eq!(manager.get_row_count("points", &[]).unwrap(), 2);
 
         let schema = manager.get_table_schema("points").unwrap();
         let names: Vec<&str> = schema.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, ["id", "name", "ts", "d", "t", "n", "u", "ok", "x"]);
 
-        let rows = manager.query_table("points", 10).unwrap();
+        let rows = manager.query_table("points", 10, &[]).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["id"], 1);
         assert!(rows[1]["name"].is_null());
@@ -85,7 +86,7 @@ mod tests {
         assert_eq!(rows[0]["t"], "23:59:58.5");
         assert_eq!(rows[0]["n"], "12.30");
         assert_eq!(rows[0]["u"], 7);
-        assert!(manager.query_table("missing", 10).is_err());
+        assert!(manager.query_table("missing", 10, &[]).is_err());
 
         // somente leitura: o SQL livre nao consegue gravar no arquivo aberto
         assert!(manager.run_sql("INSERT INTO points VALUES (3, 'x', NULL, NULL, NULL, NULL, NULL, NULL, NULL)", 10).is_err());
@@ -93,6 +94,77 @@ mod tests {
         assert_eq!(result.columns.len(), 2);
         assert_eq!(result.rows.len(), 1);
         assert!(result.truncated);
+    }
+
+    fn filter(column: &str, value: serde_json::Value) -> Filter {
+        Filter { column: column.to_string(), value }
+    }
+
+    // nome de coluna sempre citado (aspas dobradas), valor sempre por parametro, NULL vira IS NULL
+    #[test]
+    fn filter_sql_quotes_columns_and_binds_values() {
+        use duckdb::types::Value as P;
+        assert_eq!(where_clause(&[]).unwrap(), (String::new(), vec![]));
+        let (sql, params) = where_clause(&[
+            filter("si\"gla", json!("O'Brien \"x\"; DROP TABLE t --")),
+            filter("gone", json!(null)),
+            filter("id", json!(5)),
+            filter("x", json!(0.5)),
+            filter("ok", json!(true)),
+        ])
+        .unwrap();
+        assert_eq!(sql, " WHERE \"si\"\"gla\" = ? AND \"gone\" IS NULL AND \"id\" = ? AND \"x\" = ? AND \"ok\" = ?");
+        assert_eq!(
+            params,
+            vec![P::Text("O'Brien \"x\"; DROP TABLE t --".into()), P::BigInt(5), P::Double(0.5), P::Boolean(true)]
+        );
+        assert!(where_clause(&[filter("id", json!([1]))]).is_err());
+    }
+
+    // os mesmos filtros num arquivo DuckDB e num SQLite: texto com aspas, inteiro, NULL e a soma (AND)
+    #[test]
+    fn filters_run_in_the_query_on_duckdb_and_sqlite() {
+        let dir = tempdir().unwrap();
+        let ddl = "CREATE TABLE t (id INTEGER, \"si\"\"gla\" VARCHAR, note VARCHAR);
+                   INSERT INTO t VALUES (1, 'U9A', 'a'), (2, 'O''Brien \"x\"', 'b'), (3, NULL, 'c'), (4, 'U9A', NULL), (5, 'u9a', 'a');";
+        let duck = dir.path().join("f.duckdb");
+        duckdb::Connection::open(&duck).unwrap().execute_batch(ddl).unwrap();
+        let lite = dir.path().join("f.sqlite");
+        rusqlite::Connection::open(&lite).unwrap().execute_batch(ddl).unwrap();
+
+        for path in [duck, lite] {
+            let manager = DBManager::new();
+            manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+            let ids = |filters: &[Filter]| -> Vec<i64> {
+                let rows = manager.query_table("t", 100, filters).unwrap();
+                assert_eq!(manager.get_row_count("t", filters).unwrap(), rows.len() as i64, "{path:?}");
+                rows.iter().map(|r| r["id"].as_i64().unwrap()).collect()
+            };
+            assert_eq!(ids(&[filter("si\"gla", json!("U9A"))]), [1, 4], "{path:?}"); // exato: 'u9a' fica fora
+            assert_eq!(ids(&[filter("si\"gla", json!("O'Brien \"x\""))]), [2]);
+            assert_eq!(ids(&[filter("si\"gla", json!(null))]), [3]);
+            assert_eq!(ids(&[filter("id", json!(4))]), [4]);
+            assert_eq!(ids(&[filter("si\"gla", json!("U9A")), filter("note", json!(null))]), [4]);
+            // valor que seria injecao se fosse concatenado: e so um texto que nenhuma linha tem
+            assert_eq!(ids(&[filter("si\"gla", json!("' OR 1=1 --"))]), Vec::<i64>::new());
+            assert_eq!(manager.get_row_count("t", &[]).unwrap(), 5);
+            // o limite Rows continua valendo com filtro
+            assert_eq!(manager.query_table("t", 1, &[filter("si\"gla", json!("U9A"))]).unwrap().len(), 1);
+            assert!(manager.query_table("t", 10, &[filter("missing", json!(1))]).is_err());
+        }
+    }
+
+    // o valor volta como a grade mostrou (texto para data, hora, decimal) e compara no tipo da coluna
+    #[test]
+    fn filter_by_the_value_the_grid_shows_matches_every_type() {
+        let dir = tempdir().unwrap();
+        let manager = DBManager::new();
+        manager.connect(sample_duckdb(dir.path()).to_str().unwrap(), &mut no_progress()).unwrap();
+        let first = manager.query_table("points", 1, &[]).unwrap().remove(0);
+        for (column, value) in first.as_object().unwrap() {
+            let filters = [filter(column, value.clone())];
+            assert_eq!(manager.get_row_count("points", &filters).unwrap(), 1, "{column} = {value}");
+        }
     }
 
     #[test]
@@ -123,10 +195,10 @@ mod tests {
             let reopened = DBManager::new();
             assert_eq!(reopened.connect(out.to_str().unwrap(), &mut no_progress()).unwrap(), label);
             assert_eq!(reopened.list_tables().unwrap(), vec!["Other table", "points"]);
-            assert_eq!(reopened.get_row_count("Other table").unwrap(), 5);
+            assert_eq!(reopened.get_row_count("Other table", &[]).unwrap(), 5);
             let types: Vec<String> = reopened.get_table_schema("points").unwrap().into_iter().map(|c| c.col_type).collect();
             assert_eq!(types, ["INTEGER", "VARCHAR", "TIMESTAMP", "DATE", "TIME", "DECIMAL(10,2)", "UINTEGER", "BOOLEAN", "DOUBLE"], "{format}");
-            let rows = reopened.query_table("points", 10).unwrap();
+            let rows = reopened.query_table("points", 10, &[]).unwrap();
             assert_eq!(rows[0]["name"], "a, \"b\"");
             assert_eq!(rows[0]["ts"], "2026-07-14 10:00:00");
             assert_eq!(rows[0]["n"], "12.30");
@@ -152,7 +224,7 @@ mod tests {
         drop(lite);
         let manager = DBManager::new();
         assert_eq!(manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap(), "SQLite");
-        assert_eq!(manager.get_row_count("t").unwrap(), 2);
+        assert_eq!(manager.get_row_count("t", &[]).unwrap(), 2);
     }
 
     // coluna INTEGER com texto dentro (o SQLite deixa): a tabela entra inteira como texto
@@ -165,7 +237,7 @@ mod tests {
         drop(lite);
         let manager = DBManager::new();
         manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
-        let rows = manager.query_table("t", 10).unwrap();
+        let rows = manager.query_table("t", 10, &[]).unwrap();
         assert_eq!((rows[0]["a"].clone(), rows[1]["a"].clone()), ("1".into(), "abc".into()));
     }
 
@@ -184,6 +256,10 @@ mod tests {
             ("BOOLEAN", "BOOLEAN"),
             ("BLOB", "BLOB"),
             ("whatever", "VARCHAR"),
+            ("UHUGEINT", "UHUGEINT"),
+            ("TEXT_HUGE128", "HUGEINT"),
+            ("TEXT_UBIG64", "UBIGINT"),
+            ("TEXT_DECIMAL(38,10)", "DECIMAL(38,10)"),
         ] {
             assert_eq!(duck_type(declared), duck, "{declared}");
         }
@@ -345,5 +421,108 @@ mod tests {
         }
         eprintln!("{} tables, readers differ in: {differences:?}", tables.len());
         assert!(differences.is_empty(), "{differences:?}");
+    }
+
+    // auditoria externa 2: arquivo do usuario com o nome do temporario ("out.csv.partial") nao pode sumir, e o
+    // destino anterior fica intacto se a exportacao falhar
+    #[test]
+    fn export_keeps_user_files_named_like_the_temporary() {
+        let dir = tempdir().unwrap();
+        let manager = DBManager::new();
+        manager.connect(sample_duckdb(dir.path()).to_str().unwrap(), &mut no_progress()).unwrap();
+        let conn = manager.export_connection().unwrap();
+        let table = Source::Table("points".into());
+        for format in ["csv", "duckdb"] {
+            let out = dir.path().join(format!("out.{format}"));
+            let user_files = [format!("out.{format}.partial"), format!("out.{format}.partial.wal")];
+            for name in &user_files {
+                std::fs::write(dir.path().join(name), "do usuario").unwrap();
+            }
+            std::fs::write(&out, "anterior").unwrap();
+            let failed = if format == "csv" {
+                export::export_source(&conn, &table, "csv", &out, &mut |_, _, _| Err("Export cancelled".into()))
+            } else {
+                export::export_database(&conn, "duckdb", &out, &mut |_, _, _| Err("Export cancelled".into()))
+            };
+            assert!(failed.is_err());
+            assert_eq!(std::fs::read_to_string(&out).unwrap(), "anterior", "{format}");
+            let done = if format == "csv" {
+                export::export_source(&conn, &table, "csv", &out, &mut ok_progress())
+            } else {
+                export::export_database(&conn, "duckdb", &out, &mut ok_progress())
+            };
+            done.unwrap();
+            assert_ne!(std::fs::read(&out).unwrap(), b"anterior");
+            for name in &user_files {
+                assert_eq!(std::fs::read_to_string(dir.path().join(name)).unwrap(), "do usuario", "{name}");
+            }
+            // nenhum temporario da exportacao sobra na pasta
+            let left: Vec<String> = std::fs::read_dir(dir.path())
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|n| n.starts_with(&format!("out.{format}")) && !user_files.contains(n) && *n != format!("out.{format}"))
+                .collect();
+            assert!(left.is_empty(), "{left:?}");
+        }
+    }
+
+    // auditoria externa 4: decimal longo, inteiros de 128 bits e UBIGINT acima do i64 voltam exatos do .sqlite
+    #[test]
+    fn sqlite_export_keeps_long_decimals_and_huge_integers_exact() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("big.duckdb");
+        duckdb::Connection::open(&src)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE big (d DECIMAL(38,10), h HUGEINT, u UBIGINT, uh UHUGEINT, small DECIMAL(10,2));
+                 INSERT INTO big VALUES
+                   (1234567890123456789012345678.0123456789, 170141183460469231731687303715884105727,
+                    18446744073709551615, 340282366920938463463374607431768211455, 12.30),
+                   (-0.0000000001, -170141183460469231731687303715884105728, 1, 0, NULL);",
+            )
+            .unwrap();
+        let manager = DBManager::new();
+        manager.connect(src.to_str().unwrap(), &mut no_progress()).unwrap();
+        let out = dir.path().join("big.sqlite");
+        export::export_database(&manager.export_connection().unwrap(), "sqlite", &out, &mut ok_progress()).unwrap();
+
+        let reopened = DBManager::new();
+        reopened.connect(out.to_str().unwrap(), &mut no_progress()).unwrap();
+        let types: Vec<String> = reopened.get_table_schema("big").unwrap().into_iter().map(|c| c.col_type).collect();
+        assert_eq!(types, ["DECIMAL(38,10)", "HUGEINT", "UBIGINT", "UHUGEINT", "DECIMAL(10,2)"]);
+        let rows = reopened.query_table("big", 10, &[]).unwrap();
+        assert_eq!(rows[0]["d"], "1234567890123456789012345678.0123456789");
+        assert_eq!(rows[0]["h"], "170141183460469231731687303715884105727");
+        assert_eq!(rows[0]["u"], "18446744073709551615");
+        assert_eq!(rows[0]["uh"], "340282366920938463463374607431768211455");
+        assert_eq!(rows[0]["small"], "12.30");
+        assert_eq!(rows[1]["d"], "-0.0000000001");
+        assert_eq!(rows[1]["h"], "-170141183460469231731687303715884105728");
+        assert_eq!(rows[1]["u"], 1);
+    }
+
+    // auditoria externa 12: inteiro fora de Number.MAX_SAFE_INTEGER vai como texto (o JavaScript perderia digitos)
+    #[test]
+    fn integers_beyond_javascript_safe_range_go_as_text() {
+        use crate::backend::db_manager::value_to_json;
+        use duckdb::types::ValueRef as V;
+        assert_eq!(value_to_json(V::BigInt(9_007_199_254_740_991)), json!(9_007_199_254_740_991_i64));
+        assert_eq!(value_to_json(V::BigInt(-9_007_199_254_740_991)), json!(-9_007_199_254_740_991_i64));
+        assert_eq!(value_to_json(V::BigInt(9_007_199_254_740_993)), json!("9007199254740993"));
+        assert_eq!(value_to_json(V::BigInt(i64::MIN)), json!("-9223372036854775808"));
+        assert_eq!(value_to_json(V::UBigInt(u64::MAX)), json!("18446744073709551615"));
+        assert_eq!(value_to_json(V::UBigInt(7)), json!(7));
+        assert_eq!(value_to_json(V::UHugeInt(u128::MAX)), json!("340282366920938463463374607431768211455"));
+        // o filtro pelo texto mostrado acha a linha exata (nao a vizinha que o double confundiria)
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("ids.duckdb");
+        duckdb::Connection::open(&path)
+            .unwrap()
+            .execute_batch("CREATE TABLE t (id BIGINT); INSERT INTO t VALUES (9007199254740992), (9007199254740993);")
+            .unwrap();
+        let manager = DBManager::new();
+        manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+        let rows = manager.query_table("t", 10, &[filter("id", json!("9007199254740993"))]).unwrap();
+        assert_eq!(rows, [json!({ "id": "9007199254740993" })]);
     }
 }

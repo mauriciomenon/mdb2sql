@@ -17,10 +17,10 @@ Copy-Item target\release\mdb2sql.exe (Join-Path $stage "$name.exe")
 Copy-Item "target\release\bundle\nsis\*_${version}_x64-setup.exe" (Join-Path $stage "$name-installer.exe")
 Copy-Item "target\release\bundle\msi\*_${version}_x64_*.msi" (Join-Path $stage "$name-installer.msi")
 
-# zip da pasta do app: o exe (UI, DuckDB, SQLite e mdbtools dentro) e o README
+# zip da pasta do app: o exe (UI, DuckDB, SQLite e mdbtools dentro), o README e o LICENSE (GPL v2)
 $appDir = Join-Path $stage $name
 New-Item -ItemType Directory $appDir | Out-Null
-Copy-Item target\release\mdb2sql.exe, README.md $appDir
+Copy-Item target\release\mdb2sql.exe, README.md, LICENSE $appDir
 Compress-Archive -Path $appDir -DestinationPath (Join-Path $stage "$name.zip")
 Remove-Item -Recurse -Force $appDir
 

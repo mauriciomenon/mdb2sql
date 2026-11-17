@@ -19,16 +19,37 @@ pub(crate) fn is_sqlite_file(path: &Path) -> bool {
         .is_ok_and(|_| &magic == b"SQLite format 3\0")
 }
 
+// NIVEL BASICO: Tipos que o SQLite arredondaria (afinidade INTEGER/NUMERIC guarda so 64 bits ou 15 digitos)
+// sao declarados com nome de afinidade TEXT: o valor fica exato como texto e volta com o tipo DuckDB
+// NIVEL TECNICO: any declared name containing "INT" gets INTEGER affinity, hence names without it
+const EXACT_AS_TEXT: [(&str, &str); 3] = [("TEXT_HUGE128", "HUGEINT"), ("TEXT_UHUGE128", "UHUGEINT"), ("TEXT_UBIG64", "UBIGINT")];
+
+// tipo declarado no SQLite para uma coluna DuckDB
+fn lite_type(duck: &str) -> String {
+    let d = duck.trim().to_ascii_uppercase();
+    if let Some(&(lite, _)) = EXACT_AS_TEXT.iter().find(|(_, t)| *t == d) {
+        return lite.to_string();
+    }
+    let precision = d.strip_prefix("DECIMAL(").and_then(|rest| rest.split([',', ')']).next()?.trim().parse::<u32>().ok());
+    if precision.is_some_and(|p| p > 15) { format!("TEXT_{d}") } else { duck.to_string() }
+}
+
 // NIVEL BASICO: Tipo declarado no SQLite vira tipo do DuckDB (regras de afinidade do SQLite)
 // NIVEL TECNICO: the exporter below declares DuckDB type names, so a round trip keeps them
 pub(crate) fn duck_type(declared: &str) -> String {
     let d = declared.trim().to_ascii_uppercase();
-    const SAME: [&str; 17] = [
-        "BOOLEAN", "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "UTINYINT", "USMALLINT",
+    const SAME: [&str; 18] = [
+        "BOOLEAN", "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "UHUGEINT", "UTINYINT", "USMALLINT",
         "UINTEGER", "UBIGINT", "FLOAT", "DOUBLE", "DATE", "TIME", "TIMESTAMP", "BLOB", "VARCHAR",
     ];
     if SAME.contains(&d.as_str()) {
         return d;
+    }
+    if let Some(&(_, duck)) = EXACT_AS_TEXT.iter().find(|(lite, _)| *lite == d) {
+        return duck.to_string();
+    }
+    if let Some(decimal) = d.strip_prefix("TEXT_") {
+        return duck_type(decimal);
     }
     if (d.starts_with("DECIMAL(") || d.starts_with("NUMERIC(")) && d.ends_with(')') {
         let args: Vec<Option<u32>> = d[8..d.len() - 1].split(',').map(|a| a.trim().parse().ok()).collect();
@@ -130,6 +151,7 @@ fn duck_to_lite(value: DuckRef) -> LiteValue {
         DuckRef::UInt(i) => LiteValue::Integer(i.into()),
         DuckRef::UBigInt(i) => i64::try_from(i).map_or_else(|_| LiteValue::Text(i.to_string()), LiteValue::Integer),
         DuckRef::HugeInt(i) => i64::try_from(i).map_or_else(|_| LiteValue::Text(i.to_string()), LiteValue::Integer),
+        DuckRef::UHugeInt(i) => LiteValue::Text(i.to_string()),
         DuckRef::Float(f) => LiteValue::Real(f.into()),
         DuckRef::Double(f) => LiteValue::Real(f),
         DuckRef::Blob(b) => LiteValue::Blob(b.to_vec()),
@@ -156,7 +178,7 @@ pub fn export(
             .query_map([], |r| Ok((r.get(1)?, r.get(2)?)))
             .and_then(|rows| rows.collect())
             .map_err(|e| e.to_string())?;
-        let defs: Vec<String> = columns.iter().map(|(n, t)| format!("{} {t}", ident(n))).collect();
+        let defs: Vec<String> = columns.iter().map(|(n, t)| format!("{} {}", ident(n), lite_type(t))).collect();
         let marks = vec!["?"; columns.len()].join(", ");
 
         let tx = lite.transaction().map_err(|e| e.to_string())?;

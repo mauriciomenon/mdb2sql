@@ -58,6 +58,49 @@ pub(crate) fn literal(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 
+// NIVEL BASICO: Filtro da grade (clique direito > "Filtrar por este valor"): coluna = valor exato
+// `value` e o valor JSON que a grade recebeu (numero, texto, booleano ou null)
+#[derive(Debug, Deserialize)]
+pub struct Filter {
+    pub column: String,
+    pub value: serde_json::Value,
+}
+
+// NIVEL BASICO: Monta o WHERE dos filtros (somados com AND) e a lista de parametros
+// NIVEL TECNICO: the column name is always quoted by ident() and the value always goes as a bound
+// parameter, never into the SQL text; NULL becomes IS NULL. DuckDB casts the parameter to the column
+// type, so the text the grid shows for DECIMAL, DATE, TIME and TIMESTAMP compares in the column type.
+// shortcut: TIMESTAMP WITH TIME ZONE is shown in UTC but the bound text is read in the session time
+// zone; append the offset here when a table with that type needs the filter
+pub(crate) fn where_clause(filters: &[Filter]) -> Result<(String, Vec<duckdb::types::Value>), String> {
+    use duckdb::types::Value as P;
+    use serde_json::Value as J;
+    let mut terms = Vec::new();
+    let mut params = Vec::new();
+    for filter in filters {
+        let column = ident(&filter.column);
+        let param = match &filter.value {
+            J::Null => {
+                terms.push(format!("{column} IS NULL"));
+                continue;
+            }
+            J::Bool(b) => P::Boolean(*b),
+            J::String(s) => P::Text(s.clone()),
+            J::Number(n) => match (n.as_i64(), n.as_u64(), n.as_f64()) {
+                (Some(i), _, _) => P::BigInt(i),
+                (_, Some(u), _) => P::UBigInt(u),
+                (_, _, Some(f)) => P::Double(f),
+                _ => return Err(format!("Cannot filter {} by {n}", filter.column)),
+            },
+            other => return Err(format!("Cannot filter {} by {other}", filter.column)),
+        };
+        terms.push(format!("{column} = ?"));
+        params.push(param);
+    }
+    let sql = if terms.is_empty() { String::new() } else { format!(" WHERE {}", terms.join(" AND ")) };
+    Ok((sql, params))
+}
+
 const MICROS_PER_DAY: i64 = 86_400_000_000;
 
 // NIVEL BASICO: Dias desde 1970-01-01 viram "AAAA-MM-DD"
@@ -94,6 +137,9 @@ pub(crate) fn format_timestamp(micros: i64) -> String {
     )
 }
 
+// Number.MAX_SAFE_INTEGER do JavaScript
+const JS_MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
 // NIVEL BASICO: Valor do DuckDB vira JSON para a grade (e texto para CSV/SQLite)
 pub(crate) fn value_to_json(value: ValueRef) -> serde_json::Value {
     use serde_json::Value as J;
@@ -103,11 +149,15 @@ pub(crate) fn value_to_json(value: ValueRef) -> serde_json::Value {
         ValueRef::TinyInt(i) => i.into(),
         ValueRef::SmallInt(i) => i.into(),
         ValueRef::Int(i) => i.into(),
+        // fora de +-(2^53 - 1) o Number do JavaScript perde digitos: vai como texto
+        ValueRef::BigInt(i) if i.unsigned_abs() > JS_MAX_SAFE_INTEGER => J::String(i.to_string()),
         ValueRef::BigInt(i) => i.into(),
         ValueRef::UTinyInt(i) => i.into(),
         ValueRef::USmallInt(i) => i.into(),
         ValueRef::UInt(i) => i.into(),
+        ValueRef::UBigInt(i) if i > JS_MAX_SAFE_INTEGER => J::String(i.to_string()),
         ValueRef::UBigInt(i) => i.into(),
+        ValueRef::UHugeInt(i) => J::String(i.to_string()),
         ValueRef::Float(f) => serde_json::json!(f),
         ValueRef::Double(f) => serde_json::json!(f),
         ValueRef::Text(s) => J::String(String::from_utf8_lossy(s).to_string()),
@@ -296,17 +346,26 @@ impl DBManager {
         })
     }
 
-    // NIVEL BASICO: Executa SELECT na tabela e retorna ate `limit` linhas como JSON
-    pub fn query_table(&self, table_name: &str, limit: i32) -> Result<Vec<serde_json::Value>, String> {
+    // NIVEL BASICO: Executa SELECT na tabela e retorna ate `limit` linhas como JSON;
+    // os filtros entram no WHERE da consulta (acham linhas alem das carregadas)
+    pub fn query_table(
+        &self,
+        table_name: &str,
+        limit: i32,
+        filters: &[Filter],
+    ) -> Result<Vec<serde_json::Value>, String> {
         self.validate_table_name(table_name)?;
+        let (filter_sql, params) = where_clause(filters)?;
         self.with_conn(|conn| {
-            let query = format!("SELECT * FROM {} LIMIT {}", ident(table_name), limit);
+            let query = format!("SELECT * FROM {}{} LIMIT {}", ident(table_name), filter_sql, limit);
             let mut stmt = conn
                 .prepare(&query)
                 .map_err(|e| format!("Failed to prepare query: {}", e))?;
             // NIVEL TECNICO: duckdb-rs panics if column metadata is read before the
             // statement runs, so execute first and take the names from the result
-            let mut rows = stmt.query([]).map_err(|e| format!("Failed to query table: {}", e))?;
+            let mut rows = stmt
+                .query(duckdb::params_from_iter(params))
+                .map_err(|e| format!("Failed to query table: {}", e))?;
             let names = rows.as_ref().map(|s| s.column_names()).unwrap_or_default();
             Ok(rows_to_json(&mut rows, &names, usize::MAX)?.0)
         })
@@ -337,11 +396,13 @@ impl DBManager {
         })
     }
 
-    // NIVEL BASICO: Retorna numero total de linhas em uma tabela
-    pub fn get_row_count(&self, table_name: &str) -> Result<i64, String> {
+    // NIVEL BASICO: Retorna numero de linhas da tabela que passam pelos filtros (sem filtro: todas)
+    pub fn get_row_count(&self, table_name: &str, filters: &[Filter]) -> Result<i64, String> {
         self.validate_table_name(table_name)?;
+        let (filter_sql, params) = where_clause(filters)?;
         self.with_conn(|conn| {
-            conn.query_row(&format!("SELECT COUNT(*) FROM {}", ident(table_name)), [], |row| row.get(0))
+            let query = format!("SELECT COUNT(*) FROM {}{}", ident(table_name), filter_sql);
+            conn.query_row(&query, duckdb::params_from_iter(params), |row| row.get(0))
                 .map_err(|e| format!("Failed to count rows: {}", e))
         })
     }

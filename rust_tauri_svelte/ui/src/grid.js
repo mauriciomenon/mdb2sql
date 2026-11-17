@@ -19,6 +19,43 @@ export function rowToTsv(columnNames, row, withHeader = false) {
   return withHeader ? `${columnNames.map(tsvField).join('\t')}\r\n${line}` : line;
 }
 
+// NIVEL BASICO: Colunas ocultas: `hidden` e um Set com os nomes; a grade recebe so as visiveis
+// (pesquisa e exportacao continuam com todas)
+export function visibleColumns(columns, hidden) {
+  return columns.filter((col) => !hidden.has(col.name));
+}
+
+// largura de uma caixa do dialogo Colunas... (CSS): caixa + nome mais longo + tipo mais longo. Em `ch` (largura
+// do "0"): maiusculas do Segoe UI tem ~1,2ch e o tipo, menor, ~1ch por letra
+export function columnCellWidth(columns) {
+  const longest = (key) => Math.max(1, ...columns.map((col) => String(col[key] ?? '').length));
+  return `calc(${(longest('name') * 1.2).toFixed(1)}ch + ${longest('type')}ch + 44px)`;
+}
+
+// novo Set com a coluna trocada de lado (oculta <-> visivel); o Set antigo nao muda
+export function toggleHidden(hidden, name) {
+  const next = new Set(hidden);
+  if (!next.delete(name)) next.add(name);
+  return next;
+}
+
+// texto da barra de status; nada oculto = vazio
+export function hiddenStatus(count) {
+  return count ? `${count} ${count === 1 ? 'coluna oculta' : 'colunas ocultas'}` : '';
+}
+
+// NIVEL BASICO: Filtros da grade: lista de { column, value } somados com AND na consulta ao banco.
+// Filtrar de novo pela mesma coluna troca o valor (dois valores diferentes na mesma coluna nao achariam nada)
+export function withFilter(filters, column, value) {
+  return [...filters.filter((f) => f.column !== column), { column, value: value ?? null }];
+}
+
+// como o filtro aparece na tela: SIGLA = 'U9A', RTUNO = 2, NOTA IS NULL
+export function filterLabel({ column, value }) {
+  if (value === null) return `${column} IS NULL`;
+  return `${column} = ${typeof value === 'string' ? `'${value}'` : value}`;
+}
+
 // NIVEL BASICO: Texto para comparar na busca: minusculas e sem acento (ç vira c, ã vira a)
 // NIVEL TECNICO: NFD splits a letter from its accent, \p{M} drops the accent marks
 export function fold(text) {

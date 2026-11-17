@@ -3,10 +3,12 @@
   // Clique seleciona a celula; botao direito ou tecla de menu abre o menu; Ctrl+C copia o valor
   import { cellText, rowToTsv } from './grid.js';
 
-  let { columns, rows, label, emptyText = 'Table is empty', onstatus, onerror } = $props();
+  // actions (so a grade da aba Data): { hide(nome), columns(), showAll(), filter(nome, valor), clearFilters(),
+  // anyHidden, filtered }; sem ele o menu so copia
+  let { columns, rows, label, emptyText = 'Table is empty', onstatus, onerror, actions = null } = $props();
 
   let selected = $state.raw(null); // { row, col }: celula escolhida para copiar
-  let menu = $state.raw(null); // { x, y } do menu de copia aberto
+  let menu = $state.raw(null); // { x, y, header }: menu aberto; header = nome da coluna do cabecalho clicado
 
   // outra tabela, outra busca ou outro resultado: a celula escolhida antes nao vale mais (copiaria dado velho)
   $effect(() => {
@@ -17,6 +19,12 @@
 
   const isNumeric = (type) => /INT|DOUBLE|FLOAT|DECIMAL|REAL|NUMERIC/i.test(type);
   const focusNow = (node) => node.focus();
+  // menu aberto perto da borda: puxa para dentro da janela (senao os ultimos itens ficam cortados)
+  const keepInside = (node) => {
+    const box = node.getBoundingClientRect();
+    node.style.left = `${Math.max(4, Math.min(box.left, innerWidth - box.width - 4))}px`;
+    node.style.top = `${Math.max(4, Math.min(box.top, innerHeight - box.height - 4))}px`;
+  };
 
   // NIVEL BASICO: Celula sob o clique (td tem o indice da coluna, tr o da linha)
   function selectCell(event) {
@@ -26,11 +34,23 @@
 
   function openMenu(event) {
     event.preventDefault();
-    selectCell(event);
-    if (!selected) return;
     // a tecla de menu do teclado nao tem posicao de mouse: abre no canto da grade
     const box = event.currentTarget.getBoundingClientRect();
-    menu = { x: event.clientX || box.left + 40, y: event.clientY || box.top + 40 };
+    const at = { x: event.clientX || box.left + 40, y: event.clientY || box.top + 40 };
+    // clique direito no cabecalho: menu de colunas (ocultar esta, Colunas..., mostrar todas)
+    const th = actions && event.target.closest('th[data-c]');
+    if (th) {
+      menu = { ...at, header: columns[th.dataset.c].name };
+      return;
+    }
+    selectCell(event);
+    if (selected) menu = { ...at, header: null };
+  }
+
+  // fecha o menu e chama a acao da aba Data
+  function act(name, ...args) {
+    menu = null;
+    actions[name](...args);
   }
 
   // NIVEL BASICO: kind = 'value' (celula), 'row' ou 'row-header' (linha separada por TAB)
@@ -78,7 +98,7 @@
     <thead>
       <tr>
         {#each columns as col, c (c)}
-          <th scope="col" class:num={isNumeric(col.type)}>
+          <th scope="col" data-c={c} class:num={isNumeric(col.type)}>
             {col.name}
             <small>{col.type}</small>
           </th>
@@ -91,11 +111,8 @@
           {#each columns as col, c (c)}
             {@const value = row[col.name]}
             {@const isSelected = selected?.row === row && selected.col === col.name}
-            {#if value === null || value === undefined}
-              <td data-c={c} class="null" class:selected={isSelected}>NULL</td>
-            {:else}
-              <td data-c={c} class:num={isNumeric(col.type)} class:selected={isSelected}>{value}</td>
-            {/if}
+            <!-- como nas outras stacks: NULL e celula vazia, DOUBLE inteiro sem ".0" (o JSON 2.0 chega como 2) -->
+            <td data-c={c} class:num={isNumeric(col.type)} class:selected={isSelected}>{cellText(value)}</td>
           {/each}
         </tr>
       {:else}
@@ -107,13 +124,26 @@
   </table>
 </div>
 
-{#if menu}
-  <div class="menu" role="menu" aria-label="Copy" style="left: {menu.x}px; top: {menu.y}px">
+{#if menu?.header}
+  <div class="menu" role="menu" aria-label="Coluna {menu.header}" style="left: {menu.x}px; top: {menu.y}px" use:keepInside>
+    <button type="button" role="menuitem" use:focusNow onclick={() => act('hide', menu.header)}>Ocultar esta coluna</button>
+    <button type="button" role="menuitem" onclick={() => act('columns')}>Colunas...</button>
+    <button type="button" role="menuitem" disabled={!actions.anyHidden} onclick={() => act('showAll')}>Mostrar todas</button>
+  </div>
+{:else if menu}
+  <div class="menu" role="menu" aria-label="Cell" style="left: {menu.x}px; top: {menu.y}px" use:keepInside>
     <button type="button" role="menuitem" use:focusNow onclick={() => copy('value')}>
       Copy value <kbd>Ctrl+C</kbd>
     </button>
     <button type="button" role="menuitem" onclick={() => copy('row')}>Copy row</button>
     <button type="button" role="menuitem" onclick={() => copy('row-header')}>Copy row with header</button>
+    {#if actions}
+      <div class="separator" role="separator"></div>
+      <button type="button" role="menuitem" onclick={() => act('filter', selected.col, selected.row[selected.col])}>
+        Filtrar por este valor
+      </button>
+      <button type="button" role="menuitem" disabled={!actions.filtered} onclick={() => act('clearFilters')}>Limpar filtros</button>
+    {/if}
   </div>
 {/if}
 
@@ -140,13 +170,15 @@
   table {
     border-collapse: separate;
     border-spacing: 0;
-    font-size: 13px;
+    font-size: 12px;
     font-variant-numeric: tabular-nums;
   }
 
+  /* z-index: o cabecalho fixo fica sempre por cima das celulas que rolam por baixo dele */
   th {
     position: sticky;
     top: 0;
+    z-index: 1;
     background: var(--surface);
     border-bottom: 2px solid var(--border);
     padding: 6px 10px;
@@ -158,7 +190,7 @@
   th small {
     display: block;
     color: var(--muted);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 500;
     letter-spacing: 0.04em;
   }
@@ -188,10 +220,10 @@
     text-align: right;
   }
 
+  /* NULL so em italico, com a mesma cor e contraste das outras celulas: com cor apagada e opacity as colunas
+     quase so de NULL (as depois de PNTNAM no RANGER_SOSTAT) pareciam transparentes */
   .null {
-    color: var(--muted);
     font-style: italic;
-    opacity: 0.7;
   }
 
   .menu {
@@ -221,14 +253,24 @@
     cursor: pointer;
   }
 
-  .menu button:hover,
+  .menu button:hover:not(:disabled),
   .menu button:focus-visible {
     background: var(--row-hover);
+  }
+
+  .menu button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .menu .separator {
+    margin: 4px 0;
+    border-top: 1px solid var(--border);
   }
 
   .menu kbd {
     color: var(--muted);
     font: inherit;
-    font-size: 12px;
+    font-size: 11px;
   }
 </style>

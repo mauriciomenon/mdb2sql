@@ -8,7 +8,18 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount } from 'svelte';
   import Grid from './Grid.svelte';
-  import { fold, hasAllWords, rowMatches, searchWords } from './grid.js';
+  import {
+    columnCellWidth,
+    filterLabel,
+    fold,
+    hasAllWords,
+    hiddenStatus,
+    rowMatches,
+    searchWords,
+    toggleHidden,
+    visibleColumns,
+    withFilter,
+  } from './grid.js';
   import { defaultSaveDir, dirOf, joinPath, stem, suggestedName } from './paths.js';
 
   const LIMITS = [100, 500, 1000];
@@ -56,11 +67,12 @@
     }
   }
 
-  let openMenu = $state(null); // 'file' | 'settings' | 'help' | 'export'
+  let openMenu = $state(null); // 'file' | 'settings' | 'help'
   let tab = $state('data');
   let themeIndex = $state(0);
   let aboutDialog;
-  let aboutLines = $state([]);
+  let aboutInfo = $state.raw(null); // { name, version, description, rows: [[rotulo, valor]], links: [[nome, url]] }
+  let columnsDialog;
   let progressDialog;
   let progress = $state.raw(null); // { label, done, total, item } da exportacao em andamento
 
@@ -73,7 +85,11 @@
   let columns = $state([]); // [{ name, type, null }] na ordem real da tabela
   // raw: linhas so sao trocadas inteiras; sem proxy por celula, e a busca guarda o texto por linha
   let rows = $state.raw([]);
-  let rowCount = $state(0);
+  let rowCount = $state(0); // linhas da tabela inteira
+  let matchCount = $state(0); // linhas que passam pelos filtros (sem filtro = rowCount)
+  // valem para a tabela aberta; trocar de tabela ou de arquivo zera os dois
+  let hidden = $state.raw(new Set()); // nomes das colunas ocultas
+  let filters = $state.raw([]); // [{ column, value }] aplicados na consulta ao banco (AND)
   let limit = $state(LIMITS[0]);
   let search = $state('');
   let busy = $state(false);
@@ -91,6 +107,12 @@
   let visibleRows = $derived.by(() => {
     const words = searchWords(search);
     return rows.filter((row) => rowMatches(row, words));
+  });
+  let shownColumns = $derived(visibleColumns(columns, hidden));
+  let columnSearch = $state(''); // busca do dialogo Colunas...
+  let listedColumns = $derived.by(() => {
+    const words = searchWords(columnSearch);
+    return columns.filter((col) => hasAllWords(fold(col.name), words));
   });
 
   const showStatus = (text) => {
@@ -150,6 +172,8 @@
       saveSetting(LAST_DIR_KEY, dirOf(opened.path));
       showStatus(`${opened.path}: ${tables.length} tables`);
       selectedTable = '';
+      hidden = new Set();
+      filters = [];
       columns = [];
       rows = [];
       rowCount = 0;
@@ -200,37 +224,71 @@
   async function showAbout() {
     openMenu = null;
     try {
-      aboutLines = await invoke('about', { svelteVersion: __SVELTE_VERSION__ });
+      aboutInfo = await invoke('about', { svelteVersion: __SVELTE_VERSION__ });
       aboutDialog.showModal();
     } catch (err) {
       showError(String(err));
     }
   }
 
-  // NIVEL BASICO: Busca schema, linhas e contagem da tabela em paralelo
+  // NIVEL BASICO: Abre um link do Sobre no navegador padrao
+  // NIVEL TECNICO: the opener plugin only accepts the two About URLs (capabilities/default.json);
+  // preventDefault keeps the webview itself from leaving the app
+  function openLink(event, url) {
+    event.preventDefault();
+    invoke('plugin:opener|open_url', { url }).catch((err) => showError(String(err)));
+  }
+
+  // NIVEL BASICO: Busca schema, linhas e contagens da tabela em paralelo; os filtros vao na consulta
   async function openTable(tableName) {
     if (!tableName) return;
-    if (tableName !== selectedTable) search = '';
+    if (tableName !== selectedTable) {
+      search = '';
+      hidden = new Set();
+      filters = [];
+    }
     selectedTable = tableName;
     busy = true;
     error = '';
     try {
-      const [schema, data, count] = await Promise.all([
+      const asked = filters;
+      const [schema, data, total, matching] = await Promise.all([
         invoke('get_table_schema', { tableName }),
-        invoke('get_table_data', { tableName, limit }),
-        invoke('get_row_count', { tableName }),
+        invoke('get_table_data', { tableName, limit, filters: asked }),
+        invoke('get_row_count', { tableName, filters: [] }),
+        asked.length ? invoke('get_row_count', { tableName, filters: asked }) : null,
       ]);
-      // Ignora resposta atrasada se o usuario ja trocou de tabela
-      if (tableName !== selectedTable) return;
+      // Ignora resposta atrasada se o usuario ja trocou de tabela ou de filtro
+      if (tableName !== selectedTable || asked !== filters) return;
       columns = schema;
       rows = data;
-      rowCount = count;
+      rowCount = total;
+      matchCount = matching ?? total;
     } catch (err) {
       error = String(err);
     } finally {
       busy = false;
     }
   }
+
+  // NIVEL BASICO: Troca os filtros e refaz a consulta da tabela aberta (as linhas vem do banco ja filtradas)
+  // Se a consulta falhar (ex.: valor que o tipo da coluna nao aceita), voltam os filtros de antes,
+  // que sao os das linhas que continuam na tela
+  async function setFilters(next) {
+    const before = filters;
+    filters = next;
+    await openTable(selectedTable);
+    if (error && filters === next) filters = before;
+  }
+
+  // acoes do menu de clique direito da grade da aba Data (cabecalho e celula)
+  const gridActions = {
+    hide: (name) => (hidden = toggleHidden(hidden, name)),
+    columns: () => columnsDialog.showModal(),
+    showAll: () => (hidden = new Set()),
+    filter: (column, value) => setFilters(withFilter(filters, column, value)),
+    clearFilters: () => setFilters([]),
+  };
 
   // NIVEL BASICO: SQL livre; mostra ate o Row limit
   async function runSql() {
@@ -242,7 +300,7 @@
       lastSql = query;
       showStatus(
         sqlResult.columns.length
-          ? `Query returned ${sqlResult.rows.length.toLocaleString()}${sqlResult.truncated ? '+ (Row limit; export gets all)' : ''} rows`
+          ? `Query returned ${sqlResult.rows.length.toLocaleString()}${sqlResult.truncated ? '+' : ''} rows`
           : 'Statement executed'
       );
     } catch (err) {
@@ -286,9 +344,8 @@
     <div class="menu-root">
       <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openMenu === 'file'} onclick={(e) => toggleMenu(e, 'file')}>File</button>
       {#if openMenu === 'file'}
+        <!-- cada acao num lugar so: abrir e o Browse... ao lado do caminho, exportar e so este menu (ui.test.js conta) -->
         <div class="dropdown" role="menu" aria-label="File">
-          <button type="button" role="menuitem" onclick={browse} disabled={busy}>Open...</button>
-          <div class="separator" role="separator"></div>
           <span class="group">Export</span>
           {#each EXPORTS as [label, scope, format]}
             <button type="button" role="menuitem" disabled={!canExport(scope)} onclick={() => startExport(scope, format, label)}>{label}</button>
@@ -327,34 +384,63 @@
         id="db-path"
         type="text"
         bind:value={dbPath}
-        placeholder="Path to a .duckdb, .db, .sqlite, .sqlite3, .mdb or .accdb file"
+        placeholder=".duckdb, .db, .sqlite, .sqlite3, .mdb, .accdb"
         spellcheck="false"
         autocomplete="off"
       />
       <button type="button" class="secondary" onclick={browse} disabled={busy}>Browse...</button>
       <button type="submit" disabled={busy}>Open database</button>
     </form>
-    <div class="menu-root">
-      <button type="button" class="secondary" aria-haspopup="menu" aria-expanded={openMenu === 'export'} disabled={!canExport('database')} onclick={(e) => toggleMenu(e, 'export')}>Export...</button>
-      {#if openMenu === 'export'}
-        <div class="dropdown right" role="menu" aria-label="Export">
-          {#each EXPORTS as [label, scope, format]}
-            <button type="button" role="menuitem" disabled={!canExport(scope)} onclick={() => startExport(scope, format, label)}>{label}</button>
-          {/each}
-        </div>
-      {/if}
-    </div>
   </header>
 
-  <dialog bind:this={aboutDialog} aria-labelledby="about-title">
-    {#each aboutLines as line, i}
-      {#if i === 0}
-        <h2 id="about-title">{line}</h2>
-      {:else}
-        <p>{line}</p>
-      {/if}
-    {/each}
+  <dialog bind:this={aboutDialog} class="about" aria-labelledby="about-title">
+    {#if aboutInfo}
+      <h2 id="about-title">{aboutInfo.name} <span class="version">{aboutInfo.version}</span></h2>
+      <p class="tagline">{aboutInfo.description}</p>
+      <dl>
+        {#each aboutInfo.rows as [label, value]}
+          <dt>{label}</dt>
+          <dd>{value}</dd>
+        {/each}
+        {#each aboutInfo.links as [label, url]}
+          <dt>{label}</dt>
+          <dd>
+            <a href={url} title="Abrir no navegador" onclick={(e) => openLink(e, url)} onauxclick={(e) => e.preventDefault()}>{url}</a>
+          </dd>
+        {/each}
+      </dl>
+    {/if}
     <button type="button" onclick={() => aboutDialog.close()}>Close</button>
+  </dialog>
+
+  <!-- marcar/desmarcar vale na hora; da para trocar varias colunas e fechar. A grade de caixas tem quantas
+       colunas couberem (1 a 6) pelo nome mais longo; so rola na vertical -->
+  <dialog
+    bind:this={columnsDialog}
+    class="columns"
+    aria-labelledby="columns-title"
+    onclose={() => (columnSearch = '')}
+    style="--cell: {columnCellWidth(columns)}"
+  >
+    <h2 id="columns-title">Colunas de {selectedTable}</h2>
+    <input class="column-search" type="search" bind:value={columnSearch} aria-label="Procurar coluna" placeholder="Procurar coluna" />
+    <div class="column-list" role="group" aria-label="Colunas visiveis">
+      {#each listedColumns as col (col.name)}
+        <label title="{col.name} ({col.type})">
+          <input type="checkbox" checked={!hidden.has(col.name)} onchange={() => (hidden = toggleHidden(hidden, col.name))} />
+          <span>{col.name}</span>
+          <small>{col.type}</small>
+        </label>
+      {:else}
+        <p class="none">Nenhuma coluna com esse nome</p>
+      {/each}
+    </div>
+    <div class="actions">
+      <button type="button" class="secondary" onclick={() => (hidden = new Set())}>Mostrar todas</button>
+      <button type="button" class="secondary" onclick={() => (hidden = new Set(columns.map((c) => c.name)))}>Ocultar todas</button>
+      <span>{shownColumns.length} de {columns.length} visiveis</span>
+      <button type="button" class="close" onclick={() => columnsDialog.close()}>Fechar</button>
+    </div>
   </dialog>
 
   <!-- Esc nao fecha: a exportacao para pelo botao Cancel -->
@@ -375,7 +461,7 @@
         aria-label="Filter tables"
         type="search"
         bind:value={filter}
-        placeholder="Filter tables: all words, any order"
+        placeholder="Filter tables"
         disabled={tables.length === 0}
       />
       <!-- NIVEL TECNICO: native listbox gives arrow keys and type-ahead for free -->
@@ -387,7 +473,7 @@
         disabled={tables.length === 0}
       >
         {#each visibleTables as table (table)}
-          <option value={table}>{table}</option>
+          <option value={table} title={table}>{table}</option>
         {/each}
       </select>
     </nav>
@@ -412,11 +498,11 @@
             bind:value={sql}
             aria-label="SQL query"
             spellcheck="false"
-            placeholder={'SELECT * FROM "' + (selectedTable || 'table') + '" LIMIT 10   (Ctrl+Enter runs)'}
+            placeholder={'SELECT * FROM "' + (selectedTable || 'table') + '" LIMIT 10'}
             onkeydown={(e) => e.ctrlKey && e.key === 'Enter' && runSql()}
           ></textarea>
           <div class="table-bar">
-            <button type="button" onclick={runSql} disabled={busy || !openedPath || !sql.trim()}>Run SQL</button>
+            <button type="button" title="Ctrl+Enter" onclick={runSql} disabled={busy || !openedPath || !sql.trim()}>Run SQL</button>
             {#if sqlResult}
               <span>{sqlResult.rows.length.toLocaleString()}{sqlResult.truncated ? '+' : ''} rows, {sqlResult.columns.length} columns</span>
             {/if}
@@ -426,7 +512,7 @@
           <Grid columns={sqlResult.columns} rows={sqlResult.rows} label="SQL result" emptyText="No rows" onstatus={showStatus} onerror={showError} />
         {/if}
       {:else if !selectedTable}
-        <p class="empty">Open a database (.duckdb, .sqlite, .mdb, .accdb) to browse its tables.</p>
+        <p class="empty">No table open</p>
       {:else if tab === 'schema'}
         <div class="table-bar"><h2>{selectedTable}</h2><span>{columns.length} columns</span></div>
         <Grid
@@ -442,26 +528,59 @@
           <span>
             {#if search.trim()}
               {visibleRows.length.toLocaleString()} matches in {rows.length.toLocaleString()} loaded rows,
+            {:else if filters.length}
+              Showing {rows.length.toLocaleString()} of {matchCount.toLocaleString()} filtered rows
+              ({rowCount.toLocaleString()} in the table),
             {:else}
               Showing {rows.length.toLocaleString()} of {rowCount.toLocaleString()} rows,
             {/if}
             {columns.length} columns
           </span>
+          <button
+            type="button"
+            class="secondary columns-button"
+            title="A exportacao leva todas as colunas"
+            onclick={() => columnsDialog.showModal()}>Colunas...</button
+          >
           <input
             class="search"
             type="search"
             bind:value={search}
             aria-label="Search rows"
-            placeholder="Search: all words, any order, ignores case and accents"
+            placeholder="Search loaded rows"
           />
         </div>
+        {#if filters.length}
+          <div class="filters" role="group" aria-label="Filtros ativos">
+            <span>Filtro:</span>
+            {#each filters as f (f.column)}
+              <span class="chip">
+                {filterLabel(f)}
+                <button
+                  type="button"
+                  aria-label="Remover filtro {filterLabel(f)}"
+                  title="Remover este filtro"
+                  onclick={() => setFilters(filters.filter((other) => other !== f))}>×</button
+                >
+              </span>
+            {/each}
+            <button type="button" class="secondary" onclick={() => setFilters([])}>Limpar filtros</button>
+          </div>
+        {/if}
         <Grid
-          {columns}
-          rows={visibleRows}
+          columns={shownColumns}
+          rows={shownColumns.length ? visibleRows : []}
           label="Rows of {selectedTable}"
-          emptyText={rows.length ? 'No loaded row matches the search' : 'Table is empty'}
+          emptyText={!shownColumns.length
+            ? 'Todas as colunas ocultas'
+            : filters.length && !rows.length
+              ? 'Nenhuma linha com este filtro'
+              : rows.length
+                ? 'No loaded row matches the search'
+                : 'Table is empty'}
           onstatus={showStatus}
           onerror={showError}
+          actions={{ ...gridActions, anyHidden: hidden.size > 0, filtered: filters.length > 0 }}
         />
       {/if}
     </main>
@@ -469,6 +588,7 @@
 
   <footer class="statusbar" class:error role="status" aria-live="polite">
     <span class="message">{error || status}</span>
+    {#if hidden.size}<span class="source">{hiddenStatus(hidden.size)}</span>{/if}
     {#if source}<span class="source" title="How the file was read">Opened via {source}</span>{/if}
     <span class="stack">Rust + Tauri v2 + Svelte</span>
   </footer>
@@ -519,7 +639,7 @@
   :global(body) {
     background: var(--bg);
     color: var(--text);
-    font: 14px/1.4 'Segoe UI', system-ui, -apple-system, 'Roboto', sans-serif;
+    font: 13px/1.4 'Segoe UI', system-ui, -apple-system, 'Roboto', sans-serif;
   }
 
   .app {
@@ -572,11 +692,6 @@
     box-shadow: 0 6px 18px rgb(0 0 0 / 0.3);
   }
 
-  .dropdown.right {
-    left: auto;
-    right: 0;
-  }
-
   .dropdown button {
     background: none;
     border-color: transparent;
@@ -593,13 +708,8 @@
   .dropdown .group {
     padding: 4px 10px 2px;
     color: var(--muted);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
-  }
-
-  .dropdown .separator {
-    margin: 4px 0;
-    border-top: 1px solid var(--border);
   }
 
   .check {
@@ -616,7 +726,7 @@
 
   h1 {
     margin: 0;
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 650;
     letter-spacing: 0.02em;
   }
@@ -630,7 +740,7 @@
 
   label {
     color: var(--muted);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
   }
 
@@ -696,6 +806,146 @@
 
   dialog.progress {
     width: 460px;
+  }
+
+  /* Sobre: nome e versao em destaque, frase, e os detalhes numa grade de duas colunas alinhadas */
+  dialog.about {
+    width: 560px;
+  }
+
+  dialog.about h2 {
+    font-size: 24px;
+    letter-spacing: 0.01em;
+  }
+
+  .version {
+    margin-left: 6px;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-size: 14px;
+    vertical-align: middle;
+  }
+
+  dialog .tagline {
+    margin: 6px 0 14px;
+    color: var(--muted);
+  }
+
+  dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 7px 18px;
+    margin: 0;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+
+  dt {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 20px;
+  }
+
+  dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  dd a {
+    color: var(--accent);
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  dd a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* Colunas...: ~65% da janela (420 a 900 px), ate 70% da altura; titulo, busca e botoes fixos, so a lista rola */
+  dialog.columns {
+    box-sizing: border-box;
+    width: clamp(420px, 65vw, 900px);
+    max-width: calc(100vw - 32px);
+    max-height: 70vh;
+  }
+
+  dialog.columns[open] {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .column-search {
+    padding: 4px 8px;
+  }
+
+  dialog .actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+  }
+
+  dialog .actions button {
+    margin: 0;
+    padding: 4px 12px;
+  }
+
+  dialog .actions .close {
+    margin-left: auto;
+  }
+
+  /* grade responsiva: cada caixa tem a largura do nome mais longo (--cell, de columnCellWidth), de 1 a 6 por linha */
+  .column-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, max(var(--cell), calc((100% - 5 * 4px) / 6))), 1fr));
+    align-content: start;
+    gap: 2px 4px;
+    min-height: 0;
+    padding: 4px;
+    overflow: hidden auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .column-list label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 3px 6px;
+    border-radius: 4px;
+    color: var(--text);
+    font-size: inherit;
+    font-weight: 400;
+    cursor: pointer;
+  }
+
+  .column-list label span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .column-list label:hover {
+    background: var(--row-hover);
+  }
+
+  .column-list small {
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+  }
+
+  .column-list .none {
+    grid-column: 1 / -1;
+    margin: 8px;
+    color: var(--muted);
   }
 
   dialog.progress progress {
@@ -782,20 +1032,73 @@
     align-items: baseline;
     gap: 12px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 12px;
   }
 
   h2 {
     margin: 0;
     color: var(--text);
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
   }
 
-  .table-bar .search {
+  .table-bar .columns-button {
     margin-left: auto;
-    width: 400px;
+    padding: 3px 10px;
+    font-weight: 400;
+  }
+
+  /* a busca encolhe antes de empurrar o botao ou quebrar a barra */
+  .table-bar .search {
+    flex: 0 1 400px;
+    min-width: 140px;
     padding: 3px 8px;
+  }
+
+  .table-bar h2,
+  .table-bar .columns-button {
+    flex-shrink: 0;
+  }
+
+  /* filtros ativos (clique direito > Filtrar por este valor), um chip por filtro */
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 4px 2px 10px;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    background: var(--row-hover);
+    color: var(--text);
+    font-family: Consolas, 'Cascadia Mono', monospace;
+  }
+
+  .chip button {
+    padding: 0 6px;
+    border: none;
+    border-radius: 999px;
+    background: none;
+    color: var(--muted);
+    line-height: 18px;
+  }
+
+  .chip button:hover {
+    background: var(--accent);
+    color: var(--accent-text);
+  }
+
+  .filters > button {
+    padding: 2px 10px;
+    font-weight: 400;
   }
 
   .sql {
@@ -808,7 +1111,7 @@
     min-height: 90px;
     resize: vertical;
     font-family: Consolas, 'Cascadia Mono', monospace;
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .empty {
@@ -824,7 +1127,7 @@
     background: var(--surface);
     border: 1px solid var(--border);
     color: var(--muted);
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .statusbar.error {
