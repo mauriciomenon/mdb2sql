@@ -109,7 +109,7 @@ Real database "2026-07-14 DB4" (copies): 287 tables, 113,962 rows, RANGER_SOSTAT
 - 1.2.0 (2026-11-17, release exe, DB4 `.duckdb` copy, driven by UI Automation): RANGER_SOSTAT, "Colunas..." with
   5 columns hidden (status "5 colunas ocultas"); right-click on SUBNAM `U02` > Filtrar por este valor shows
   "Showing 100 of 604 filtered rows (36,754 rows in table)"; the filter round trip (filter by each value of a row
-  gives that row back) passes on the DB4 `.accdb` copy with ODBC and with mdbtools. 83 automatic tests (79 run in
+  gives that row back) passes on the DB4 `.accdb` copy with ODBC and with mdbtools. 84 automatic tests (80 run in
   every build).
 - Products checked: zip extracted, installer installed and uninstalled silently (no files, shortcut or registry key
   left); the exe, the zip folder and the installed folder have no path or name of the build machine.

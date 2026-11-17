@@ -53,7 +53,7 @@ from backend.export import Cancelled, default_save_dir, export_database, export_
 from shared.about import app_title
 from shared.tsv import rows_to_tsv
 from ui.dialogs import EXPORT_NOTE, AboutDialog, ColumnsDialog
-from ui.table_model import SORT_ROLE, SearchProxyModel, TableModel, fold, search_words
+from ui.table_model import COPY_ROLE, SORT_ROLE, SearchProxyModel, TableModel, fold, search_words
 
 APP_TITLE = app_title()  # "mdb2sql <versao> - Python"; versao da fonte unica (pyproject.toml / VERSION)
 # shortcut: search and sort run in the UI thread over the loaded rows, so the limit stops at 10 000;
@@ -601,11 +601,11 @@ class MainWindow(QMainWindow):
             return
         indexes = sorted(view.selectedIndexes(), key=lambda i: (i.row(), i.column()))
         if len(indexes) == 1:
-            QGuiApplication.clipboard().setText(str(indexes[0].data() or ""))  # valor puro, sem aspas de TSV
+            QGuiApplication.clipboard().setText(str(indexes[0].data(COPY_ROLE) or ""))  # valor puro, sem aspas de TSV
             return
         lines: dict[int, list[object]] = {}
         for index in indexes:
-            lines.setdefault(index.row(), []).append(index.data())
+            lines.setdefault(index.row(), []).append(index.data(COPY_ROLE))
         if lines:
             QGuiApplication.clipboard().setText(rows_to_tsv(list(lines.values())))
 
@@ -621,7 +621,7 @@ class MainWindow(QMainWindow):
             return
         titles = [model.headerData(c, Qt.Orientation.Horizontal) for c in columns] if header else None
         QGuiApplication.clipboard().setText(
-            rows_to_tsv([[model.index(row, c).data() for c in columns] for row in rows], titles)
+            rows_to_tsv([[model.index(row, c).data(COPY_ROLE) for c in columns] for row in rows], titles)
         )
 
     # ------------------------------------------------------------ database

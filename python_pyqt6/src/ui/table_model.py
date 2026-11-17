@@ -12,6 +12,7 @@ from PyQt6.QtGui import QFont, QFontDatabase
 
 # !T: Role read by QSortFilterProxyModel so numbers sort as numbers, not as text
 SORT_ROLE = Qt.ItemDataRole.UserRole
+COPY_ROLE = Qt.ItemDataRole.UserRole + 1  # texto copiado: o valor real (2316.0), nao o da grade (2316)
 
 _INT64_MAX = 2**63 - 1
 # !T: str.split() treats \x1f as whitespace, so no search word holds it and none matches across two cells
@@ -34,6 +35,16 @@ def is_number(value: Any) -> bool:
 
 def display_text(value: Any) -> str:
     return "" if is_missing(value) else str(value)
+
+
+def grid_text(value: Any) -> str:
+    """Texto da grade: DOUBLE inteiro sem '.0' (2316.0 -> 2316), igual as outras stacks; o resto como display_text.
+
+    !T: Display only: copy (COPY_ROLE), the value filter (typed value) and exports keep the real value
+    """
+    if isinstance(value, float) and value.is_integer() and abs(value) < 1e16:
+        return str(int(value))
+    return display_text(value)
 
 
 def sort_key(value: Any) -> int | float | str | None:
@@ -99,11 +110,13 @@ class TableModel(QAbstractTableModel):
             # texto longo inteiro na dica (na grade so corta acima de MAX_COLUMN_WIDTH, 1200 px)
             text = display_text(self.rows[index.row()].get(self.columns[column]))
             return text if len(text) > 40 else None
-        if role not in (Qt.ItemDataRole.DisplayRole, SORT_ROLE):
+        if role not in (Qt.ItemDataRole.DisplayRole, SORT_ROLE, COPY_ROLE):
             return None
 
         value = self.rows[index.row()].get(self.columns[column])
-        return display_text(value) if role == Qt.ItemDataRole.DisplayRole else sort_key(value)
+        if role == Qt.ItemDataRole.DisplayRole:
+            return grid_text(value)
+        return display_text(value) if role == COPY_ROLE else sort_key(value)
 
     def headerData(
         self,
