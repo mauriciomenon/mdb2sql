@@ -35,8 +35,11 @@ Changes in 1.2.0:
 - The table name above the grid is never cut (before, "RANGER_SOSTAT" showed as "RAN..."): it keeps its
   width and the search, Rows and "Colunas..." wrap to a second line when the window is narrow. Column
   headers stay whole (each column is as wide as its header or longest value; name also in the tooltip).
-- The "Colunas..." dialog fits the window: three columns of checkboxes, the list scrolls, "Fechar" stays
-  visible.
+- "Colunas..." sized to the window: about 65% of its width (420 to 900 px) and up to 70% of its height; a
+  search field on top; the checkboxes form a grid of 1 to 6 per row from the longest column name (4 at the
+  default 1280x800 window); only the list scrolls, vertically; buttons in one row.
+- One font size everywhere (14 px base): the grid, the filter chips, the SQL editor and the menu captions
+  no longer use smaller text.
 - Licenca: GPL v2 ou posterior (antes: proprietaria). The zip and the installer carry `LICENSE`.
 
 Changes in 1.1.1: the row search and the table filter match every word typed, in any order, ignoring case
@@ -82,8 +85,9 @@ Window parts:
   ("Filtro: SIGLA = 'U9A'") with an x to remove it; "Limpar filtros" (chip bar or cell menu) removes all.
   Another table starts without filters. The word search works on the filtered rows; the SQL tab is not
   affected. Exports ignore the filters (they write the whole table).
-- Hide columns (Data tab): "Colunas..." lists every column with a checkbox (checked = visible), plus
-  "Mostrar todas" and "Ocultar todas"; change as many as needed and close. Right-click a column header:
+- Hide columns (Data tab): "Colunas..." lists every column with a checkbox (checked = visible), a field
+  to filter the list, plus "Mostrar todas" and "Ocultar todas" (they act on the listed columns); change as
+  many as needed and close. Right-click a column header:
   "Ocultar esta coluna", "Colunas...", "Mostrar todas". The status bar shows "N colunas ocultas". Hidden
   columns come back when another table or file is opened. The search still looks at every column and
   exports still write every column.

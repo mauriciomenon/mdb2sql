@@ -2,7 +2,7 @@ import React from 'react';
 import { readFileSync } from 'node:fs';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, beforeEach } from 'vitest';
-import App, { aboutRows, filterLabel, progressText, rowToTsv, searchRows, tsvField, withFilter } from './App.tsx';
+import App, { aboutRows, columnCellWidth, filterLabel, progressText, rowToTsv, searchRows, tsvField, withFilter } from './App.tsx';
 
 const tables = ['RANGER_SOACCU', 'RANGER_SOGEN'];
 const rows = [
@@ -182,6 +182,25 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, []));
     await waitFor(() => expect(header('NAME')).toBeInTheDocument());
+  });
+
+  it('searches the Colunas... list and sizes its grid from the longest name', async () => {
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+    fireEvent.click(screen.getByRole('button', { name: 'Colunas...' }));
+    expect(screen.getByLabelText('Filtrar colunas')).toHaveFocus();
+    fireEvent.change(screen.getByLabelText('Filtrar colunas'), { target: { value: 'na' } });
+    expect(screen.queryByRole('checkbox', { name: 'ID' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Ocultar todas' })); // only the listed ones
+    expect(screen.getByText('1 de 2 visiveis')).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'NAME' })).not.toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'ID' })).toBeInTheDocument();
+    expect(document.querySelector('.col-list').style.getPropertyValue('--col-w')).toBe('150px');
+
+    expect(columnCellWidth(['ID', 'NAME'])).toBe(150); // short names: the 150 px floor (about 4 per row at 1280x800)
+    expect(columnCellWidth(['X'.repeat(30)])).toBe(30 * 8 + 44);
+    expect(columnCellWidth([])).toBe(150);
   });
 
   it('filters by the right-clicked value in the database query and shows removable chips', async () => {

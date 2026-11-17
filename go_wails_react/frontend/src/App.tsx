@@ -803,30 +803,76 @@ function App() {
       )}
 
       {colsOpen && (
-        <div className="backdrop" onClick={(e) => e.target === e.currentTarget && setColsOpen(false)}>
-          <div className="about columns" role="dialog" aria-modal="true" aria-labelledby="cols-title">
-            <h2 id="cols-title">Colunas de {selectedTable}</h2>
-            <p className="tagline" title="A pesquisa e o Export continuam usando todas as colunas.">
-              {shownColumns.length} de {gridColumns.length} visiveis
-            </p>
-            <div className="col-actions">
-              <button onClick={() => setHidden(new Set())}>Mostrar todas</button>
-              <button onClick={() => setHidden(new Set(gridColumns))}>Ocultar todas</button>
-            </div>
-            <div className="col-list">
-              {gridColumns.map((col) => (
-                <label key={col} title={col}>
-                  <input type="checkbox" checked={!hidden.has(col)} onChange={(e) => setColumnHidden(col, !e.target.checked)} />
-                  {col}
-                </label>
-              ))}
-            </div>
-            <button className="primary" autoFocus onClick={() => setColsOpen(false)}>
-              Fechar
-            </button>
-          </div>
-        </div>
+        <ColumnsDialog table={selectedTable} columns={gridColumns} hidden={hidden} setHidden={setHidden} onClose={() => setColsOpen(false)} />
       )}
+    </div>
+  );
+}
+
+// Minimum width of one checkbox cell of "Colunas...": longest name (~8 px per character at the 14 px base font)
+// plus box and gaps, at least 150 px; the CSS grid fits as many as the dialog allows, 1 to 6 (about 4 at 1280x800)
+export const columnCellWidth = (columns: string[]) => Math.max(150, Math.max(0, ...columns.map((c) => c.length)) * 8 + 44);
+
+type ColumnsDialogProps = {
+  table: string;
+  columns: string[];
+  hidden: Set<string>;
+  setHidden: (update: (old: Set<string>) => Set<string>) => void;
+  onClose: () => void;
+};
+
+// "Colunas...": search on top, responsive checkbox grid (vertical scroll only), buttons in one row
+function ColumnsDialog({ table, columns, hidden, setHidden, onClose }: ColumnsDialogProps) {
+  const [query, setQuery] = useState('');
+  const listed = useMemo(() => {
+    const words = searchWords(query);
+    return words.length ? columns.filter((c) => hasAllWords(normalizeText(c), words)) : columns;
+  }, [columns, query]);
+  const visible = columns.filter((c) => !hidden.has(c)).length;
+  // Mostrar/Ocultar todas act on the listed columns (all of them when the search is empty)
+  const showListed = (show: boolean) =>
+    setHidden((old) => (show ? new Set([...old].filter((c) => !listed.includes(c))) : new Set([...old, ...listed])));
+  const toggle = (col: string, show: boolean) =>
+    setHidden((old) => {
+      const next = new Set(old);
+      if (show) next.delete(col);
+      else next.add(col);
+      return next;
+    });
+  return (
+    <div className="backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="about columns" role="dialog" aria-modal="true" aria-labelledby="cols-title">
+        <h2 id="cols-title">Colunas de {table}</h2>
+        <div className="col-top">
+          <input
+            type="search"
+            placeholder="Filtrar colunas"
+            aria-label="Filtrar colunas"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            autoFocus
+          />
+          <span className="col-count" title="A pesquisa e o Export continuam usando todas as colunas.">
+            {visible} de {columns.length} visiveis
+          </span>
+        </div>
+        <div className="col-list" style={{ '--col-w': `${columnCellWidth(columns)}px` } as React.CSSProperties}>
+          {listed.map((col) => (
+            <label key={col} title={col}>
+              <input type="checkbox" checked={!hidden.has(col)} onChange={(e) => toggle(col, e.target.checked)} />
+              <span>{col}</span>
+            </label>
+          ))}
+          {listed.length === 0 && <p className="empty">Nenhuma coluna.</p>}
+        </div>
+        <div className="col-actions">
+          <button onClick={() => showListed(true)}>Mostrar todas</button>
+          <button onClick={() => showListed(false)}>Ocultar todas</button>
+          <button className="primary" onClick={onClose}>
+            Fechar
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
