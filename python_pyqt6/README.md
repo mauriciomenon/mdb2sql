@@ -95,13 +95,18 @@ Real database "2026-07-14 DB4" (copies): 287 tables, 113,962 rows, RANGER_SOSTAT
 - `.sqlite` and `.duckdb`: 287 tables, all counts equal.
 - Export of the `.accdb` to `.duckdb`, `.sqlite` and `.xlsx`, reopened: 287 tables with equal counts; the `.xlsx`
   has 287 sheets with the right row counts.
-- 55 automatic tests (pytest + pytest-qt; 53 run in every build, 2 need local data: a real `.accdb` copy in
+- 55 automatic tests in 1.1.0 (pytest + pytest-qt; 53 run in every build, 2 need local data: a real `.accdb` copy in
   `MDB2SQL_TEST_ACCDB`, run here with DB4, and `data/sample.duckdb`): sheet names and split, reader order and
   forcing, export formats, cancel, default folder, theme saving, SQL tab, menus, DECIMAL display, search, title
   and icon.
 - 1.1.1 search (2026-11-16, DB4 `.duckdb` copy): `tensao energ barra` finds RANGER_SOPERM "IOPI 62 - Não energizar
   BARRA B4 com tensão maior que 525kV." (1.1.0 found nothing); on RANGER_SOSTAT, 10,000 loaded rows x 123 columns,
   the first search takes ~1 s (text prepared once per load) and each next one 40-80 ms (1.1.0: up to 12 s).
+- 1.2.0 (2026-11-17, release exe, DB4 `.duckdb` copy, driven by UI Automation): RANGER_SOSTAT, "Colunas..." with
+  5 columns hidden (status "5 colunas ocultas"); right-click on SUBNAM `U02` > Filtrar por este valor shows
+  "Showing 100 of 604 filtered rows (36,754 rows in table)"; the filter round trip (filter by each value of a row
+  gives that row back) passes on the DB4 `.accdb` copy with ODBC and with mdbtools. 78 automatic tests (74 run in
+  every build).
 - Products checked: zip extracted, installer installed and uninstalled silently (no files, shortcut or registry key
   left); the exe, the zip folder and the installed folder have no path or name of the build machine.
 
