@@ -27,7 +27,7 @@ detalhes; aqui fica so o mapa. Nao ha build na raiz.
   rust_tauri_svelte   sim                sim       sim (NSIS .exe e MSI)
   zig_imgui           sim                sim       sim (NSIS, por usuario)
 
-  Todos os subprojetos geram os tres produtos (1.1.0). Detalhes no scripts\package_w11.ps1 de cada subprojeto (nomes ja definidos no README-BUILD.txt
+  Todos os subprojetos geram os tres produtos (1.1.1). Detalhes no scripts\package_w11.ps1 de cada subprojeto (nomes ja definidos no README-BUILD.txt
   de cada um).
 
 
