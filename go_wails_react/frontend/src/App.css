@@ -315,15 +315,20 @@ button.primary {
   padding: 12px 16px;
 }
 
+/* the table name is never cut: it keeps its full width and the controls wrap to a second line if needed */
 .content-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px 12px;
 }
 
 .content-bar h2 {
-  flex: 1;
-  min-width: 0;
+  flex: none;
+  max-width: 100%;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
 }
 
 .tabs {
@@ -408,9 +413,8 @@ td[aria-selected='true'] {
 }
 
 .search {
-  /* wide enough for the whole placeholder; shrinks before the tabs do */
-  flex: 0 1 470px;
-  min-width: 180px;
+  flex: 1 1 240px;
+  min-width: 160px;
   padding: 4px 8px;
 }
 
@@ -523,13 +527,20 @@ td[aria-selected='true'] {
 .columns {
   display: flex;
   flex-direction: column;
-  width: 560px;
-  max-height: 100%;
+  width: min(680px, 100%);
+  max-width: none;
+  /* a 130-column table scrolls inside the list; the dialog and its button stay inside the window */
+  max-height: calc(100vh - 32px);
   user-select: none;
 }
 
 .columns h2 {
   overflow-wrap: anywhere;
+}
+
+/* only the list shrinks when the window is short */
+.columns > :not(.col-list) {
+  flex-shrink: 0;
 }
 
 .col-actions {
@@ -541,6 +552,7 @@ td[aria-selected='true'] {
 .col-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  flex: 1 1 auto;
   gap: 2px 12px;
   min-height: 60px;
   margin-top: 12px;

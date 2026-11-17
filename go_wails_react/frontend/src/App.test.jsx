@@ -1,4 +1,5 @@
 import React from 'react';
+import { readFileSync } from 'node:fs';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, beforeEach } from 'vitest';
 import App, { aboutRows, filterLabel, progressText, rowToTsv, searchRows, tsvField, withFilter } from './App.tsx';
@@ -324,6 +325,19 @@ describe('App IPC flow', () => {
     expect(screen.getByRole('menu', { name: 'Cell' }).style.left).not.toBe('0px');
     fireEvent.click(screen.getByRole('menuitem', { name: 'Filtrar por este valor' }));
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [{ column: 'NAME', value: 'Beta' }]));
+  });
+
+  // jsdom has no layout, so the rules themselves are checked: 1.2.0 builds cut "RANGER_SOSTAT" to "RAN..."
+  it('never cuts the table name or a column header', () => {
+    const css = readFileSync('src/App.css', 'utf8').replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = (sel) => css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*]/g, '\\$&')} \\{([^}]*)\\}`))?.[1] ?? '';
+    const title = rule('.content-bar h2');
+    expect(title).toMatch(/flex: none/);
+    expect(title).toMatch(/white-space: normal/);
+    expect(rule('.content-bar')).toMatch(/flex-wrap: wrap/);
+    const cells = rule('th,\ntd');
+    expect(cells).toMatch(/white-space: nowrap/);
+    expect(cells + rule('th')).not.toMatch(/max-width|text-overflow|overflow: hidden/);
   });
 
   it('describes progress by table or by row', () => {

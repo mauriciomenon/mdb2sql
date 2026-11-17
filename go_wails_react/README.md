@@ -32,6 +32,11 @@ Changes in 1.2.0:
 - Each action appears once: the toolbar row ("Load database", "Sample data" and a second "Export", copies of
   File > Open and of the export list in File) is gone; the exports have their own Export menu.
 - A selected cell opens its menu with the keyboard menu key too (cells take focus).
+- The table name above the grid is never cut (before, "RANGER_SOSTAT" showed as "RAN..."): it keeps its
+  width and the search, Rows and "Colunas..." wrap to a second line when the window is narrow. Column
+  headers stay whole (each column is as wide as its header or longest value; name also in the tooltip).
+- The "Colunas..." dialog fits the window: three columns of checkboxes, the list scrolls, "Fechar" stays
+  visible.
 - Licenca: GPL v2 ou posterior (antes: proprietaria). The zip and the installer carry `LICENSE`.
 
 Changes in 1.1.1: the row search and the table filter match every word typed, in any order, ignoring case

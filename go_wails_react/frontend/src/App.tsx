@@ -409,6 +409,7 @@ function App() {
             <th
               key={col}
               scope="col"
+              title={col}
               onContextMenu={
                 view === 'data'
                   ? (e) => {
