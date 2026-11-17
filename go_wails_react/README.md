@@ -40,6 +40,8 @@ Changes in 1.2.0:
   default 1280x800 window); only the list scrolls, vertically; buttons in one row.
 - One font size everywhere (14 px base): the grid, the filter chips, the SQL editor and the menu captions
   no longer use smaller text.
+- On-screen texts are labels and data only: the how-to hints ("Write a query and press Run...", "export
+  writes all rows", "Open a database...") are gone; tooltips keep one short line.
 - Licenca: GPL v2 ou posterior (antes: proprietaria). The zip and the installer carry `LICENSE`.
 
 Changes in 1.1.1: the row search and the table filter match every word typed, in any order, ignoring case
@@ -239,6 +241,6 @@ at the end.
 
 ## Licenca
 
-GPL v2 ou posterior (`GPL-2.0-or-later`), text in [`LICENSE`](LICENSE). Copyright (C) 2026 Mauricio Menon.
+GPL v2 ou posterior (`GPL-2.0-or-later`), text in [`LICENSE`](LICENSE).
 Third-party parts keep their own licenses (Go, Wails, React, DuckDB, excelize; the embedded mdbtools is
 GPL/LGPL, its `COPYING` files go inside the exe).

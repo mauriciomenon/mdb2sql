@@ -555,7 +555,7 @@ function App() {
 
       <main className="content">
         {tables.length === 0 ? (
-          <p className="empty">File &gt; Open database: .duckdb, .db, .sqlite, .mdb, .accdb</p>
+          <p className="empty">DuckDB, SQLite, Access (.mdb, .accdb)</p>
         ) : (
           <>
             <div className="content-bar">
@@ -572,7 +572,7 @@ function App() {
                 className="search"
                 placeholder="Search loaded rows"
                 aria-label="Search rows"
-                title="Shows the loaded rows (see Rows) with a cell that contains every word, in any order; ignores case and accents"
+                title="All words, any order, ignores case and accents"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -589,7 +589,7 @@ function App() {
               <button
                 onClick={() => setColsOpen(true)}
                 disabled={view !== 'data' || gridColumns.length === 0}
-                title="Mostrar ou ocultar colunas. A pesquisa e o Export continuam usando todas as colunas."
+                title="Pesquisa e Export usam todas as colunas"
               >
                 Colunas...
               </button>
@@ -675,14 +675,14 @@ function App() {
                 </p>
               )}
               {view === 'data' && visibleRows.length > 0 && shownColumns.length === 0 && (
-                <p className="empty">Todas as colunas estao ocultas (Colunas... &gt; Mostrar todas).</p>
+                <p className="empty">Nenhuma coluna visivel</p>
               )}
-              {view === 'sql' && !result && <p className="empty">Write a query and press Run (Ctrl+Enter).</p>}
+
             </div>
 
             <footer className="info">
               {view === 'sql'
-                ? result && `SQL result: ${result.rows.length} rows${result.more ? ` (limit ${limit}; export writes all rows)` : ''}`
+                ? result && `SQL result: ${result.rows.length} rows${result.more ? ` (limit ${limit})` : ''}`
                 : `${selectedTable}: Showing ${rows.length} of ${rowCount} rows` +
                   (filters.length > 0 ? ` matching the filters (${totalCount} in the table)` : '')}
               {search.trim() && view !== 'schema' && ` - ${visibleRows.length} match "${search.trim()}"`}
@@ -697,7 +697,7 @@ function App() {
           {error || status}
         </p>
         {hiddenCount > 0 && (
-          <span className="source" title="Colunas... > Mostrar todas">
+          <span className="source">
             {hiddenCount} {hiddenCount === 1 ? 'coluna oculta' : 'colunas ocultas'}
           </span>
         )}
@@ -852,7 +852,7 @@ function ColumnsDialog({ table, columns, hidden, setHidden, onClose }: ColumnsDi
             onChange={(e) => setQuery(e.target.value)}
             autoFocus
           />
-          <span className="col-count" title="A pesquisa e o Export continuam usando todas as colunas.">
+          <span className="col-count">
             {visible} de {columns.length} visiveis
           </span>
         </div>

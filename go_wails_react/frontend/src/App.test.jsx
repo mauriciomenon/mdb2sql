@@ -140,7 +140,7 @@ describe('App IPC flow', () => {
     await screen.findByText('Alpha');
     const header = (name) => screen.queryByRole('columnheader', { name });
 
-    expect(screen.getByRole('button', { name: 'Colunas...' }).title).toMatch(/Export continuam usando todas as colunas/);
+    expect(screen.getByRole('button', { name: 'Colunas...' }).title).toMatch(/^Pesquisa e Export usam todas as colunas$/);
     fireEvent.click(screen.getByRole('button', { name: 'Colunas...' }));
     const dialog = screen.getByRole('dialog', { name: 'Colunas de RANGER_SOACCU' });
     fireEvent.click(screen.getByRole('checkbox', { name: 'NAME' }));
@@ -332,6 +332,10 @@ describe('App IPC flow', () => {
     expect(all).toContain('Database as Excel (.xlsx, one sheet per table)');
     expect(all).toContain('Limpar filtros');
     expect(all).toContain('Colunas...');
+    // labels and data only: no how-to sentences, no copyright line
+    fireEvent.click(screen.getByRole('tab', { name: 'SQL' }));
+    const shown = document.body.textContent + [...document.querySelectorAll('[title]')].map((e) => e.title).join(' ');
+    expect(shown).not.toMatch(/copyright|press |write a|verifi|lembre|open a database|export writes/i);
   });
 
   it('selects a cell by focus and opens its menu from the keyboard', async () => {

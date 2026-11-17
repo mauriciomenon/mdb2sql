@@ -27,7 +27,7 @@ Copy-Item build\bin\mdb2sql.exe, LICENSE $appDir
     'Arquivos Access: usa o driver ODBC do Access (64 bits) se instalado; senao, o mdbtools embutido.'
     'Cache das ferramentas embutidas: %LOCALAPPDATA%\mdb2sql\go-wails-react-<versao>-<build>.'
     'Codigo: https://github.com/mauriciomenon/mdb2sql  e  https://gitlab.com/mauricio.menon/mdb2sql'
-    'Licenca: GPL v2 ou posterior (arquivo LICENSE). Copyright (C) 2026 Mauricio Menon'
+    'Licenca: GPL v2 ou posterior (arquivo LICENSE)'
 ) | Set-Content (Join-Path $appDir 'LEIAME.txt') -Encoding utf8
 Compress-Archive -Path $appDir -DestinationPath (Join-Path $stage "$name.zip")
 Remove-Item -Recurse -Force (Join-Path $stage 'zip')
