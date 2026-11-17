@@ -2,7 +2,7 @@
 // tabela atual ou resultado do SQL para .csv (UTF-8 com BOM) ou .xlsx.
 // .mdb/.accdb nao: nao ha biblioteca confiavel para gravar Access.
 //
-// NIVEL TECNICO: every writer goes to "<file>.partial" and is renamed at the end, so a cancel or
+// NIVEL TECNICO: every writer goes to a unique "<file>.<pid>-<n>.partial" renamed at the end, so a cancel or
 // an error never leaves a half-written file under the chosen name. progress() returns Err to cancel.
 
 use super::db_manager::{ident, json_text, list_tables, literal, value_to_json};
@@ -228,12 +228,19 @@ fn write_csv(conn: &Connection, select: &str, path: &Path, tick: &mut dyn FnMut(
     Ok(count)
 }
 
-// NIVEL BASICO: Grava em "<arquivo>.partial" e so no fim troca pelo nome escolhido
+// NIVEL BASICO: Grava num temporario "<arquivo>.<n>.partial" com nome que ainda nao existe e so no fim troca pelo
+// nome escolhido; o destino anterior so e substituido se tudo deu certo
+// NIVEL TECNICO: the temporary name is unique per export (pid + counter, skipped while the file or its DuckDB
+// .wal exists), so cleaning it up never deletes a file of the user; rename replaces the target in one step
 fn via_partial(path: &Path, write: impl FnOnce(&Path) -> Result<String, String>) -> Result<String, String> {
     let file_name = path.file_name().ok_or("Invalid file name")?.to_string_lossy();
-    let partial: PathBuf = path.with_file_name(format!("{file_name}.partial"));
-    let wal = path.with_file_name(format!("{file_name}.partial.wal"));
-    let _ = std::fs::remove_file(&partial); // sobra de uma tentativa anterior
+    let (partial, wal): (PathBuf, PathBuf) = (0u32..)
+        .map(|n| {
+            let name = format!("{file_name}.{}-{n}.partial", std::process::id());
+            (path.with_file_name(&name), path.with_file_name(format!("{name}.wal")))
+        })
+        .find(|(p, w)| !p.exists() && !w.exists())
+        .expect("a free temporary name");
     let result = write(&partial).and_then(|summary| {
         std::fs::rename(&partial, path).map_err(|e| format!("{}: {e}", path.display()))?;
         Ok(summary)

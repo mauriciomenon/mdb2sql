@@ -256,6 +256,10 @@ mod tests {
             ("BOOLEAN", "BOOLEAN"),
             ("BLOB", "BLOB"),
             ("whatever", "VARCHAR"),
+            ("UHUGEINT", "UHUGEINT"),
+            ("TEXT_HUGE128", "HUGEINT"),
+            ("TEXT_UBIG64", "UBIGINT"),
+            ("TEXT_DECIMAL(38,10)", "DECIMAL(38,10)"),
         ] {
             assert_eq!(duck_type(declared), duck, "{declared}");
         }
@@ -417,5 +421,108 @@ mod tests {
         }
         eprintln!("{} tables, readers differ in: {differences:?}", tables.len());
         assert!(differences.is_empty(), "{differences:?}");
+    }
+
+    // auditoria externa 2: arquivo do usuario com o nome do temporario ("out.csv.partial") nao pode sumir, e o
+    // destino anterior fica intacto se a exportacao falhar
+    #[test]
+    fn export_keeps_user_files_named_like_the_temporary() {
+        let dir = tempdir().unwrap();
+        let manager = DBManager::new();
+        manager.connect(sample_duckdb(dir.path()).to_str().unwrap(), &mut no_progress()).unwrap();
+        let conn = manager.export_connection().unwrap();
+        let table = Source::Table("points".into());
+        for format in ["csv", "duckdb"] {
+            let out = dir.path().join(format!("out.{format}"));
+            let user_files = [format!("out.{format}.partial"), format!("out.{format}.partial.wal")];
+            for name in &user_files {
+                std::fs::write(dir.path().join(name), "do usuario").unwrap();
+            }
+            std::fs::write(&out, "anterior").unwrap();
+            let failed = if format == "csv" {
+                export::export_source(&conn, &table, "csv", &out, &mut |_, _, _| Err("Export cancelled".into()))
+            } else {
+                export::export_database(&conn, "duckdb", &out, &mut |_, _, _| Err("Export cancelled".into()))
+            };
+            assert!(failed.is_err());
+            assert_eq!(std::fs::read_to_string(&out).unwrap(), "anterior", "{format}");
+            let done = if format == "csv" {
+                export::export_source(&conn, &table, "csv", &out, &mut ok_progress())
+            } else {
+                export::export_database(&conn, "duckdb", &out, &mut ok_progress())
+            };
+            done.unwrap();
+            assert_ne!(std::fs::read(&out).unwrap(), b"anterior");
+            for name in &user_files {
+                assert_eq!(std::fs::read_to_string(dir.path().join(name)).unwrap(), "do usuario", "{name}");
+            }
+            // nenhum temporario da exportacao sobra na pasta
+            let left: Vec<String> = std::fs::read_dir(dir.path())
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|n| n.starts_with(&format!("out.{format}")) && !user_files.contains(n) && *n != format!("out.{format}"))
+                .collect();
+            assert!(left.is_empty(), "{left:?}");
+        }
+    }
+
+    // auditoria externa 4: decimal longo, inteiros de 128 bits e UBIGINT acima do i64 voltam exatos do .sqlite
+    #[test]
+    fn sqlite_export_keeps_long_decimals_and_huge_integers_exact() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("big.duckdb");
+        duckdb::Connection::open(&src)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE big (d DECIMAL(38,10), h HUGEINT, u UBIGINT, uh UHUGEINT, small DECIMAL(10,2));
+                 INSERT INTO big VALUES
+                   (1234567890123456789012345678.0123456789, 170141183460469231731687303715884105727,
+                    18446744073709551615, 340282366920938463463374607431768211455, 12.30),
+                   (-0.0000000001, -170141183460469231731687303715884105728, 1, 0, NULL);",
+            )
+            .unwrap();
+        let manager = DBManager::new();
+        manager.connect(src.to_str().unwrap(), &mut no_progress()).unwrap();
+        let out = dir.path().join("big.sqlite");
+        export::export_database(&manager.export_connection().unwrap(), "sqlite", &out, &mut ok_progress()).unwrap();
+
+        let reopened = DBManager::new();
+        reopened.connect(out.to_str().unwrap(), &mut no_progress()).unwrap();
+        let types: Vec<String> = reopened.get_table_schema("big").unwrap().into_iter().map(|c| c.col_type).collect();
+        assert_eq!(types, ["DECIMAL(38,10)", "HUGEINT", "UBIGINT", "UHUGEINT", "DECIMAL(10,2)"]);
+        let rows = reopened.query_table("big", 10, &[]).unwrap();
+        assert_eq!(rows[0]["d"], "1234567890123456789012345678.0123456789");
+        assert_eq!(rows[0]["h"], "170141183460469231731687303715884105727");
+        assert_eq!(rows[0]["u"], "18446744073709551615");
+        assert_eq!(rows[0]["uh"], "340282366920938463463374607431768211455");
+        assert_eq!(rows[0]["small"], "12.30");
+        assert_eq!(rows[1]["d"], "-0.0000000001");
+        assert_eq!(rows[1]["h"], "-170141183460469231731687303715884105728");
+        assert_eq!(rows[1]["u"], 1);
+    }
+
+    // auditoria externa 12: inteiro fora de Number.MAX_SAFE_INTEGER vai como texto (o JavaScript perderia digitos)
+    #[test]
+    fn integers_beyond_javascript_safe_range_go_as_text() {
+        use crate::backend::db_manager::value_to_json;
+        use duckdb::types::ValueRef as V;
+        assert_eq!(value_to_json(V::BigInt(9_007_199_254_740_991)), json!(9_007_199_254_740_991_i64));
+        assert_eq!(value_to_json(V::BigInt(-9_007_199_254_740_991)), json!(-9_007_199_254_740_991_i64));
+        assert_eq!(value_to_json(V::BigInt(9_007_199_254_740_993)), json!("9007199254740993"));
+        assert_eq!(value_to_json(V::BigInt(i64::MIN)), json!("-9223372036854775808"));
+        assert_eq!(value_to_json(V::UBigInt(u64::MAX)), json!("18446744073709551615"));
+        assert_eq!(value_to_json(V::UBigInt(7)), json!(7));
+        assert_eq!(value_to_json(V::UHugeInt(u128::MAX)), json!("340282366920938463463374607431768211455"));
+        // o filtro pelo texto mostrado acha a linha exata (nao a vizinha que o double confundiria)
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("ids.duckdb");
+        duckdb::Connection::open(&path)
+            .unwrap()
+            .execute_batch("CREATE TABLE t (id BIGINT); INSERT INTO t VALUES (9007199254740992), (9007199254740993);")
+            .unwrap();
+        let manager = DBManager::new();
+        manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+        let rows = manager.query_table("t", 10, &[filter("id", json!("9007199254740993"))]).unwrap();
+        assert_eq!(rows, [json!({ "id": "9007199254740993" })]);
     }
 }

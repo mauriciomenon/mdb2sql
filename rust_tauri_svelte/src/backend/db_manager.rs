@@ -137,6 +137,9 @@ pub(crate) fn format_timestamp(micros: i64) -> String {
     )
 }
 
+// Number.MAX_SAFE_INTEGER do JavaScript
+const JS_MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
 // NIVEL BASICO: Valor do DuckDB vira JSON para a grade (e texto para CSV/SQLite)
 pub(crate) fn value_to_json(value: ValueRef) -> serde_json::Value {
     use serde_json::Value as J;
@@ -146,11 +149,15 @@ pub(crate) fn value_to_json(value: ValueRef) -> serde_json::Value {
         ValueRef::TinyInt(i) => i.into(),
         ValueRef::SmallInt(i) => i.into(),
         ValueRef::Int(i) => i.into(),
+        // fora de +-(2^53 - 1) o Number do JavaScript perde digitos: vai como texto
+        ValueRef::BigInt(i) if i.unsigned_abs() > JS_MAX_SAFE_INTEGER => J::String(i.to_string()),
         ValueRef::BigInt(i) => i.into(),
         ValueRef::UTinyInt(i) => i.into(),
         ValueRef::USmallInt(i) => i.into(),
         ValueRef::UInt(i) => i.into(),
+        ValueRef::UBigInt(i) if i > JS_MAX_SAFE_INTEGER => J::String(i.to_string()),
         ValueRef::UBigInt(i) => i.into(),
+        ValueRef::UHugeInt(i) => J::String(i.to_string()),
         ValueRef::Float(f) => serde_json::json!(f),
         ValueRef::Double(f) => serde_json::json!(f),
         ValueRef::Text(s) => J::String(String::from_utf8_lossy(s).to_string()),

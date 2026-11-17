@@ -58,7 +58,7 @@ A **barra de status** (embaixo) mostra a mensagem atual e por qual caminho o arq
   "N colunas ocultas". Vale para a tabela aberta (trocar de tabela ou de arquivo mostra todas de novo). A busca
   continua olhando todas as colunas e a exportacao sai com todas.
 - **Filtrar por este valor** (botao direito numa celula da aba Data): filtra a tabela por coluna = valor exato na
-  consulta ao banco (`WHERE "coluna" = ?`, valor como parametro; celula NULL vira `IS NULL`), entao acha linhas
+  consulta ao banco (`WHERE "coluna" = ?`, valor como parametro; celula NULL, que aparece vazia, vira `IS NULL`), entao acha linhas
   alem das carregadas, ainda limitadas pelo Row limit. Varios filtros somam (E); filtrar de novo a mesma coluna
   troca o valor. Os filtros ativos aparecem acima da grade (`Filtro: SIGLA = 'U9A' x`), com remover um a um e
   **Limpar filtros**; a contagem vira "Showing N of M filtered rows (T in the table)". A busca por palavras
@@ -85,7 +85,10 @@ A **barra de status** (embaixo) mostra a mensagem atual e por qual caminho o arq
   - O dialogo de salvar abre na pasta do banco aberto (sem banco aberto, na ultima pasta usada) e nao sugere o
     nome do proprio arquivo aberto; gravar por cima do banco aberto e recusado.
   - A exportacao roda em segundo plano com barra de progresso e **Cancel**. O arquivo e gravado como
-    `<nome>.partial` e so recebe o nome final no fim: cancelar ou dar erro nunca deixa arquivo pela metade.
+    temporario `<nome>.<n>.partial` (nome novo a cada exportacao, nunca um arquivo que ja existe) e so recebe o
+    nome final no fim: cancelar ou dar erro nunca deixa arquivo pela metade nem mexe no arquivo anterior.
+  - No .sqlite, decimais com mais de 15 digitos e inteiros de 128 bits/UBIGINT ficam como texto exato (tipo
+    declarado `TEXT_DECIMAL(p,s)`, `TEXT_HUGE128`, `TEXT_UHUGE128`, `TEXT_UBIG64`); o mdb2sql reabre com o tipo DuckDB.
   - **Gerar .mdb/.accdb: nao.** Nao ha biblioteca confiavel para gravar Access; exporte para DuckDB/SQLite/Excel.
 
 **Menu Settings > Theme**: System (segue o Windows), Light ou Dark; a escolha fica gravada.
