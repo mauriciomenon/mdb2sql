@@ -46,8 +46,8 @@ Tabs:
   10,000). Click a header to sort (numbers sort as numbers; third click returns to the original order). Search box
   (Ctrl+F) filters the loaded rows: a row stays when one of its cells has all the words typed, in any order,
   ignoring case and accents (`tensao campo` finds `EXCITAÇÃO TENSÃO DE CAMPO`; words that are only in different
-  cells do not match). Columns fit the header name and the values; long values are cut at 320 px (the tooltip
-  shows the full text), column names are never cut below 640 px (header tooltip: name and type).
+  cells do not match). Columns fit the header name and the longest loaded value, so nothing is cut with "..."
+  (only above 1,200 px; the tooltip shows the full text; header tooltip: name and type).
   - **Colunas...** (button above the grid): check boxes in a grid that follows the dialog width (1 to 6 per row,
     4 at the default window size), a search field on top, "Mostrar todas" / "Ocultar todas" (only the columns the
     search shows) and "Fechar"; each change applies at once. With several boxes selected, checking one checks them

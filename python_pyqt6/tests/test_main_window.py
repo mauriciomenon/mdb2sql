@@ -217,12 +217,18 @@ def _repeated(texts: list[str]) -> list[str]:
 def test_column_headers_and_table_names_are_not_cut(qtbot, tmp_path: Path) -> None:
     import duckdb
 
-    long_name = "CIM_PROGRESS_START_DATE_" + "x" * 25  # mais largo que o limite de 320 px, menos que 640
+    long_name = "CIM_PROGRESS_START_DATE_" + "x" * 25  # nome mais largo que o conteudo (1, 2, 3)
     table = "RANGER_TABLE_WITH_A_VERY_LONG_NAME_FOR_THE_PANEL_" + "Y" * 30
+    # valor de 70 caracteres so na ultima das 99 linhas (alem das que o Qt mede sozinho) e um de 400 (> 1200 px)
+    value70 = "SUPERV/CONTR UN PREPARACION DE PARTIDA ACCIONADO COMPLETA LADO B 12345"
+    assert len(value70) == 70
     db_file = tmp_path / "wide.duckdb"
     with duckdb.connect(str(db_file)) as conn:
-        conn.execute(f'CREATE TABLE "{table}" (A INTEGER, CIM_PROGRESS_START_DATE INTEGER, "{long_name}" INTEGER, T VARCHAR)')
-        conn.execute(f"INSERT INTO \"{table}\" VALUES (1, 2, 3, '{'z' * 400}')")
+        conn.execute(
+            f'CREATE TABLE "{table}" AS SELECT 1 AS A, 2 AS CIM_PROGRESS_START_DATE, 3 AS "{long_name}",'
+            f" '{'z' * 400}' AS T, CASE WHEN i = 98 THEN '{value70}' ELSE 'short' END AS PNTNAM"
+            " FROM range(99) r(i) ORDER BY i"
+        )
     win = MainWindow()
     qtbot.addWidget(win)
     win.show()
@@ -235,7 +241,10 @@ def test_column_headers_and_table_names_are_not_cut(qtbot, tmp_path: Path) -> No
         # largura da secao >= largura do nome da coluna (o valor 1 e curto: so o nome define a largura)
         assert win.data_table.columnWidth(column) >= metrics.horizontalAdvance(name), name
         assert win.table_model.headerData(column, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole).startswith(name)
-    assert win.data_table.columnWidth(3) == 320  # conteudo longo continua limitado (texto inteiro na dica)
+    # valor de 70 caracteres inteiro (sem "..."): largura >= texto + margens da celula
+    cell_metrics = win.data_table.fontMetrics()
+    assert win.data_table.columnWidth(4) >= cell_metrics.horizontalAdvance(value70) + 6
+    assert win.data_table.columnWidth(3) == 1200  # so acima de 1200 px corta (texto inteiro na dica)
     assert win.table_list.item(0).toolTip() == table
     # nome de tabela nunca vira "...": o painel cabe o nome mais longo do DB4 inteiro; acima de 35% da janela,
     # rolagem horizontal na lista (o nome continua inteiro)

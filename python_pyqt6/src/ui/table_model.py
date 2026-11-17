@@ -1,13 +1,14 @@
 # Modelo de tabela somente leitura para linhas vindas do DuckDB (lista de dicts)
 # !T: Read-only table model; exposes display text, numeric alignment/font and a typed sort role
 
+import heapq
 import unicodedata
 from decimal import Decimal
 from typing import Any
 
 import pandas as pd
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
-from PyQt6.QtGui import QFontDatabase
+from PyQt6.QtGui import QFont, QFontDatabase
 
 # !T: Role read by QSortFilterProxyModel so numbers sort as numbers, not as text
 SORT_ROLE = Qt.ItemDataRole.UserRole
@@ -68,6 +69,16 @@ class TableModel(QAbstractTableModel):
         self._search_rows: list[str] | None = None  # texto de busca de cada linha (fold), feito na 1a busca
         self._fixed_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
 
+    def longest_texts(self, column: int, count: int = 3) -> list[str]:
+        """Os textos mais longos (em caracteres) da coluna: candidatos para medir a largura em pixels."""
+        # shortcut: runs in the UI thread, ~1.4 s for 10,000 rows x 123 columns (instant at the default 100 rows);
+        # move it to the table worker if larger "Rows" limits are added
+        name = self.columns[column]
+        return heapq.nlargest(count, (display_text(row.get(name)) for row in self.rows), key=len)
+
+    def cell_font(self, column: int, base: QFont) -> QFont:
+        return self._fixed_font if self.numeric[column] else base
+
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self.rows)
 
@@ -85,7 +96,7 @@ class TableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.FontRole:
             return self._fixed_font if self.numeric[column] else None
         if role == Qt.ItemDataRole.ToolTipRole:
-            # coluna limitada a MAX_COLUMN_WIDTH: texto longo cortado na grade aparece inteiro na dica
+            # texto longo inteiro na dica (na grade so corta acima de MAX_COLUMN_WIDTH, 1200 px)
             text = display_text(self.rows[index.row()].get(self.columns[column]))
             return text if len(text) > 40 else None
         if role not in (Qt.ItemDataRole.DisplayRole, SORT_ROLE):

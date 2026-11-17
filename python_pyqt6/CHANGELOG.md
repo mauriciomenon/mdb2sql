@@ -16,8 +16,8 @@
   still respects "Rows". Several filters add up (AND) and combine with the word search. Active filters are shown
   above the grid, one button each (click removes it), plus "Limpar filtros". Changing table clears them.
   Column names are always quoted and values are always bound parameters.
-- Column headers are never cut: columns fit the header name as well as the values (long values still stop at
-  320 px; long names get up to 640 px and a tooltip).
+- Nothing cut with "..." in the grids: each column fits its header name and the longest loaded value (1.1.1 cut
+  values at 320 px). Only a value wider than 1,200 px is cut, with the full text in the tooltip.
 - Table names are never cut with "...": the Tables panel opens as wide as the longest name (up to 35% of the
   window, then horizontal scroll; the separator still drags) and each name has a tooltip.
 - "Colunas..." dialog sized from the window (~65%, 420 to 900 px, height up to 70%), check boxes in a responsive

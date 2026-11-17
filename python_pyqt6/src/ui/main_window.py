@@ -14,7 +14,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QGuiApplication, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QFontMetrics, QGuiApplication, QKeySequence
 from PyQt6.QtWidgets import (
     QComboBox,
     QDockWidget,
@@ -59,7 +59,7 @@ APP_TITLE = app_title()  # "mdb2sql <versao> - Python"; versao da fonte unica (p
 # shortcut: search and sort run in the UI thread over the loaded rows, so the limit stops at 10 000;
 # move search to SQL in the backend when bigger limits are needed
 ROW_LIMITS = (100, 1_000, 10_000)
-MAX_COLUMN_WIDTH = 320
+MAX_COLUMN_WIDTH = 1200  # trava de seguranca: abaixo disso nenhum valor nem nome de coluna e cortado
 EMPTY_HINT = "No database loaded"
 OPEN_FILTER = (
     "Databases (*.duckdb *.db *.sqlite *.sqlite3 *.mdb *.accdb);;DuckDB (*.duckdb *.db);;"
@@ -362,7 +362,7 @@ class MainWindow(QMainWindow):
         header.setStretchLastSection(True)
         header.setHighlightSections(False)
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        header.setResizeContentsPrecision(200)  # mede so as primeiras linhas: rapido em tabelas grandes
+        header.setResizeContentsPrecision(50)  # Qt mede poucas linhas; _fit_columns mede o texto mais longo de todas
         # !T: A third click on a header returns to the order the backend gave
         header.setSortIndicatorClearable(True)
         header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
@@ -754,12 +754,15 @@ class MainWindow(QMainWindow):
     def _fit_columns(self, view: QTableView) -> None:
         view.sortByColumn(-1, Qt.SortOrder.AscendingOrder)  # volta para a ordem do backend
         view.resizeColumnsToContents()  # !T: Qt takes the larger of the header text and the content
-        header = view.horizontalHeader()
-        for column in range(view.model().columnCount()):
-            if view.columnWidth(column) > MAX_COLUMN_WIDTH:
-                # o limite corta so o conteudo longo; o nome da coluna aparece inteiro (ate 2x o limite; dica: nome)
-                fit = min(header.sectionSizeHint(column), 2 * MAX_COLUMN_WIDTH)
-                view.setColumnWidth(column, max(MAX_COLUMN_WIDTH, fit))
+        # !T: Qt measures only the first rows (resize precision); the longest texts of all loaded rows are measured
+        # !T: here so no value is cut with "..."; only above MAX_COLUMN_WIDTH (tooltip has the full text)
+        model: TableModel = view.model().sourceModel()
+        padding = 2 * (view.style().pixelMetric(QStyle.PixelMetric.PM_FocusFrameHMargin, None, view) + 1) + 8
+        for column in range(model.columnCount()):
+            metrics = QFontMetrics(model.cell_font(column, view.font()))
+            longest = max((metrics.horizontalAdvance(text) for text in model.longest_texts(column)), default=0)
+            width = max(view.columnWidth(column), longest + padding)
+            view.setColumnWidth(column, min(width, MAX_COLUMN_WIDTH))
 
     def _on_table_loaded(self, request_id: int, result: object) -> None:
         if request_id != self._table_request:
