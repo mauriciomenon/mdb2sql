@@ -3,10 +3,12 @@
   // Clique seleciona a celula; botao direito ou tecla de menu abre o menu; Ctrl+C copia o valor
   import { cellText, rowToTsv } from './grid.js';
 
-  let { columns, rows, label, emptyText = 'Table is empty', onstatus, onerror } = $props();
+  // actions (so a grade da aba Data): { hide(nome), columns(), showAll(), filter(nome, valor), clearFilters(),
+  // anyHidden, filtered }; sem ele o menu so copia
+  let { columns, rows, label, emptyText = 'Table is empty', onstatus, onerror, actions = null } = $props();
 
   let selected = $state.raw(null); // { row, col }: celula escolhida para copiar
-  let menu = $state.raw(null); // { x, y } do menu de copia aberto
+  let menu = $state.raw(null); // { x, y, header }: menu aberto; header = nome da coluna do cabecalho clicado
 
   // outra tabela, outra busca ou outro resultado: a celula escolhida antes nao vale mais (copiaria dado velho)
   $effect(() => {
@@ -26,11 +28,23 @@
 
   function openMenu(event) {
     event.preventDefault();
-    selectCell(event);
-    if (!selected) return;
     // a tecla de menu do teclado nao tem posicao de mouse: abre no canto da grade
     const box = event.currentTarget.getBoundingClientRect();
-    menu = { x: event.clientX || box.left + 40, y: event.clientY || box.top + 40 };
+    const at = { x: event.clientX || box.left + 40, y: event.clientY || box.top + 40 };
+    // clique direito no cabecalho: menu de colunas (ocultar esta, Colunas..., mostrar todas)
+    const th = actions && event.target.closest('th[data-c]');
+    if (th) {
+      menu = { ...at, header: columns[th.dataset.c].name };
+      return;
+    }
+    selectCell(event);
+    if (selected) menu = { ...at, header: null };
+  }
+
+  // fecha o menu e chama a acao da aba Data
+  function act(name, ...args) {
+    menu = null;
+    actions[name](...args);
   }
 
   // NIVEL BASICO: kind = 'value' (celula), 'row' ou 'row-header' (linha separada por TAB)
@@ -78,7 +92,7 @@
     <thead>
       <tr>
         {#each columns as col, c (c)}
-          <th scope="col" class:num={isNumeric(col.type)}>
+          <th scope="col" data-c={c} class:num={isNumeric(col.type)}>
             {col.name}
             <small>{col.type}</small>
           </th>
@@ -107,13 +121,26 @@
   </table>
 </div>
 
-{#if menu}
-  <div class="menu" role="menu" aria-label="Copy" style="left: {menu.x}px; top: {menu.y}px">
+{#if menu?.header}
+  <div class="menu" role="menu" aria-label="Coluna {menu.header}" style="left: {menu.x}px; top: {menu.y}px">
+    <button type="button" role="menuitem" use:focusNow onclick={() => act('hide', menu.header)}>Ocultar esta coluna</button>
+    <button type="button" role="menuitem" onclick={() => act('columns')}>Colunas...</button>
+    <button type="button" role="menuitem" disabled={!actions.anyHidden} onclick={() => act('showAll')}>Mostrar todas</button>
+  </div>
+{:else if menu}
+  <div class="menu" role="menu" aria-label="Cell" style="left: {menu.x}px; top: {menu.y}px">
     <button type="button" role="menuitem" use:focusNow onclick={() => copy('value')}>
       Copy value <kbd>Ctrl+C</kbd>
     </button>
     <button type="button" role="menuitem" onclick={() => copy('row')}>Copy row</button>
     <button type="button" role="menuitem" onclick={() => copy('row-header')}>Copy row with header</button>
+    {#if actions}
+      <div class="separator" role="separator"></div>
+      <button type="button" role="menuitem" onclick={() => act('filter', selected.col, selected.row[selected.col])}>
+        Filtrar por este valor
+      </button>
+      <button type="button" role="menuitem" disabled={!actions.filtered} onclick={() => act('clearFilters')}>Limpar filtros</button>
+    {/if}
   </div>
 {/if}
 
@@ -221,9 +248,19 @@
     cursor: pointer;
   }
 
-  .menu button:hover,
+  .menu button:hover:not(:disabled),
   .menu button:focus-visible {
     background: var(--row-hover);
+  }
+
+  .menu button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .menu .separator {
+    margin: 4px 0;
+    border-top: 1px solid var(--border);
   }
 
   .menu kbd {

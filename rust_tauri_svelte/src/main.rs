@@ -10,7 +10,7 @@
 
 mod backend;
 
-use backend::db_manager::{ColumnSchema, DBManager, SqlResult};
+use backend::db_manager::{ColumnSchema, DBManager, Filter, SqlResult};
 use backend::export::{self, Source};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -74,18 +74,23 @@ fn load_database(app: AppHandle, db_path: String, state: State<'_, AppState>) ->
     })
 }
 
-// NIVEL BASICO: GetTableData retorna ate `limit` linhas de uma tabela (default 100)
+// NIVEL BASICO: GetTableData retorna ate `limit` linhas de uma tabela (default 100) que passam pelos filtros
 #[tauri::command(async)]
-fn get_table_data(table_name: String, limit: i32, state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
+fn get_table_data(
+    table_name: String,
+    limit: i32,
+    filters: Vec<Filter>,
+    state: State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
     let manager = state.db_manager.lock().unwrap();
     let limit = if limit <= 0 { 100 } else { limit };
-    manager.query_table(&table_name, limit)
+    manager.query_table(&table_name, limit, &filters)
 }
 
-// NIVEL BASICO: GetRowCount retorna total de linhas em tabela
+// NIVEL BASICO: GetRowCount retorna quantas linhas da tabela passam pelos filtros (sem filtro: o total)
 #[tauri::command(async)]
-fn get_row_count(table_name: String, state: State<'_, AppState>) -> Result<i64, String> {
-    state.db_manager.lock().unwrap().get_row_count(&table_name)
+fn get_row_count(table_name: String, filters: Vec<Filter>, state: State<'_, AppState>) -> Result<i64, String> {
+    state.db_manager.lock().unwrap().get_row_count(&table_name, &filters)
 }
 
 // NIVEL BASICO: GetTableSchema retorna schema da tabela
@@ -158,38 +163,59 @@ fn cancel_export(state: State<'_, AppState>) {
 }
 
 // Barra de titulo da janela; a versao vem do Cargo.toml (fonte unica)
-const WINDOW_TITLE: &str = concat!("mdb2sql ", env!("CARGO_PKG_VERSION"), " - Rust + Tauri + Svelte");
+const WINDOW_TITLE: &str = concat!("mdb2sql ", env!("CARGO_PKG_VERSION"), " - Rust");
 
-// NIVEL BASICO: Linhas do dialogo Sobre; a versao vem do Cargo.toml (fonte unica),
-// numero e data do build vem do build oficial (build.rs)
-fn about_lines(runtimes: &str) -> Vec<String> {
-    vec![
-        "MDB2SQL (Rust + Tauri + Svelte)".to_string(),
-        format!("Versao {} - {}", env!("CARGO_PKG_VERSION"), env!("BUILD_LABEL")),
-        "Abre bancos Access, DuckDB e SQLite e exporta para DuckDB, SQLite, Excel e CSV.".to_string(),
-        runtimes.to_string(),
-        "Autor: Mauricio Menon".to_string(),
-        "Codigo: https://github.com/mauriciomenon/mdb2sql".to_string(),
-    ]
+// Os dois unicos enderecos que o app abre no navegador; capabilities/default.json libera so estes
+// para o plugin opener (cargo test confere que as duas listas sao iguais)
+const LINKS: [(&str, &str); 2] = [
+    ("GitHub", "https://github.com/mauriciomenon/mdb2sql"),
+    ("GitLab", "https://gitlab.com/mauricio.menon/mdb2sql"),
+];
+
+// NIVEL BASICO: Conteudo do dialogo Sobre: nome e versao em destaque, a frase da funcao, as linhas
+// de detalhe (rotulo, valor) e os links
+#[derive(Serialize)]
+struct About {
+    name: &'static str,
+    version: &'static str,
+    description: &'static str,
+    rows: Vec<(&'static str, String)>,
+    links: [(&'static str, &'static str); 2],
 }
 
-// NIVEL TECNICO: Runtime versions are read when the dialog opens; Svelte reports its own
-// version from the webview, the Rust compiler version is captured by build.rs
+// NIVEL TECNICO: The version comes from Cargo.toml (single source), build number and date from the
+// official build (build.rs). Runtime versions are read when the dialog opens; Svelte reports its
+// own version from the webview, the Rust compiler version is captured by build.rs
 #[tauri::command]
-fn about(svelte_version: String) -> Vec<String> {
+fn about(svelte_version: String) -> About {
     let duckdb = duckdb::Connection::open_in_memory()
         .and_then(|conn| conn.query_row("SELECT version()", [], |row| row.get::<_, String>(0)))
         .unwrap_or_else(|e| format!("? ({e})"));
     let webview = tauri::webview_version().unwrap_or_else(|_| "?".to_string());
-    let odbc = if backend::access::odbc_installed() { "installed" } else { "not installed" };
-    about_lines(&format!(
-        "Tauri {}, WebView2 {webview}, Rust {}, Svelte {svelte_version}, DuckDB {duckdb}, SQLite {}, \
-         mdbtools {} (embedded), Access ODBC driver {odbc}",
-        tauri::VERSION,
-        env!("RUSTC_VERSION"),
-        rusqlite::version(),
-        backend::access::MDBTOOLS_VERSION,
-    ))
+    let mdbtools = backend::access::MDBTOOLS_VERSION;
+    let access = if backend::access::odbc_installed() {
+        format!("driver ODBC do Access (instalado); reserva: mdbtools {mdbtools} embutido")
+    } else {
+        format!("mdbtools {mdbtools} embutido (driver ODBC do Access nao instalado)")
+    };
+    About {
+        name: "mdb2sql",
+        version: env!("CARGO_PKG_VERSION"),
+        description: "Abre bancos Access, DuckDB e SQLite e exporta para DuckDB, SQLite, Excel e CSV.",
+        rows: vec![
+            ("Build", env!("BUILD_LABEL").trim_start_matches("build ").to_string()),
+            (
+                "Stack",
+                format!("Rust {} + Tauri {} + Svelte {svelte_version}", env!("RUSTC_VERSION"), tauri::VERSION),
+            ),
+            ("Janela", format!("WebView2 {webview}")),
+            ("Bancos", format!("DuckDB {duckdb}, SQLite {}", rusqlite::version())),
+            ("Leitura do Access", access),
+            ("Autor", "Mauricio Menon".to_string()),
+            ("Licenca", "GPL v2 ou posterior".to_string()),
+        ],
+        links: LINKS,
+    }
 }
 
 fn main() {
@@ -199,6 +225,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(AppState {
             db_manager: Mutex::new(DBManager::new()),
             cancel_export: AtomicBool::new(false),
@@ -232,29 +259,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn about_has_the_six_required_lines() {
-        let lines = about("5.0.0".to_string());
-        assert_eq!(lines.len(), 6);
-        assert_eq!(lines[0], "MDB2SQL (Rust + Tauri + Svelte)");
-        // "Versao 1.1.1 - build 123 (2026-11-15)" no build oficial, "Versao 1.1.1 - build dev" fora dele
-        let version = lines[1].strip_prefix("Versao 1.1.1 - build ").expect(&lines[1]);
-        let official = version.split_once(" (").is_some_and(|(n, d)| {
+    fn about_has_version_build_stack_engines_author_license_and_links() {
+        let about = about("5.0.0".to_string());
+        assert_eq!((about.name, about.version), ("mdb2sql", "1.2.0"));
+        assert!(about.description.starts_with("Abre bancos Access, DuckDB e SQLite"));
+        let labels: Vec<&str> = about.rows.iter().map(|(label, _)| *label).collect();
+        assert_eq!(labels, ["Build", "Stack", "Janela", "Bancos", "Leitura do Access", "Autor", "Licenca"]);
+        let value = |i: usize| about.rows[i].1.as_str();
+        // "123 (2026-11-15)" no build oficial, "dev" fora dele
+        let official = value(0).split_once(" (").is_some_and(|(n, d)| {
             n.parse::<u32>().is_ok() && d.len() == 11 && d.ends_with(')') && d.as_bytes()[4] == b'-'
         });
-        assert!(version == "dev" || official, "{}", lines[1]);
-        assert!(lines[2].starts_with("Abre bancos Access, DuckDB e SQLite"));
-        assert!(lines[3].starts_with(&format!("Tauri {}, WebView2 ", tauri::VERSION)));
-        assert!(lines[3].contains(", Svelte 5.0.0, DuckDB v"), "{}", lines[3]);
-        assert!(lines[3].contains(", SQLite 3."), "{}", lines[3]);
-        assert!(lines[3].contains(", mdbtools 1.0.1 (embedded), Access ODBC driver "), "{}", lines[3]);
-        assert!(!lines[3].contains("Rust unknown"));
-        assert_eq!(lines[4], "Autor: Mauricio Menon");
-        assert_eq!(lines[5], "Codigo: https://github.com/mauriciomenon/mdb2sql");
+        assert!(value(0) == "dev" || official, "{}", value(0));
+        let stack = format!("Rust {} + Tauri {} + Svelte 5.0.0", env!("RUSTC_VERSION"), tauri::VERSION);
+        assert_eq!(value(1), stack);
+        assert!(!stack.contains("unknown") && stack.starts_with("Rust 1.") && stack.contains(" + Tauri 2."));
+        assert!(value(2).starts_with("WebView2 "));
+        assert!(value(3).starts_with("DuckDB v") && value(3).contains(", SQLite 3."), "{}", value(3));
+        assert!(value(4).contains("mdbtools 1.0.1 embutido") && value(4).contains("ODBC"), "{}", value(4));
+        assert_eq!(value(5), "Mauricio Menon");
+        assert_eq!(value(6), "GPL v2 ou posterior");
+        assert_eq!(
+            about.links,
+            [
+                ("GitHub", "https://github.com/mauriciomenon/mdb2sql"),
+                ("GitLab", "https://gitlab.com/mauricio.menon/mdb2sql")
+            ]
+        );
+    }
+
+    // o plugin opener so pode abrir os dois links do Sobre: nada de abrir URL ou arquivo qualquer
+    #[test]
+    fn opener_is_allowed_only_for_the_about_links() {
+        let text = std::fs::read_to_string("capabilities/default.json").unwrap();
+        let conf: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let opener: Vec<&serde_json::Value> = conf["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|p| p.to_string().contains("opener") || p.to_string().contains("shell"))
+            .collect();
+        let urls: Vec<&str> = LINKS.iter().map(|(_, url)| *url).collect();
+        let expected = serde_json::json!({
+            "identifier": "opener:allow-open-url",
+            "allow": urls.iter().map(|url| serde_json::json!({ "url": url })).collect::<Vec<_>>(),
+        });
+        assert_eq!(opener, [&expected]);
+        assert!(urls.iter().all(|url| url.starts_with("https://") && !url.contains('*')));
     }
 
     #[test]
-    fn window_title_shows_the_version() {
-        assert_eq!(WINDOW_TITLE, "mdb2sql 1.1.1 - Rust + Tauri + Svelte");
+    fn window_title_is_short_and_shows_the_version() {
+        assert_eq!(WINDOW_TITLE, "mdb2sql 1.2.0 - Rust");
+        assert_eq!(WINDOW_TITLE, format!("mdb2sql {} - Rust", env!("CARGO_PKG_VERSION")));
     }
 
     // Cargo.toml e a fonte unica: tauri.conf.json herda dele quando nao tem "version"
@@ -269,5 +326,24 @@ mod tests {
             assert_eq!(conf, version, "tauri.conf.json");
         }
         assert_eq!(json("ui/package.json")["version"], version, "ui/package.json");
+    }
+
+    // GPL v2 ou posterior: texto integral no LICENSE (vai no zip e nos instaladores), metadados e Sobre
+    #[test]
+    fn license_is_gpl2_or_later_everywhere() {
+        let text = std::fs::read_to_string("LICENSE").unwrap();
+        let mut lines = text.lines().map(str::trim);
+        assert_eq!(lines.next(), Some("GNU GENERAL PUBLIC LICENSE"));
+        assert!(lines.next().unwrap().starts_with("Version 2, June 1991"));
+        assert_eq!(env!("CARGO_PKG_LICENSE"), "GPL-2.0-or-later");
+        let json = |path: &str| -> serde_json::Value {
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+        };
+        assert_eq!(json("ui/package.json")["license"], "GPL-2.0-or-later");
+        let bundle = &json("tauri.conf.json")["bundle"];
+        assert_eq!(bundle["license"], "GPL-2.0-or-later");
+        assert_eq!(bundle["resources"], serde_json::json!(["LICENSE"]));
+        let about = about("5.0.0".to_string());
+        assert!(about.rows.contains(&("Licenca", "GPL v2 ou posterior".to_string())));
     }
 }

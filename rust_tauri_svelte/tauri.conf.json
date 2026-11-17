@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "mdb2sql - Rust + Tauri + Svelte",
+        "title": "mdb2sql - Rust",
         "width": 1200,
         "height": 800,
         "resizable": true,
@@ -26,6 +26,8 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "license": "GPL-2.0-or-later",
+    "resources": ["LICENSE"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

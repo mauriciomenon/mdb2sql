@@ -1,7 +1,56 @@
 // Roda com: pnpm --filter mdb2sql-ui test  (node --test, sem dependencias)
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { cellText, fold, hasAllWords, rowMatches, rowToTsv, searchWords, tsvField } from './grid.js';
+import {
+  cellText,
+  filterLabel,
+  fold,
+  hasAllWords,
+  hiddenStatus,
+  rowMatches,
+  rowToTsv,
+  searchWords,
+  toggleHidden,
+  tsvField,
+  visibleColumns,
+  withFilter,
+} from './grid.js';
+
+test('several columns are hidden at once and shown again, order kept', () => {
+  const columns = [{ name: 'id' }, { name: 'SIGLA' }, { name: 'note' }];
+  let hidden = new Set();
+  assert.deepEqual(visibleColumns(columns, hidden), columns);
+  const before = hidden;
+  hidden = toggleHidden(toggleHidden(hidden, 'note'), 'id');
+  assert.equal(before.size, 0); // o Set antigo nao muda (a tela so reage a um Set novo)
+  assert.deepEqual(visibleColumns(columns, hidden), [{ name: 'SIGLA' }]);
+  assert.equal(hiddenStatus(hidden.size), '2 colunas ocultas');
+  hidden = toggleHidden(hidden, 'id');
+  assert.deepEqual(visibleColumns(columns, hidden).map((c) => c.name), ['id', 'SIGLA']);
+  assert.equal(hiddenStatus(hidden.size), '1 coluna oculta');
+  assert.equal(hiddenStatus(0), '');
+  assert.deepEqual(visibleColumns(columns, new Set(['id', 'SIGLA', 'note'])), []);
+});
+
+test('hidden columns are still searched', () => {
+  const row = { id: 1, SIGLA: 'U9A' };
+  assert.ok(rowMatches(row, searchWords('u9a'))); // a busca olha a linha inteira, nao so as colunas visiveis
+});
+
+test('filters add up, one per column, and keep the value type', () => {
+  let filters = withFilter([], 'SIGLA', 'U9A');
+  filters = withFilter(filters, 'RTUNO', 2);
+  filters = withFilter(filters, 'note', undefined); // celula sem valor = NULL
+  assert.deepEqual(filters, [
+    { column: 'SIGLA', value: 'U9A' },
+    { column: 'RTUNO', value: 2 },
+    { column: 'note', value: null },
+  ]);
+  filters = withFilter(filters, 'SIGLA', 'U18A'); // mesma coluna: troca o valor
+  assert.deepEqual(filters.map(filterLabel), ['RTUNO = 2', 'note IS NULL', "SIGLA = 'U18A'"]);
+  assert.equal(filterLabel({ column: 'ok', value: false }), 'ok = false');
+  assert.equal(filterLabel({ column: 'n', value: '2' }), "n = '2'"); // texto '2' nao e o numero 2
+});
 
 test('plain values are copied unchanged, NULL as empty', () => {
   assert.equal(tsvField('abc'), 'abc');

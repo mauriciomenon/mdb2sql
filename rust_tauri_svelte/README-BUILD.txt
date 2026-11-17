@@ -63,9 +63,10 @@ Windows - dist\w11\amd64\
       sem instalar. Unica pasta que ele cria: %LOCALAPPDATA%\mdb2sql\rust-tauri-svelte-<versao>\mdbtools
       (so ao abrir Access sem o driver ODBC; versoes antigas sao apagadas) alem dos dados do WebView2.
   mdb2sql-<versao>-w11-amd64-rust-tauri-svelte.zip
-      ZIP da pasta do app: mdb2sql-<versao>-w11-amd64-rust-tauri-svelte\mdb2sql.exe e README.md.
+      ZIP da pasta do app: mdb2sql-<versao>-w11-amd64-rust-tauri-svelte\mdb2sql.exe, README.md e LICENSE.
   mdb2sql-<versao>-w11-amd64-rust-tauri-svelte-installer.exe
-      INSTALADOR NSIS (gerado pelo Tauri; por usuario, sem administrador; instala o WebView2 se faltar).
+      INSTALADOR NSIS (gerado pelo Tauri; por usuario, sem administrador; instala o WebView2 se faltar;
+      o LICENSE vai junto na pasta do app, como no MSI).
   mdb2sql-<versao>-w11-amd64-rust-tauri-svelte-installer.msi
       INSTALADOR MSI (WiX, gerado pelo Tauri; por maquina).
 
