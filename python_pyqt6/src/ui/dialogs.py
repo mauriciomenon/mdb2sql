@@ -1,0 +1,197 @@
+# Dialogos da janela principal: Sobre (Ajuda > Sobre) e Colunas (ocultar/mostrar varias colunas de uma vez)
+# !T: Both are opened with open() by the caller: no nested event loop, so tests and UI Automation do not block
+
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QPixmap
+from PyQt6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QStyle,
+    QVBoxLayout,
+    QWidget,
+)
+
+from shared.about import APP_NAME, LINKS, SUMMARY, about_fields, app_version, link_html
+from shared.bundle import resource
+
+EXPORT_NOTE = "Exportar leva todas as colunas"
+
+
+class AboutDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Sobre")
+
+        icon = QLabel()
+        icon.setPixmap(
+            QPixmap(str(resource("mdb2sql.png"))).scaled(
+                72, 72, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            )
+        )
+        self.title = QLabel(f"{APP_NAME} {app_version()}")
+        font = self.title.font()
+        font.setPointSizeF(font.pointSizeF() * 1.4)  # destaque discreto, mesma familia do app
+        font.setBold(True)
+        self.title.setFont(font)
+        summary = QLabel(SUMMARY)
+        summary.setWordWrap(True)
+        heading = QVBoxLayout()
+        heading.addWidget(self.title)
+        heading.addWidget(summary)
+        top = QHBoxLayout()
+        top.setSpacing(16)
+        top.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+        top.addLayout(heading, 1)
+
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+
+        self.form = QFormLayout()
+        self.form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self.form.setHorizontalSpacing(16)
+        self.form.setVerticalSpacing(6)
+        for label, value in about_fields():
+            text = QLabel(value)
+            text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            self.form.addRow(f"{label}:", text)
+        self.links: list[QLabel] = []
+        for label, url in LINKS:
+            link = QLabel(link_html(url))
+            link.setOpenExternalLinks(True)  # abre no navegador padrao
+            link.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)  # tambem por Tab + Enter
+            link.setAccessibleName(f"{label} {url}")
+            self.links.append(link)
+            self.form.addRow(f"{label}:", link)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        buttons.accepted.connect(self.accept)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 16)
+        layout.setSpacing(14)
+        layout.addLayout(top)
+        layout.addWidget(line)
+        layout.addLayout(self.form)
+        layout.addWidget(buttons)
+        self.setMinimumWidth(560)
+
+
+def grid_columns(available: int, cell: int) -> int:
+    """Colunas da grade de caixas: quantas celulas cabem na largura, de 1 a 6."""
+    return max(1, min(6, available // max(1, cell)))
+
+
+class ColumnsDialog(QDialog):
+    """Caixas em grade (marcada = visivel); cada mudanca vale na hora (hiddenChanged), Fechar so fecha."""
+
+    hiddenChanged = pyqtSignal(object)  # set[str] com as colunas ocultas
+
+    def __init__(self, columns: list[str], hidden: set[str], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Colunas")
+
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Buscar coluna")
+        self.search.setClearButtonEnabled(True)
+        self.search.setAccessibleName("Buscar coluna")
+        self.search.textChanged.connect(self._filter)
+
+        # !T: Wrapping LeftToRight list: a responsive grid with vertical scroll only; the font stays the base font
+        self.list = QListWidget()
+        self.list.setAccessibleName("Colunas visiveis")
+        self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.list.setFlow(QListWidget.Flow.LeftToRight)
+        self.list.setWrapping(True)
+        self.list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list.setTextElideMode(Qt.TextElideMode.ElideNone)  # nome inteiro: a celula ja cabe o mais longo
+        for name in columns:
+            item = QListWidgetItem(name)
+            item.setToolTip(name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked if name in hidden else Qt.CheckState.Checked)
+            self.list.addItem(item)
+        self.list.itemChanged.connect(self._item_changed)
+
+        # celula da grade: nome mais longo + caixa + espaco, nunca menor que ~24 caracteres medios
+        metrics = self.list.fontMetrics()
+        indicator = self.style().pixelMetric(QStyle.PixelMetric.PM_IndicatorWidth)
+        longest = max((metrics.horizontalAdvance(name) for name in columns), default=0)
+        self.cell = max(longest + indicator + 24, metrics.averageCharWidth() * 24)
+        self.row_height = metrics.height() + 10
+
+        show_all = QPushButton("Mostrar todas")
+        show_all.clicked.connect(lambda: self.set_all(True))
+        hide_all = QPushButton("Ocultar todas")
+        hide_all.clicked.connect(lambda: self.set_all(False))
+        close = QPushButton("Fechar")
+        close.setDefault(True)
+        close.clicked.connect(self.accept)
+        buttons = QHBoxLayout()
+        buttons.addWidget(show_all)
+        buttons.addWidget(hide_all)
+        buttons.addStretch(1)
+        buttons.addWidget(close)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 12)
+        layout.setSpacing(10)
+        layout.addWidget(self.search)
+        layout.addWidget(self.list, 1)
+        layout.addLayout(buttons)
+
+        # ~65% da janela principal (420..900 px) e altura ate 70% dela; sem janela, o tamanho padrao do app
+        base = parent.window().size() if parent else QSize(1200, 800)
+        width = max(420, min(900, round(base.width() * 0.65)))
+        columns_here = grid_columns(width - 60, self.cell)
+        rows = -(-len(columns) // columns_here)
+        wanted = rows * self.row_height + 140  # busca, botoes e margens
+        self.resize(width, max(300, min(round(base.height() * 0.7), wanted)))
+        self.setMinimumSize(420, 300)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt)
+        super().resizeEvent(event)
+        self._layout_grid()
+
+    def _layout_grid(self) -> None:
+        # redimensionar recalcula a grade: as colunas dividem a largura por igual
+        available = self.list.viewport().width() - 4
+        self.columns_shown = grid_columns(available, self.cell)
+        self.list.setGridSize(QSize(available // self.columns_shown, self.row_height))
+
+    def _filter(self, text: str) -> None:
+        words = text.casefold().split()
+        for row in range(self.list.count()):
+            item = self.list.item(row)
+            item.setHidden(not all(word in item.text().casefold() for word in words))
+
+    def _item_changed(self, changed: QListWidgetItem) -> None:
+        # varias selecionadas (Shift/Ctrl + clique): marcar uma aplica o mesmo estado a todas
+        if changed.isSelected():
+            self.list.blockSignals(True)
+            for item in self.list.selectedItems():
+                item.setCheckState(changed.checkState())
+            self.list.blockSignals(False)
+        self.hiddenChanged.emit(self.hidden())
+
+    def set_all(self, visible: bool) -> None:
+        state = Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked
+        self.list.blockSignals(True)
+        for row in range(self.list.count()):
+            if not self.list.item(row).isHidden():
+                self.list.item(row).setCheckState(state)
+        self.list.blockSignals(False)
+        self.hiddenChanged.emit(self.hidden())
+
+    def hidden(self) -> set[str]:
+        items = (self.list.item(row) for row in range(self.list.count()))
+        return {item.text() for item in items if item.checkState() == Qt.CheckState.Unchecked}

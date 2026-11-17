@@ -44,11 +44,14 @@ def test_copy_value_and_row(qtbot, tmp_path: Path) -> None:
 
     # as tres acoes estao no menu de contexto (clique direito) da grade
     assert win.data_table.contextMenuPolicy() == Qt.ContextMenuPolicy.ActionsContextMenu
+    copy_texts = ["&Copy Value", "Copy &Row", "Copy Row with &Header"]
     assert [action.text() for action in win.data_table.actions()] == [
-        "&Copy Value",
-        "Copy &Row",
-        "Copy Row with &Header",
+        *copy_texts,
+        "",  # separador
+        "&Filtrar por este valor",
+        "&Limpar filtros",
     ]
+    assert [action.text() for action in win.sql_table.actions()] == copy_texts
 
     win.data_table.setCurrentIndex(win.data_proxy.index(0, 1))
     win.copy_action.trigger()

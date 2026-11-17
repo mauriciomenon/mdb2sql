@@ -1,14 +1,17 @@
 # Exportacao: banco inteiro para .duckdb, .sqlite ou .xlsx (uma aba por tabela) e tabela/consulta para .csv ou .xlsx
 # !T: Runs in a worker thread; progress(done, total, text) reports, cancel (threading.Event) stops between chunks
-# !T: and the partial output file is deleted
+# !T: and only the temporary file is deleted; the target is replaced only when the export finished
 
 import csv
+import os
 import re
 import threading
+import uuid
+from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Iterator
 
 import xlsxwriter
 
@@ -63,6 +66,22 @@ def _remove(path: Path) -> None:
         leftover.unlink(missing_ok=True)
 
 
+@contextmanager
+def _staged(out: Path, cancel: threading.Event | None) -> Iterator[Path]:
+    """Grava num arquivo temporario so desta exportacao e so no sucesso troca o destino.
+
+    !T: Error or cancel removes only the temporary file: an existing file with the target name is kept. The
+    !T: cancel check after the work makes a cancel during the last table/chunk count as a cancel
+    """
+    temp = out.with_name(f"{out.stem}.{uuid.uuid4().hex[:12]}.partial{out.suffix}")
+    try:
+        yield temp
+        _check(cancel)
+        os.replace(temp, out)
+    finally:
+        _remove(temp)
+
+
 def export_database(
     manager: DBManager, out: Path, progress: Progress, cancel: threading.Event | None = None
 ) -> int:
@@ -73,15 +92,11 @@ def export_database(
     if manager.current_db and out.resolve() == Path(manager.current_db).resolve():
         raise ValueError("O arquivo de saida e o proprio banco aberto; escolha outro nome")
     tables = manager.list_tables()
-    _remove(out)
-    try:
+    with _staged(out, cancel) as temp:
         if suffix == ".xlsx":
-            _database_to_xlsx(manager, tables, out, progress, cancel)
+            _database_to_xlsx(manager, tables, temp, progress, cancel)
         else:
-            _database_to_db(manager, tables, out, progress, cancel)
-    except BaseException:
-        _remove(out)
-        raise
+            _database_to_db(manager, tables, temp, progress, cancel)
     progress(len(tables), len(tables), "")
     return len(tables)
 
@@ -188,37 +203,32 @@ def export_result(
     suffix = out.suffix.lower()
     if suffix not in RESULT_FORMATS:
         raise ValueError(f"Formato de exportacao nao suportado: {suffix}")
-    _remove(out)
     written = 0
-    try:
-        with manager.cursor() as cursor:
-            cursor.execute(query)
-            if cursor.description is None:
-                raise ValueError("A consulta nao devolve linhas")
-            header = [c[0] for c in cursor.description]
+    with _staged(out, cancel) as temp, manager.cursor() as cursor:
+        cursor.execute(query)
+        if cursor.description is None:
+            raise ValueError("A consulta nao devolve linhas")
+        header = [c[0] for c in cursor.description]
 
-            def counted() -> Iterable[list[tuple]]:
-                nonlocal written
-                for rows in _chunks(cursor):
-                    yield rows
-                    written += len(rows)
-                    progress(written, 0, f"{written:,} linhas")
+        def counted() -> Iterable[list[tuple]]:
+            nonlocal written
+            for rows in _chunks(cursor):
+                yield rows
+                written += len(rows)
+                progress(written, 0, f"{written:,} linhas")
 
-            if suffix == ".csv":
-                # utf-8-sig: BOM para o Excel reconhecer UTF-8
-                with open(out, "w", encoding="utf-8-sig", newline="") as handle:
-                    writer = csv.writer(handle)
-                    writer.writerow(header)
-                    for rows in counted():
-                        _check(cancel)
-                        writer.writerows([[v.hex() if isinstance(v, bytes) else v for v in r] for r in rows])
-            else:
-                book = _workbook(out)
-                try:
-                    _write_sheets(book, title, header, counted(), {"history"}, cancel)
-                finally:
-                    book.close()
-    except BaseException:
-        _remove(out)
-        raise
+        if suffix == ".csv":
+            # utf-8-sig: BOM para o Excel reconhecer UTF-8
+            with open(temp, "w", encoding="utf-8-sig", newline="") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(header)
+                for rows in counted():
+                    _check(cancel)
+                    writer.writerows([[v.hex() if isinstance(v, bytes) else v for v in r] for r in rows])
+        else:
+            book = _workbook(temp)
+            try:
+                _write_sheets(book, title, header, counted(), {"history"}, cancel)
+            finally:
+                book.close()
     return written

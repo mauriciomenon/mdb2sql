@@ -3,7 +3,7 @@
 
 import threading
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from PyQt6.QtCore import (
     QObject,
@@ -14,7 +14,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QGuiApplication, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QFontMetrics, QGuiApplication, QKeySequence
 from PyQt6.QtWidgets import (
     QComboBox,
     QDockWidget,
@@ -25,7 +25,6 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QMainWindow,
     QMenu,
-    QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QProgressDialog,
@@ -33,6 +32,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStackedWidget,
+    QStyle,
     QTableView,
     QTabWidget,
     QToolBar,
@@ -48,22 +48,19 @@ from backend.database_tasks import (
     load_table_payload,
     open_database,
 )
-from backend.db_manager import DBManager
+from backend.db_manager import DBManager, sql_string
 from backend.export import Cancelled, default_save_dir, export_database, export_result
-from shared.about import about_html, app_version
+from shared.about import app_title
 from shared.tsv import rows_to_tsv
-from ui.table_model import SORT_ROLE, SearchProxyModel, TableModel, fold, search_words
+from ui.dialogs import EXPORT_NOTE, AboutDialog, ColumnsDialog
+from ui.table_model import COPY_ROLE, SORT_ROLE, SearchProxyModel, TableModel, fold, search_words
 
-APP_TITLE = f"mdb2sql {app_version()} - Python + PyQt6"  # versao da fonte unica (pyproject.toml / VERSION)
+APP_TITLE = app_title()  # "mdb2sql <versao> - Python"; versao da fonte unica (pyproject.toml / VERSION)
 # shortcut: search and sort run in the UI thread over the loaded rows, so the limit stops at 10 000;
 # move search to SQL in the backend when bigger limits are needed
 ROW_LIMITS = (100, 1_000, 10_000)
-MAX_COLUMN_WIDTH = 320
-EMPTY_HINT = (
-    "No database loaded.\n\n"
-    "Open a DuckDB, SQLite or Access file with File > Open Database (Ctrl+O),\n"
-    "or set MDB2SQL_DB_PATH and press F5."
-)
+MAX_COLUMN_WIDTH = 1200  # trava de seguranca: abaixo disso nenhum valor nem nome de coluna e cortado
+EMPTY_HINT = "No database loaded"
 OPEN_FILTER = (
     "Databases (*.duckdb *.db *.sqlite *.sqlite3 *.mdb *.accdb);;DuckDB (*.duckdb *.db);;"
     "SQLite (*.sqlite *.sqlite3);;Access (*.mdb *.accdb);;All files (*)"
@@ -81,6 +78,17 @@ THEMES = {"system": Qt.ColorScheme.Unknown, "light": Qt.ColorScheme.Light, "dark
 def apply_theme(name: str) -> None:
     # !T: Unknown = follow the system; Qt 6.8+ restyles every window when the scheme changes
     QGuiApplication.styleHints().setColorScheme(THEMES.get(name, Qt.ColorScheme.Unknown))
+
+
+def filter_text(column: str, value: Any) -> str:
+    """Texto do filtro ativo na tela: SIGLA = 'U9A', RTUNO = 9, OBS IS NULL (a consulta usa parametro)."""
+    if value is None:
+        return f"{column} IS NULL"
+    return f"{column} = {sql_string(value) if isinstance(value, str) else value}"
+
+
+def hidden_text(count: int) -> str:
+    return "" if not count else " - 1 coluna oculta" if count == 1 else f" - {count} colunas ocultas"
 
 
 class _WorkerSignals(QObject):
@@ -119,8 +127,14 @@ class MainWindow(QMainWindow):
         self.pending_table_name: str | None = None
         self.loaded_table: tuple[str, int] | None = None  # (name, total rows in the table)
         self.sql_query: str | None = None  # ultima consulta da aba SQL que deu certo (para exportar)
+        # filtros coluna = valor (clique direito) e colunas ocultas: valem para view_table, ate trocar de tabela
+        self.view_table: str | None = None
+        self.filters: list[tuple[str, Any]] = []
+        self.hidden_columns: set[str] = set()
+        self.matched_rows = 0  # linhas da tabela que passam nos filtros
         self._table_request = 0
         self._sql_request = 0
+        self._db_request = 0
         self._busy = 0
         self.thread_pool: QThreadPool = QThreadPool.globalInstance() or QThreadPool(self)
 
@@ -201,6 +215,18 @@ class MainWindow(QMainWindow):
         self.copy_row_header_action = QAction("Copy Row with &Header", self)
         self.copy_row_header_action.triggered.connect(lambda: self.copy_rows(header=True))
 
+        # clique direito numa celula da aba Data: filtro coluna = valor feito na consulta ao banco
+        self.filter_value_action = QAction("&Filtrar por este valor", self)
+        self.filter_value_action.triggered.connect(self.filter_by_current_cell)
+        self.clear_filters_action = QAction("&Limpar filtros", self)
+        self.clear_filters_action.triggered.connect(self.clear_filters)
+        self.clear_filters_action.setEnabled(False)
+        # uma acao so para o botao da aba Data e o menu do cabecalho (nada duplicado)
+        self.columns_action = QAction("Colunas...", self)
+        self.columns_action.setIconText("Colunas...")  # !T: The default iconText drops the "..." on the button
+        self.columns_action.setToolTip(EXPORT_NOTE)
+        self.columns_action.triggered.connect(self.choose_columns)
+
         self.find_action = QAction("&Find in Rows", self)
         self.find_action.setShortcut(QKeySequence.StandardKey.Find)
         self.find_action.triggered.connect(self._focus_search)
@@ -247,7 +273,7 @@ class MainWindow(QMainWindow):
 
         self.sql_edit = QPlainTextEdit()
         self.sql_edit.setAccessibleName("SQL")
-        self.sql_edit.setPlaceholderText("SELECT * FROM ...   (Ctrl+Enter runs; read-only database)")
+        self.sql_edit.setPlaceholderText("SELECT * FROM ...")
         self.sql_edit.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.sql_edit.addAction(self.run_sql_action)
         run_button = QPushButton("Run")
@@ -269,7 +295,7 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
-        self.tabs.addTab(self.data_table, "Data")
+        self.tabs.addTab(self._create_data_page(), "Data")
         self.tabs.addTab(self.schema_table, "Schema")
         self.tabs.addTab(self.sql_page, "SQL")
         # !T: On the tabs for the shortcut scope, on each view for its right-click menu
@@ -278,6 +304,14 @@ class MainWindow(QMainWindow):
         for view in (self.data_table, self.schema_table, self.sql_table):
             view.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
             view.addActions(copy_actions)
+        separator = QAction(self)
+        separator.setSeparator(True)
+        self.data_table.addActions([separator, self.filter_value_action, self.clear_filters_action])
+        header = self.data_table.horizontalHeader()
+        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        header.customContextMenuRequested.connect(
+            lambda pos: self.header_menu(header.logicalIndexAt(pos)).popup(header.mapToGlobal(pos))
+        )
 
         self.empty_label = QLabel(EMPTY_HINT)
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -287,6 +321,29 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.empty_label)
         self.stack.addWidget(self.tabs)
         self.setCentralWidget(self.stack)
+
+    def _create_data_page(self) -> QWidget:
+        # barra da aba Data: botao Colunas..., filtros ativos (um botao por filtro, clique remove) e Limpar filtros
+        self.columns_button = QToolButton()
+        self.columns_button.setDefaultAction(self.columns_action)
+        self.filter_chips = QHBoxLayout()
+        self.clear_filters_button = QToolButton()
+        self.clear_filters_button.setDefaultAction(self.clear_filters_action)
+        self.clear_filters_button.hide()
+        bar = QHBoxLayout()
+        bar.setContentsMargins(6, 4, 6, 0)
+        bar.addWidget(self.columns_button)
+        bar.addLayout(self.filter_chips)
+        bar.addStretch(1)
+        bar.addWidget(self.clear_filters_button)
+
+        self.data_page = QWidget()
+        layout = QVBoxLayout(self.data_page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addLayout(bar)
+        layout.addWidget(self.data_table)
+        return self.data_page
 
     def _create_table_view(self, model: TableModel, name: str) -> tuple[SearchProxyModel, QTableView]:
         proxy = SearchProxyModel(self)
@@ -305,7 +362,7 @@ class MainWindow(QMainWindow):
         header.setStretchLastSection(True)
         header.setHighlightSections(False)
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        header.setResizeContentsPrecision(200)  # mede so as primeiras linhas: rapido em tabelas grandes
+        header.setResizeContentsPrecision(50)  # Qt mede poucas linhas; _fit_columns mede o texto mais longo de todas
         # !T: A third click on a header returns to the order the backend gave
         header.setSortIndicatorClearable(True)
         header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
@@ -319,12 +376,15 @@ class MainWindow(QMainWindow):
         self.table_filter.setPlaceholderText("Filter tables")
         self.table_filter.setClearButtonEnabled(True)
         self.table_filter.setAccessibleName("Filter tables")
-        self.table_filter.setToolTip("Tables whose name has all the words, in any order; ignores case and accents")
+        self.table_filter.setToolTip("All words, any order; ignores case and accents")
         self.table_filter.textChanged.connect(self._filter_tables)
 
         self.table_list = QListWidget()
         self.table_list.setAccessibleName("Tables")
         self.table_list.setUniformItemSizes(True)
+        # nome de tabela nunca vira "...": o painel cresce ate o nome mais longo (limite: rolagem horizontal)
+        self.table_list.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.table_list.setHorizontalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         # !T: Signal emitido quando usuario seleciona outra tabela
         self.table_list.currentTextChanged.connect(self.on_table_selected)
         self.table_list.itemSelectionChanged.connect(self._sync_current_table)
@@ -341,6 +401,18 @@ class MainWindow(QMainWindow):
         self.tables_dock.setWidget(panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.tables_dock)
         self.resizeDocks([self.tables_dock], [260], Qt.Orientation.Horizontal)
+
+    def tables_panel_width(self, tables: list[str]) -> int:
+        """Largura do painel para o nome mais longo caber inteiro: 260..35% da janela (acima disso, rolagem)."""
+        metrics = self.table_list.fontMetrics()
+        longest = max((metrics.horizontalAdvance(name) for name in tables), default=0)
+        scrollbar = self.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+        needed = longest + scrollbar + 2 * self.table_list.frameWidth() + 12 + 16  # item, lista e margens do painel
+        return max(260, min(needed, round(self.width() * 0.35)))
+
+    def _fit_tables_panel(self, tables: list[str]) -> None:
+        # o separador do painel continua arrastavel; so ajusta na abertura do arquivo
+        self.resizeDocks([self.tables_dock], [self.tables_panel_width(tables)], Qt.Orientation.Horizontal)
 
     def _create_toolbar(self) -> None:
         toolbar = QToolBar("Main toolbar", self)
@@ -382,14 +454,11 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(spacer)
 
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Search: all words, any order, ignores case and accents (Ctrl+F)")
-        self.search_edit.setToolTip(
-            "Shows the loaded rows with a cell that has every word, in any order.\n"
-            "Ignores case and accents: tensao campo finds EXCITAÇÃO TENSÃO DE CAMPO."
-        )
+        self.search_edit.setPlaceholderText("Search loaded rows (Ctrl+F)")
+        self.search_edit.setToolTip("All words, any order; ignores case and accents")
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.setAccessibleName("Search loaded rows")
-        self.search_edit.setMinimumWidth(380)
+        self.search_edit.setMinimumWidth(280)
         self.search_edit.setMaximumWidth(420)
         self.search_edit.textChanged.connect(lambda _text: self.search_timer.start())
         toolbar.addWidget(self.search_edit)
@@ -409,6 +478,9 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self.copy_row_action)
         edit_menu.addAction(self.copy_row_header_action)
         edit_menu.addAction(self.find_action)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self.filter_value_action)
+        edit_menu.addAction(self.clear_filters_action)
 
         view_menu = menu_bar.addMenu("&View")
         toggle_tables = self.tables_dock.toggleViewAction()
@@ -431,7 +503,7 @@ class MainWindow(QMainWindow):
 
     def show_about(self) -> None:
         # !T: open() instead of exec(): no nested event loop, so tests and UI Automation do not block
-        box = QMessageBox(QMessageBox.Icon.NoIcon, "Sobre", about_html(), QMessageBox.StandardButton.Ok, self)
+        box = AboutDialog(self)
         box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         box.open()
 
@@ -441,7 +513,7 @@ class MainWindow(QMainWindow):
         apply_theme(name)
 
     def _create_status_bar(self) -> None:
-        self.status_label = QLabel("No database loaded")
+        self.status_label = QLabel()  # o centro da janela ja diz "No database loaded"
         self.info_label = QLabel("Ready")
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)  # indeterminado: o backend nao informa percentual
@@ -458,6 +530,7 @@ class MainWindow(QMainWindow):
 
     def _set_message(self, label: QLabel, text: str, error: bool = False) -> None:
         label.setText(text)
+        label.setToolTip(text)  # texto inteiro se a barra de status estreitar o rotulo
         if not error:
             label.setStyleSheet("")
             return
@@ -517,6 +590,8 @@ class MainWindow(QMainWindow):
         page = self.tabs.currentWidget()
         if page is self.sql_page:
             return self.sql_table
+        if page is self.data_page:
+            return self.data_table
         return page if isinstance(page, QTableView) else None
 
     def copy_selection(self) -> None:
@@ -526,11 +601,11 @@ class MainWindow(QMainWindow):
             return
         indexes = sorted(view.selectedIndexes(), key=lambda i: (i.row(), i.column()))
         if len(indexes) == 1:
-            QGuiApplication.clipboard().setText(str(indexes[0].data() or ""))  # valor puro, sem aspas de TSV
+            QGuiApplication.clipboard().setText(str(indexes[0].data(COPY_ROLE) or ""))  # valor puro, sem aspas de TSV
             return
         lines: dict[int, list[object]] = {}
         for index in indexes:
-            lines.setdefault(index.row(), []).append(index.data())
+            lines.setdefault(index.row(), []).append(index.data(COPY_ROLE))
         if lines:
             QGuiApplication.clipboard().setText(rows_to_tsv(list(lines.values())))
 
@@ -546,7 +621,7 @@ class MainWindow(QMainWindow):
             return
         titles = [model.headerData(c, Qt.Orientation.Horizontal) for c in columns] if header else None
         QGuiApplication.clipboard().setText(
-            rows_to_tsv([[model.index(row, c).data() for c in columns] for row in rows], titles)
+            rows_to_tsv([[model.index(row, c).data(COPY_ROLE) for c in columns] for row in rows], titles)
         )
 
     # ------------------------------------------------------------ database
@@ -579,28 +654,43 @@ class MainWindow(QMainWindow):
             if total and table:
                 self._set_message(self.status_label, f"Converting {db_path.name}: table {done + 1} of {total} ({table})")
 
+        self._db_request += 1  # abrir outro arquivo invalida a abertura anterior ainda em andamento
         self._run(
-            0,
+            self._db_request,
             lambda report: (db_path, *open_database(db_path, report)),
             self._on_database_loaded,
             self._on_database_error,
             progress,
         )
 
-    def _on_database_loaded(self, _request_id: int, result: object) -> None:
+    def _on_database_loaded(self, request_id: int, result: object) -> None:
+        if request_id != self._db_request:
+            return  # abertura antiga terminou depois de outra mais nova: nao troca o banco
         db_path, manager, tables = result  # type: ignore[misc]
         previous = self.table_list.currentItem().text() if self.table_list.currentItem() else None
+        if db_path != self.current_db_path:
+            self._reset_view(None)  # outro arquivo: filtros e colunas ocultas nao valem mais
+            self.loaded_table = None
+            self.table_model.set_rows([])
+            self.schema_model.set_rows([])
+        # consultas de tabela e SQL ainda pendentes sao do banco anterior: descartar o que elas devolverem
+        self._table_request += 1
+        self._sql_request += 1
         # !T: No close() on the old manager: a table/SQL worker may still use it; the last reference closes it
         self.manager = manager
         self.current_db_path = db_path
         self.sql_query = None
+        self.sql_model.set_rows([])
         self.setWindowTitle(f"{db_path.name} - {APP_TITLE}")
         self.stack.setCurrentWidget(self.tabs)
 
         self.table_list.blockSignals(True)
         self.table_list.clear()
         self.table_list.addItems(tables)
+        for row in range(self.table_list.count()):  # nome inteiro tambem na dica
+            self.table_list.item(row).setToolTip(self.table_list.item(row).text())
         self.table_list.blockSignals(False)
+        self._fit_tables_panel(tables)
         self._filter_tables(self.table_filter.text())
 
         # o caminho usado para abrir (DuckDB, SQLite, Access ODBC, mdbtools) fica visivel na barra de status
@@ -618,7 +708,9 @@ class MainWindow(QMainWindow):
             self.schema_model.set_rows([])
             self._set_message(self.info_label, "No tables")
 
-    def _on_database_error(self, _request_id: int, message: str) -> None:
+    def _on_database_error(self, request_id: int, message: str) -> None:
+        if request_id != self._db_request:
+            return
         self._set_message(self.status_label, f"Error: {message}", error=True)
         self.open_action.setEnabled(True)
         self.reload_action.setEnabled(True)
@@ -636,6 +728,8 @@ class MainWindow(QMainWindow):
         if not table_name or self.manager is None:
             return
 
+        if table_name != self.view_table:
+            self._reset_view(table_name)  # trocar de tabela limpa os filtros e mostra todas as colunas
         self.pending_table_name = table_name
         self._set_message(self.info_label, f"Loading {table_name}...")
         self.table_load_timer.start()
@@ -647,21 +741,28 @@ class MainWindow(QMainWindow):
         manager = self.manager
         table_name = self.pending_table_name
         limit = self.limit_combo.currentData()
+        filters = list(self.filters)
         self.pending_table_name = None
         self._table_request += 1
         self._run(
             self._table_request,
-            lambda _report: load_table_payload(manager, table_name, limit),
+            lambda _report: load_table_payload(manager, table_name, limit, filters),
             self._on_table_loaded,
             self._on_table_error,
         )
 
     def _fit_columns(self, view: QTableView) -> None:
         view.sortByColumn(-1, Qt.SortOrder.AscendingOrder)  # volta para a ordem do backend
-        view.resizeColumnsToContents()
-        for column in range(view.model().columnCount()):
-            if view.columnWidth(column) > MAX_COLUMN_WIDTH:
-                view.setColumnWidth(column, MAX_COLUMN_WIDTH)
+        view.resizeColumnsToContents()  # !T: Qt takes the larger of the header text and the content
+        # !T: Qt measures only the first rows (resize precision); the longest texts of all loaded rows are measured
+        # !T: here so no value is cut with "..."; only above MAX_COLUMN_WIDTH (tooltip has the full text)
+        model: TableModel = view.model().sourceModel()
+        padding = 2 * (view.style().pixelMetric(QStyle.PixelMetric.PM_FocusFrameHMargin, None, view) + 1) + 8
+        for column in range(model.columnCount()):
+            metrics = QFontMetrics(model.cell_font(column, view.font()))
+            longest = max((metrics.horizontalAdvance(text) for text in model.longest_texts(column)), default=0)
+            width = max(view.columnWidth(column), longest + padding)
+            view.setColumnWidth(column, min(width, MAX_COLUMN_WIDTH))
 
     def _on_table_loaded(self, request_id: int, result: object) -> None:
         if request_id != self._table_request:
@@ -676,9 +777,11 @@ class MainWindow(QMainWindow):
         )
         self.schema_model.set_rows(schema)
         self.loaded_table = (payload["table_name"], payload["total_rows"])
+        self.matched_rows = payload["matched_rows"]
 
         for view in (self.data_table, self.schema_table):
             self._fit_columns(view)
+        self._apply_hidden_columns()  # o reset do modelo mostra todas: oculta de novo as escolhidas
         self._apply_search()
         self._update_export_actions()
 
@@ -693,16 +796,106 @@ class MainWindow(QMainWindow):
 
         table_name, total_rows = self.loaded_table
         loaded = self.table_model.rowCount()
-        if not loaded:
+        in_table = f"{total_rows:,} rows in table"
+        if self.filters:  # contagem das linhas que passam nos filtros, feita no banco (alem das carregadas)
+            in_table = f"{self.matched_rows:,} filtered rows, {in_table}"
+        if self.data_proxy.words and loaded:
+            message = f"{table_name}: {self.data_proxy.rowCount():,} of {loaded:,} loaded rows match ({in_table})"
+        elif self.filters:
+            shown = f"Showing {loaded:,} of {self.matched_rows:,} filtered rows"
+            message = f"{table_name}: {shown} ({total_rows:,} rows in table)"
+        elif not loaded:
             message = f"{table_name}: 0 rows"
-        elif self.data_proxy.words:
-            message = (
-                f"{table_name}: {self.data_proxy.rowCount():,} of {loaded:,} loaded rows match"
-                f" ({total_rows:,} rows in table)"
-            )
         else:
             message = f"{table_name}: Showing {loaded:,} of {total_rows:,} rows"
-        self._set_message(self.info_label, message)
+        hidden = sum(name in self.hidden_columns for name in self.table_model.columns)
+        self._set_message(self.info_label, message + hidden_text(hidden))
+
+    # ----------------------------------------------- filtros e colunas ocultas
+
+    def _reset_view(self, table_name: str | None) -> None:
+        self.view_table = table_name
+        self.filters.clear()
+        self.hidden_columns.clear()
+        self._refresh_filter_bar()
+
+    def filter_by_current_cell(self) -> None:
+        # celula atual da aba Data (o clique direito e o Shift+F10 agem sobre ela): valor Python lido do banco
+        index = self.data_table.currentIndex()
+        selected = self.data_table.selectedIndexes()
+        if selected and index not in selected:
+            index = selected[0]  # !T: UI Automation / screen readers select a cell without making it current
+        index = self.data_proxy.mapToSource(index)
+        if index.isValid():
+            column = self.table_model.columns[index.column()]
+            self.add_filter(column, self.table_model.rows[index.row()].get(column))
+
+    def add_filter(self, column: str, value: Any) -> None:
+        if (column, value) not in self.filters:
+            self.filters.append((column, value))
+            self._filters_changed()
+
+    def remove_filter(self, position: int) -> None:
+        del self.filters[position]
+        self._filters_changed()
+
+    def clear_filters(self) -> None:
+        if self.filters:
+            self.filters.clear()
+            self._filters_changed()
+
+    def _filters_changed(self) -> None:
+        self._refresh_filter_bar()
+        self.reload_table()  # o filtro vai na consulta: acha linhas alem das carregadas
+
+    def _refresh_filter_bar(self) -> None:
+        while self.filter_chips.count():
+            self.filter_chips.takeAt(0).widget().deleteLater()
+        if self.filters:
+            self.filter_chips.addWidget(QLabel("Filtros:" if len(self.filters) > 1 else "Filtro:"))
+        for position, (column, value) in enumerate(self.filters):
+            text = filter_text(column, value)
+            chip = QToolButton()
+            chip.setText(f"{text}  ×")
+            chip.setAccessibleName(f"Remover filtro {text}")
+            chip.setToolTip("Remover este filtro")
+            chip.clicked.connect(lambda _checked=False, p=position: self.remove_filter(p))
+            self.filter_chips.addWidget(chip)
+        self.clear_filters_button.setVisible(bool(self.filters))
+        self.clear_filters_action.setEnabled(bool(self.filters))
+
+    def _apply_hidden_columns(self) -> None:
+        for column, name in enumerate(self.table_model.columns):
+            self.data_table.setColumnHidden(column, name in self.hidden_columns)
+
+    def set_hidden_columns(self, names: set[str]) -> None:
+        self.hidden_columns = set(names)
+        self._apply_hidden_columns()
+        self._apply_search()  # atualiza "N colunas ocultas" na barra de status
+
+    def hide_column(self, name: str) -> None:
+        self.set_hidden_columns(self.hidden_columns | {name})
+
+    def choose_columns(self) -> None:
+        for open_dialog in self.findChildren(ColumnsDialog):
+            if open_dialog.isVisible():  # um dialogo so, mesmo com pedido repetido
+                open_dialog.raise_()
+                return
+        dialog = ColumnsDialog(self.table_model.columns, self.hidden_columns, self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.hiddenChanged.connect(self.set_hidden_columns)  # vale na hora; Fechar so fecha
+        dialog.open()
+
+    def header_menu(self, column: int) -> QMenu:
+        """Menu do clique direito no cabecalho da aba Data (column = -1 fora de uma coluna)."""
+        menu = QMenu(self)
+        menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        hide = menu.addAction("Ocultar esta coluna")
+        hide.setEnabled(0 <= column < len(self.table_model.columns))
+        hide.triggered.connect(lambda: self.hide_column(self.table_model.columns[column]))
+        menu.addAction(self.columns_action)
+        menu.addAction("Mostrar todas", lambda: self.set_hidden_columns(set()))
+        return menu
 
     # ----------------------------------------------------------------- SQL
 
@@ -815,6 +1008,7 @@ class MainWindow(QMainWindow):
         def finished(message: str, error: bool = False) -> None:
             dialog.canceled.disconnect(cancel.set)
             dialog.close()
+            dialog.deleteLater()  # nao acumula dialogos "Export" escondidos
             self._set_message(self.info_label, message, error=error)
 
         def cancelled_or_done(_request_id: int, count: object) -> None:

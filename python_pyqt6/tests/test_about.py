@@ -1,23 +1,49 @@
 import re
 import sys
+import tomllib
+from pathlib import Path
 
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QLabel
 
 from shared import about
+from ui.dialogs import AboutDialog
 from ui.main_window import MainWindow
 
+GITHUB = "https://github.com/mauriciomenon/mdb2sql"
+GITLAB = "https://gitlab.com/mauricio.menon/mdb2sql"
+ROOT = Path(__file__).resolve().parents[1]
 
-def test_about_lines() -> None:
-    lines = about.about_lines()
 
-    assert lines[0] == "MDB2SQL (Python + PyQt6)"
-    assert lines[1] == "Versao 1.1.1 - build dev"
-    assert lines[2] == "Abre bancos Access (.mdb/.accdb), SQLite e DuckDB e exporta para DuckDB, SQLite, Excel e CSV."
+def test_license_is_gpl2_or_later() -> None:
+    text = (ROOT / "LICENSE").read_text(encoding="utf-8")
+    assert text.split()[:5] == ["GNU", "GENERAL", "PUBLIC", "LICENSE", "Version"] and text.split()[5] == "2,"
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert project["license"] == "GPL-2.0-or-later"
+    assert dict(about.about_fields())["Licenca"] == "GPL v2 ou posterior"
+    # o pacote (zip e instalador) leva o LICENSE
+    assert "'LICENSE'" in (ROOT / "scripts" / "package_w11.ps1").read_text(encoding="utf-8")
+
+
+def test_title_is_short_and_uses_the_single_version_source() -> None:
+    assert about.app_version() == "1.2.0"
+    assert about.app_title() == "mdb2sql 1.2.0 - Python"
+
+
+def test_about_fields() -> None:
+    fields = dict(about.about_fields())
+
+    assert list(fields) == ["Build", "Stack", "Bibliotecas", "Leitura do Access", "Autor", "Licenca"]
+    assert fields["Build"] == "dev"
+    assert re.fullmatch(r"Python [\d.]+\S* \+ PyQt6 [\d.]+ \(Qt [\d.]+\)", fields["Stack"])
+    assert re.fullmatch(r"DuckDB [\d.]+\S*, XlsxWriter [\d.]+, pyodbc [\d.]+", fields["Bibliotecas"])
     assert re.fullmatch(
-        r"Python [\d.]+\S*, PyQt6 [\d.]+, Qt [\d.]+, DuckDB [\d.]+\S*, XlsxWriter [\d.]+, pyodbc [\d.]+", lines[3]
+        r"ODBC Microsoft Access Driver \((nao )?instalado\) ou mdbtools( [\d.]+ embutido| \(so no exe de release\))",
+        fields["Leitura do Access"],
     )
-    assert lines[4:] == ["Autor: Mauricio Menon", "Codigo: https://github.com/mauriciomenon/mdb2sql"]
-    assert "@" not in "".join(lines)
+    assert fields["Autor"] == "Mauricio Menon"
+    assert about.LINKS == (("GitHub", GITHUB), ("GitLab", GITLAB))
+    assert "@" not in "".join(fields.values())
 
 
 def test_version_from_frozen_bundle(tmp_path, monkeypatch) -> None:
@@ -25,17 +51,26 @@ def test_version_from_frozen_bundle(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
 
     assert about.app_version() == "9.9.9"
+    assert about.app_title() == "mdb2sql 9.9.9 - Python"
     assert about.build_info() == "build dev"  # exe sem BUILD
     (tmp_path / "BUILD").write_text("123 2026-11-15\n", encoding="utf-8")
     assert about.build_info() == "build 123 (2026-11-15)"
+    assert dict(about.about_fields())["Build"] == "123 (2026-11-15)"
 
 
-def test_help_menu_opens_about(qtbot) -> None:
+def test_help_menu_opens_about_with_clickable_links(qtbot) -> None:
     win = MainWindow()
     qtbot.addWidget(win)
     win.show_about()
 
-    box = win.findChild(QMessageBox)
+    box = win.findChild(AboutDialog)
     assert box.windowTitle() == "Sobre"
-    assert "Versao 1.1.1 - build dev" in box.text()
+    assert box.title.text() == "mdb2sql 1.2.0"
+    texts = [label.text() for label in box.findChildren(QLabel)]
+    assert "Build:" in texts and "dev" in texts and "Licenca:" in texts
+    # os dois links abrem no navegador padrao (openExternalLinks) e aceitam teclado
+    assert [link.text() for link in box.links] == [f'<a href="{url}">{url}</a>' for url in (GITHUB, GITLAB)]
+    for link in box.links:
+        assert link.openExternalLinks()
+        assert link.textInteractionFlags() & Qt.TextInteractionFlag.LinksAccessibleByMouse
     box.close()

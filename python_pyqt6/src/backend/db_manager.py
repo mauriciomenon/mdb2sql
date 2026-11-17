@@ -3,7 +3,7 @@
 # !T: bundled sqlite extension, Access copied into an in-memory database. Each call uses its own cursor (threads)
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import duckdb
 
@@ -19,6 +19,22 @@ SQLITE_EXTENSION = "duckdb_ext/sqlite_scanner.duckdb_extension"
 
 def sql_string(text: str) -> str:
     return "'" + text.replace("'", "''") + "'"
+
+
+Filters = Sequence[tuple[str, Any]]  # (coluna, valor) do clique direito "Filtrar por este valor"
+
+
+def filter_where(filters: Filters) -> tuple[str, list[Any]]:
+    """' WHERE "a" = ? AND "b" IS NULL' e os parametros; sem filtros, ('', []).
+
+    !T: The column name is always quoted (double quotes doubled) and the value is always a bound parameter,
+    !T: never text inside the SQL. The value is the Python value read from that column, so DuckDB compares it
+    !T: in the column type (number, text, date) for DuckDB, SQLite and Access files alike
+    """
+    if not filters:
+        return "", []
+    parts = [f"{quote(column)} IS NULL" if value is None else f"{quote(column)} = ?" for column, value in filters]
+    return " WHERE " + " AND ".join(parts), [value for _, value in filters if value is not None]
 
 
 def load_sqlite_extension(conn: duckdb.DuckDBPyConnection) -> None:
@@ -169,9 +185,9 @@ class DBManager:
             for row in result
         ]
 
-    def query_table(self, table_name: str, limit: int = 100) -> List[Dict[str, Any]]:
+    def query_table(self, table_name: str, limit: int = 100, filters: Filters = ()) -> List[Dict[str, Any]]:
         """
-        Executa SELECT na tabela e retorna ate limit linhas.
+        Executa SELECT na tabela e retorna ate limit linhas (so as que passam nos filtros coluna = valor).
         """
         if not self.conn:
             return []
@@ -180,8 +196,9 @@ class DBManager:
 
         # SELECT com LIMIT para nao carregar tabela inteira
         # !T: Plain Python values, not pandas: DECIMAL(10,0) stays 1 (pandas would show 1.0) and NULL stays None
+        where, params = filter_where(filters)
         with self.cursor() as cursor:
-            cursor.execute(f"SELECT * FROM {quote(table_name)} LIMIT {int(limit)}")
+            cursor.execute(f"SELECT * FROM {quote(table_name)}{where} LIMIT {int(limit)}", params)
             columns = [column[0] for column in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
@@ -206,17 +223,18 @@ class DBManager:
             rows = cursor.fetchmany(limit + 1)
         return columns, [dict(zip(columns, row)) for row in rows[:limit]], len(rows) > limit
 
-    def get_row_count(self, table_name: str) -> int:
+    def get_row_count(self, table_name: str, filters: Filters = ()) -> int:
         """
-        Retorna numero total de linhas em uma tabela.
+        Retorna numero total de linhas em uma tabela (com filtros: so as que passam neles).
         """
         if not self.conn:
             return 0
 
         self._validate_table_name(table_name)
 
+        where, params = filter_where(filters)
         with self.cursor() as cursor:
-            result = cursor.execute(f"SELECT COUNT(*) FROM {quote(table_name)}").fetchone()
+            result = cursor.execute(f"SELECT COUNT(*) FROM {quote(table_name)}{where}", params).fetchone()
         return result[0] if result else 0
 
     def close(self) -> None:

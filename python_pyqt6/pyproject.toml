@@ -3,8 +3,10 @@
 
 [project]
 name = "mdb2sql"
-version = "1.1.1"
+version = "1.2.0"
 description = "Desktop viewer and exporter for Access, SQLite and DuckDB databases"
+license = "GPL-2.0-or-later"
+license-files = ["LICENSE"]
 authors = [
     {name = "Maurício Menon", email = "54405514+mauriciomenon@users.noreply.github.com"}
 ]

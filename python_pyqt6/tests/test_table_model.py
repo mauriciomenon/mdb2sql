@@ -4,6 +4,7 @@ import pandas as pd
 from PyQt6.QtCore import Qt
 
 from ui.table_model import (
+    COPY_ROLE,
     SORT_ROLE,
     SearchProxyModel,
     TableModel,
@@ -31,6 +32,19 @@ def test_numbers_keep_their_type_for_sorting() -> None:
     assert sort_key(Decimal("1.5")) == 1.5
     assert sort_key(2**70) == float(2**70)
     assert sort_key(pd.Timestamp("2026-07-14")) == "2026-07-14 00:00:00"
+
+
+def test_whole_doubles_show_without_decimal_part_but_copy_the_real_value(qtbot) -> None:
+    # paridade com as outras stacks: RTUNO 2.0 aparece 2, PNTNO 2316.0 aparece 2316; 2.5, NaN e DECIMAL nao mudam
+    model = TableModel()
+    values = [2.0, 2316.0, -0.0, 2.5, 1e20, float("nan"), None, Decimal("1.50"), 7]
+    model.set_rows([{"v": v} for v in values])
+    shown = [model.data(model.index(r, 0)) for r in range(len(values))]
+    assert shown == ["2", "2316", "0", "2.5", "1e+20", "", "", "1.50", "7"]
+    copied = [model.data(model.index(r, 0), COPY_ROLE) for r in range(len(values))]
+    assert copied[:2] == ["2.0", "2316.0"] and copied[3] == "2.5"  # copia o valor real
+    assert model.data(model.index(1, 0), SORT_ROLE) == 2316.0
+    assert model.rows[1]["v"] == 2316.0  # o filtro por valor usa o valor tipado da linha
 
 
 def test_model_roles(qtbot) -> None:

@@ -3,17 +3,17 @@
 Windows desktop program that opens Microsoft Access (`.mdb`, `.accdb`), SQLite (`.sqlite`, `.sqlite3`)
 and DuckDB (`.duckdb`, `.db`) databases read-only, shows tables, schema and data, runs SQL, and exports
 the whole database to DuckDB, SQLite or Excel (one sheet per table), or the current table / SQL result
-to CSV or Excel. Version 1.1.1.
+to CSV or Excel. Version 1.2.0.
 
 ## Download: which file
 
-Release `python_pyqt6-v1.1.1`, the three files are the same program, pick one:
+Release `python_pyqt6-v1.2.0`, the three files are the same program, pick one:
 
 | File | What it is | When to use |
 | --- | --- | --- |
-| `mdb2sql-1.1.1-w11-amd64-python-pyqt6.exe` | Single exe. Double-click, nothing to install. At every start it unpacks itself into a temporary folder (a few seconds) and removes it on exit. | Try it, run from a USB stick or a shared folder. |
-| `mdb2sql-1.1.1-w11-amd64-python-pyqt6.zip` | The app folder (`mdb2sql.exe` + `_internal\`). Unzip anywhere, run `mdb2sql.exe`. Starts faster than the single exe. | Daily use without installing. |
-| `mdb2sql-1.1.1-w11-amd64-python-pyqt6-installer.exe` | Installer for the current user (no administrator): `%LOCALAPPDATA%\Programs\MDB2SQL (Python + PyQt6)`, Start menu shortcut, uninstaller in Settings > Apps. | Daily use, installed like any program. |
+| `mdb2sql-1.2.0-w11-amd64-python-pyqt6.exe` | Single exe. Double-click, nothing to install. At every start it unpacks itself into a temporary folder (a few seconds) and removes it on exit. | Try it, run from a USB stick or a shared folder. |
+| `mdb2sql-1.2.0-w11-amd64-python-pyqt6.zip` | The app folder (`mdb2sql.exe` + `_internal\`). Unzip anywhere, run `mdb2sql.exe`. Starts faster than the single exe. | Daily use without installing. |
+| `mdb2sql-1.2.0-w11-amd64-python-pyqt6-installer.exe` | Installer for the current user (no administrator): `%LOCALAPPDATA%\Programs\MDB2SQL (Python + PyQt6)`, Start menu shortcut, uninstaller in Settings > Apps. | Daily use, installed like any program. |
 
 Windows may show SmartScreen ("Windows protected your PC") because the files are not signed:
 More info > Run anyway.
@@ -39,13 +39,27 @@ A 115 MB `.accdb` with 287 tables takes about 10-15 s by ODBC and 30-40 s by mdb
 The source file is never changed.
 
 Left panel: list of tables with a filter box (Ctrl+L goes to the list); the filter works like the search below.
+Names are never cut: the panel opens as wide as the longest name (up to 35% of the window, then it scrolls).
 Tabs:
 
 - **Data** (Ctrl+1): first rows of the selected table; "Rows" in the toolbar sets how many (100 by default, 1,000,
   10,000). Click a header to sort (numbers sort as numbers; third click returns to the original order). Search box
   (Ctrl+F) filters the loaded rows: a row stays when one of its cells has all the words typed, in any order,
   ignoring case and accents (`tensao campo` finds `EXCITAÇÃO TENSÃO DE CAMPO`; words that are only in different
-  cells do not match). Long values are cut at 320 px; the tooltip shows the full text.
+  cells do not match). Columns fit the header name and the longest loaded value, so nothing is cut with "..."
+  (only above 1,200 px; the tooltip shows the full text; header tooltip: name and type).
+  - **Colunas...** (button above the grid): check boxes in a grid that follows the dialog width (1 to 6 per row,
+    4 at the default window size), a search field on top, "Mostrar todas" / "Ocultar todas" (only the columns the
+    search shows) and "Fechar"; each change applies at once. With several boxes selected, checking one checks them
+    all. The dialog is about 65% of the window (420 to 900 px wide). Right-click on a column header: "Ocultar esta coluna",
+    "Colunas...", "Mostrar todas". The status bar shows "N colunas ocultas". Hidden columns last until another
+    table or file is selected. Search still looks at every column and exports still write every column.
+  - **Filtrar por este valor** (right-click on a cell, or Edit menu): shows only the rows of the table where that
+    column has exactly that value (an empty NULL cell filters `IS NULL`). The filter runs in the database query,
+    so it finds rows beyond the loaded ones; "Rows" still limits how many are shown and the status bar says how
+    many match (`Showing 100 of 604 filtered rows (36,754 rows in table)`). Several filters add up (AND) and
+    combine with the search box. Each active filter is a button above the grid (`SUBNAM = 'U02' ×`, click to
+    remove it); "Limpar filtros" removes all. Selecting another table clears them. Exports are not filtered.
 - **Schema** (Ctrl+2): columns, types and nullability.
 - **SQL** (Ctrl+3): free SQL (DuckDB dialect) over the open database, run with Ctrl+Enter or Run. Shows up to
   the "Rows" limit. Table names with spaces or symbols go in double quotes: `SELECT * FROM "My Table"`.
@@ -65,9 +79,14 @@ Menus:
   - Writing `.mdb`/`.accdb` is not offered: there is no reliable free library that writes Access files.
 - **Edit**: Copy Value (Ctrl+C), Copy Row (Ctrl+Shift+C), Copy Row with Header, Find in Rows (Ctrl+F). Also on the
   right-click menu of every grid. Copied rows are TAB-separated: they paste as columns in Excel.
+  Filtrar por este valor and Limpar filtros (Data tab, see above).
 - **View**: Tables Panel (Ctrl+B), Go to Table List (Ctrl+L), Data / Schema / SQL tabs, Run SQL.
 - **Settings > Theme**: System, Light or Dark. Saved for the next start (registry `HKCU\Software\MDB2SQL`).
-- **Help > Sobre**: name, version, build number and date, runtime versions, author, source link.
+- **Help > Sobre**: name, version, build number and date, stack and library versions, Access readers available,
+  author, license, and the GitHub and GitLab links (they open in the default browser).
+
+The window title is short, `mdb2sql 1.2.0 - Python` (with a file open, `<file> - mdb2sql 1.2.0 - Python`); the
+full stack is in Help > Sobre. Changes of each version: [CHANGELOG.md](CHANGELOG.md).
 
 ## Tested (2026-11-15)
 
@@ -80,13 +99,18 @@ Real database "2026-07-14 DB4" (copies): 287 tables, 113,962 rows, RANGER_SOSTAT
 - `.sqlite` and `.duckdb`: 287 tables, all counts equal.
 - Export of the `.accdb` to `.duckdb`, `.sqlite` and `.xlsx`, reopened: 287 tables with equal counts; the `.xlsx`
   has 287 sheets with the right row counts.
-- 55 automatic tests (pytest + pytest-qt; 53 run in every build, 2 need local data: a real `.accdb` copy in
+- 55 automatic tests in 1.1.0 (pytest + pytest-qt; 53 run in every build, 2 need local data: a real `.accdb` copy in
   `MDB2SQL_TEST_ACCDB`, run here with DB4, and `data/sample.duckdb`): sheet names and split, reader order and
   forcing, export formats, cancel, default folder, theme saving, SQL tab, menus, DECIMAL display, search, title
   and icon.
 - 1.1.1 search (2026-11-16, DB4 `.duckdb` copy): `tensao energ barra` finds RANGER_SOPERM "IOPI 62 - Não energizar
   BARRA B4 com tensão maior que 525kV." (1.1.0 found nothing); on RANGER_SOSTAT, 10,000 loaded rows x 123 columns,
   the first search takes ~1 s (text prepared once per load) and each next one 40-80 ms (1.1.0: up to 12 s).
+- 1.2.0 (2026-11-17, release exe, DB4 `.duckdb` copy, driven by UI Automation): RANGER_SOSTAT, "Colunas..." with
+  5 columns hidden (status "5 colunas ocultas"); right-click on SUBNAM `U02` > Filtrar por este valor shows
+  "Showing 100 of 604 filtered rows (36,754 rows in table)"; the filter round trip (filter by each value of a row
+  gives that row back) passes on the DB4 `.accdb` copy with ODBC and with mdbtools. 84 automatic tests (80 run in
+  every build).
 - Products checked: zip extracted, installer installed and uninstalled silently (no files, shortcut or registry key
   left); the exe, the zip folder and the installed folder have no path or name of the build machine.
 
@@ -114,10 +138,15 @@ pwsh -NoProfile -File build_w11_amd64.ps1                        # the three pro
 
 Commands, products, work folders and cleaning: [README-BUILD.txt](README-BUILD.txt).
 
-Layout: `src/main.py` entry point; `src/ui/` window and table model; `src/backend/` database access
-(`db_manager.py`), Access readers (`access.py`), exports (`export.py`); `src/shared/` About text, TAB copy,
+Layout: `src/main.py` entry point; `src/ui/` window, dialogs and table model; `src/backend/` database access
+(`db_manager.py`), Access readers (`access.py`), exports (`export.py`); `src/shared/` About data, TAB copy,
 bundled files; `tests/`; `mdb2sql.spec` PyInstaller spec (single exe and app folder); `scripts/` build steps and
 `installer.nsi`.
 
-License: proprietary, all rights reserved. mdbtools (GPL/LGPL, license files inside the program, folder
-`mdbtools`) is run as a separate program.
+## Licenca
+
+Licenca: GPL v2 ou posterior (`GPL-2.0-or-later`, text in [LICENSE](LICENSE); the zip and the installed folder
+carry it).
+
+Third-party parts keep their own licenses: Qt and PyQt6, DuckDB, XlsxWriter, pyodbc, and mdbtools (GPL/LGPL,
+license files inside the program, folder `mdbtools`, run as a separate program).
