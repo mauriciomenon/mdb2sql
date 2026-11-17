@@ -148,11 +148,21 @@ fn writeFromWhere(out: *std.ArrayList(u8), params: *std.ArrayList([]const u8), a
 
     var n_groups: usize = 0;
 
-    if (spec.search.len > 0 and spec.columns.len > 0) {
+    // Busca global: uma coluna que contem todas as palavras, em qualquer ordem (mesma regra de gridtools.rowMatches)
+    const ws = &std.ascii.whitespace;
+    if (std.mem.indexOfNone(u8, spec.search, ws) != null and spec.columns.len > 0) {
         try out.appendSlice(a, " WHERE (");
         for (spec.columns, 0..) |col, i| {
             if (i > 0) try out.appendSlice(a, " OR ");
-            try writeCriterion(out, params, a, .{ .column = col, .op = .contains, .value = spec.search });
+            try out.append(a, '(');
+            var words = std.mem.tokenizeAny(u8, spec.search, ws);
+            var first_word = true;
+            while (words.next()) |w| {
+                if (!first_word) try out.appendSlice(a, " AND ");
+                first_word = false;
+                try writeCriterion(out, params, a, .{ .column = col, .op = .contains, .value = w });
+            }
+            try out.append(a, ')');
         }
         try out.append(a, ')');
         n_groups += 1;
@@ -296,7 +306,7 @@ test "search, criteria, sort and paging" {
     const n = "strip_accents(lower(CAST(\"NAME\" AS VARCHAR)))";
     const i = "strip_accents(lower(CAST(\"ID\" AS VARCHAR)))";
     const p = "strip_accents(lower(CAST(? AS VARCHAR)))";
-    try t.expectEqualStrings("SELECT * FROM \"RANGER_SOACCU\" WHERE (contains(" ++ i ++ ", " ++ p ++ ") OR contains(" ++ n ++ ", " ++ p ++ "))" ++
+    try t.expectEqualStrings("SELECT * FROM \"RANGER_SOACCU\" WHERE ((contains(" ++ i ++ ", " ++ p ++ ")) OR (contains(" ++ n ++ ", " ++ p ++ ")))" ++
         " AND (CASE WHEN TRY_CAST(? AS DOUBLE) IS NOT NULL THEN TRY_CAST(\"ID\" AS DOUBLE) > TRY_CAST(? AS DOUBLE) ELSE " ++ i ++ " > " ++ p ++ " END" ++
         " OR \"NAME\" IS NULL) ORDER BY \"NAME\" DESC NULLS LAST LIMIT 50 OFFSET 150", b.sql);
     try t.expectEqual(5, b.params.len);
@@ -304,6 +314,22 @@ test "search, criteria, sort and paging" {
     try t.expectEqualStrings("10", b.params[4]);
     // o numero de '?' sempre bate com o numero de parametros
     try t.expectEqual(b.params.len, std.mem.count(u8, b.sql, "?"));
+}
+
+test "search words: all of them in the same column, any order; blank search filters nothing" {
+    const b = try buildCount(t.allocator, .{ .table = "RANGER_SOACCU", .tables = &t_tables, .columns = &t_cols, .search = " campo\ttensao " });
+    defer b.deinit(t.allocator);
+    const n = "strip_accents(lower(CAST(\"NAME\" AS VARCHAR)))";
+    const i = "strip_accents(lower(CAST(\"ID\" AS VARCHAR)))";
+    const p = "strip_accents(lower(CAST(? AS VARCHAR)))";
+    try t.expectEqualStrings("SELECT COUNT(*) FROM \"RANGER_SOACCU\" WHERE ((contains(" ++ i ++ ", " ++ p ++ ") AND contains(" ++ i ++ ", " ++ p ++ "))" ++
+        " OR (contains(" ++ n ++ ", " ++ p ++ ") AND contains(" ++ n ++ ", " ++ p ++ ")))", b.sql);
+    try t.expectEqualSlices(u8, "campo", b.params[0]);
+    try t.expectEqualSlices(u8, "tensao", b.params[3]);
+    try t.expectEqual(4, b.params.len);
+    const blank = try buildCount(t.allocator, .{ .table = "RANGER_SOACCU", .tables = &t_tables, .columns = &t_cols, .search = "  " });
+    defer blank.deinit(t.allocator);
+    try t.expectEqualStrings("SELECT COUNT(*) FROM \"RANGER_SOACCU\"", blank.sql);
 }
 
 test "count shares the filter and has no paging" {

@@ -1,7 +1,7 @@
 MDB2SQL (Zig + Dear ImGui) - BUILD, PRODUTOS E LIMPEZA
 =======================================================
 Guia pratico de build desta pasta. O README.md descreve o app; este arquivo diz qual comando rodar e onde
-fica cada coisa. Versao: .version em build.zig.zon (fonte unica; hoje 1.1.0).
+fica cada coisa. Versao: .version em build.zig.zon (fonte unica; hoje 1.1.1).
 
 
 1. REGRAS

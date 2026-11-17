@@ -204,6 +204,7 @@ const App = struct {
     source: ?dbm.Source = null,
     counts: []u64 = &.{}, // linhas por tabela, mesma ordem de db.table_names
     table_filter: [128:0]u8 = @splat(0),
+    filter_scratch: std.ArrayList(u8) = .empty, // nome de tabela em forma de busca (reaproveitado a cada quadro)
 
     selected: ?usize = null,
     schema: ?dbm.Grid = null,
@@ -260,6 +261,7 @@ const App = struct {
         app.clearTable();
         app.clearResult();
         app.gpa.free(app.counts);
+        app.filter_scratch.deinit(app.gpa);
         app.db.close();
     }
 
@@ -731,7 +733,7 @@ const App = struct {
 
     fn drawTables(app: *App) void {
         ig.igSetNextItemWidth(-1);
-        _ = ig.igInputTextWithHint("##filter", "filter tables", &app.table_filter, app.table_filter.len + 1, 0, null, null);
+        _ = ig.igInputTextWithHint("##filter", "all words, any order, ignores case and accents", &app.table_filter, app.table_filter.len + 1, 0, null, null);
         const flags = ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_ScrollY | ig.ImGuiTableFlags_BordersInnerV;
         if (!ig.igBeginTable("tbl", 2, flags, .{ .x = 0, .y = 0 }, 0)) return;
         defer ig.igEndTable();
@@ -739,9 +741,11 @@ const App = struct {
         ig.igTableSetupColumn("Table", ig.ImGuiTableColumnFlags_WidthStretch, 0, 0);
         ig.igTableSetupColumn("Rows", ig.ImGuiTableColumnFlags_WidthFixed, 0, 0);
         ig.igTableHeadersRow();
-        const filter = zstr(&app.table_filter);
+        var fbuf: [app.table_filter.len]u8 = undefined;
+        const words = dbm.gridtools.fold(&fbuf, zstr(&app.table_filter));
         for (app.db.table_names, 0..) |name, i| {
-            if (filter.len > 0 and std.ascii.findIgnoreCase(name, filter) == null) continue;
+            const row = [_]?[]const u8{name};
+            if (!(dbm.gridtools.rowMatches(app.gpa, &app.filter_scratch, &row, words) catch true)) continue;
             ig.igTableNextRow(0, 0);
             _ = ig.igTableNextColumn();
             ig.igPushID_Int(@intCast(i));
@@ -789,8 +793,8 @@ const App = struct {
         ig.igPushID_Int(@intCast(index));
         defer ig.igPopID();
 
-        ig.igSetNextItemWidth(260);
-        if (ig.igInputTextWithHint("##search", "search all columns (Enter)", &app.search, app.search.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) {
+        ig.igSetNextItemWidth(264);
+        if (ig.igInputTextWithHint("##search", "all words, any order, ignores case and accents", &app.search, app.search.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) {
             app.page = 0;
             app.want_reload = true;
         }
@@ -844,8 +848,8 @@ const App = struct {
         ig.igSameLine(0, -1);
         if (running) ig.igTextDisabled("Running...") else if (app.sql_msg.len == 0) ig.igTextDisabled("the open file is read-only") else app.sql_msg.draw();
         const g = if (app.result) |*x| x else return;
-        ig.igSetNextItemWidth(260);
-        if (ig.igInputTextWithHint("##rfilter", "search the rows shown, all columns", &app.result_filter, app.result_filter.len + 1, 0, null, null)) app.refilter();
+        ig.igSetNextItemWidth(400);
+        if (ig.igInputTextWithHint("##rfilter", "search the rows shown: all words, any order, ignores case and accents", &app.result_filter, app.result_filter.len + 1, 0, null, null)) app.refilter();
         if (app.result_rows) |rows| {
             ig.igSameLine(0, -1);
             text("{d} of {d} rows match", .{ rows.len, g.rows.len });
@@ -1055,7 +1059,7 @@ fn run(init: std.process.Init) !void {
     glfw.windowHint(.context_version_major, 3);
     glfw.windowHint(.context_version_minor, 3);
     glfw.windowHint(.opengl_profile, .opengl_core_profile);
-    const window = try glfw.Window.create(1280, 800, "MDB2SQL (Zig + Dear ImGui)", null, null);
+    const window = try glfw.Window.create(1280, 800, "mdb2sql " ++ dbm.about.version ++ " - Zig + Dear ImGui", null, null);
     defer window.destroy();
     glfw.makeContextCurrent(window);
     glfw.swapInterval(1);

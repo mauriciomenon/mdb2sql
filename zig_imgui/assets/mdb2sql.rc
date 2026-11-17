@@ -1,0 +1,2 @@
+// Icone do exe (Explorer, atalhos) e da janela: o GLFW carrega o recurso "GLFW_ICON" do proprio exe
+GLFW_ICON ICON "mdb2sql.ico"

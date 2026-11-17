@@ -565,6 +565,11 @@ test "list tables, schema, paging, search, filter, sort, read-only" {
     defer found.deinit();
     try t.expectEqualStrings("Ação", found.rows[0][1].?);
     try t.expectEqualStrings("name", found.columns[1]);
+    // varias palavras: todas na mesma coluna, qualquer ordem ("Ação" e "acao"); em colunas diferentes nao casa
+    spec.search = "ÃO  ac";
+    try t.expectEqual(2, try db.count(spec));
+    spec.search = "acao 10";
+    try t.expectEqual(0, try db.count(spec));
 
     // criterios AND / OR, numerico e NULL
     spec = .{ .table = "people", .tables = db.table_names, .columns = &cols, .criteria = &.{
