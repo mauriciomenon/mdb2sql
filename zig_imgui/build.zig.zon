@@ -1,6 +1,6 @@
 .{
     .name = .mdb2sql_zig,
-    .version = "1.1.1",
+    .version = "1.2.0",
     .fingerprint = 0x716b6b022cd43757,
     .minimum_zig_version = "0.17.0",
     .paths = .{ "build.zig", "build.zig.zon", "src", "README.md", "scripts", "build_w11_amd64.ps1", "clean.ps1" },

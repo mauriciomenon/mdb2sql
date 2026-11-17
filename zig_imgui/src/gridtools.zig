@@ -4,6 +4,7 @@
 const std = @import("std");
 const Writer = std.Io.Writer;
 const Allocator = std.mem.Allocator;
+const query = @import("query.zig");
 
 // Mesmo formato que o Excel poe na area de transferencia: um valor com TAB, quebra de linha ou
 // aspas vai entre aspas, com as aspas dobradas; assim ele volta inteiro para uma unica celula.
@@ -104,7 +105,71 @@ pub fn filterRows(gpa: Allocator, rows: []const []?[]const u8, search: []const u
     return out.toOwnedSlice(gpa);
 }
 
+// Soma um filtro do clique direito (coluna = valor exato; valor null = IS NULL) a lista. O valor (do gpa)
+// passa a ser da lista; se o filtro ja existe ou falta memoria, e liberado aqui.
+pub fn addFilter(gpa: Allocator, list: *std.ArrayList(query.Criterion), column: []const u8, value: ?[]u8) void {
+    const v: []const u8 = value orelse "";
+    const op: query.Op = if (value == null) .is_null else .exact;
+    for (list.items) |old| {
+        if (old.op == op and std.mem.eql(u8, old.column, column) and std.mem.eql(u8, old.value, v)) break;
+    } else if (list.append(gpa, .{ .column = column, .op = op, .value = v })) |_| return else |_| {}
+    gpa.free(v);
+}
+
+// Corta em ate `max` bytes sem partir um caractere UTF-8
+fn cutUtf8(s: []const u8, max: usize) []const u8 {
+    var end = @min(s.len, max);
+    while (end > 0 and end < s.len and (s[end] & 0xC0) == 0x80) end -= 1;
+    return s[0..end];
+}
+
+// Rotulo do botao de um filtro ativo: "SIGLA = 'U9A'  x" / "SIGLA IS NULL  x"; valor longo e cortado (so na
+// tela). "###f" fixa o ID do botao do ImGui.
+// shortcut: a value holding "##" shows cut at that point (ImGui label rule), escape it if that ever matters
+pub fn filterLabel(buf: []u8, f: query.Criterion) [:0]const u8 {
+    const column = cutUtf8(f.column, 64);
+    const value = cutUtf8(f.value, 40);
+    return (if (f.op == .is_null)
+        std.fmt.bufPrintSentinel(buf, "{s} IS NULL  x###f", .{column}, 0)
+    else
+        std.fmt.bufPrintSentinel(buf, "{s} = '{s}{s}'  x###f", .{ column, value, if (value.len < f.value.len) "..." else "" }, 0)) catch "filter  x###f";
+}
+
 // -------------------------------------------------------------------- tests
+
+test "right-click filters: exact value or NULL, no repeats, the list owns the values" {
+    var list: std.ArrayList(query.Criterion) = .empty;
+    defer {
+        for (list.items) |f| t.allocator.free(f.value);
+        list.deinit(t.allocator);
+    }
+    addFilter(t.allocator, &list, "SIGLA", try t.allocator.dupe(u8, "U9A"));
+    addFilter(t.allocator, &list, "SIGLA", try t.allocator.dupe(u8, "U9A")); // repetido: liberado, nao somado
+    addFilter(t.allocator, &list, "SIGLA", null);
+    addFilter(t.allocator, &list, "SIGLA", null);
+    addFilter(t.allocator, &list, "SIGLA", try t.allocator.dupe(u8, "")); // texto vazio nao e NULL
+    addFilter(t.allocator, &list, "N", try t.allocator.dupe(u8, "U9A"));
+    try t.expectEqual(4, list.items.len);
+    try t.expectEqual(query.Op.exact, list.items[0].op);
+    try t.expectEqual(query.Op.is_null, list.items[1].op);
+    try t.expectEqual(query.Op.exact, list.items[2].op);
+    try t.expectEqualStrings("N", list.items[3].column);
+}
+
+test "filter button label: value quoted, NULL, long value cut on a whole UTF-8 character" {
+    var buf: [200]u8 = undefined;
+    try t.expectEqualStrings("SIGLA = 'U9A'  x###f", filterLabel(&buf, .{ .column = "SIGLA", .op = .exact, .value = "U9A" }));
+    try t.expectEqualStrings("SIGLA IS NULL  x###f", filterLabel(&buf, .{ .column = "SIGLA", .op = .is_null }));
+    try t.expectEqualStrings("S = ''  x###f", filterLabel(&buf, .{ .column = "S", .op = .exact, .value = "" }));
+    // 39 letras + "Ç" (2 bytes) passa de 40: corta antes do Ç, nunca no meio dele
+    const a39 = "abcdefghijklmnopqrstuvwxyzabcdefghijklm";
+    try t.expectEqual(39, a39.len);
+    try t.expectEqualStrings("S = '" ++ a39 ++ "...'  x###f", filterLabel(&buf, .{ .column = "S", .op = .exact, .value = a39 ++ "Çb" }));
+    const e30 = "éééééééééééééééééééééééééééééé"; // 30 x 2 bytes: o corte em 40 cai entre dois "é"
+    try t.expectEqualStrings("S = '" ++ e30[0..40] ++ "...'  x###f", filterLabel(&buf, .{ .column = "S", .op = .exact, .value = e30 }));
+    // corte impar: em 40 bytes ficaria "a" + 19 "é" + meio "é"; sai "a" + 19 "é"
+    try t.expectEqualStrings("S = 'a" ++ e30[0..38] ++ "...'  x###f", filterLabel(&buf, .{ .column = "S", .op = .exact, .value = "a" ++ e30 }));
+}
 
 const t = std.testing;
 

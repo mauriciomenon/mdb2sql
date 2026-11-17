@@ -38,7 +38,18 @@ extern fn shim_io_setup() void;
 extern fn shim_add_font(path: [*:0]const u8, size_pixels: f32) void;
 extern fn shim_clipper_range(clipper: *const ig.ImGuiListClipper, start: *c_int, end: *c_int) void;
 
-const app_title = "MDB2SQL (Zig + Dear ImGui)";
+extern "shell32" fn ShellExecuteW(hwnd: ?*anyopaque, op: [*:0]const u16, file: [*:0]const u16, params: ?[*:0]const u16, dir: ?[*:0]const u16, show: c_int) callconv(.winapi) ?*anyopaque;
+
+const app_title = dbm.about.window_title; // "mdb2sql <versao> - Zig": janela e caixas de mensagem
+
+// Abre no navegador padrao so os links fixos do Sobre (about.allowedLink); qualquer outro texto e ignorado
+fn openLink(url: []const u8) void {
+    const safe = dbm.about.allowedLink(url) orelse return;
+    var wide: [128:0]u16 = undefined;
+    const n = std.unicode.utf8ToUtf16Le(wide[0 .. wide.len - 1], safe) catch return;
+    wide[n] = 0;
+    _ = ShellExecuteW(null, std.unicode.utf8ToUtf16LeStringLiteral("open"), &wide, null, null, 1); // SW_SHOWNORMAL
+}
 
 // Caixa de mensagem: o exe de release nao tem console, entao erro fatal e panico aparecem aqui
 fn messageBox(text_utf8: []const u8, icon: c_uint) void {
@@ -217,6 +228,12 @@ const App = struct {
     total: u64 = 0,
     // busca e ordenacao que valem para a pagina na tela (a caixa de busca pode ter texto ainda nao aplicado)
     applied_search: [256:0]u8 = @splat(0),
+    // Filtros coluna = valor exato (clique direito na celula), somados com AND na consulta ao banco.
+    // `column` aponta para col_names e `value` e do gpa; a lista so muda sem trabalho rodando (o pedido a le).
+    filters: std.ArrayList(query.Criterion) = .empty,
+    want_filter: ?struct { col: usize, value: ?[]u8 } = null, // novo filtro pedido (valor do gpa; null = NULL)
+    want_unfilter: ?usize = null, // remover o filtro de indice N
+    want_clear_filters: bool = false,
 
     sql: [8192:0]u8 = @splat(0),
     result: ?dbm.Grid = null,
@@ -262,10 +279,33 @@ const App = struct {
         app.clearResult();
         app.gpa.free(app.counts);
         app.filter_scratch.deinit(app.gpa);
+        app.filters.deinit(app.gpa);
         app.db.close();
     }
 
+    fn clearFilters(app: *App) void {
+        for (app.filters.items) |f| app.gpa.free(f.value);
+        app.filters.clearRetainingCapacity();
+        if (app.want_filter) |f| if (f.value) |v| app.gpa.free(v);
+        app.want_filter = null;
+        app.want_unfilter = null;
+        app.want_clear_filters = false;
+    }
+
+    // Aplica os pedidos de filtro da UI (so chamado sem trabalho rodando)
+    fn editFilters(app: *App) void {
+        const add = app.want_filter;
+        app.want_filter = null; // clearFilters nao pode soltar o valor que vai entrar na lista
+        if (app.want_clear_filters) app.clearFilters();
+        if (app.want_unfilter) |i| if (i < app.filters.items.len) app.gpa.free(app.filters.orderedRemove(i).value);
+        app.want_unfilter = null;
+        const f = add orelse return;
+        if (f.col < app.col_names.len) return dbm.gridtools.addFilter(app.gpa, &app.filters, app.col_names[f.col], f.value);
+        if (f.value) |v| app.gpa.free(v);
+    }
+
     fn clearTable(app: *App) void {
+        app.clearFilters();
         if (app.data) |*g| g.deinit();
         if (app.schema) |*g| g.deinit();
         app.data = null;
@@ -326,6 +366,7 @@ const App = struct {
                 r.table = app.selected orelse return;
                 r.columns = app.col_names;
                 r.search = app.search;
+                r.filters = app.filters.items;
                 r.sort_col = app.sort_col;
                 r.sort_desc = app.sort_desc;
                 r.page = app.page;
@@ -374,7 +415,7 @@ const App = struct {
                 if (app.data) |*old| old.deinit();
                 app.data = out.data;
                 out.data = null;
-                app.data_sel = .{};
+                app.data_sel.row = null; // as colunas ocultas continuam valendo na mesma tabela
                 app.total = out.total;
                 app.page = out.page;
                 app.applied_search = app.slot.req.search;
@@ -465,6 +506,11 @@ const App = struct {
         app.want_browse = false;
 
         if (app.slot.busy()) return; // um trabalho por vez; os pedidos abaixo ficam para depois
+        if (app.want_filter != null or app.want_unfilter != null or app.want_clear_filters) {
+            app.editFilters();
+            app.page = 0;
+            app.want_reload = true;
+        }
         if (app.start_export != null and app.db.isOpen() and !app.want_open and !app.want_reload and !app.want_run) {
             app.want_export = app.start_export;
             app.start_export = null;
@@ -557,6 +603,7 @@ const App = struct {
                 r.table = index;
                 r.columns = app.col_names;
                 r.search = app.applied_search;
+                r.filters = app.filters.items;
                 r.sort_col = app.sort_col;
                 r.sort_desc = app.sort_desc;
                 r.total_hint = app.total;
@@ -671,7 +718,7 @@ const App = struct {
         }
         if (ig.igBeginMenu("Help", true)) {
             defer ig.igEndMenu();
-            if (ig.igMenuItem_Bool("About MDB2SQL", null, false, true)) app.want_about = true;
+            if (ig.igMenuItem_Bool("About mdb2sql", null, false, true)) app.want_about = true;
         }
         if (ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_O)) app.want_browse = true;
     }
@@ -684,7 +731,7 @@ const App = struct {
     }
 
     fn drawAbout(app: *App) void {
-        const title = "About MDB2SQL";
+        const title = "About mdb2sql";
         if (app.want_about) {
             _ = ig.igOpenPopup_Str(title, 0);
             app.about_open = true;
@@ -694,12 +741,48 @@ const App = struct {
         ig.igSetNextWindowPos(.{ .x = vp.*.Pos.x + vp.*.Size.x / 2, .y = vp.*.Pos.y + vp.*.Size.y / 2 }, ig.ImGuiCond_Appearing, .{ .x = 0.5, .y = 0.5 });
         if (!ig.igBeginPopupModal(title, &app.about_open, ig.ImGuiWindowFlags_AlwaysAutoResize | ig.ImGuiWindowFlags_NoSavedSettings)) return;
         defer ig.igEndPopup();
+        const about = dbm.about;
+        // nome e versao em destaque (mesma fonte, maior)
+        ig.igPushFont(null, ig.igGetStyle().*.FontSizeBase * 1.4);
+        textSlice(about.name ++ " " ++ about.version);
+        ig.igPopFont();
+        textSlice(about.tagline);
+        ig.igSpacing();
+        ig.igSeparator();
+        ig.igSpacing();
+
         var glfw_ver: [3]c_int = undefined;
         glfwGetVersion(&glfw_ver[0], &glfw_ver[1], &glfw_ver[2]);
-        var ver_buf: [32]u8 = undefined;
-        const glfw_text = std.fmt.bufPrint(&ver_buf, "{d}.{d}.{d}", .{ glfw_ver[0], glfw_ver[1], glfw_ver[2] }) catch "";
-        var buf: [1024]u8 = undefined;
-        textSlice(dbm.about.text(&buf, std.mem.span(ig.igGetVersion()), glfw_text, dbm.libraryVersion()));
+        var bufs: [4][96]u8 = undefined;
+        const rows = [_]struct { [:0]const u8, []const u8 }{
+            .{ "Build", about.build(&bufs[0]) },
+            .{ "Stack", about.stackText(&bufs[1], std.mem.span(ig.igGetVersion())) },
+            .{ "Window", std.fmt.bufPrint(&bufs[2], "GLFW {d}.{d}.{d} + OpenGL 3.3", .{ glfw_ver[0], glfw_ver[1], glfw_ver[2] }) catch "" },
+            .{ "Database", std.fmt.bufPrint(&bufs[3], "DuckDB {s}", .{std.mem.trimStart(u8, dbm.libraryVersion(), "v")}) catch "" },
+            .{ "Access reader", about.access_engine },
+            .{ "Author", about.author },
+            .{ "License", about.license },
+        };
+        if (ig.igBeginTable("about", 2, ig.ImGuiTableFlags_SizingFixedFit, .{ .x = 0, .y = 0 }, 0)) {
+            defer ig.igEndTable();
+            for (rows) |row| {
+                ig.igTableNextRow(0, 0);
+                _ = ig.igTableNextColumn();
+                ig.igTextDisabled(row[0]);
+                _ = ig.igTableNextColumn();
+                textSlice(row[1]);
+            }
+            for (about.links) |link| {
+                ig.igTableNextRow(0, 0);
+                _ = ig.igTableNextColumn();
+                ig.igTextDisabled(link.label);
+                _ = ig.igTableNextColumn();
+                if (ig.igTextLink(link.url)) openLink(link.url);
+                ig.igSetItemTooltip("%s", "Open in the browser");
+            }
+        }
+        ig.igSpacing();
+        ig.igSeparator();
         ig.igSpacing();
         if (button("Close")) ig.igCloseCurrentPopup();
     }
@@ -776,7 +859,7 @@ const App = struct {
         if (ig.igBeginTabItem("Schema", null, 0)) {
             defer ig.igEndTabItem();
             app.tab = .schema;
-            if (app.schema) |*g| _ = drawGrid("schema", g, null, &app.schema_sel, null);
+            if (app.schema) |*g| _ = drawGrid("schema", g, null, &app.schema_sel, null, .plain);
         }
         if (ig.igBeginTabItem("SQL", null, if (app.focus_sql) ig.ImGuiTabItemFlags_SetSelected else 0)) {
             defer ig.igEndTabItem();
@@ -812,25 +895,61 @@ const App = struct {
             app.want_reload = true;
         }
         ig.igEndDisabled();
+        // exportar a tabela fica so no Export... da barra de cima (um botao por acao)
         ig.igSameLine(0, -1);
-        if (button("Export CSV...")) app.want_export = .table_csv;
-        ig.igSameLine(0, -1);
-        if (button("Export Excel...")) app.want_export = .table_xlsx;
-        ig.igSameLine(0, -1);
+        columnsButton(&app.data_sel);
+        // contagem na linha de baixo: ao lado dos botoes ela ficava cortada na janela de 1280
         const first = app.page * page_size;
         const shown = if (app.data) |g| g.rows.len else 0;
-        text("{s}: page {d} of {d} | rows {d}-{d} of {d}{s}", .{
+        var hidden_buf: [48]u8 = undefined;
+        ig.igAlignTextToFramePadding();
+        text("{s}: page {d} of {d} | rows {d}-{d} of {d}{s}{s}", .{
             app.db.table_names[index],                     app.page + 1,  pages,
             if (shown == 0) 0 else first + 1,              first + shown, app.total,
-            if (app.applied_search[0] != 0) " (filtered)" else "",
+            if (app.applied_search[0] != 0 or app.filters.items.len > 0) " (filtered)" else "",
+            hiddenText(&hidden_buf, &app.data_sel, if (app.data) |g| g.columns.len else 0),
         });
 
-        if (app.data) |*g| if (drawGrid("data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null)) |s| {
+        // Filtros ativos: um botao por filtro (clicar remove) e Clear filters
+        const right_edge = ig.igGetWindowPos().x + ig.igGetWindowWidth();
+        for (app.filters.items, 0..) |f, i| {
+            if (i == 0) {
+                ig.igSameLine(0, 24);
+                ig.igTextDisabled("Filters:");
+            }
+            // continua na mesma linha enquanto couber um botao medio; senao desce
+            if (ig.igGetItemRectMax().x + 220 < right_edge) ig.igSameLine(0, -1);
+            var label: [200]u8 = undefined;
+            ig.igPushID_Int(@intCast(i));
+            if (button(dbm.gridtools.filterLabel(&label, f))) app.want_unfilter = i;
+            ig.igSetItemTooltip("%s", "Remove this filter");
+            ig.igPopID();
+        }
+        if (app.filters.items.len > 0) {
+            ig.igSameLine(0, -1);
+            if (button("Clear filters")) app.want_clear_filters = true;
+        }
+
+        app.data_sel.has_filters = app.filters.items.len > 0;
+        if (app.data) |*g| if (drawGrid("data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null, .filter)) |s| {
             app.sort_col = s.col;
             app.sort_desc = s.desc;
             app.page = 0;
             app.want_reload = true;
         };
+        // pedidos do menu da celula
+        const sel = &app.data_sel;
+        if (sel.want_clear) app.want_clear_filters = true;
+        if (sel.want_filter and app.want_filter == null) if (app.data) |g| if (sel.row) |r| if (r < g.rows.len and sel.col < g.columns.len) {
+            // o valor e copiado agora: a pagina pode ser trocada antes de o filtro ser aplicado
+            if (g.rows[r][sel.col]) |s| {
+                if (app.gpa.dupe(u8, s)) |v| {
+                    app.want_filter = .{ .col = sel.col, .value = v };
+                } else |_| {}
+            } else app.want_filter = .{ .col = sel.col, .value = null };
+        };
+        sel.want_filter = false;
+        sel.want_clear = false;
     }
 
     fn drawSql(app: *App) void {
@@ -840,23 +959,37 @@ const App = struct {
         if (button("Run (Ctrl+Enter)") or enter) app.want_run = true;
         ig.igEndDisabled();
         ig.igSameLine(0, -1);
-        ig.igBeginDisabled(app.result == null);
-        if (button("Export CSV...")) app.want_export = .result_csv;
-        ig.igSameLine(0, -1);
-        if (button("Export Excel...")) app.want_export = .result_xlsx;
-        ig.igEndDisabled();
-        ig.igSameLine(0, -1);
         if (running) ig.igTextDisabled("Running...") else if (app.sql_msg.len == 0) ig.igTextDisabled("the open file is read-only") else app.sql_msg.draw();
         const g = if (app.result) |*x| x else return;
         ig.igSetNextItemWidth(400);
         if (ig.igInputTextWithHint("##rfilter", "search the rows shown: all words, any order, ignores case and accents", &app.result_filter, app.result_filter.len + 1, 0, null, null)) app.refilter();
+        ig.igSameLine(0, -1);
+        columnsButton(&app.result_sel);
+        var hidden_buf: [48]u8 = undefined;
+        const hidden = hiddenText(&hidden_buf, &app.result_sel, g.columns.len);
         if (app.result_rows) |rows| {
             ig.igSameLine(0, -1);
-            text("{d} of {d} rows match", .{ rows.len, g.rows.len });
+            text("{d} of {d} rows match{s}", .{ rows.len, g.rows.len, hidden });
+        } else if (hidden.len > 0) {
+            ig.igSameLine(0, -1);
+            textSlice(hidden[3..]); // sem o " | " do comeco
         }
-        _ = drawGrid("result", g, null, &app.result_sel, app.result_rows);
+        _ = drawGrid("result", g, null, &app.result_sel, app.result_rows, .hide);
     }
 };
+
+// Botao "Columns..." da barra da grade: o dialogo e desenhado por drawGrid
+fn columnsButton(sel: *GridSel) void {
+    if (button("Columns...")) sel.open_columns = true;
+    ig.igSetItemTooltip("%s", "Show or hide several columns at once.\nHidden columns are still searched, and exports still write every column.");
+}
+
+// " | 3 columns hidden" ou vazio
+fn hiddenText(buf: []u8, sel: *const GridSel, n_cols: usize) []const u8 {
+    const n = sel.hiddenCount(n_cols);
+    if (n == 0) return "";
+    return std.fmt.bufPrint(buf, " | {d} column{s} hidden", .{ n, if (n == 1) "" else "s" }) catch "";
+}
 
 const Sort = struct { col: ?usize, desc: bool };
 
@@ -864,8 +997,29 @@ const Sort = struct { col: ?usize, desc: bool };
 const GridSel = struct {
     row: ?usize = null,
     col: usize = 0,
-    popup: bool = false, // abrir o menu de copia ao lado da celula (estado inicial --cell)
+    popup: bool = false, // abrir o menu da celula ao lado dela (estado inicial --cell)
+    // Colunas ocultas desta grade (indice da coluna). Valem ate trocar de tabela/resultado ou "Show all";
+    // so mudam o que e desenhado: busca e exportacao continuam com todas as colunas.
+    hidden: std.StaticBitSet(max_grid_cols) = .empty,
+    header_col: usize = 0, // coluna do menu do cabecalho
+    open_columns: bool = false, // abrir o dialogo "Columns"
+    col_filter: [64:0]u8 = @splat(0), // busca por nome dentro do dialogo
+    has_filters: bool = false, // habilita "Clear filters" no menu da celula
+    want_filter: bool = false, // menu da celula: filtrar pelo valor da celula selecionada
+    want_clear: bool = false, // menu da celula: limpar filtros
+
+    fn hiddenCount(sel: *const GridSel, n_cols: usize) usize {
+        var n: usize = 0;
+        for (0..@min(n_cols, max_grid_cols)) |c| n += @intFromBool(sel.hidden.isSet(c));
+        return n;
+    }
 };
+
+// shortcut: ImGui tables hold at most 512 columns, wider results are cut at 512
+const max_grid_cols = 512;
+
+// plain: so copia; hide: tambem ocultar colunas; filter: tambem "Filter by this value" (aba Data)
+const GridMode = enum { plain, hide, filter };
 
 var copy_header = false; // "Copy row" tambem copia a linha de nomes das colunas
 
@@ -883,20 +1037,38 @@ fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool) void 
 
 // Desenha um Grid; com `sort` os cabecalhos ordenam e a nova ordenacao pedida e devolvida.
 // `rows` limita e ordena as linhas mostradas (filtro); null = todas.
-// Clique seleciona a celula; Ctrl+C copia o valor; o clique direito abre o menu de copia.
-fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, rows: ?[]const usize) ?Sort {
-    // shortcut: ImGui tables hold at most 512 columns, wider results are cut at 512
-    const n_cols: usize = @min(g.columns.len, 512);
+// Clique seleciona a celula; Ctrl+C copia o valor; o clique direito abre o menu da celula (copiar, filtrar).
+// Com `mode` != .plain o clique direito no cabecalho oculta colunas e abre o popup "Columns...".
+fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, rows: ?[]const usize, mode: GridMode) ?Sort {
+    const n_cols: usize = @min(g.columns.len, max_grid_cols);
     if (n_cols == 0) return null;
+    const can_hide = mode != .plain;
     var flags: c_int = ig.ImGuiTableFlags_Borders | ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_Resizable |
         ig.ImGuiTableFlags_ScrollX | ig.ImGuiTableFlags_ScrollY | ig.ImGuiTableFlags_SizingFixedFit;
     if (sort != null) flags |= ig.ImGuiTableFlags_Sortable | ig.ImGuiTableFlags_SortTristate;
+    if (can_hide) flags |= ig.ImGuiTableFlags_Hideable;
     if (!ig.igBeginTable(id, @intCast(n_cols), flags, .{ .x = 0, .y = 0 }, 0)) return null;
     defer ig.igEndTable();
 
     ig.igTableSetupScrollFreeze(0, 1);
     for (g.columns[0..n_cols]) |name| ig.igTableSetupColumn(name.ptr, 0, 0, 0);
-    ig.igTableHeadersRow();
+    var open_header = false;
+    if (can_hide) {
+        // a lista de ocultas e nossa (GridSel.hidden); o ImGui so executa
+        for (0..n_cols) |c| ig.igTableSetColumnEnabled(@intCast(c), !sel.hidden.isSet(c));
+        // cabecalho como o TableHeadersRow, mais o clique direito com o nosso menu
+        ig.igTableNextRow(ig.ImGuiTableRowFlags_Headers, ig.igTableGetHeaderRowHeight());
+        for (g.columns[0..n_cols], 0..) |name, c| {
+            if (!ig.igTableSetColumnIndex(@intCast(c))) continue;
+            ig.igPushID_Int(@intCast(c));
+            ig.igTableHeader(name.ptr);
+            ig.igPopID();
+            if (ig.igIsMouseReleased_Nil(1) and ig.igIsItemHovered(0)) {
+                sel.header_col = c;
+                open_header = true;
+            }
+        }
+    } else ig.igTableHeadersRow();
 
     var changed: ?Sort = null;
     if (sort) |cur| if (ig.igTableGetSortSpecs()) |specs| if (specs.*.SpecsDirty) {
@@ -920,7 +1092,7 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
             const r = if (rows) |list| list[shown] else shown;
             ig.igTableNextRow(0, 0);
             for (g.rows[r][0..n_cols], 0..) |cell, c| {
-                _ = ig.igTableNextColumn();
+                if (!ig.igTableNextColumn()) continue; // coluna oculta ou fora da tela
                 ig.igPushID_Int(@intCast(r * n_cols + c));
                 const selected = sel.row == r and sel.col == c;
                 // rotulo vazio: a area clicavel e a celula toda e o texto vem logo depois
@@ -946,10 +1118,66 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
     if (open_menu) _ = ig.igOpenPopup_Str("copy", 0);
     if (ig.igBeginPopup("copy", 0)) {
         defer ig.igEndPopup();
+        if (mode == .filter) {
+            if (ig.igMenuItem_Bool("Filter by this value", null, false, true)) sel.want_filter = true;
+            if (ig.igMenuItem_Bool("Clear filters", null, false, sel.has_filters)) sel.want_clear = true;
+            ig.igSeparator();
+        }
         if (ig.igMenuItem_Bool("Copy value", "Ctrl+C", false, true)) copySelection(g, sel, false);
         if (ig.igMenuItem_Bool("Copy row (TAB separated)", null, false, true)) copySelection(g, sel, true);
         ig.igSeparator();
         _ = ig.igCheckbox("Copy row includes the header", &copy_header);
+    }
+    if (!can_hide) return changed;
+
+    // Cabecalho: este menu abre depois do menu padrao do ImGui (TableHeader) no mesmo quadro e toma o lugar dele
+    if (open_header) _ = ig.igOpenPopup_Str("header", 0);
+    if (ig.igBeginPopup("header", 0)) {
+        defer ig.igEndPopup();
+        if (ig.igMenuItem_Bool("Hide this column", null, false, true)) sel.hidden.set(sel.header_col);
+        if (ig.igMenuItem_Bool("Columns...", null, false, true)) sel.open_columns = true;
+        if (ig.igMenuItem_Bool("Show all", null, false, sel.hiddenCount(n_cols) > 0)) sel.hidden = .empty;
+    }
+
+    // "Columns": dialogo no centro da janela, uma caixa por coluna; marcar e desmarcar varias e fechar
+    const dialog_title = "Columns";
+    if (sel.open_columns) {
+        sel.open_columns = false;
+        sel.col_filter[0] = 0;
+        _ = ig.igOpenPopup_Str(dialog_title, 0);
+    }
+    const vp = ig.igGetMainViewport();
+    ig.igSetNextWindowPos(.{ .x = vp.*.Pos.x + vp.*.Size.x / 2, .y = vp.*.Pos.y + vp.*.Size.y / 2 }, ig.ImGuiCond_Appearing, .{ .x = 0.5, .y = 0.5 });
+    var dialog_open = true;
+    if (ig.igBeginPopupModal(dialog_title, &dialog_open, ig.ImGuiWindowFlags_AlwaysAutoResize | ig.ImGuiWindowFlags_NoSavedSettings)) {
+        defer ig.igEndPopup();
+        const width = 360;
+        ig.igSetNextItemWidth(width);
+        _ = ig.igInputTextWithHint("##colfilter", "find a column", &sel.col_filter, sel.col_filter.len + 1, 0, null, null);
+        const needle = zstr(&sel.col_filter);
+        const line = ig.igGetFrameHeightWithSpacing();
+        if (ig.igBeginChild_Str("list", .{ .x = width, .y = line * 12 }, ig.ImGuiChildFlags_Borders, 0)) {
+            for (g.columns[0..n_cols], 0..) |name, c| {
+                if (needle.len > 0 and std.ascii.findIgnoreCase(name, needle) == null) continue;
+                var shown = !sel.hidden.isSet(c);
+                ig.igPushID_Int(@intCast(c));
+                if (ig.igCheckbox(name.ptr, &shown)) sel.hidden.setValue(c, !shown);
+                ig.igPopID();
+            }
+        }
+        ig.igEndChild();
+        ig.igAlignTextToFramePadding();
+        text("{d} of {d} shown", .{ n_cols - sel.hiddenCount(n_cols), n_cols });
+        ig.igSameLine(width - 2 * 88 - ig.igGetStyle().*.ItemSpacing.x + ig.igGetStyle().*.WindowPadding.x, -1);
+        if (ig.igButton("Show all", .{ .x = 88, .y = 0 })) sel.hidden = .empty;
+        ig.igSameLine(0, -1);
+        if (ig.igButton("Hide all", .{ .x = 88, .y = 0 })) sel.hidden.setRangeValue(.{ .start = 0, .end = n_cols }, true);
+        ig.igPushTextWrapPos(ig.igGetCursorPosX() + width);
+        ig.igTextDisabled("%s", "Hidden columns are still searched and exported.");
+        ig.igPopTextWrapPos();
+        ig.igSeparator();
+        ig.igSetCursorPosX(ig.igGetCursorPosX() + width - 88);
+        if (ig.igButton("Close", .{ .x = 88, .y = 0 })) ig.igCloseCurrentPopup();
     }
     return changed;
 }
@@ -1059,7 +1287,7 @@ fn run(init: std.process.Init) !void {
     glfw.windowHint(.context_version_major, 3);
     glfw.windowHint(.context_version_minor, 3);
     glfw.windowHint(.opengl_profile, .opengl_core_profile);
-    const window = try glfw.Window.create(1280, 800, "mdb2sql " ++ dbm.about.version ++ " - Zig + Dear ImGui", null, null);
+    const window = try glfw.Window.create(1280, 800, app_title, null, null);
     defer window.destroy();
     glfw.makeContextCurrent(window);
     glfw.swapInterval(1);
