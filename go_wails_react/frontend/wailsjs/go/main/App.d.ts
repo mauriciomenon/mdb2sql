@@ -15,9 +15,9 @@ export function ExportTable(arg1:string,arg2:string):Promise<string>;
 
 export function GetAppInfo():Promise<main.AppInfo>;
 
-export function GetRowCount(arg1:string):Promise<number>;
+export function GetRowCount(arg1:string,arg2:Array<backend.Filter>):Promise<number>;
 
-export function GetTableData(arg1:string,arg2:number):Promise<Array<Record<string, any>>>;
+export function GetTableData(arg1:string,arg2:number,arg3:Array<backend.Filter>):Promise<Array<Record<string, any>>>;
 
 export function GetTableSchema(arg1:string):Promise<Array<backend.ColumnSchema>>;
 

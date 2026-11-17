@@ -3,8 +3,10 @@
 param([switch]$Dist)
 $ErrorActionPreference = 'Stop'
 
-# build\appicon.png e build\windows\icon.ico ficam (versionados); o resto de build\ e gerado pelo wails build
-$targets = 'build\bin', 'build\windows\installer', 'build\windows\info.json', 'build\windows\wails.exe.manifest',
+# build\appicon.png, build\windows\icon.ico e build\windows\installer\project.nsi ficam (versionados); o resto de
+# build\ e gerado pelo wails build
+$targets = 'build\bin', 'build\windows\installer\tmp', 'build\windows\installer\wails_tools.nsh', 'build\windows\info.json',
+    'build\windows\wails.exe.manifest',
     'frontend\dist', 'dist\.stage'
 if ($Dist) { $targets += 'dist' }
 foreach ($target in $targets) {

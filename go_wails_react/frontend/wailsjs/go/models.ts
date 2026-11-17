@@ -16,6 +16,20 @@ export namespace backend {
 	        this.null = source["null"];
 	    }
 	}
+	export class Filter {
+	    column: string;
+	    value: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new Filter(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.column = source["column"];
+	        this.value = source["value"];
+	    }
+	}
 	export class QueryResult {
 	    columns: string[];
 	    rows: any[];
@@ -44,6 +58,7 @@ export namespace main {
 	    go: string;
 	    wails: string;
 	    duckdb: string;
+	    access: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppInfo(source);
@@ -57,6 +72,7 @@ export namespace main {
 	        this.go = source["go"];
 	        this.wails = source["wails"];
 	        this.duckdb = source["duckdb"];
+	        this.access = source["access"];
 	    }
 	}
 

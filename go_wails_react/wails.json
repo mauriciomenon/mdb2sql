@@ -11,8 +11,8 @@
   "info": {
     "companyName": "Mauricio Menon",
     "productName": "MDB2SQL",
-    "productVersion": "1.1.1",
-    "copyright": "Copyright © 2026 Mauricio Menon",
+    "productVersion": "1.2.0",
+    "copyright": "GPL v2 ou posterior",
     "comments": "Viewer for DuckDB databases converted from Microsoft Access"
   }
 }

@@ -239,6 +239,56 @@ func TestExportXLSXSplitsSheets(t *testing.T) {
 	}
 }
 
+// audit item 2: the old temp name "<name>.partial.<ext>" deleted a user file with that name (and its .wal), and
+// the target was removed before the rename. Now other files and the old target survive every outcome.
+func TestExportKeepsOtherFilesAndOldTarget(t *testing.T) {
+	src := fixtureDB(t)
+	m := NewDBManager()
+	if err := m.Connect(src); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	dir := t.TempDir()
+	noop := func(int, int, string) {}
+	write := func(name, text string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(name, want string) {
+		t.Helper()
+		if data, err := os.ReadFile(filepath.Join(dir, name)); err != nil || string(data) != want {
+			t.Errorf("%s: %q %v, want %q", name, data, err, want)
+		}
+	}
+	out := filepath.Join(dir, "p.csv")
+	write("p.csv", "old target")
+	write("p.partial.csv", "user file")
+	write("p.partial.csv.wal", "user wal")
+
+	if err := m.ExportTable(context.Background(), "nope", "csv", out, noop); err == nil {
+		t.Fatal("unknown table must fail")
+	}
+	check("p.csv", "old target") // failed export: old target intact
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := m.ExportTable(ctx, "Pontos A", "csv", out, noop); err == nil {
+		t.Fatal("cancelled export must fail")
+	}
+	check("p.csv", "old target")
+	if err := m.ExportTable(context.Background(), "Pontos A", "csv", out, noop); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(out); !strings.HasPrefix(string(data), "\xEF\xBB\xBFid,") {
+		t.Errorf("target not replaced: %q", data)
+	}
+	check("p.partial.csv", "user file")
+	check("p.partial.csv.wal", "user wal")
+	if left, _ := filepath.Glob(filepath.Join(dir, ".mdb2sql-export-*")); len(left) != 0 {
+		t.Errorf("temporary folder left behind: %v", left)
+	}
+}
+
 func TestExportTableCSVAndDatabases(t *testing.T) {
 	src := fixtureDB(t)
 	m := NewDBManager()
@@ -275,8 +325,8 @@ func TestExportTableCSVAndDatabases(t *testing.T) {
 		if err := m.ExportDatabase(context.Background(), format, out, noop); err != nil {
 			t.Fatalf("%s: %v", format, err)
 		}
-		if _, err := os.Stat(strings.TrimSuffix(out, "."+format) + ".partial." + format); !os.IsNotExist(err) {
-			t.Errorf("%s: partial file left behind", format)
+		if left, _ := filepath.Glob(filepath.Join(dir, ".mdb2sql-export-*")); len(left) != 0 {
+			t.Errorf("%s: temporary folder left behind: %v", format, left)
 		}
 		back := NewDBManager()
 		if err := back.Connect(out); err != nil {

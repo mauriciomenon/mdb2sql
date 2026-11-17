@@ -76,8 +76,7 @@ body {
 
 .menubar {
   display: flex;
-  padding: 2px 8px;
-  border-bottom: 1px solid var(--border);
+  padding: 3px 8px;
 }
 
 .menubar > .menu-root > button {
@@ -131,20 +130,13 @@ body {
 
 .menu-title {
   margin: 4px 12px 2px;
-  font-size: 12px;
+  font-size: inherit;
   color: var(--muted);
 }
 
 .check {
   display: inline-block;
   width: 1.4em;
-}
-
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 16px;
 }
 
 /* Status bar: last action or error, and the reader that opened the file */
@@ -173,7 +165,7 @@ body {
   flex: 1;
   min-height: 72px;
   resize: vertical;
-  font: 13px/1.4 Consolas, 'Cascadia Mono', monospace;
+  font: 14px/1.4 Consolas, 'Cascadia Mono', monospace;
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -188,12 +180,6 @@ body {
 .progress progress {
   width: 100%;
   margin-top: 12px;
-}
-
-h1 {
-  margin: 0 8px 0 0;
-  font-size: 18px;
-  font-weight: 600;
 }
 
 h2 {
@@ -329,15 +315,20 @@ button.primary {
   padding: 12px 16px;
 }
 
+/* the table name is never cut: it keeps its full width and the controls wrap to a second line if needed */
 .content-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px 12px;
 }
 
 .content-bar h2 {
-  flex: 1;
-  min-width: 0;
+  flex: none;
+  max-width: 100%;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
 }
 
 .tabs {
@@ -377,7 +368,7 @@ table {
   border-collapse: separate;
   border-spacing: 0;
   min-width: 100%;
-  font-size: 13px;
+  font-size: inherit;
 }
 
 th,
@@ -422,9 +413,8 @@ td[aria-selected='true'] {
 }
 
 .search {
-  /* wide enough for the whole placeholder; shrinks before the tabs do */
-  flex: 0 1 470px;
-  min-width: 180px;
+  flex: 1 1 240px;
+  min-width: 160px;
   padding: 4px 8px;
 }
 
@@ -468,8 +458,8 @@ td[aria-selected='true'] {
 }
 
 .about {
-  max-width: 480px;
-  padding: 20px 24px;
+  max-width: 560px;
+  padding: 22px 26px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -482,8 +472,45 @@ td[aria-selected='true'] {
   font-size: 18px;
 }
 
+.about .version {
+  margin-left: 6px;
+  padding: 2px 9px;
+  font-size: 14px;
+  vertical-align: middle;
+  color: var(--accent-text);
+  background: var(--accent);
+  border-radius: 999px;
+}
+
 .about p {
   margin: 10px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.about .tagline {
+  color: var(--muted);
+}
+
+/* label column as wide as the longest label, values aligned */
+.about dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 7px 16px;
+  margin: 16px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.about dl > div {
+  display: contents;
+}
+
+.about dt {
+  color: var(--muted);
+}
+
+.about dd {
+  margin: 0;
   overflow-wrap: anywhere;
 }
 
@@ -491,9 +518,142 @@ td[aria-selected='true'] {
   color: var(--accent);
 }
 
-.about button {
+.about > button {
   display: block;
   margin: 18px 0 0 auto;
+}
+
+/* "Colunas..." dialog: about 65% of the window wide (420-900 px), up to 70% high; the list scrolls vertically */
+.columns {
+  display: flex;
+  flex-direction: column;
+  width: clamp(420px, 65vw, 900px);
+  max-width: 100%;
+  max-height: 70vh;
+  user-select: none;
+}
+
+.columns h2 {
+  overflow-wrap: anywhere;
+}
+
+/* only the list shrinks when the window is short */
+.columns > :not(.col-list) {
+  flex-shrink: 0;
+}
+
+.col-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.col-top input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+}
+
+.col-count {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* buttons in one row, Fechar on the right */
+.col-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.col-actions .primary {
+  margin-left: auto;
+}
+
+/* --col-w (set in App.tsx from the longest name) is the minimum cell; never more than 6 per row */
+.col-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(max(var(--col-w, 150px), calc((100% - 5 * 12px) / 6)), 1fr));
+  align-content: start;
+  flex: 1 1 auto;
+  gap: 2px 12px;
+  min-height: 80px;
+  margin-top: 12px;
+  padding: 8px 10px;
+  overflow: hidden auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.col-list label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 0;
+  white-space: nowrap;
+}
+
+.col-list label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.col-list label input {
+  flex: none;
+  margin: 0;
+}
+
+.col-list .empty {
+  grid-column: 1 / -1;
+  padding: 8px 0;
+}
+
+/* Active filters (right-click a cell > Filtrar por este valor) */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 10px;
+  font-size: inherit;
+  background: var(--row-hover);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* a long value is cut with "..." (full text in the tooltip), never widening the window */
+.chip span {
+  max-width: 420px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chip button {
+  flex: none;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.menu hr {
+  width: 100%;
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
 }
 
 .info,

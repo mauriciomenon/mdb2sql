@@ -15,10 +15,10 @@ New-Item -ItemType Directory -Force $stage, (Split-Path $out) | Out-Null
 # 1) executavel unico: o exe do Wails ja e autossuficiente (DuckDB estatico, UI e ferramentas embutidas)
 Copy-Item build\bin\mdb2sql.exe (Join-Path $stage "$name.exe")
 
-# 2) zip da pasta do app: <name>\mdb2sql.exe + LEIAME.txt
+# 2) zip da pasta do app: <name>\mdb2sql.exe + LEIAME.txt + LICENSE (GPL v2)
 $appDir = Join-Path $stage "zip\$name"
 New-Item -ItemType Directory -Force $appDir | Out-Null
-Copy-Item build\bin\mdb2sql.exe $appDir
+Copy-Item build\bin\mdb2sql.exe, LICENSE $appDir
 @(
     "MDB2SQL (Go + Wails + React) $version"
     ''
@@ -26,7 +26,8 @@ Copy-Item build\bin\mdb2sql.exe $appDir
     '.duckdb, .sqlite, .xlsx e .csv. Precisa do Microsoft Edge WebView2 Runtime (parte do Windows 11).'
     'Arquivos Access: usa o driver ODBC do Access (64 bits) se instalado; senao, o mdbtools embutido.'
     'Cache das ferramentas embutidas: %LOCALAPPDATA%\mdb2sql\go-wails-react-<versao>-<build>.'
-    'Codigo: https://github.com/mauriciomenon/mdb2sql'
+    'Codigo: https://github.com/mauriciomenon/mdb2sql  e  https://gitlab.com/mauricio.menon/mdb2sql'
+    'Licenca: GPL v2 ou posterior (arquivo LICENSE)'
 ) | Set-Content (Join-Path $appDir 'LEIAME.txt') -Encoding utf8
 Compress-Archive -Path $appDir -DestinationPath (Join-Path $stage "$name.zip")
 Remove-Item -Recurse -Force (Join-Path $stage 'zip')
