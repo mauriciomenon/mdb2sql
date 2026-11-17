@@ -3,13 +3,14 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from backend.access import Progress
-from backend.db_manager import DBManager
+from backend.db_manager import DBManager, Filters
 
 
 class TablePayload(TypedDict):
     table_name: str
     rows: list[dict[str, Any]]
-    total_rows: int
+    total_rows: int  # linhas na tabela inteira
+    matched_rows: int  # linhas que passam nos filtros (= total_rows sem filtros)
     schema: list[dict[str, Any]]
 
 
@@ -35,8 +36,15 @@ def open_database(db_path: Path, progress: Progress | None = None) -> tuple[DBMa
         raise
 
 
-def load_table_payload(manager: DBManager, table_name: str, limit: int = 100) -> TablePayload:
-    rows = manager.query_table(table_name, limit=limit)
+def load_table_payload(manager: DBManager, table_name: str, limit: int = 100, filters: Filters = ()) -> TablePayload:
+    rows = manager.query_table(table_name, limit=limit, filters=filters)
     total_rows = manager.get_row_count(table_name)
+    matched_rows = manager.get_row_count(table_name, filters) if filters else total_rows
     schema = manager.get_table_schema(table_name)
-    return {"table_name": table_name, "rows": rows, "total_rows": total_rows, "schema": schema}
+    return {
+        "table_name": table_name,
+        "rows": rows,
+        "total_rows": total_rows,
+        "matched_rows": matched_rows,
+        "schema": schema,
+    }

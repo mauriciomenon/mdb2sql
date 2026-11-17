@@ -3,8 +3,9 @@ from pathlib import Path
 import pytest
 from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtWidgets import QApplication, QFileDialog
+from PyQt6.QtWidgets import QAbstractButton, QApplication, QFileDialog, QProgressDialog
 
+from ui.dialogs import ColumnsDialog
 from ui.main_window import MainWindow
 
 
@@ -33,7 +34,7 @@ def test_starts_empty(qtbot) -> None:
     qtbot.addWidget(win)
 
     assert win.stack.currentWidget() is win.empty_label
-    assert win.windowTitle() == "mdb2sql 1.1.1 - Python + PyQt6"
+    assert win.windowTitle() == "mdb2sql 1.2.0 - Python"
     assert win.status_label.text() == "No database loaded"
     assert win.progress.isHidden()
 
@@ -61,7 +62,7 @@ def test_open_lists_tables_and_loads_first(window: MainWindow) -> None:
 
     assert names == ["empty_table", "people"]
     assert window.status_label.text() == "Loaded: people.duckdb (2 tables) via DuckDB"
-    assert window.windowTitle() == "people.duckdb - mdb2sql 1.1.1 - Python + PyQt6"
+    assert window.windowTitle() == "people.duckdb - mdb2sql 1.2.0 - Python"
     assert window.stack.currentWidget() is window.tabs
     # tabela vazia ainda mostra as colunas do schema
     assert window.info_label.text() == "empty_table: 0 rows"
@@ -190,3 +191,209 @@ def test_export_actions_write_files_next_to_source(qtbot, window: MainWindow, pe
     assert Path(asked[3]).name == "people.csv"
     assert sorted(p.name for p in people_db.parent.glob("out.*")) == ["out.csv", "out.duckdb", "out.sqlite", "out.xlsx"]
     assert QSettings().value("last_dir") == str(people_db.parent)
+    # cada exportacao fecha e apaga o seu dialogo "Export": nenhum fica acumulado na janela
+    qtbot.waitUntil(lambda: not window.findChildren(QProgressDialog), timeout=5000)
+
+
+def _texts(items) -> list[str]:
+    return [item.text().replace("&", "") for item in items if item.text()]
+
+
+def _menu_texts(menu) -> list[str]:
+    # textos de um menu e dos submenus, na ordem; cada item aparece uma vez na arvore inteira
+    texts = []
+    for action in menu.actions():
+        if action.menu():
+            texts += [action.text().replace("&", "")] + _menu_texts(action.menu())
+        elif not action.isSeparator():
+            texts.append(action.text().replace("&", ""))
+    return texts
+
+
+def _repeated(texts: list[str]) -> list[str]:
+    return sorted({text for text in texts if texts.count(text) > 1})
+
+
+def test_nothing_duplicated(qtbot, points_window: MainWindow) -> None:
+    # estado mais cheio da tela: tabela, filtro ativo (botao do filtro + Limpar filtros) e coluna oculta
+    win = points_window
+    _reloaded(qtbot, win, lambda: win.add_filter("sigla", "U18A"))
+    win.set_hidden_columns({"id"})
+
+    buttons = _texts(b for b in win.findChildren(QAbstractButton) if b.isVisible())
+    assert _repeated(buttons) == []
+    assert buttons.count("Export") == 1 and buttons.count("Colunas...") == 1 and buttons.count("Limpar filtros") == 1
+    assert _repeated(_menu_texts(win.menuBar())) == []
+    assert _menu_texts(win.menuBar()).count("Export") == 1
+    assert _repeated(_texts(win.data_table.actions())) == []
+    assert _repeated(_texts(win.header_menu(0).actions())) == []
+    # botao e menu usam a mesma acao (uma acao so, nao duas copias)
+    assert win.columns_button.defaultAction() is win.columns_action
+    assert win.clear_filters_button.defaultAction() is win.clear_filters_action
+    assert win.header_menu(0).actions()[1] is win.columns_action
+    assert win.export_button.menu() is win.export_menu
+
+
+# ------------------------------------------------------------ 1.2.0: colunas ocultas e filtro por valor
+
+
+def _hidden(win: MainWindow) -> list[bool]:
+    return [win.data_table.isColumnHidden(c) for c in range(win.table_model.columnCount())]
+
+
+def _reloaded(qtbot, win: MainWindow, action) -> None:
+    request = win._table_request
+    action()
+    qtbot.waitUntil(lambda: win._table_request > request and win._busy == 0, timeout=10000)
+
+
+def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None:
+    _select_table(qtbot, window, "people")
+    assert "Exportar continua exportando todas as colunas" in window.columns_button.toolTip()
+
+    window.columns_button.click()
+    dialog = window.findChild(ColumnsDialog)
+    assert [dialog.list.item(i).text() for i in range(3)] == ["id", "name", "score"]
+    dialog.set_all(False)  # "Ocultar todas"
+    dialog.list.item(1).setCheckState(Qt.CheckState.Checked)
+    assert _hidden(window) == [False, False, False]  # nada muda antes do OK
+    dialog.accept()
+
+    assert _hidden(window) == [True, False, True]
+    assert window.hidden_columns == {"id", "score"}
+    assert window.info_label.text() == "people: Showing 3 of 3 rows - 2 colunas ocultas"
+    # a pesquisa continua olhando todas as colunas (7.25 esta na coluna oculta) e exportar leva todas
+    window.search_edit.setText("7.25")
+    qtbot.waitUntil(lambda: window.data_proxy.rowCount() == 1, timeout=5000)
+    assert window.info_label.text() == "people: 1 of 3 loaded rows match (3 rows in table) - 2 colunas ocultas"
+    assert window.current_result() == ('SELECT * FROM "people"', "people")
+    window.search_edit.clear()
+
+    # recarregar a mesma tabela (limite) mantem; o dialogo abre com o estado atual; "Mostrar todas" volta
+    _reloaded(qtbot, window, lambda: window.limit_combo.setCurrentIndex(1))
+    assert _hidden(window) == [True, False, True]
+    window.choose_columns()
+    dialog = [d for d in window.findChildren(ColumnsDialog) if d.isVisible()][-1]
+    assert dialog.hidden() == {"id", "score"}
+    dialog.set_all(True)
+    dialog.accept()
+    assert _hidden(window) == [False, False, False]
+    assert window.info_label.text() == "people: Showing 3 of 3 rows"
+
+
+def test_columns_dialog_checks_all_selected_rows(qtbot) -> None:
+    dialog = ColumnsDialog(["a", "b", "c", "d"], {"d"})
+    qtbot.addWidget(dialog)
+    for row in (0, 1, 2):
+        dialog.list.item(row).setSelected(True)
+    dialog.list.item(1).setCheckState(Qt.CheckState.Unchecked)  # desmarcar uma das selecionadas desmarca as tres
+
+    assert dialog.hidden() == {"a", "b", "c", "d"}
+    dialog.list.clearSelection()
+    dialog.list.item(3).setCheckState(Qt.CheckState.Checked)
+    assert dialog.hidden() == {"a", "b", "c"}
+
+
+def test_header_menu_hides_one_column_and_table_switch_resets(qtbot, window: MainWindow) -> None:
+    _select_table(qtbot, window, "people")
+    menu = window.header_menu(2)
+    assert [a.text() for a in menu.actions()] == ["Ocultar esta coluna", "Colunas...", "Mostrar todas"]
+    menu.actions()[0].trigger()
+    assert _hidden(window) == [False, False, True]
+    assert window.info_label.text() == "people: Showing 3 of 3 rows - 1 coluna oculta"
+    assert not window.header_menu(-1).actions()[0].isEnabled()  # clique fora de uma coluna
+
+    window.header_menu(0).actions()[2].trigger()  # Mostrar todas
+    assert _hidden(window) == [False, False, False]
+
+    window.set_hidden_columns({"name"})
+    _select_table(qtbot, window, "empty_table")
+    assert window.hidden_columns == set() and _hidden(window) == [False, False]
+
+
+@pytest.fixture
+def points_window(qtbot, tmp_path: Path) -> MainWindow:
+    # 300 linhas, 100 carregadas: as 50 de sigla U18A ficam alem do limite "Rows"
+    import duckdb
+
+    db_file = tmp_path / "points.duckdb"
+    with duckdb.connect(str(db_file)) as conn:
+        conn.execute(
+            "CREATE TABLE points AS SELECT i AS id, CASE WHEN i < 250 THEN 'U9A' ELSE 'U18A' END AS sigla,"
+            " CASE WHEN i % 2 = 0 THEN NULL ELSE 'it''s' END AS obs FROM range(300) t(i) ORDER BY i"
+        )
+        conn.execute("CREATE TABLE other (x INTEGER)")
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.show()
+    win.open_database(db_file)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=10000)
+    _select_table(qtbot, win, "points")
+    return win
+
+
+def _chips(win: MainWindow) -> list[str]:
+    layout = win.filter_chips
+    return [layout.itemAt(i).widget().text() for i in range(layout.count())]
+
+
+def test_right_click_filter_runs_in_the_database(qtbot, points_window: MainWindow) -> None:
+    win = points_window
+    assert win.info_label.text() == "points: Showing 100 of 300 rows"
+    menu = [a.text() for a in win.data_table.actions() if not a.isSeparator()]
+    assert menu[-2:] == ["&Filtrar por este valor", "&Limpar filtros"] and "&Copy Value" in menu
+    assert not win.clear_filters_action.isEnabled() and win.clear_filters_button.isHidden()
+
+    # U18A nao esta nas 100 linhas carregadas: o filtro vai na consulta e acha as 50
+    _reloaded(qtbot, win, lambda: win.add_filter("sigla", "U18A"))
+    assert win.info_label.text() == "points: Showing 50 of 50 filtered rows (300 rows in table)"
+    assert set(_column(win, 1)) == {"U18A"}
+    assert _chips(win) == ["Filtro:", "sigla = 'U18A'  ×"]
+
+    # clique direito na celula: a celula atual (NULL) vira "obs IS NULL" e soma com o primeiro filtro
+    win.data_table.setCurrentIndex(win.data_proxy.index(0, 2))
+    _reloaded(qtbot, win, win.filter_value_action.trigger)
+    assert win.filters == [("sigla", "U18A"), ("obs", None)]
+    assert win.info_label.text() == "points: Showing 25 of 25 filtered rows (300 rows in table)"
+    assert _chips(win) == ["Filtros:", "sigla = 'U18A'  ×", "obs IS NULL  ×"]
+    assert win.clear_filters_action.isEnabled() and not win.clear_filters_button.isHidden()
+
+    # a pesquisa de palavras combina com o filtro, nas linhas carregadas
+    win.search_edit.setText("298")
+    qtbot.waitUntil(lambda: win.data_proxy.rowCount() == 1, timeout=5000)
+    assert win.info_label.text() == "points: 1 of 25 loaded rows match (25 filtered rows, 300 rows in table)"
+    win.search_edit.clear()
+
+    # remover um a um (botao do filtro) e limpar
+    _reloaded(qtbot, win, win.filter_chips.itemAt(1).widget().click)
+    assert win.filters == [("obs", None)]
+    assert win.info_label.text() == "points: Showing 100 of 150 filtered rows (300 rows in table)"  # limite Rows vale
+    _reloaded(qtbot, win, win.clear_filters_button.click)
+    assert win.filters == [] and _chips(win) == []
+    assert win.info_label.text() == "points: Showing 100 of 300 rows"
+
+
+def test_filter_integer_and_quoted_text_from_cell(qtbot, points_window: MainWindow) -> None:
+    win = points_window
+    win.data_table.sortByColumn(0, Qt.SortOrder.DescendingOrder)  # a celula vem do proxy ordenado: id 99
+    win.data_table.setCurrentIndex(win.data_proxy.index(0, 0))
+    _reloaded(qtbot, win, win.filter_by_current_cell)
+    assert win.filters == [("id", 99)] and _column(win, 0) == ["99"]
+    assert _chips(win)[1] == "id = 99  ×"
+
+    win.data_table.setCurrentIndex(win.data_proxy.index(0, 2))
+    _reloaded(qtbot, win, win.filter_by_current_cell)
+    assert win.filters[1] == ("obs", "it's") and win.data_proxy.rowCount() == 1
+    assert _chips(win)[2] == "obs = 'it''s'  ×"
+    win.filter_by_current_cell()  # o mesmo filtro de novo nao duplica
+    assert len(win.filters) == 2
+
+
+def test_table_switch_clears_filters(qtbot, points_window: MainWindow) -> None:
+    win = points_window
+    _reloaded(qtbot, win, lambda: win.add_filter("sigla", "U18A"))
+    win.set_hidden_columns({"id"})
+    _select_table(qtbot, win, "other")
+
+    assert win.filters == [] and _chips(win) == [] and win.hidden_columns == set()
+    assert win.info_label.text() == "other: 0 rows"
