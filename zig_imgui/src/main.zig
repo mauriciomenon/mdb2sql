@@ -1302,10 +1302,11 @@ fn run(init: std.process.Init) !void {
     const scale = window.getContentScale()[0];
     setupSizes(scale);
     applyTheme(settings.isLight(theme), app.hwnd);
-    // Segoe UI quando existe (acentos legiveis); senao fica a fonte embutida do ImGui
+    // Segoe UI quando existe (acentos legiveis); senao fica a fonte embutida do ImGui.
+    // 16 px (1.1.1 usava 17): um pouco menor a pedido do dono; titulos seguem proporcionais (FontSizeBase)
     const font = "C:\\Windows\\Fonts\\segoeui.ttf";
     if (std.Io.Dir.cwd().access(init.io, font, .{})) |_| {
-        shim_add_font(font, 17 * scale);
+        shim_add_font(font, 16 * scale);
     } else |_| ig.igGetStyle().*.FontScaleDpi = scale;
 
     if (!ImGui_ImplGlfw_InitForOpenGL(window, true)) return error.PlatformError;

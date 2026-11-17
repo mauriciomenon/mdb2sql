@@ -170,6 +170,7 @@ NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 
   buttons, with **Clear filters**.
 - One export action per place: the **Export CSV...** / **Export Excel...** buttons of the Data and SQL tabs
   repeated the **Export...** menu (same items) and were removed.
+- Slightly smaller text: Segoe UI at 16 px instead of 17 (about 6%); the About title stays 1.4 times the text.
 - License: GPL v2 or later (before: proprietary, all rights reserved). `LICENSE` goes in the zip and the installer.
 - Tested: unit tests for the exact filter SQL (quoted column, bound value, quotes and an injection attempt in the
   value, NULL, empty text, AND with the search, row limit) on DuckDB, SQLite and the in-memory Access copy, the
