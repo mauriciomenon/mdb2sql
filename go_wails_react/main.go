@@ -22,9 +22,9 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-// Barra de titulo com a versao de wails.json: "mdb2sql 1.1.1 - Go + Wails + React"
+// Barra de titulo curta com a versao de wails.json: "mdb2sql 1.2.0 - Go" (a stack completa fica em Ajuda > Sobre)
 func windowTitle() string {
-	return "mdb2sql " + productVersion() + " - Go + Wails + React"
+	return "mdb2sql " + productVersion() + " - Go"
 }
 
 func main() {

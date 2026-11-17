@@ -26,12 +26,12 @@ export function GetAppInfo() {
   return window['go']['main']['App']['GetAppInfo']();
 }
 
-export function GetRowCount(arg1) {
-  return window['go']['main']['App']['GetRowCount'](arg1);
+export function GetRowCount(arg1, arg2) {
+  return window['go']['main']['App']['GetRowCount'](arg1, arg2);
 }
 
-export function GetTableData(arg1, arg2) {
-  return window['go']['main']['App']['GetTableData'](arg1, arg2);
+export function GetTableData(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetTableData'](arg1, arg2, arg3);
 }
 
 export function GetTableSchema(arg1) {

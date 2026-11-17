@@ -76,8 +76,7 @@ body {
 
 .menubar {
   display: flex;
-  padding: 2px 8px;
-  border-bottom: 1px solid var(--border);
+  padding: 3px 8px;
 }
 
 .menubar > .menu-root > button {
@@ -140,13 +139,6 @@ body {
   width: 1.4em;
 }
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 16px;
-}
-
 /* Status bar: last action or error, and the reader that opened the file */
 .statusbar {
   grid-column: 1 / -1;
@@ -188,12 +180,6 @@ body {
 .progress progress {
   width: 100%;
   margin-top: 12px;
-}
-
-h1 {
-  margin: 0 8px 0 0;
-  font-size: 18px;
-  font-weight: 600;
 }
 
 h2 {
@@ -468,8 +454,8 @@ td[aria-selected='true'] {
 }
 
 .about {
-  max-width: 480px;
-  padding: 20px 24px;
+  max-width: 560px;
+  padding: 22px 26px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -482,8 +468,45 @@ td[aria-selected='true'] {
   font-size: 18px;
 }
 
+.about .version {
+  margin-left: 6px;
+  padding: 2px 9px;
+  font-size: 13px;
+  vertical-align: middle;
+  color: var(--accent-text);
+  background: var(--accent);
+  border-radius: 999px;
+}
+
 .about p {
   margin: 10px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.about .tagline {
+  color: var(--muted);
+}
+
+/* label column as wide as the longest label, values aligned */
+.about dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 7px 16px;
+  margin: 16px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.about dl > div {
+  display: contents;
+}
+
+.about dt {
+  color: var(--muted);
+}
+
+.about dd {
+  margin: 0;
   overflow-wrap: anywhere;
 }
 
@@ -491,9 +514,95 @@ td[aria-selected='true'] {
   color: var(--accent);
 }
 
-.about button {
+.about > button {
   display: block;
   margin: 18px 0 0 auto;
+}
+
+/* "Colunas..." dialog: one checkbox per column, several at once */
+.columns {
+  display: flex;
+  flex-direction: column;
+  width: 560px;
+  max-height: 100%;
+  user-select: none;
+}
+
+.columns h2 {
+  overflow-wrap: anywhere;
+}
+
+.col-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.col-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 2px 12px;
+  min-height: 60px;
+  margin-top: 12px;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.col-list label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Active filters (right-click a cell > Filtrar por este valor) */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 10px;
+  font-size: 13px;
+  background: var(--row-hover);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* a long value is cut with "..." (full text in the tooltip), never widening the window */
+.chip span {
+  max-width: 420px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chip button {
+  flex: none;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.menu hr {
+  width: 100%;
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
 }
 
 .info,

@@ -50,6 +50,7 @@ type AppInfo struct {
 	Go        string `json:"go"`
 	Wails     string `json:"wails"`
 	DuckDB    string `json:"duckdb"`
+	Access    string `json:"access"` // reader an Access file would use now: "Access ODBC", "mdbtools" or ""
 }
 
 func productVersion() string {
@@ -89,6 +90,7 @@ func (a *App) GetAppInfo() AppInfo {
 		Go:        strings.TrimPrefix(goruntime.Version(), "go"),
 		Wails:     wailsVersion(),
 		DuckDB:    duck,
+		Access:    backend.AccessReader(),
 	}
 }
 
@@ -264,20 +266,20 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 	return tables, nil
 }
 
-// GetTableData retorna linhas de uma tabela com limite configuravel
+// GetTableData retorna linhas de uma tabela com limite configuravel; filters = coluna = valor (clique direito), no banco
 // !T: Returns slice of maps with column names as keys, limit defaults to 100 rows
-func (a *App) GetTableData(tableName string, limit int) ([]map[string]interface{}, error) {
+func (a *App) GetTableData(tableName string, limit int, filters []backend.Filter) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 
-	return a.dbManager.QueryTable(tableName, limit)
+	return a.dbManager.QueryTable(tableName, limit, filters...)
 }
 
-// GetRowCount retorna total de linhas em tabela
+// GetRowCount retorna total de linhas em tabela (das que casam com os filtros, se houver)
 // !T: Executes COUNT(*) query and returns integer result
-func (a *App) GetRowCount(tableName string) (int, error) {
-	return a.dbManager.GetRowCount(tableName)
+func (a *App) GetRowCount(tableName string, filters []backend.Filter) (int, error) {
+	return a.dbManager.GetRowCount(tableName, filters...)
 }
 
 // GetTableSchema retorna schema da tabela com tipos de colunas

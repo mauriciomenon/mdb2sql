@@ -1,7 +1,7 @@
 // Visualizador de bancos (DuckDB, SQLite, Access): abre um arquivo, lista tabelas, mostra dados, schema e SQL, exporta
 // !T: Single-screen viewer talking to Go through the Wails IPC bridge (window.go.main.App)
 
-import { useEffect, useMemo, useRef, useState, version as reactVersion } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, version as reactVersion } from 'react';
 import './App.css';
 
 type Row = Record<string, unknown>;
@@ -11,7 +11,8 @@ type View = 'data' | 'schema' | 'sql';
 type MenuName = 'file' | 'settings' | 'help' | 'export';
 type QueryResult = { columns: string[]; rows: Row[]; more: boolean };
 type Progress = { done: number; total: number; label: string };
-export type AppInfo = { version: string; build?: string; buildDate?: string; go: string; wails: string; duckdb: string };
+export type AppInfo = { version: string; build?: string; buildDate?: string; go: string; wails: string; duckdb: string; access?: string };
+export type Filter = { column: string; value: unknown }; // column = exact value, applied in the database query
 
 declare global {
   interface Window {
@@ -19,8 +20,8 @@ declare global {
       main: {
         App: {
           LoadDatabase: (dbPath: string) => Promise<string[]>;
-          GetTableData: (tableName: string, limit: number) => Promise<Row[]>;
-          GetRowCount: (tableName: string) => Promise<number>;
+          GetTableData: (tableName: string, limit: number, filters: Filter[]) => Promise<Row[]>;
+          GetRowCount: (tableName: string, filters: Filter[]) => Promise<number>;
           GetTableSchema?: (tableName: string) => Promise<Column[]>;
           SelectDatabase?: () => Promise<string>;
           DatabaseName?: () => Promise<string>;
@@ -53,22 +54,37 @@ const THEMES: { value: Theme; label: string }[] = [
   { value: 'dark', label: 'Dark' },
 ];
 
-const REPO_URL = 'https://github.com/mauriciomenon/mdb2sql';
+const ABOUT_TAGLINE = 'Visualiza e exporta bancos DuckDB, SQLite e Microsoft Access: tabelas, esquema, dados e SQL.';
+const ACCESS_READERS: Record<string, string> = {
+  'Access ODBC': 'ODBC do Microsoft Access (driver instalado); reserva: mdbtools embutido',
+  mdbtools: 'mdbtools embutido (driver ODBC do Access nao instalado)',
+};
 
-// Linhas do dialogo Sobre; versao de wails.json, numero/data do build gravados pelo build, runtimes lidos em execucao
-// !T: Text is Portuguese on purpose (owner's spec); the last line ends with REPO_URL, rendered as a link
-export function aboutLines(info: AppInfo): string[] {
+// Linhas (rotulo, valor) do dialogo Sobre; versao de wails.json, numero/data do build gravados pelo build, runtimes
+// lidos em execucao. Valor que comeca com https:// vira link aberto no navegador padrao.
+// !T: Text is Portuguese on purpose (owner's spec)
+export function aboutRows(info: AppInfo): [string, string][] {
   const v = (s: string) => s.replace(/^v/, '');
-  const build = info.build ? `build ${info.build} (${info.buildDate})` : 'build dev';
   return [
-    'MDB2SQL (Go + Wails + React)',
-    `Versao ${info.version} - ${build}`,
-    'Visualiza e exporta bancos DuckDB, SQLite e Microsoft Access: tabelas, esquema, dados e SQL.',
-    `Go ${info.go}, Wails ${v(info.wails)}, DuckDB ${v(info.duckdb)}, React ${reactVersion}`,
-    'Autor: Mauricio Menon',
-    `Codigo: ${REPO_URL}`,
+    ['Build', info.build ? `${info.build} (${info.buildDate})` : 'dev'],
+    ['Stack', `Go ${info.go} + Wails ${v(info.wails)} + React ${reactVersion}`],
+    ['Banco', `DuckDB ${v(info.duckdb)}`],
+    ['Leitor Access', ACCESS_READERS[info.access ?? ''] ?? 'indisponivel neste computador'],
+    ['Autor', 'Mauricio Menon'],
+    ['Licenca', 'Proprietaria, todos os direitos reservados (mdbtools embutido: GPL/LGPL)'],
+    ['GitHub', 'https://github.com/mauriciomenon/mdb2sql'],
+    ['GitLab', 'https://gitlab.com/mauricio.menon/mdb2sql'],
   ];
 }
+
+// Texto do filtro ativo: Filtro: SIGLA = 'U9A' | ID = 7 | NOTE IS NULL
+export function filterLabel(f: Filter): string {
+  if (f.value === null || f.value === undefined) return `${f.column} IS NULL`;
+  return `${f.column} = ${typeof f.value === 'string' ? `'${f.value}'` : String(f.value)}`;
+}
+
+// Um filtro por coluna: filtrar de novo a mesma coluna troca o valor (dois valores com AND nao casariam nada)
+export const withFilter = (filters: Filter[], f: Filter) => [...filters.filter((x) => x.column !== f.column), f];
 
 export const cellText = (v: unknown) => String(v ?? '');
 
@@ -136,10 +152,15 @@ function App() {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [theme, setThemeState] = useState<Theme>('system');
   const [openMenu, setOpenMenu] = useState<MenuName | null>(null);
-  const [about, setAbout] = useState<string[] | null>(null);
+  const [about, setAbout] = useState<AppInfo | null>(null);
   const [search, setSearch] = useState('');
   const [sel, setSel] = useState<{ row: Row; col: string } | null>(null); // selected cell
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null); // open copy menu
+  // open context menu: of the selected cell, or of a column header (header = column name)
+  const [menu, setMenu] = useState<{ x: number; y: number; header?: string } | null>(null);
+  const [filters, setFilters] = useState<Filter[]>([]); // of the current table, applied by Go in the query
+  const [totalCount, setTotalCount] = useState(0); // rows of the table without filters
+  const [hidden, setHidden] = useState<Set<string>>(new Set()); // hidden columns of the current table
+  const [colsOpen, setColsOpen] = useState(false); // "Colunas..." dialog
   const [copied, setCopied] = useState('');
   const [sql, setSql] = useState('');
   const [result, setResult] = useState<QueryResult | null>(null);
@@ -177,11 +198,15 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!about) return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setAbout(null);
+    if (!about && !colsOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setAbout(null);
+      setColsOpen(false);
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [about]);
+  }, [about, colsOpen]);
 
   async function copyText(text: string, what: string) {
     try {
@@ -203,7 +228,7 @@ function App() {
     try {
       const bridge = getWailsBridge();
       if (!bridge.GetAppInfo) throw new Error('IPC bridge not available');
-      setAbout(aboutLines(await bridge.GetAppInfo()));
+      setAbout(await bridge.GetAppInfo());
     } catch (err) {
       fail(err);
     }
@@ -263,31 +288,47 @@ function App() {
     }
   }
 
-  async function loadTable(tableName: string, rowLimit: number) {
+  // keep = filtros a manter (mesma tabela: novo limite ou filtro); sem keep e outra tabela: filtros e colunas ocultas zeram
+  async function loadTable(tableName: string, rowLimit: number, keep?: Filter[]) {
+    const tableFilters = keep ?? [];
     try {
       setError('');
       setSelectedTable(tableName);
       setSel(null);
       setCopied('');
+      setFilters(tableFilters);
+      if (!keep) setHidden(new Set());
       if (view === 'sql') setView('data');
       const bridge = getWailsBridge();
-      const [data, count, cols] = await Promise.all([
-        bridge.GetTableData(tableName, rowLimit),
-        bridge.GetRowCount(tableName),
+      const [data, count, cols, total] = await Promise.all([
+        bridge.GetTableData(tableName, rowLimit, tableFilters),
+        bridge.GetRowCount(tableName, tableFilters),
         bridge.GetTableSchema ? bridge.GetTableSchema(tableName) : Promise.resolve([]),
+        tableFilters.length > 0 ? bridge.GetRowCount(tableName, []) : null,
       ]);
       setRows(data ?? []); // Go sends null for an empty table
       setRowCount(count);
+      setTotalCount(total ?? count);
       setSchema(cols ?? []);
     } catch (err) {
       fail(err);
     }
   }
 
+  const applyFilters = (next: Filter[]) => loadTable(selectedTable, limit, next);
+
+  const setColumnHidden = (col: string, hide: boolean) =>
+    setHidden((old) => {
+      const next = new Set(old);
+      if (hide) next.add(col);
+      else next.delete(col);
+      return next;
+    });
+
   function changeLimit(rowLimit: number) {
     setLimit(rowLimit);
     if (view === 'sql') runSql(rowLimit);
-    else if (selectedTable) loadTable(selectedTable, rowLimit);
+    else if (selectedTable) loadTable(selectedTable, rowLimit, filters);
   }
 
   async function runSql(rowLimit = limit) {
@@ -324,13 +365,13 @@ function App() {
 
   const bridge = window.go?.main?.App;
   const exportItems = [
-    { label: 'Database as DuckDB (.duckdb)', on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('duckdb')) },
-    { label: 'Database as SQLite (.sqlite)', on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('sqlite')) },
-    { label: 'Database as Excel (.xlsx, one sheet per table)', on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('xlsx')) },
-    { label: 'Current table as CSV', on: !!selectedTable, run: () => runExport(selectedTable, () => bridge?.ExportTable?.(selectedTable, 'csv')) },
-    { label: 'Current table as Excel (.xlsx)', on: !!selectedTable, run: () => runExport(selectedTable, () => bridge?.ExportTable?.(selectedTable, 'xlsx')) },
-    { label: 'SQL result as CSV', on: !!resultSql, run: () => runExport('SQL result', () => bridge?.ExportQuery?.(resultSql, 'csv')) },
-    { label: 'SQL result as Excel (.xlsx)', on: !!resultSql, run: () => runExport('SQL result', () => bridge?.ExportQuery?.(resultSql, 'xlsx')) },
+    { group: 'db', label: 'Database as DuckDB (.duckdb)', on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('duckdb')) },
+    { group: 'db', label: 'Database as SQLite (.sqlite)', on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('sqlite')) },
+    { group: 'db', label: 'Database as Excel (.xlsx, one sheet per table)', on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('xlsx')) },
+    { group: 'table', label: 'Current table as CSV', on: !!selectedTable, run: () => runExport(selectedTable, () => bridge?.ExportTable?.(selectedTable, 'csv')) },
+    { group: 'table', label: 'Current table as Excel (.xlsx)', on: !!selectedTable, run: () => runExport(selectedTable, () => bridge?.ExportTable?.(selectedTable, 'xlsx')) },
+    { group: 'sql', label: 'SQL result as CSV', on: !!resultSql, run: () => runExport('SQL result', () => bridge?.ExportQuery?.(resultSql, 'csv')) },
+    { group: 'sql', label: 'SQL result as Excel (.xlsx)', on: !!resultSql, run: () => runExport('SQL result', () => bridge?.ExportQuery?.(resultSql, 'xlsx')) },
   ];
 
   const visibleTables = useMemo(() => {
@@ -346,6 +387,9 @@ function App() {
   const searching = search.trim() !== '';
   const searchIndex = useMemo(() => (searching ? rowSearchText(gridRows, gridColumns) : undefined), [searching, gridRows, gridColumns]);
   const visibleRows = useMemo(() => searchRows(gridRows, gridColumns, search, searchIndex), [gridRows, gridColumns, search, searchIndex]);
+  // hidden columns only leave the Data grid: search, copy row and exports still use every column
+  const shownColumns = useMemo(() => (view === 'data' ? gridColumns.filter((c) => !hidden.has(c)) : gridColumns), [view, gridColumns, hidden]);
+  const hiddenCount = gridColumns.length - shownColumns.length;
   const copyCell = () => sel && copyText(cellText(sel.row[sel.col]), 'value');
   const copyRow = (withHeader: boolean) =>
     sel && copyText(rowToTsv(gridColumns, sel.row, withHeader), withHeader ? 'row with header' : 'row');
@@ -357,22 +401,24 @@ function App() {
     setOpenMenu(openMenu === name ? null : name);
   };
 
-  const exportMenu = (
-    <div className="dropdown" role="menu" aria-label="Export">
-      {exportItems.map((it) => (
-        <button key={it.label} role="menuitem" disabled={!it.on || busy} onClick={it.run}>
-          {it.label}
-        </button>
-      ))}
-    </div>
-  );
-
   const grid = (
     <table>
       <thead>
         <tr>
-          {gridColumns.map((col) => (
-            <th key={col} scope="col">
+          {shownColumns.map((col) => (
+            <th
+              key={col}
+              scope="col"
+              onContextMenu={
+                view === 'data'
+                  ? (e) => {
+                      e.preventDefault();
+                      setOpenMenu(null);
+                      setMenu({ x: e.clientX, y: e.clientY, header: col });
+                    }
+                  : undefined
+              }
+            >
               {col}
             </th>
           ))}
@@ -381,7 +427,7 @@ function App() {
       <tbody>
         {visibleRows.map((row, idx) => (
           <tr key={idx} className={sel?.row === row ? 'selected' : undefined}>
-            {gridColumns.map((col) => (
+            {shownColumns.map((col) => (
               <td
                 key={col}
                 className={typeof row[col] === 'number' ? 'num' : undefined}
@@ -416,20 +462,31 @@ function App() {
                 <button role="menuitem" disabled={busy} onClick={() => loadDatabase(true)}>
                   Open database...
                 </button>
-                <button role="menuitem" disabled={busy} onClick={() => loadDatabase(false)}>
+                <button role="menuitem" disabled={busy} onClick={() => loadDatabase(false)} title="MDB2SQL_DB_PATH or data/sample.duckdb">
                   Open sample data
                 </button>
-                <hr />
-                <p className="menu-title">Export</p>
-                {exportItems.map((it) => (
-                  <button key={it.label} role="menuitem" disabled={!it.on || busy} onClick={it.run}>
-                    {it.label}
-                  </button>
-                ))}
                 <hr />
                 <button role="menuitem" onClick={() => window.runtime?.Quit?.()}>
                   Exit
                 </button>
+              </div>
+            )}
+          </div>
+          {/* every action lives in one place only: no toolbar copies of the menu items */}
+          <div className="menu-root">
+            <button aria-haspopup="menu" aria-expanded={openMenu === 'export'} onClick={toggleMenu('export')}>
+              Export
+            </button>
+            {openMenu === 'export' && (
+              <div className="dropdown" role="menu" aria-label="Export">
+                {exportItems.map((it, i) => (
+                  <Fragment key={it.label}>
+                    {i > 0 && exportItems[i - 1].group !== it.group && <hr />}
+                    <button role="menuitem" disabled={!it.on || busy} onClick={it.run}>
+                      {it.label}
+                    </button>
+                  </Fragment>
+                ))}
               </div>
             )}
           </div>
@@ -462,21 +519,6 @@ function App() {
             )}
           </div>
         </nav>
-        <div className="toolbar">
-          <h1>mdb2sql</h1>
-          <button className="primary" onClick={() => loadDatabase(true)} disabled={busy}>
-            Load database
-          </button>
-          <button onClick={() => loadDatabase(false)} disabled={busy} title="MDB2SQL_DB_PATH or data/sample.duckdb">
-            Sample data
-          </button>
-          <div className="menu-root">
-            <button aria-haspopup="menu" aria-expanded={openMenu === 'export'} onClick={toggleMenu('export')} disabled={busy}>
-              Export
-            </button>
-            {openMenu === 'export' && exportMenu}
-          </div>
-        </div>
       </header>
 
       <nav className="sidebar" aria-label="Tables">
@@ -508,7 +550,7 @@ function App() {
 
       <main className="content">
         {tables.length === 0 ? (
-          <p className="empty">Open a database (.duckdb, .db, .sqlite, .mdb, .accdb) to browse its tables.</p>
+          <p className="empty">File &gt; Open database: .duckdb, .db, .sqlite, .mdb, .accdb</p>
         ) : (
           <>
             <div className="content-bar">
@@ -523,7 +565,7 @@ function App() {
               <input
                 type="search"
                 className="search"
-                placeholder="Search loaded rows: all words, any order, ignores case and accents"
+                placeholder="Search loaded rows"
                 aria-label="Search rows"
                 title="Shows the loaded rows (see Rows) with a cell that contains every word, in any order; ignores case and accents"
                 value={search}
@@ -539,7 +581,32 @@ function App() {
                   ))}
                 </select>
               </label>
+              <button
+                onClick={() => setColsOpen(true)}
+                disabled={view !== 'data' || gridColumns.length === 0}
+                title="Mostrar ou ocultar colunas. A pesquisa e o Export continuam usando todas as colunas."
+              >
+                Colunas...
+              </button>
             </div>
+
+            {view === 'data' && filters.length > 0 && (
+              <div className="filters" role="group" aria-label="Filtros ativos">
+                {filters.map((f) => (
+                  <span key={f.column} className="chip">
+                    <span title={`Filtro: ${filterLabel(f)}`}>Filtro: {filterLabel(f)}</span>
+                    <button
+                      aria-label={`Remover filtro ${f.column}`}
+                      title="Remover este filtro"
+                      onClick={() => applyFilters(filters.filter((x) => x !== f))}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                <button onClick={() => applyFilters([])}>Limpar filtros</button>
+              </div>
+            )}
 
             {view === 'sql' && (
               <div className="sql-bar">
@@ -598,7 +665,12 @@ function App() {
                 grid
               )}
               {view === 'data' && visibleRows.length === 0 && (
-                <p className="empty">{rows.length === 0 ? 'This table has no rows.' : 'No loaded row matches the search.'}</p>
+                <p className="empty">
+                  {rows.length > 0 ? 'No loaded row matches the search.' : filters.length > 0 ? 'No row matches the filters.' : 'This table has no rows.'}
+                </p>
+              )}
+              {view === 'data' && visibleRows.length > 0 && shownColumns.length === 0 && (
+                <p className="empty">Todas as colunas estao ocultas (Colunas... &gt; Mostrar todas).</p>
               )}
               {view === 'sql' && !result && <p className="empty">Write a query and press Run (Ctrl+Enter).</p>}
             </div>
@@ -606,7 +678,8 @@ function App() {
             <footer className="info">
               {view === 'sql'
                 ? result && `SQL result: ${result.rows.length} rows${result.more ? ` (limit ${limit}; export writes all rows)` : ''}`
-                : `${selectedTable}: Showing ${rows.length} of ${rowCount} rows`}
+                : `${selectedTable}: Showing ${rows.length} of ${rowCount} rows` +
+                  (filters.length > 0 ? ` matching the filters (${totalCount} in the table)` : '')}
               {search.trim() && view !== 'schema' && ` - ${visibleRows.length} match "${search.trim()}"`}
               {copied && ` - ${copied}`}
             </footer>
@@ -618,16 +691,51 @@ function App() {
         <p className={error ? 'status error' : 'status'} role="status" aria-live="polite" title={error || status}>
           {error || status}
         </p>
+        {hiddenCount > 0 && (
+          <span className="source" title="Colunas... > Mostrar todas">
+            {hiddenCount} {hiddenCount === 1 ? 'coluna oculta' : 'colunas ocultas'}
+          </span>
+        )}
         {source && <span className="source" title="Reader used to open the file">Opened via {source}</span>}
       </footer>
 
-      {menu && (
+      {menu?.header !== undefined && (
         <div
           className="menu"
           role="menu"
-          aria-label="Copy"
+          aria-label="Coluna"
           style={{ left: Math.min(menu.x, window.innerWidth - 220), top: Math.min(menu.y, window.innerHeight - 120) }}
         >
+          <button role="menuitem" autoFocus onClick={() => setColumnHidden(menu.header!, true)}>
+            Ocultar esta coluna
+          </button>
+          <button role="menuitem" onClick={() => setColsOpen(true)}>
+            Colunas...
+          </button>
+          <button role="menuitem" disabled={hiddenCount === 0} onClick={() => setHidden(new Set())}>
+            Mostrar todas
+          </button>
+        </div>
+      )}
+
+      {menu && menu.header === undefined && (
+        <div
+          className="menu"
+          role="menu"
+          aria-label="Cell"
+          style={{ left: Math.min(menu.x, window.innerWidth - 220), top: Math.min(menu.y, window.innerHeight - 190) }}
+        >
+          {view === 'data' && (
+            <>
+              <button role="menuitem" onClick={() => sel && applyFilters(withFilter(filters, { column: sel.col, value: sel.row[sel.col] ?? null }))}>
+                Filtrar por este valor
+              </button>
+              <button role="menuitem" disabled={filters.length === 0} onClick={() => applyFilters([])}>
+                Limpar filtros
+              </button>
+              <hr />
+            </>
+          )}
           <button role="menuitem" autoFocus onClick={copyCell}>
             Copy value <kbd>Ctrl+C</kbd>
           </button>
@@ -655,27 +763,61 @@ function App() {
       {about && (
         <div className="backdrop" onClick={(e) => e.target === e.currentTarget && setAbout(null)}>
           <div className="about" role="dialog" aria-modal="true" aria-labelledby="about-title">
-            <h2 id="about-title">{about[0]}</h2>
-            {about.slice(1).map((line) =>
-              line.endsWith(REPO_URL) ? (
-                <p key={line}>
-                  {line.slice(0, -REPO_URL.length)}
-                  <a
-                    href={REPO_URL}
-                    onClick={(e) => {
-                      e.preventDefault(); // never navigate the app's own webview away
-                      window.runtime?.BrowserOpenURL?.(REPO_URL);
-                    }}
-                  >
-                    {REPO_URL}
-                  </a>
-                </p>
-              ) : (
-                <p key={line}>{line}</p>
-              ),
-            )}
+            <h2 id="about-title">
+              mdb2sql <span className="version">{about.version}</span>
+            </h2>
+            <p className="tagline">{ABOUT_TAGLINE}</p>
+            <dl>
+              {aboutRows(about).map(([label, value]) => (
+                <div key={label}>
+                  <dt>{label}</dt>
+                  <dd>
+                    {value.startsWith('https://') ? (
+                      <a
+                        href={value}
+                        title="Abrir no navegador padrao"
+                        onClick={(e) => {
+                          e.preventDefault(); // never navigate the app's own webview away
+                          window.runtime?.BrowserOpenURL?.(value);
+                        }}
+                      >
+                        {value}
+                      </a>
+                    ) : (
+                      value
+                    )}
+                  </dd>
+                </div>
+              ))}
+            </dl>
             <button className="primary" autoFocus onClick={() => setAbout(null)}>
-              Close
+              Fechar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {colsOpen && (
+        <div className="backdrop" onClick={(e) => e.target === e.currentTarget && setColsOpen(false)}>
+          <div className="about columns" role="dialog" aria-modal="true" aria-labelledby="cols-title">
+            <h2 id="cols-title">Colunas de {selectedTable}</h2>
+            <p className="tagline" title="A pesquisa e o Export continuam usando todas as colunas.">
+              {shownColumns.length} de {gridColumns.length} visiveis
+            </p>
+            <div className="col-actions">
+              <button onClick={() => setHidden(new Set())}>Mostrar todas</button>
+              <button onClick={() => setHidden(new Set(gridColumns))}>Ocultar todas</button>
+            </div>
+            <div className="col-list">
+              {gridColumns.map((col) => (
+                <label key={col} title={col}>
+                  <input type="checkbox" checked={!hidden.has(col)} onChange={(e) => setColumnHidden(col, !e.target.checked)} />
+                  {col}
+                </label>
+              ))}
+            </div>
+            <button className="primary" autoFocus onClick={() => setColsOpen(false)}>
+              Fechar
             </button>
           </div>
         </div>

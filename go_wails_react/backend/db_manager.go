@@ -390,9 +390,67 @@ func (m *DBManager) validateTableName(tableName string) (string, error) {
 	return tableName, nil
 }
 
+// Filter e uma condicao "coluna = valor exato" vinda do clique direito numa celula; Value nil = IS NULL
+// !T: Value is the cell as the UI got it (JSON string, number or bool)
+type Filter struct {
+	Column string `json:"column"`
+	Value  any    `json:"value"`
+}
+
+// filterWhere monta " WHERE ..." (AND entre os filtros) e os parametros; types = tipo DuckDB de cada coluna da tabela
+// !T: Column names must exist in types and are quoted; values are always bound. The value is cast to the column
+// type (text read from the catalog, never user input) so the comparison happens in that type: REAL 0.1 equals the
+// shown 0.1, a timestamp equals its shown text.
+func filterWhere(filters []Filter, types map[string]string) (string, []any, error) {
+	var conds []string
+	var args []any
+	for _, f := range filters {
+		typ, ok := types[f.Column]
+		if !ok {
+			return "", nil, fmt.Errorf("column not found: %s", f.Column)
+		}
+		switch f.Value.(type) {
+		case nil:
+			conds = append(conds, quoteIdent(f.Column)+" IS NULL")
+			continue
+		case string, bool, float64, float32, int, int64:
+		default:
+			return "", nil, fmt.Errorf("cannot filter column %s by a list or struct value", f.Column)
+		}
+		conds = append(conds, quoteIdent(f.Column)+" = CAST(? AS "+typ+")")
+		args = append(args, f.Value)
+	}
+	if len(conds) == 0 {
+		return "", nil, nil
+	}
+	return " WHERE " + strings.Join(conds, " AND "), args, nil
+}
+
+// tableWhere reads the column types of the (already validated) table only when there are filters
+func (m *DBManager) tableWhere(tableName string, filters []Filter) (string, []any, error) {
+	if len(filters) == 0 {
+		return "", nil, nil
+	}
+	schema, err := m.GetTableSchema(tableName)
+	if err != nil {
+		return "", nil, err
+	}
+	types := make(map[string]string, len(schema))
+	for _, c := range schema {
+		types[c.Name] = c.Type
+	}
+	return filterWhere(filters, types)
+}
+
+// AccessReader diz qual leitor abriria um .mdb/.accdb agora (para o Sobre): "Access ODBC", "mdbtools" ou ""
+func AccessReader() string {
+	reader, _ := chooseAccessReader(os.Getenv("MDB2SQL_ACCESS_READER"), odbcInstalled(), mdbtoolsAvailable())
+	return reader
+}
+
 // Executa SELECT na tabela e retorna resultados como slice de maps
 // !T: Returns []map[string]interface{} for dynamic column handling in frontend
-func (m *DBManager) QueryTable(tableName string, limit int) ([]map[string]interface{}, error) {
+func (m *DBManager) QueryTable(tableName string, limit int, filters ...Filter) ([]map[string]interface{}, error) {
 	if m.conn == nil {
 		return nil, fmt.Errorf("no database connected")
 	}
@@ -407,8 +465,12 @@ func (m *DBManager) QueryTable(tableName string, limit int) ([]map[string]interf
 
 	// SELECT com LIMIT parametrizado
 	// !T: Only limit is parameterized, table name is validated
-	query := fmt.Sprintf(`SELECT * FROM %s LIMIT ?`, quoteIdent(tableName))
-	rows, err := m.conn.Query(query, limit)
+	where, args, err := m.tableWhere(tableName, filters)
+	if err != nil {
+		return nil, err
+	}
+	query := fmt.Sprintf(`SELECT * FROM %s%s LIMIT ?`, quoteIdent(tableName), where)
+	rows, err := m.conn.Query(query, append(args, limit)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query table: %w", err)
 	}
@@ -449,7 +511,7 @@ func (m *DBManager) QueryTable(tableName string, limit int) ([]map[string]interf
 
 // Retorna numero total de linhas em uma tabela
 // !T: Executes COUNT(*) query with validated table name
-func (m *DBManager) GetRowCount(tableName string) (int, error) {
+func (m *DBManager) GetRowCount(tableName string, filters ...Filter) (int, error) {
 	if m.conn == nil {
 		return 0, fmt.Errorf("no database connected")
 	}
@@ -464,9 +526,13 @@ func (m *DBManager) GetRowCount(tableName string) (int, error) {
 
 	// COUNT(*) retorna total de linhas
 	// !T: Table name validated, safe to use in query
-	query := fmt.Sprintf(`SELECT COUNT(*) FROM %s`, quoteIdent(tableName))
+	where, args, err := m.tableWhere(tableName, filters)
+	if err != nil {
+		return 0, err
+	}
+	query := fmt.Sprintf(`SELECT COUNT(*) FROM %s%s`, quoteIdent(tableName), where)
 	var count int
-	if err = m.conn.QueryRow(query).Scan(&count); err != nil {
+	if err = m.conn.QueryRow(query, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("failed to count rows: %w", err)
 	}
 

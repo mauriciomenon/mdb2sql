@@ -1,4 +1,4 @@
-# MDB2SQL (Go + Wails + React) 1.1.1
+# MDB2SQL (Go + Wails + React) 1.2.0
 
 Windows program to open, browse and convert databases: DuckDB, SQLite and Microsoft Access
 (`.mdb`, `.accdb`). It lists the tables, shows data and schema, runs SQL, and exports the whole database
@@ -7,15 +7,30 @@ it opens.
 
 ## Which file to download
 
-Release `go_wails_react-v1.1.1`, three files with the same program (Windows 11, 64-bit):
+Release `go_wails_react-v1.2.0`, three files with the same program (Windows 11, 64-bit):
 
 | File | What it is | When to use |
 | --- | --- | --- |
-| `mdb2sql-1.1.1-w11-amd64-go-wails-react.exe` | single executable, nothing to install | copy anywhere and double-click |
-| `mdb2sql-1.1.1-w11-amd64-go-wails-react.zip` | folder with `mdb2sql.exe` and `LEIAME.txt` | unzip to a folder (USB stick, shared drive) |
-| `mdb2sql-1.1.1-w11-amd64-go-wails-react-installer.exe` | NSIS installer: `Program Files\Mauricio Menon\MDB2SQL`, Start menu and desktop shortcuts, uninstaller | permanent install; asks for administrator rights |
+| `mdb2sql-1.2.0-w11-amd64-go-wails-react.exe` | single executable, nothing to install | copy anywhere and double-click |
+| `mdb2sql-1.2.0-w11-amd64-go-wails-react.zip` | folder with `mdb2sql.exe` and `LEIAME.txt` | unzip to a folder (USB stick, shared drive) |
+| `mdb2sql-1.2.0-w11-amd64-go-wails-react-installer.exe` | NSIS installer: `Program Files\Mauricio Menon\MDB2SQL`, Start menu and desktop shortcuts, uninstaller | permanent install; asks for administrator rights |
 
 Windows SmartScreen may warn because the files are not code-signed: "More info" > "Run anyway".
+
+Changes in 1.2.0:
+
+- Short window title, "mdb2sql 1.2.0 - Go"; the full stack with versions moved to Help > About.
+- Help > About redone: name and version, what the program does, build number and date, "Go x + Wails x +
+  React x", DuckDB version, the Access reader this computer would use (ODBC driver or embedded mdbtools),
+  author, license, and two links that open in the default browser (GitHub and GitLab).
+- Hide several columns at once: "Colunas..." button (one checkbox per column, "Mostrar todas", "Ocultar
+  todas") and right-click on a column header ("Ocultar esta coluna", "Colunas...", "Mostrar todas"). The
+  status bar shows "N colunas ocultas". Search and exports still use every column.
+- Right-click a cell > "Filtrar por este valor": keeps the rows where that column has exactly that value
+  (a NULL cell: `IS NULL`). The filter runs in the database query, so it finds rows beyond the ones
+  loaded; filters on several columns add up (AND) and are shown as removable chips ("Filtro: SIGLA = 'U9A'").
+- Each action appears once: the toolbar row ("Load database", "Sample data" and a second "Export", copies of
+  File > Open and of the export list in File) is gone; the exports have their own Export menu.
 
 Changes in 1.1.1: the row search and the table filter match every word typed, in any order, ignoring case
 and accents (before, the whole text had to appear as typed, accents included); own app icon (exe, window,
@@ -35,7 +50,7 @@ installer, shortcuts) instead of the Wails default; the title bar shows the vers
 
 ## How to use
 
-Start the program; open a file with File > Open database (or the Load database button). A file can also be
+Start the program; open a file with File > Open database. A file can also be
 given on the command line (`mdb2sql.exe "C:\data\DB4.accdb"`, or drag the file onto the exe) or in the
 environment variable `MDB2SQL_DB_PATH`; it then opens at start.
 
@@ -51,7 +66,20 @@ Window parts:
   - Schema: column names, types and nullability.
   - SQL: any DuckDB SQL over the open database (`SELECT ... FROM "TABLE" WHERE ...`); Run or Ctrl+Enter.
 - Click a cell to select it; Ctrl+C copies the value. Right-click a cell: Copy value, Copy row,
-  Copy row with header (TAB-separated; pastes into Excel in columns).
+  Copy row with header (TAB-separated; pastes into Excel in columns; hidden columns are copied too).
+- Filter by a value (Data tab): right-click a cell > "Filtrar por este valor" shows only the rows where that
+  column has exactly that value; a NULL cell filters by `IS NULL`. It is a `WHERE` in the database query, so
+  it also finds rows that were not loaded, and Rows still limits how many are shown: the line under the grid
+  says "Showing 100 of 1234 rows matching the filters (40000 in the table)". Filters on other columns add up
+  (AND); filtering the same column again replaces its value. Each active filter is a chip above the grid
+  ("Filtro: SIGLA = 'U9A'") with an x to remove it; "Limpar filtros" (chip bar or cell menu) removes all.
+  Another table starts without filters. The word search works on the filtered rows; the SQL tab is not
+  affected. Exports ignore the filters (they write the whole table).
+- Hide columns (Data tab): "Colunas..." lists every column with a checkbox (checked = visible), plus
+  "Mostrar todas" and "Ocultar todas"; change as many as needed and close. Right-click a column header:
+  "Ocultar esta coluna", "Colunas...", "Mostrar todas". The status bar shows "N colunas ocultas". Hidden
+  columns come back when another table or file is opened. The search still looks at every column and
+  exports still write every column.
 - Bottom status bar: what was opened (file and number of tables), the last export or the error, and on the
   right the reader used: "Opened via DuckDB", "SQLite", "Access ODBC" or "mdbtools".
 
@@ -60,19 +88,20 @@ Menus:
 - File
   - Open database...: `.duckdb`, `.db`, `.sqlite`, `.sqlite3`, `.mdb`, `.accdb`.
   - Open sample data: the file in `MDB2SQL_DB_PATH` (or `data\sample.duckdb` next to where it runs).
-  - Export (also the Export button), all run in the background with a progress window and a Cancel button:
-    - Database as DuckDB (.duckdb) and Database as SQLite (.sqlite): every table, with its types;
-    - Database as Excel (.xlsx, one sheet per table): sheet name = table name (characters Excel refuses
-      become `_`, cut to Excel's 31 characters, `~2` added if two cut names are equal); first row = column
-      names; a table with more than 1,048,575 rows continues in sheets `NAME (2)`, `NAME (3)`...;
-    - Current table as CSV / as Excel: the whole table, not only the rows shown;
-    - SQL result as CSV / as Excel: the whole result of the last query run in the SQL tab.
-    - CSV files are UTF-8 with BOM, comma separated (Excel opens them with accents right).
-    - The save dialog opens in the folder of the open file; with none open, in the last folder used.
-    - A cancelled or failed export leaves no half-written file; an existing file is replaced only at the end.
   - Exit.
+- Export, all run in the background with a progress window and a Cancel button:
+  - Database as DuckDB (.duckdb) and Database as SQLite (.sqlite): every table, with its types;
+  - Database as Excel (.xlsx, one sheet per table): sheet name = table name (characters Excel refuses
+    become `_`, cut to Excel's 31 characters, `~2` added if two cut names are equal); first row = column
+    names; a table with more than 1,048,575 rows continues in sheets `NAME (2)`, `NAME (3)`...;
+  - Current table as CSV / as Excel: the whole table, not only the rows shown;
+  - SQL result as CSV / as Excel: the whole result of the last query run in the SQL tab.
+  - CSV files are UTF-8 with BOM, comma separated (Excel opens them with accents right).
+  - The save dialog opens in the folder of the open file; with none open, in the last folder used.
+  - A cancelled or failed export leaves no half-written file; an existing file is replaced only at the end.
 - Settings > Theme: System (follows Windows), Light or Dark; remembered for the next start.
-- Help > About: version, build number and date, versions of Go, Wails, DuckDB and React, author and code link.
+- Help > About: version, build number and date, stack (Go + Wails + React) and DuckDB versions, Access reader
+  in use on this computer, author, license, and the GitHub and GitLab links (they open in the default browser).
 
 Opening Access files: the tables are copied into memory first (progress window with Cancel); the 287-table
 test database (115 MB) takes about 20 s with the ODBC driver and about 45 s with mdbtools on an idle machine (up to
@@ -81,7 +110,7 @@ message says what to install.
 
 Files the program creates on the user's computer (nothing else):
 
-- `%LOCALAPPDATA%\mdb2sql\go-wails-react-1.1.1-<build>\`: mdbtools and the SQLite extension, unpacked on
+- `%LOCALAPPDATA%\mdb2sql\go-wails-react-1.2.0-<build>\`: mdbtools and the SQLite extension, unpacked on
   first use; folders of older builds are deleted automatically.
 - `%LOCALAPPDATA%\mdb2sql\go-wails-react-webview\`: WebView2 data.
 - `%APPDATA%\mdb2sql\go-wails-react.json`: theme and last folder used.
