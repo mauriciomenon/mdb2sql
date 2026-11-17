@@ -165,7 +165,9 @@ NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 
 
 - Short window title: `mdb2sql 1.2.0 - Zig`; the details moved to Help > About, now laid out as a table with
   the stack versions and clickable GitHub and GitLab links.
-- **Columns...** and the column header right-click menu hide or show several columns at once.
+- **Columns...** and the column header right-click menu hide or show several columns at once. The dialog takes
+  about 65% of the window width (420 to 900 px) and up to 70% of its height, can be resized, and lays the check
+  boxes out in 1 to 6 columns (4 at the default window size) with vertical scrolling only.
 - Right-click a cell > **Filter by this value**: exact-value filter in the database query, shown as removable
   buttons, with **Clear filters**.
 - One export action per place: the **Export CSV...** / **Export Excel...** buttons of the Data and SQL tabs

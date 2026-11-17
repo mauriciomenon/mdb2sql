@@ -135,7 +135,33 @@ pub fn filterLabel(buf: []u8, f: query.Criterion) [:0]const u8 {
         std.fmt.bufPrintSentinel(buf, "{s} = '{s}{s}'  x###f", .{ column, value, if (value.len < f.value.len) "..." else "" }, 0)) catch "filter  x###f";
 }
 
+// Dialogo Columns: ~65% da largura da janela principal, entre 420 e 900 px, e nunca maior que a propria janela
+pub fn columnsDialogWidth(main_w: f32) f32 {
+    return @max(0, @min(std.math.clamp(main_w * 0.65, 420, 900), main_w - 16));
+}
+
+// Colunas da grade de caixas do dialogo: quantas celulas de `cell` px cabem em `avail`, de 1 a 6
+pub fn checkboxGridColumns(avail: f32, cell: f32) usize {
+    if (!(cell > 0) or !(avail > 0)) return 1;
+    return @intFromFloat(std.math.clamp(@floor(avail / cell), 1, 6));
+}
+
 // -------------------------------------------------------------------- tests
+
+test "Columns dialog: width follows the main window within 420..900, grid of 1 to 6 columns" {
+    try t.expectEqual(@as(f32, 832), columnsDialogWidth(1280)); // tamanho padrao do app
+    try t.expectEqual(@as(f32, 900), columnsDialogWidth(1920)); // maximizada
+    try t.expectEqual(@as(f32, 420), columnsDialogWidth(600));
+    try t.expectEqual(@as(f32, 384), columnsDialogWidth(400)); // janela menor que o minimo: cabe nela
+    // celula minima de 11 em (176 px com a fonte de 16 px): ~4 colunas no tamanho padrao
+    try t.expectEqual(4, checkboxGridColumns(832 - 2 * 10 - 2 * 10 - 14, 176));
+    try t.expectEqual(4, checkboxGridColumns(900 - 54, 176));
+    try t.expectEqual(2, checkboxGridColumns(420 - 54, 176));
+    try t.expectEqual(1, checkboxGridColumns(100, 176));
+    try t.expectEqual(6, checkboxGridColumns(5000, 176));
+    try t.expectEqual(1, checkboxGridColumns(0, 176));
+    try t.expectEqual(1, checkboxGridColumns(500, 0));
+}
 
 test "right-click filters: exact value or NULL, no repeats, the list owns the values" {
     var list: std.ArrayList(query.Criterion) = .empty;

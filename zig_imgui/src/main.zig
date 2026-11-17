@@ -1176,38 +1176,60 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         sel.col_filter[0] = 0;
         _ = ig.igOpenPopup_Str(dialog_title, 0);
     }
+    if (!ig.igIsPopupOpen_Str(dialog_title, 0)) return changed;
+    // Tamanho proporcional a janela (REGRA_VISUAL): largura ~65% (420..900 px), altura ate 70%; redimensionavel,
+    // a grade de caixas se refaz pela largura disponivel; a fonte e sempre a base do app
+    const st = ig.igGetStyle();
     const vp = ig.igGetMainViewport();
+    const row_h = ig.igGetFrameHeight() + 2 * st.*.CellPadding.y;
+    const footer_h = ig.igGetFrameHeightWithSpacing() + st.*.ItemSpacing.y + 2; // separador + contagem e botoes
+    // celula: nome mais longo + caixa + folga, nunca menos de 11 em (assim da ~4 colunas no tamanho padrao)
+    var longest: f32 = 0;
+    for (g.columns[0..n_cols]) |name| longest = @max(longest, textWidth(name));
+    const cell_w = @max(longest + ig.igGetFrameHeight() + st.*.ItemInnerSpacing.x + 2 * st.*.CellPadding.x + 12, 11 * ig.igGetFontSize());
+    const dlg_w = dbm.gridtools.columnsDialogWidth(vp.*.Size.x);
+    const per_row0 = dbm.gridtools.checkboxGridColumns(dlg_w - 4 * st.*.WindowPadding.x - st.*.ScrollbarSize, cell_w);
+    const n_rows: f32 = @floatFromInt((n_cols + per_row0 - 1) / per_row0);
+    const overhead = ig.igGetFrameHeight() + 2 * st.*.WindowPadding.y + ig.igGetFrameHeightWithSpacing() + 2 * st.*.WindowPadding.y + footer_h;
+    const dlg_h = @min(overhead + n_rows * row_h, vp.*.Size.y * 0.7);
     ig.igSetNextWindowPos(.{ .x = vp.*.Pos.x + vp.*.Size.x / 2, .y = vp.*.Pos.y + vp.*.Size.y / 2 }, ig.ImGuiCond_Appearing, .{ .x = 0.5, .y = 0.5 });
+    ig.igSetNextWindowSize(.{ .x = dlg_w, .y = dlg_h }, ig.ImGuiCond_Appearing);
+    ig.igSetNextWindowSizeConstraints(.{ .x = @min(420, vp.*.Size.x - 16), .y = overhead + 3 * row_h }, .{ .x = vp.*.Size.x - 16, .y = vp.*.Size.y - 16 }, null, null);
     var dialog_open = true;
-    if (ig.igBeginPopupModal(dialog_title, &dialog_open, ig.ImGuiWindowFlags_AlwaysAutoResize | ig.ImGuiWindowFlags_NoSavedSettings)) {
+    if (ig.igBeginPopupModal(dialog_title, &dialog_open, ig.ImGuiWindowFlags_NoSavedSettings)) {
         defer ig.igEndPopup();
-        const width = 360;
-        ig.igSetNextItemWidth(width);
+        ig.igSetNextItemWidth(-1);
         _ = ig.igInputTextWithHint("##colfilter", "find a column", &sel.col_filter, sel.col_filter.len + 1, 0, null, null);
         const needle = zstr(&sel.col_filter);
-        const line = ig.igGetFrameHeightWithSpacing();
-        if (ig.igBeginChild_Str("list", .{ .x = width, .y = line * 12 }, ig.ImGuiChildFlags_Borders, 0)) {
-            for (g.columns[0..n_cols], 0..) |name, c| {
-                if (needle.len > 0 and std.ascii.findIgnoreCase(name, needle) == null) continue;
-                var shown = !sel.hidden.isSet(c);
-                ig.igPushID_Int(@intCast(c));
-                if (ig.igCheckbox(name.ptr, &shown)) sel.hidden.setValue(c, !shown);
-                ig.igPopID();
+        // so rolagem vertical: a grade usa a largura da lista, sem barra horizontal
+        if (ig.igBeginChild_Str("list", .{ .x = 0, .y = -footer_h }, ig.ImGuiChildFlags_Borders, 0)) {
+            const per_row = dbm.gridtools.checkboxGridColumns(ig.igGetContentRegionAvail().x, cell_w);
+            if (ig.igBeginTable("grid", @intCast(per_row), ig.ImGuiTableFlags_SizingStretchSame, .{ .x = 0, .y = 0 }, 0)) {
+                defer ig.igEndTable();
+                for (g.columns[0..n_cols], 0..) |name, c| {
+                    if (needle.len > 0 and std.ascii.findIgnoreCase(name, needle) == null) continue;
+                    _ = ig.igTableNextColumn();
+                    var shown = !sel.hidden.isSet(c);
+                    ig.igPushID_Int(@intCast(c));
+                    if (ig.igCheckbox(name.ptr, &shown)) sel.hidden.setValue(c, !shown);
+                    ig.igPopID();
+                }
             }
         }
         ig.igEndChild();
+        ig.igSeparator();
+        // contagem a esquerda; Show all, Hide all e Close a direita, do mesmo tamanho
+        const bw = @max(buttonWidth("Show all"), @max(buttonWidth("Hide all"), buttonWidth("Close")));
+        const full = ig.igGetContentRegionAvail().x;
         ig.igAlignTextToFramePadding();
         text("{d} of {d} shown", .{ n_cols - sel.hiddenCount(n_cols), n_cols });
-        ig.igSameLine(width - 2 * 88 - ig.igGetStyle().*.ItemSpacing.x + ig.igGetStyle().*.WindowPadding.x, -1);
-        if (ig.igButton("Show all", .{ .x = 88, .y = 0 })) sel.hidden = .empty;
+        ig.igSetItemTooltip("%s", "Hidden columns are still searched and exported.");
+        ig.igSameLine(st.*.WindowPadding.x + full - 3 * bw - 2 * st.*.ItemSpacing.x, -1);
+        if (ig.igButton("Show all", .{ .x = bw, .y = 0 })) sel.hidden = .empty;
         ig.igSameLine(0, -1);
-        if (ig.igButton("Hide all", .{ .x = 88, .y = 0 })) sel.hidden.setRangeValue(.{ .start = 0, .end = n_cols }, true);
-        ig.igPushTextWrapPos(ig.igGetCursorPosX() + width);
-        ig.igTextDisabled("%s", "Hidden columns are still searched and exported.");
-        ig.igPopTextWrapPos();
-        ig.igSeparator();
-        ig.igSetCursorPosX(ig.igGetCursorPosX() + width - 88);
-        if (ig.igButton("Close", .{ .x = 88, .y = 0 })) ig.igCloseCurrentPopup();
+        if (ig.igButton("Hide all", .{ .x = bw, .y = 0 })) sel.hidden.setRangeValue(.{ .start = 0, .end = n_cols }, true);
+        ig.igSameLine(0, -1);
+        if (ig.igButton("Close", .{ .x = bw, .y = 0 })) ig.igCloseCurrentPopup();
     }
     return changed;
 }
