@@ -48,7 +48,7 @@ A **barra de status** (embaixo) mostra a mensagem atual e por qual caminho o arq
 - **Tables** (esquerda): lista de tabelas; **Filter tables** filtra por nome, com a mesma regra da busca abaixo.
   Clique (ou setas) abre a tabela.
 - Aba **Data**: as primeiras linhas da tabela (quantas: **Row limit**, 100/500/1000; padrao 100) e o total de
-  linhas. O campo de busca (**Search: all words...**) procura nas linhas carregadas (nao na tabela inteira):
+  linhas. O campo de busca (**Search loaded rows**) procura nas linhas carregadas (nao na tabela inteira):
   a linha aparece quando uma mesma celula tem todas as palavras digitadas, em qualquer ordem e sem diferenciar
   maiusculas nem acentos (`campo tensao` acha `EXCITAÇÃO TENSÃO DE CAMPO`; palavras que so aparecem em celulas
   diferentes nao contam).
@@ -205,5 +205,5 @@ Licencas: o mdbtools e GPL/LGPL; os textos (`COPYING`, `COPYING.LIB`) vao junto 
 ## Licenca
 
 GPL v2 ou posterior (SPDX `GPL-2.0-or-later`), texto em [LICENSE](LICENSE), que vai no zip e e instalado junto
-pelos instaladores. Copyright (C) 2026 Mauricio Menon. Componentes de terceiros (Tauri, DuckDB, SQLite, mdbtools
+pelos instaladores. Componentes de terceiros (Tauri, DuckDB, SQLite, mdbtools
 etc.) mantem as licencas deles.

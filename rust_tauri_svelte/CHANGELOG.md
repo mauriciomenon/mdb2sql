@@ -19,6 +19,8 @@
   o cabecalho fixo nao deixa mais o texto das linhas passar por cima dele.
 - Dialogo **Colunas...** proporcional a janela: ~65% da largura (420 a 900 px), ate 70% da altura, busca no topo,
   caixas em grade de 1 a 6 colunas pela largura do nome mais longo, fonte base, rolagem so vertical.
+- Sem instrucoes na tela: campos e avisos so com rotulos curtos (ex.: "Search loaded rows", "Filter tables");
+  atalho e detalhe ficam em dica de uma linha ou no README.
 - Textos um passo menores (base 14 -> 13 px; titulos, grade e notas na mesma proporcao; nada abaixo de 11 px).
 - Nome da tabela acima da grade e cabecalhos de coluna sempre inteiros (a coluna cresce ate caber nome e
   valores, sem limite); teste confere. Nome longo na lista de tabelas ganha dica com o nome inteiro.

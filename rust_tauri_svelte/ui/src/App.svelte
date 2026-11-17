@@ -300,7 +300,7 @@
       lastSql = query;
       showStatus(
         sqlResult.columns.length
-          ? `Query returned ${sqlResult.rows.length.toLocaleString()}${sqlResult.truncated ? '+ (Row limit; export gets all)' : ''} rows`
+          ? `Query returned ${sqlResult.rows.length.toLocaleString()}${sqlResult.truncated ? '+' : ''} rows`
           : 'Statement executed'
       );
     } catch (err) {
@@ -384,7 +384,7 @@
         id="db-path"
         type="text"
         bind:value={dbPath}
-        placeholder="Path to a .duckdb, .db, .sqlite, .sqlite3, .mdb or .accdb file"
+        placeholder=".duckdb, .db, .sqlite, .sqlite3, .mdb, .accdb"
         spellcheck="false"
         autocomplete="off"
       />
@@ -461,7 +461,7 @@
         aria-label="Filter tables"
         type="search"
         bind:value={filter}
-        placeholder="Filter tables: all words, any order"
+        placeholder="Filter tables"
         disabled={tables.length === 0}
       />
       <!-- NIVEL TECNICO: native listbox gives arrow keys and type-ahead for free -->
@@ -498,11 +498,11 @@
             bind:value={sql}
             aria-label="SQL query"
             spellcheck="false"
-            placeholder={'SELECT * FROM "' + (selectedTable || 'table') + '" LIMIT 10   (Ctrl+Enter runs)'}
+            placeholder={'SELECT * FROM "' + (selectedTable || 'table') + '" LIMIT 10'}
             onkeydown={(e) => e.ctrlKey && e.key === 'Enter' && runSql()}
           ></textarea>
           <div class="table-bar">
-            <button type="button" onclick={runSql} disabled={busy || !openedPath || !sql.trim()}>Run SQL</button>
+            <button type="button" title="Ctrl+Enter" onclick={runSql} disabled={busy || !openedPath || !sql.trim()}>Run SQL</button>
             {#if sqlResult}
               <span>{sqlResult.rows.length.toLocaleString()}{sqlResult.truncated ? '+' : ''} rows, {sqlResult.columns.length} columns</span>
             {/if}
@@ -512,7 +512,7 @@
           <Grid columns={sqlResult.columns} rows={sqlResult.rows} label="SQL result" emptyText="No rows" onstatus={showStatus} onerror={showError} />
         {/if}
       {:else if !selectedTable}
-        <p class="empty">Open a database (.duckdb, .sqlite, .mdb, .accdb) to browse its tables.</p>
+        <p class="empty">No table open</p>
       {:else if tab === 'schema'}
         <div class="table-bar"><h2>{selectedTable}</h2><span>{columns.length} columns</span></div>
         <Grid
@@ -539,7 +539,7 @@
           <button
             type="button"
             class="secondary columns-button"
-            title="Mostrar ou ocultar colunas da grade. A exportacao continua com todas as colunas."
+            title="A exportacao leva todas as colunas"
             onclick={() => columnsDialog.showModal()}>Colunas...</button
           >
           <input
@@ -547,7 +547,7 @@
             type="search"
             bind:value={search}
             aria-label="Search rows"
-            placeholder="Search: all words, any order, ignores case and accents"
+            placeholder="Search loaded rows"
           />
         </div>
         {#if filters.length}
@@ -572,9 +572,9 @@
           rows={shownColumns.length ? visibleRows : []}
           label="Rows of {selectedTable}"
           emptyText={!shownColumns.length
-            ? 'Todas as colunas estao ocultas (Colunas... > Mostrar todas)'
+            ? 'Todas as colunas ocultas'
             : filters.length && !rows.length
-              ? 'Nenhuma linha da tabela passa pelo filtro'
+              ? 'Nenhuma linha com este filtro'
               : rows.length
                 ? 'No loaded row matches the search'
                 : 'Table is empty'}
@@ -588,7 +588,7 @@
 
   <footer class="statusbar" class:error role="status" aria-live="polite">
     <span class="message">{error || status}</span>
-    {#if hidden.size}<span class="source" title="Colunas... > Mostrar todas traz de volta">{hiddenStatus(hidden.size)}</span>{/if}
+    {#if hidden.size}<span class="source">{hiddenStatus(hidden.size)}</span>{/if}
     {#if source}<span class="source" title="How the file was read">Opened via {source}</span>{/if}
     <span class="stack">Rust + Tauri v2 + Svelte</span>
   </footer>

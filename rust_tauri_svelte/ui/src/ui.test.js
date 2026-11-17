@@ -79,6 +79,17 @@ test('the table name above the grid is never squeezed', () => {
   assert.doesNotMatch(css, /h2[^{]*\{[^}]*(text-overflow|overflow:\s*hidden)/);
 });
 
+// a tela mostra dados e rotulos: nada de instrucao ao usuario nem copyright (explicacao fica no README)
+test('no lecturing hints or copyright on screen or in the README', () => {
+  const screen = markup('./App.svelte') + markup('./Grid.svelte');
+  const preachy = /verifique|lembre-se|aten[cç][aã]o|all words|any order|ignores case|to browse|traz de volta|> Mostrar todas|Enter runs|export gets all/i;
+  assert.doesNotMatch(screen, preachy);
+  assert.doesNotMatch(screen, /copyright|\(c\) 20/i);
+  assert.doesNotMatch(readFileSync(new URL('../../README.md', import.meta.url), 'utf8'), /copyright/i);
+  // tooltip: uma linha curta, no maximo
+  for (const [, title] of screen.matchAll(/title="([^"{]*)"/g)) assert.ok(title.length <= 40 && !title.includes('. '), title);
+});
+
 test('each grid context menu lists an action once', () => {
   const grid = markup('./Grid.svelte');
   const [header, cell] = grid.split('{:else if menu}');
