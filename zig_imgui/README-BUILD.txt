@@ -1,7 +1,7 @@
 MDB2SQL (Zig + Dear ImGui) - BUILD, PRODUTOS E LIMPEZA
 =======================================================
 Guia pratico de build desta pasta. O README.md descreve o app; este arquivo diz qual comando rodar e onde
-fica cada coisa. Versao: .version em build.zig.zon (fonte unica; hoje 1.1.1).
+fica cada coisa. Versao: .version em build.zig.zon (fonte unica; hoje 1.2.0).
 
 
 1. REGRAS
@@ -10,7 +10,7 @@ fica cada coisa. Versao: .version em build.zig.zon (fonte unica; hoje 1.1.1).
   ferramentas fixas para .tools\ (sha256 conferido), compila, roda os testes, gera os tres produtos e so no fim
   troca dist\<os>\<arch>\. Se algo falhar, os produtos anteriores ficam intactos em dist\.
 - Ele imprime "Build <N> (<AAAA-MM-DD>)" (N = git rev-list --count HEAD, data de hoje; gravados no programa e
-  mostrados em Help > About; fora deste comando o About diz "build dev") e, no fim,
+  mostrados em Help > About; fora deste comando o About mostra Build "dev") e, no fim,
   "Source: <tag>-<n>-g<commit>[-dirty]": esse e o commit que esta dentro dos produtos. Para release, commite antes.
 - So Windows amd64: o build.zig para em outros alvos (so a libduckdb de Windows esta fixada).
   Por isso nao ha clean.sh nem build Linux.
@@ -51,7 +51,7 @@ Windows - dist\w11\amd64\
       %LOCALAPPDATA%\mdb2sql\zig-imgui-<versao>-<hash>\ e roda de la (apaga as versoes velhas dessa pasta).
   mdb2sql-<versao>-w11-amd64-zig-imgui.zip
       pasta do app zipada (mdb2sql-zig-imgui\): mdb2sql-zig.exe, duckdb.dll, sqlite_scanner.duckdb_extension,
-      mdbtools\ (3 exes + COPYING, COPYING.LIB) e README.md. Os arquivos precisam ficar juntos.
+      mdbtools\ (3 exes + COPYING, COPYING.LIB), README.md e LICENSE (GPL v2). Os arquivos precisam ficar juntos.
   mdb2sql-<versao>-w11-amd64-zig-imgui-installer.exe
       instalador NSIS por usuario (sem administrador): %LOCALAPPDATA%\Programs\mdb2sql-zig-imgui,
       atalho no Menu Iniciar, desinstalar em Configuracoes > Aplicativos. Silencioso: /S [/D=pasta].

@@ -55,8 +55,9 @@ pub const Op = enum {
     less,
     is_null,
     not_null,
+    exact, // texto exibido igual ao valor, com caixa e acentos (filtro do clique direito); valor vazio vale
 
-    pub const labels = [_][:0]const u8{ "contains", "equals", "not equals", "starts with", ">", "<", "is null", "is not null" };
+    pub const labels = [_][:0]const u8{ "contains", "equals", "not equals", "starts with", ">", "<", "is null", "is not null", "is exactly" };
 
     pub fn needsValue(op: Op) bool {
         return op != .is_null and op != .not_null;
@@ -137,6 +138,12 @@ fn writeCriterion(out: *std.ArrayList(u8), params: *std.ArrayList([]const u8), a
             try out.appendSlice(a, if (c.op == .equals) " = " else " IS DISTINCT FROM ");
             try writeNorm(out, a, null);
         },
+        .exact => {
+            // o mesmo texto que a grade mostra (todo tipo chega como VARCHAR): vale para numero, data e texto
+            try out.appendSlice(a, "CAST(");
+            try writeIdent(out, a, c.column);
+            try out.appendSlice(a, " AS VARCHAR) = ?");
+        },
     }
     try params.append(a, c.value);
 }
@@ -170,7 +177,7 @@ fn writeFromWhere(out: *std.ArrayList(u8), params: *std.ArrayList([]const u8), a
 
     var first = true;
     for (spec.criteria) |c| {
-        if (c.op.needsValue() and c.value.len == 0) continue; // criterio incompleto nao filtra
+        if (c.op.needsValue() and c.op != .exact and c.value.len == 0) continue; // criterio incompleto nao filtra
         if (!contains(spec.columns, c.column)) return error.ColumnNotFound;
         if (first) {
             try out.appendSlice(a, if (n_groups == 0) " WHERE (" else " AND (");
@@ -344,6 +351,37 @@ test "count shares the filter and has no paging" {
     try t.expect(std.mem.indexOf(u8, b.sql, ") AND strip_accents(") != null);
     try t.expect(std.mem.indexOf(u8, b.sql, "LIMIT") == null);
     try t.expectEqual(2, b.params.len);
+}
+
+test "exact value filter: quoted identifier, bound value, NULL, empty text, AND with the search" {
+    const cols = [_][]const u8{ "si\"gla", "ID" };
+    const evil = "U9A' OR '1'='1\" --";
+    const b = try buildCount(t.allocator, .{
+        .table = "odd\"name",
+        .tables = &t_tables,
+        .columns = &cols,
+        .search = "x",
+        .criteria = &.{
+            .{ .column = "si\"gla", .op = .exact, .value = evil },
+            .{ .column = "ID", .op = .is_null },
+            .{ .column = "ID", .op = .exact, .value = "" }, // texto vazio e um valor, nao um criterio incompleto
+        },
+    });
+    defer b.deinit(t.allocator);
+    try t.expect(std.mem.endsWith(u8, b.sql, " AND (CAST(\"si\"\"gla\" AS VARCHAR) = ? AND \"ID\" IS NULL AND CAST(\"ID\" AS VARCHAR) = ?)"));
+    try t.expect(std.mem.startsWith(u8, b.sql, "SELECT COUNT(*) FROM \"odd\"\"name\" WHERE (("));
+    // o valor nunca entra no SQL: so como parametro, byte a byte
+    try t.expect(std.mem.indexOf(u8, b.sql, "U9A") == null);
+    try t.expectEqual(4, b.params.len); // 2 da busca + 2 dos filtros
+    try t.expectEqualStrings(evil, b.params[2]);
+    try t.expectEqualStrings("", b.params[3]);
+    try t.expectEqual(b.params.len, std.mem.count(u8, b.sql, "?"));
+    try t.expectError(error.ColumnNotFound, buildSelect(t.allocator, .{
+        .table = "RANGER_SOACCU",
+        .tables = &t_tables,
+        .columns = &t_cols,
+        .criteria = &.{.{ .column = "NAME\" = 1 OR \"x", .op = .exact, .value = "1" }},
+    }));
 }
 
 test "paging math" {

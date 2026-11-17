@@ -15,10 +15,15 @@ pub const Progress = struct {
     done: std.atomic.Value(u64) = .init(0),
     total: std.atomic.Value(u64) = .init(0),
     cancel: std.atomic.Value(bool) = .init(false),
+    // .xlsx: o que o Excel nao comporta e ficou de fora; a UI le depois que o trabalho termina
+    cut_cells: u64 = 0, // textos cortados em 32.767 caracteres
+    cut_cols: u64 = 0, // colunas alem da 16.384a (somadas por tabela)
 
     pub fn begin(p: *Progress, total: u64) void {
         p.done.store(0, .monotonic);
         p.total.store(total, .monotonic);
+        p.cut_cells = 0;
+        p.cut_cols = 0;
     }
 
     pub fn add(p: *Progress, n: u64) void {
@@ -179,6 +184,8 @@ fn writeSheets(wb: *xlsx.Workbook, db: *Db, sel: Select, progress: *Progress, ro
     var rows = try db.stream(sel.sql, sel.params, .{ .types = true });
     defer rows.deinit();
     const n = @min(rows.n_cols, xlsx.max_cols);
+    progress.cut_cols += rows.n_cols - n;
+    defer progress.cut_cells = wb.cut_cells;
     const cells = try db.gpa.alloc(xlsx.Cell, n);
     defer db.gpa.free(cells);
     const header = try db.gpa.alloc(xlsx.Cell, n);
@@ -318,6 +325,29 @@ fn readBack(path: []const u8, sheet_names: *std.ArrayList(u8), rows_per_sheet: *
         }
     }
     try rows_per_sheet.appendSlice(t.allocator, sheets[0..n_sheets]);
+}
+
+test "xlsx: cells over 32,767 characters and columns past 16,384 are counted for the user (audit item 13)" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var b0: [256]u8 = undefined;
+    var db = try sampleDb(&tmp, &b0);
+    defer db.close();
+    var p: Progress = .{};
+    // 3 linhas, 2 com texto de 40.000 "é" (alem de 32.767) e 1 com texto de 32.767 (cabe)
+    var b1: [256]u8 = undefined;
+    const out = dbm.tmpPath(&b1, &tmp, "wide.xlsx");
+    const long = "SELECT repeat('é', CASE WHEN i = 1 THEN 32767 ELSE 40000 END) AS a FROM range(3) r(i)";
+    try t.expectEqual(3, try selection(&db, t.io, .xlsx, .{ .sql = long, .sheet = "Query" }, out, &p, 3));
+    try t.expectEqual(2, p.cut_cells);
+    // colunas alem de 16.384 (consulta de 16.386 colunas: lenta demais para o teste) sao n_cols - max_cols
+    // por tabela; aqui o contador fica no zero
+    try t.expectEqual(0, p.cut_cols);
+    p.cut_cols = 9; // e a exportacao seguinte zera os dois
+    // a exportacao seguinte comeca do zero
+    try t.expectEqual(1, try selection(&db, t.io, .xlsx, .{ .sql = "SELECT 'x' AS s", .sheet = "Query" }, out, &p, 1));
+    try t.expectEqual(0, p.cut_cells);
+    try t.expectEqual(0, p.cut_cols);
 }
 
 test "xlsx: one sheet per table, big table split, typed cells, result export" {

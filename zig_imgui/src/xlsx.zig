@@ -31,15 +31,16 @@ pub const Names = struct {
     }
 
     // O nome devolvido vive ate deinit
-    pub fn make(n: *Names, table: []const u8, part: usize) Allocator.Error![]const u8 {
-        var clean_buf: [256]u8 = undefined;
+    pub fn make(n: *Names, table: []const u8, part: usize) (Allocator.Error || error{SheetNameTooLong})![]const u8 {
+        // ate 31 unidades UTF-16 cabem em 31 * 4 bytes de UTF-8; os buffers sao medidos por isso (nome
+        // Unicode de 22 caracteres estourava 64 bytes e derrubava o programa)
+        var clean_buf: [max_name * 4]u8 = undefined;
         var clean: std.ArrayList(u8) = .initBuffer(&clean_buf);
-        for (table) |ch| {
-            if (clean.items.len == clean_buf.len) break;
+        for (cutUtf8(table, max_name)) |ch| {
             clean.appendAssumeCapacity(if (std.mem.indexOfScalar(u8, "\\/?*[]:", ch) != null or ch < 0x20) '_' else ch);
         }
         const base = std.mem.trim(u8, clean.items, "' ");
-        var buf: [64]u8 = undefined;
+        var buf: [max_name * 4 + 48]u8 = undefined;
         var k: usize = 1;
         while (true) : (k += 1) {
             var suffix_buf: [24]u8 = undefined;
@@ -48,7 +49,7 @@ pub const Names = struct {
             const dup_s = if (k > 1) std.fmt.bufPrint(&dup_buf, "~{d}", .{k}) catch unreachable else "";
             const room = max_name - part_s.len - dup_s.len;
             const head = cutUtf8(if (base.len == 0) "Sheet" else base, room);
-            const name = std.fmt.bufPrint(&buf, "{s}{s}{s}", .{ std.mem.trimEnd(u8, head, "' "), dup_s, part_s }) catch unreachable;
+            const name = std.fmt.bufPrint(&buf, "{s}{s}{s}", .{ std.mem.trimEnd(u8, head, "' "), dup_s, part_s }) catch return error.SheetNameTooLong;
             if (!n.taken(name)) {
                 const owned = try n.gpa.dupe(u8, name);
                 errdefer n.gpa.free(owned);
@@ -59,14 +60,15 @@ pub const Names = struct {
     }
 };
 
-// Corta em ate `max` caracteres (pontos de codigo), sem partir um caractere UTF-8
+// Corta em ate `max` caracteres como o Excel conta (unidades UTF-16: acima de U+FFFF vale 2), sem partir um
+// caractere UTF-8
 pub fn cutUtf8(s: []const u8, max: usize) []const u8 {
-    var chars: usize = 0;
+    var units: usize = 0;
     for (s, 0..) |ch, i| {
-        if (ch & 0xC0 != 0x80) {
-            if (chars == max) return s[0..i];
-            chars += 1;
-        }
+        if (ch & 0xC0 == 0x80) continue;
+        const w: usize = if (ch >= 0xF0) 2 else 1;
+        if (units + w > max) return s[0..i];
+        units += w;
     }
     return s;
 }
@@ -129,7 +131,7 @@ pub fn isExcelNumber(s: []const u8) bool {
 
 const Entry = struct { name: []const u8, offset: u64, crc: u32, csize: u64, usize: u64 };
 
-pub const Error = error{ TooLarge, TooManySheets } || Allocator.Error || Io.File.OpenError ||
+pub const Error = error{ TooLarge, TooManySheets, SheetNameTooLong } || Allocator.Error || Io.File.OpenError ||
     Io.File.Writer.Error || Io.File.WritePositionalError || Io.Writer.Error || Io.File.Writer.SeekError;
 
 // Uma entrada do zip sendo escrita: XML -> deflate -> arquivo. CRC e tamanhos vao no cabecalho no fim.
@@ -157,6 +159,7 @@ pub const Workbook = struct {
     window: *[flate.max_window_len]u8,
     cur: ?struct { stream: Stream, header_at: u64, data_at: u64, name: []u8 } = null,
     row: usize = 0, // linhas escritas na aba atual (cabecalho incluso)
+    cut_cells: u64 = 0, // textos cortados no limite do Excel (32.767 caracteres por celula)
     // texto XML montado aqui antes de ir para o compressor
     xml_buf: []u8,
     xml: Io.Writer,
@@ -292,6 +295,7 @@ pub const Workbook = struct {
                 .text => |s| {
                     try wb.xml.writeAll(" t=\"inlineStr\"><is><t xml:space=\"preserve\">");
                     const cut = cutUtf8(s, max_cell_chars);
+                    wb.cut_cells += @intFromBool(cut.len < s.len); // contado e mostrado no fim da exportacao
                     // pior caso do escape: 7 bytes por byte de entrada
                     if (cut.len * 7 > wb.xml_buf.len / 2) {
                         var tmp: Io.Writer.Allocating = .init(wb.gpa);
@@ -444,6 +448,22 @@ test "sheet names: Excel limits, forbidden characters, unique, continuation part
     const s = try n.make("Ação" ++ &@as([40]u8, @splat('x')), 1);
     try t.expectEqual(31, try std.unicode.utf8CountCodepoints(s));
     for (n.used.items) |name| try t.expect(try std.unicode.utf8CountCodepoints(name) <= max_name);
+}
+
+test "sheet names: long Unicode table names never overflow (audit item 5)" {
+    var n: Names = .{ .gpa = t.allocator };
+    defer n.deinit();
+    const cjk = "日本語日本語日本語日本語日本語日本語日本語日"; // 22 caracteres de 3 bytes = 66 bytes
+    try t.expectEqualStrings(cjk, try n.make(cjk, 1));
+    try t.expectEqualStrings(cjk ++ " (3)", try n.make(cjk, 3));
+    _ = try n.make(cjk ++ cjk, 1);
+    _ = try n.make(cjk ++ cjk, 12345);
+    // acima de U+FFFF o Excel conta 2 unidades: 31 unidades = 15 desses caracteres
+    const clef = "𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞";
+    try t.expectEqual(15 * 4, (try n.make(clef, 1)).len);
+    _ = try n.make(clef, 2);
+    _ = try n.make(clef, 2);
+    for (n.used.items) |name| try t.expect(std.unicode.utf8ValidateSlice(name));
 }
 
 test "column letters and numbers" {

@@ -43,6 +43,7 @@ pub const Grid = struct {
     columns: []const [:0]const u8 = &.{},
     rows: []const []?[]const u8 = &.{},
     truncated: bool = false, // o resultado tinha mais que max_rows linhas (as outras nao foram lidas)
+    float_cols: []const bool = &.{}, // colunas DOUBLE/FLOAT: a grade mostra 2.0 como 2 (so na tela, como no Go)
 
     pub fn deinit(self: *Grid) void {
         self.arena.deinit();
@@ -369,7 +370,7 @@ pub const Db = struct {
 
     // Executa SQL com parametros '?' e devolve tudo como texto (no maximo max_rows linhas)
     pub fn run(self: *Db, sql: [:0]const u8, params: []const []const u8) Error!Grid {
-        var rows = try self.stream(sql, params, .{});
+        var rows = try self.stream(sql, params, .{ .types = true });
         defer rows.deinit();
 
         var grid: Grid = .{ .arena = .init(self.gpa) };
@@ -377,6 +378,9 @@ pub const Db = struct {
         const a = grid.arena.allocator();
         const columns = try a.alloc([:0]const u8, rows.n_cols);
         for (columns, 0..) |*col, i| col.* = try a.dupeSentinel(u8, rows.name(i), 0);
+        const floats = try a.alloc(bool, rows.n_cols);
+        for (floats, 0..) |*f, i| f.* = i < rows.types.len and (rows.types[i] == c.DUCKDB_TYPE_DOUBLE or rows.types[i] == c.DUCKDB_TYPE_FLOAT);
+        grid.float_cols = floats;
 
         var list: std.ArrayList([]?[]const u8) = .empty;
         var buf: [64]u8 = undefined;
@@ -584,6 +588,87 @@ test "list tables, schema, paging, search, filter, sort, read-only" {
     defer nulls.deinit();
     try t.expectEqual(1, nulls.rows.len);
     try t.expect(nulls.rows[0][2] == null);
+}
+
+// Filtro do clique direito (coluna = valor exato), o mesmo em DuckDB, SQLite e Access (banco em memoria)
+const filter_table = "o'k \"t\"";
+const filter_ddl = " AS SELECT * FROM (VALUES ('U9A', 1, DATE '2026-07-14'), ('it''s \"q\"', 2, NULL), (NULL, NULL, NULL), " ++
+    "('u9a', 10, DATE '2026-07-15'), ('', 3, NULL), ('U9A', 11, DATE '2026-07-14')) v(\"si\"\"gla\", n, d)";
+
+fn expectExactFilters(db: *Db) !void {
+    const cols = [_][]const u8{ "si\"gla", "n", "d" };
+    const cases = [_]struct { query.Criterion, u64 }{
+        .{ .{ .column = "si\"gla", .op = .exact, .value = "U9A" }, 2 }, // caixa conta: nao pega 'u9a'
+        .{ .{ .column = "si\"gla", .op = .exact, .value = "it's \"q\"" }, 1 }, // aspas no valor
+        .{ .{ .column = "si\"gla", .op = .exact, .value = "' OR '1'='1" }, 0 }, // injecao e so um texto que nao existe
+        .{ .{ .column = "si\"gla", .op = .exact, .value = "" }, 1 }, // texto vazio nao e NULL
+        .{ .{ .column = "si\"gla", .op = .is_null }, 1 },
+        .{ .{ .column = "n", .op = .exact, .value = "1" }, 1 }, // inteiro: 1 nao pega 10 nem 11
+        .{ .{ .column = "n", .op = .is_null }, 1 },
+        .{ .{ .column = "d", .op = .exact, .value = "2026-07-14" }, 2 }, // data, pelo texto exibido
+    };
+    var spec: query.Spec = .{ .table = filter_table, .tables = db.table_names, .columns = &cols };
+    for (cases) |case| {
+        spec.criteria = &.{case[0]};
+        try t.expectEqual(case[1], try db.count(spec));
+    }
+    // varios filtros somam (AND), combinam com a busca e respeitam o limite de linhas
+    spec.criteria = &.{ cases[0][0], .{ .column = "d", .op = .exact, .value = "2026-07-14" }, .{ .column = "n", .op = .exact, .value = "11" } };
+    spec.search = "u9";
+    try t.expectEqual(1, try db.count(spec));
+    spec.criteria = spec.criteria[0..1];
+    spec.limit = 1;
+    var g = try db.page(spec);
+    defer g.deinit();
+    try t.expectEqual(1, g.rows.len);
+    try t.expectEqualStrings("U9A", g.rows[0][0].?);
+}
+
+test "exact value filter on DuckDB, SQLite and the in-memory Access copy" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var b1: [256]u8 = undefined;
+    var b2: [256]u8 = undefined;
+    const duck = tmpPath(&b1, &tmp, "f.duckdb");
+    const lite = tmpPath(&b2, &tmp, "f.sqlite");
+    var ident: std.ArrayList(u8) = .empty;
+    defer ident.deinit(t.allocator);
+    try query.writeIdent(&ident, t.allocator, filter_table);
+    var sql_buf: [1024]u8 = undefined;
+
+    var db = testDb();
+    defer db.close();
+    try db.open(duck, false);
+    try db.exec(try std.fmt.bufPrintSentinel(&sql_buf, "CREATE TABLE {s}" ++ filter_ddl, .{ident.items}, 0));
+    try db.open(":memory:", false);
+    try db.loadSqlite();
+    try db.exec(try std.fmt.bufPrintSentinel(&sql_buf, "ATTACH '{s}' AS w (TYPE sqlite)", .{lite}, 0));
+    try db.exec(try std.fmt.bufPrintSentinel(&sql_buf, "CREATE TABLE w.{s}" ++ filter_ddl, .{ident.items}, 0));
+    try db.exec("DETACH w");
+
+    try db.openReadOnly(duck);
+    try expectExactFilters(&db);
+    try db.openReadOnly(lite);
+    try t.expectEqual(.sqlite, db.source.?);
+    try expectExactFilters(&db);
+    // Access: access.zig converte o arquivo para um banco em memoria como este
+    try db.beginMemory();
+    try db.exec(try std.fmt.bufPrintSentinel(&sql_buf, "CREATE TABLE {s}" ++ filter_ddl, .{ident.items}, 0));
+    try db.finishMemory(.access_odbc);
+    try expectExactFilters(&db);
+}
+
+test "grid marks DOUBLE/FLOAT columns and keeps their original text" {
+    var db = Db.init(t.allocator);
+    defer db.close();
+    try db.start();
+    var g = try db.run("SELECT 2316.0::DOUBLE AS d, 2.5::DOUBLE AS e, '2.0' AS s, 2::FLOAT AS f, 2 AS i, 2.0::DECIMAL(4,1) AS m", &.{});
+    defer g.deinit();
+    try t.expectEqualSlices(bool, &.{ true, true, false, true, false, false }, g.float_cols);
+    // a celula guarda o texto do banco: copia e "Filter by this value" (CAST AS VARCHAR = ?) continuam iguais
+    try t.expectEqualStrings("2316.0", g.rows[0][0].?);
+    try t.expectEqualStrings("2.0", g.rows[0][2].?);
+    try t.expectEqualStrings("2.0", g.rows[0][3].?);
 }
 
 test "free SQL result is capped at max_rows and streamed" {

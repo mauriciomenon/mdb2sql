@@ -21,6 +21,7 @@ New-Item -ItemType Directory -Force (Join-Path $app 'mdbtools'), (Split-Path $ou
 Copy-Item zig-out\bin\mdb2sql-zig.exe, zig-out\bin\duckdb.dll, zig-out\bin\sqlite_scanner.duckdb_extension $app
 Copy-Item zig-out\bin\mdbtools\* (Join-Path $app 'mdbtools')
 Copy-Item README.md (Join-Path $app 'README.md')
+Copy-Item LICENSE (Join-Path $app 'LICENSE') # GPL v2 (texto integral)
 
 Copy-Item zig-out\onefile\mdb2sql-zig-onefile.exe (Join-Path $stage "$name.exe")
 Compress-Archive -Path $app -DestinationPath (Join-Path $stage "$name.zip")

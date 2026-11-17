@@ -42,6 +42,7 @@ pub const Req = struct {
     table: usize = 0, // select, reload, export de tabela
     columns: []const []const u8 = &.{}, // reload/export: colunas da tabela (do schema ja carregado)
     search: [256:0]u8 = @splat(0),
+    filters: []const query.Criterion = &.{}, // reload/export: filtros coluna = valor exato (a UI so muda a lista sem trabalho rodando)
     sort_col: ?usize = null,
     sort_desc: bool = false,
     page: u64 = 0,
@@ -146,6 +147,7 @@ fn tableSpec(db: *dbm.Db, req: *const Req) !query.Spec {
         .tables = db.table_names,
         .columns = req.columns,
         .search = std.mem.sliceTo(&req.search, 0),
+        .criteria = req.filters,
         .sort_column = if (req.sort_col) |c| req.columns[c] else null,
         .sort_desc = req.sort_desc,
     };
@@ -315,6 +317,16 @@ test "jobs run on a worker thread: open, select, reload, sql, export, errors" {
     try t.expectEqual(0, out.page);
     try t.expectEqualStrings("3", out.data.?.rows[0][0].?);
     out.deinit(t.allocator);
+
+    // filtro de valor exato somado a busca: so o id 3 ("acao")
+    slot.req.filters = &.{.{ .column = "name", .op = .exact, .value = "acao" }};
+    try slot.start();
+    out = slot.wait().?;
+    try t.expect(out.err == null);
+    try t.expectEqual(1, out.total);
+    try t.expectEqualStrings("3", out.data.?.rows[0][0].?);
+    out.deinit(t.allocator);
+    slot.req.filters = &.{};
 
     // export da tabela atual com a mesma busca: so as 2 linhas que casam
     slot.req.kind = .export_;

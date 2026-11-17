@@ -19,11 +19,13 @@ pub fn build(b: *std.Build) void {
     options.addOption(bool, "console", console);
     options.addOption([]const u8, "build_number", b.option([]const u8, "build_number", "Build number (git rev-list --count HEAD)") orelse "");
     options.addOption([]const u8, "build_date", b.option([]const u8, "build_date", "Build date (YYYY-MM-DD)") orelse "");
+    const mdbtools_version = "1.0.1"; // a mesma de scripts/setup_tools.ps1 (mostrada no Sobre)
+    options.addOption([]const u8, "mdbtools_version", mdbtools_version);
     const build_options = options.createModule();
 
     // Arquivos que vao junto do programa, baixados por scripts\setup_tools.ps1 (sha256 conferido)
     const sqlite_ext = b.path(".tools/duckdb-ext-v2.0.0/sqlite_scanner.duckdb_extension");
-    const mdbtools_dir = b.path(".tools/mdbtools-1.0.1");
+    const mdbtools_dir = b.path(".tools/mdbtools-" ++ mdbtools_version);
     const mdbtools_files = [_][]const u8{ "mdb-tables.exe", "mdb-schema.exe", "mdb-export.exe", "COPYING", "COPYING.LIB" };
 
     // libduckdb pre-compilada: duckdb.h + duckdb.lib (import lib) + duckdb.dll
@@ -47,6 +49,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{ .{ .name = "duckdb_c", .module = duckdb_c }, .{ .name = "build_options", .module = build_options } },
     });
     core.linkSystemLibrary("odbc32", .{});
+    core.addAnonymousImport("LICENSE", .{ .root_source_file = b.path("LICENSE") }); // so o teste da licenca le
 
     const zglfw = b.dependency("zglfw", .{ .target = target, .optimize = optimize });
 
