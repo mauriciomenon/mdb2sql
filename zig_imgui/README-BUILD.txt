@@ -51,7 +51,7 @@ Windows - dist\w11\amd64\
       %LOCALAPPDATA%\mdb2sql\zig-imgui-<versao>-<hash>\ e roda de la (apaga as versoes velhas dessa pasta).
   mdb2sql-<versao>-w11-amd64-zig-imgui.zip
       pasta do app zipada (mdb2sql-zig-imgui\): mdb2sql-zig.exe, duckdb.dll, sqlite_scanner.duckdb_extension,
-      mdbtools\ (3 exes + COPYING, COPYING.LIB) e README.md. Os arquivos precisam ficar juntos.
+      mdbtools\ (3 exes + COPYING, COPYING.LIB), README.md e LICENSE (GPL v2). Os arquivos precisam ficar juntos.
   mdb2sql-<versao>-w11-amd64-zig-imgui-installer.exe
       instalador NSIS por usuario (sem administrador): %LOCALAPPDATA%\Programs\mdb2sql-zig-imgui,
       atalho no Menu Iniciar, desinstalar em Configuracoes > Aplicativos. Silencioso: /S [/D=pasta].

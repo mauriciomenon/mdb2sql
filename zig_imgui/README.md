@@ -154,7 +154,7 @@ NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 
   `SUPERVISÃO DE FREIOS UG 12 - ...` (1.1.0 found none: it looked for the whole text as one piece). Time on that
   table: about 0.15 s for one word, 0.2 to 0.4 s for two to six words. The SQL result search over 10,000 real
   rows x 123 columns takes about 10 ms per keystroke.
-- Unit tests (`zig build test`, 46 plus 1 of the single-exe packer; the real-Access one runs only when `MDB2SQL_TEST_ACCDB` is set): SQL building and whitelists, paging, streaming results, sheet names and
+- Unit tests (`zig build test`, 47 plus 1 of the single-exe packer; the real-Access one runs only when `MDB2SQL_TEST_ACCDB` is set): SQL building and whitelists, paging, streaming results, sheet names and
   splitting, the xlsx zip read back by Zig's zip reader (CRC and headers checked), CSV, Access reader choice,
   Access type mapping and `mdb-schema` parsing, settings file and default dialog folder, worker thread jobs,
   cancel, and a long session (25 rounds of reopen, SQL errors, a 10-billion-row result, exports and cancels)
@@ -170,9 +170,10 @@ NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 
   buttons, with **Clear filters**.
 - One export action per place: the **Export CSV...** / **Export Excel...** buttons of the Data and SQL tabs
   repeated the **Export...** menu (same items) and were removed.
+- License: GPL v2 or later (before: proprietary, all rights reserved). `LICENSE` goes in the zip and the installer.
 - Tested: unit tests for the exact filter SQL (quoted column, bound value, quotes and an injection attempt in the
   value, NULL, empty text, AND with the search, row limit) on DuckDB, SQLite and the in-memory Access copy, the
-  filter list and its button label, the short title and the two allowed links. Screenshots of the release
+  filter list and its button label, the short title, the two allowed links and the license. Screenshots of the release
   program on a copy of DB4.duckdb: title and table, About, Columns with several hidden, an active filter.
 
 ### Changes in 1.1.1
@@ -270,4 +271,8 @@ payload of the single executable use only Zig's standard library.
 
 ## License
 
-Proprietary - All rights reserved. mdbtools (in `mdbtools\`) is GPL/LGPL, DuckDB is MIT.
+GPL v2 or later (`GPL-2.0-or-later`), full text in [LICENSE](LICENSE).
+Copyright (C) 2026 Mauricio Menon.
+
+Third-party parts keep their own licenses: mdbtools (in `mdbtools\`) is GPL/LGPL, DuckDB is MIT, Dear ImGui is
+MIT, GLFW is zlib.

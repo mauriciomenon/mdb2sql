@@ -3,7 +3,7 @@
     .version = "1.2.0",
     .fingerprint = 0x716b6b022cd43757,
     .minimum_zig_version = "0.17.0",
-    .paths = .{ "build.zig", "build.zig.zon", "src", "README.md", "scripts", "build_w11_amd64.ps1", "clean.ps1" },
+    .paths = .{ "build.zig", "build.zig.zon", "src", "README.md", "LICENSE", "scripts", "build_w11_amd64.ps1", "clean.ps1" },
     .dependencies = .{
         .zglfw = .{
             .url = "https://github.com/zig-gamedev/zglfw/archive/2450fe3c4140091287c79cb41e4a8020af73d896.tar.gz",

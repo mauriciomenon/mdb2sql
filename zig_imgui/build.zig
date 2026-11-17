@@ -49,6 +49,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{ .{ .name = "duckdb_c", .module = duckdb_c }, .{ .name = "build_options", .module = build_options } },
     });
     core.linkSystemLibrary("odbc32", .{});
+    core.addAnonymousImport("LICENSE", .{ .root_source_file = b.path("LICENSE") }); // so o teste da licenca le
 
     const zglfw = b.dependency("zglfw", .{ .target = target, .optimize = optimize });
 

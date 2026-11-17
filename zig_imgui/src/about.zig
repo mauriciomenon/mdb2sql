@@ -15,7 +15,7 @@ pub const window_title = name ++ " " ++ version ++ " - Zig";
 pub const tagline = "Opens Access, SQLite and DuckDB databases, searches them and exports to DuckDB, SQLite, Excel and CSV.";
 pub const access_engine = "Microsoft Access ODBC driver or mdbtools " ++ options.mdbtools_version;
 pub const author = "Mauricio Menon";
-pub const license = "Proprietary, all rights reserved";
+pub const license = "GPL v2 or later (GPL-2.0-or-later)";
 
 pub const Link = struct { label: [:0]const u8, url: [:0]const u8 };
 pub const links = [_]Link{
@@ -70,4 +70,12 @@ test "about texts: build, stack with versions, Access engine" {
     var want: [96]u8 = undefined;
     try std.testing.expectEqualStrings(try std.fmt.bufPrint(&want, "Zig {s} + Dear ImGui 1.93.0", .{zig_version}), stackText(&sb, "1.93.0"));
     try std.testing.expect(std.mem.startsWith(u8, access_engine, "Microsoft Access ODBC driver or mdbtools 1."));
+}
+
+test "license: GPL v2 or later in About, LICENSE file is the GPL v2 text" {
+    try std.testing.expectEqualStrings("GPL v2 or later (GPL-2.0-or-later)", license);
+    const text = @embedFile("LICENSE"); // o mesmo arquivo que vai no zip e no instalador
+    var lines = std.mem.tokenizeAny(u8, text, "\r\n");
+    try std.testing.expectEqualStrings("GNU GENERAL PUBLIC LICENSE", std.mem.trim(u8, lines.next().?, " "));
+    try std.testing.expect(std.mem.startsWith(u8, std.mem.trim(u8, lines.next().?, " "), "Version 2,"));
 }
