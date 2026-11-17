@@ -457,7 +457,7 @@
         disabled={tables.length === 0}
       >
         {#each visibleTables as table (table)}
-          <option value={table}>{table}</option>
+          <option value={table} title={table}>{table}</option>
         {/each}
       </select>
     </nav>
@@ -623,7 +623,7 @@
   :global(body) {
     background: var(--bg);
     color: var(--text);
-    font: 14px/1.4 'Segoe UI', system-ui, -apple-system, 'Roboto', sans-serif;
+    font: 13px/1.4 'Segoe UI', system-ui, -apple-system, 'Roboto', sans-serif;
   }
 
   .app {
@@ -692,13 +692,8 @@
   .dropdown .group {
     padding: 4px 10px 2px;
     color: var(--muted);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
-  }
-
-  .dropdown .separator {
-    margin: 4px 0;
-    border-top: 1px solid var(--border);
   }
 
   .check {
@@ -715,7 +710,7 @@
 
   h1 {
     margin: 0;
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 650;
     letter-spacing: 0.02em;
   }
@@ -729,7 +724,7 @@
 
   label {
     color: var(--muted);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
   }
 
@@ -803,7 +798,7 @@
   }
 
   dialog.about h2 {
-    font-size: 26px;
+    font-size: 24px;
     letter-spacing: 0.01em;
   }
 
@@ -813,7 +808,7 @@
     border-radius: 999px;
     background: var(--accent);
     color: var(--accent-text);
-    font-size: 15px;
+    font-size: 14px;
     vertical-align: middle;
   }
 
@@ -833,7 +828,7 @@
 
   dt {
     color: var(--muted);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     line-height: 20px;
   }
@@ -864,7 +859,7 @@
     align-items: center;
     gap: 8px;
     color: var(--muted);
-    font-size: 12px;
+    font-size: 11px;
   }
 
   dialog .actions button {
@@ -890,7 +885,7 @@
     padding: 3px 6px;
     border-radius: 4px;
     color: var(--text);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 400;
     cursor: pointer;
   }
@@ -990,13 +985,13 @@
     align-items: baseline;
     gap: 12px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 12px;
   }
 
   h2 {
     margin: 0;
     color: var(--text);
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
   }
 
@@ -1025,7 +1020,7 @@
     align-items: center;
     gap: 8px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .chip {
@@ -1069,7 +1064,7 @@
     min-height: 90px;
     resize: vertical;
     font-family: Consolas, 'Cascadia Mono', monospace;
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .empty {
@@ -1085,7 +1080,7 @@
     background: var(--surface);
     border: 1px solid var(--border);
     color: var(--muted);
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .statusbar.error {

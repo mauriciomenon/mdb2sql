@@ -19,6 +19,12 @@
 
   const isNumeric = (type) => /INT|DOUBLE|FLOAT|DECIMAL|REAL|NUMERIC/i.test(type);
   const focusNow = (node) => node.focus();
+  // menu aberto perto da borda: puxa para dentro da janela (senao os ultimos itens ficam cortados)
+  const keepInside = (node) => {
+    const box = node.getBoundingClientRect();
+    node.style.left = `${Math.max(4, Math.min(box.left, innerWidth - box.width - 4))}px`;
+    node.style.top = `${Math.max(4, Math.min(box.top, innerHeight - box.height - 4))}px`;
+  };
 
   // NIVEL BASICO: Celula sob o clique (td tem o indice da coluna, tr o da linha)
   function selectCell(event) {
@@ -122,13 +128,13 @@
 </div>
 
 {#if menu?.header}
-  <div class="menu" role="menu" aria-label="Coluna {menu.header}" style="left: {menu.x}px; top: {menu.y}px">
+  <div class="menu" role="menu" aria-label="Coluna {menu.header}" style="left: {menu.x}px; top: {menu.y}px" use:keepInside>
     <button type="button" role="menuitem" use:focusNow onclick={() => act('hide', menu.header)}>Ocultar esta coluna</button>
     <button type="button" role="menuitem" onclick={() => act('columns')}>Colunas...</button>
     <button type="button" role="menuitem" disabled={!actions.anyHidden} onclick={() => act('showAll')}>Mostrar todas</button>
   </div>
 {:else if menu}
-  <div class="menu" role="menu" aria-label="Cell" style="left: {menu.x}px; top: {menu.y}px">
+  <div class="menu" role="menu" aria-label="Cell" style="left: {menu.x}px; top: {menu.y}px" use:keepInside>
     <button type="button" role="menuitem" use:focusNow onclick={() => copy('value')}>
       Copy value <kbd>Ctrl+C</kbd>
     </button>
@@ -167,13 +173,15 @@
   table {
     border-collapse: separate;
     border-spacing: 0;
-    font-size: 13px;
+    font-size: 12px;
     font-variant-numeric: tabular-nums;
   }
 
+  /* z-index: o cabecalho fixo fica sempre por cima das celulas que rolam por baixo dele */
   th {
     position: sticky;
     top: 0;
+    z-index: 1;
     background: var(--surface);
     border-bottom: 2px solid var(--border);
     padding: 6px 10px;
@@ -215,10 +223,10 @@
     text-align: right;
   }
 
+  /* NULL so em italico, com a mesma cor e contraste das outras celulas: com cor apagada e opacity as colunas
+     quase so de NULL (as depois de PNTNAM no RANGER_SOSTAT) pareciam transparentes */
   .null {
-    color: var(--muted);
     font-style: italic;
-    opacity: 0.7;
   }
 
   .menu {
@@ -266,6 +274,6 @@
   .menu kbd {
     color: var(--muted);
     font: inherit;
-    font-size: 12px;
+    font-size: 11px;
   }
 </style>

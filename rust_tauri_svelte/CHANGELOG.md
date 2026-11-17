@@ -14,6 +14,13 @@
   linhas filtradas.
 - Sem acoes repetidas: saiu o botao Export... da barra (repetia File > Export) e o File > Open... (repetia o
   Browse...). Teste conta os botoes e itens de menu.
+- Correcao: colunas quase so de NULL (ex.: as depois de PNTNAM no RANGER_SOSTAT) pareciam transparentes; o NULL
+  tinha cor apagada e opacity 0,7. Agora so italico, com o mesmo contraste das outras celulas (claro e escuro), e
+  o cabecalho fixo nao deixa mais o texto das linhas passar por cima dele.
+- Textos um passo menores (base 14 -> 13 px; titulos, grade e notas na mesma proporcao).
+- Nome da tabela acima da grade e cabecalhos de coluna sempre inteiros (a coluna cresce ate caber nome e
+  valores, sem limite); teste confere. Nome longo na lista de tabelas ganha dica com o nome inteiro.
+- Correcao: o menu do botao direito perto da borda da janela era cortado; agora fica dentro da janela.
 - Licenca: GPL v2 ou posterior (antes: proprietaria). LICENSE vai no zip e nos instaladores.
 
 ## 1.1.1
