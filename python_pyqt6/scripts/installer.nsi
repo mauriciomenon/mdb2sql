@@ -17,7 +17,6 @@ VIAddVersionKey "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey "FileVersion" "${APP_VERSION}"
 VIAddVersionKey "FileDescription" "${APP_NAME} installer"
 VIAddVersionKey "CompanyName" "Mauricio Menon"
-VIAddVersionKey "LegalCopyright" "Mauricio Menon"
 ; icone do app no instalador e no desinstalador (o atalho usa o do mdb2sql.exe)
 Icon "${__FILEDIR__}\..\src\resources\mdb2sql.ico"
 UninstallIcon "${__FILEDIR__}\..\src\resources\mdb2sql.ico"
