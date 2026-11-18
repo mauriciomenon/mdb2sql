@@ -23,6 +23,14 @@ const ROWS_PER_TICK: usize = 10_000;
 
 pub type Progress<'a> = &'a mut dyn FnMut(usize, usize, &str) -> Result<(), String>;
 
+// NIVEL BASICO: O que foi gravado: tabelas (banco inteiro) ou linhas (tabela/SQL), e abas se foi Excel
+// a interface monta a frase no idioma escolhido
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct Summary {
+    pub count: usize,
+    pub sheets: Option<usize>,
+}
+
 // NIVEL BASICO: O que exportar na exportacao de uma fonte so: tabela atual ou resultado do SQL
 pub enum Source {
     Table(String),
@@ -228,32 +236,33 @@ fn write_csv(conn: &Connection, select: &str, path: &Path, tick: &mut dyn FnMut(
     Ok(count)
 }
 
-// NIVEL BASICO: Grava num temporario "<arquivo>.<n>.partial" com nome que ainda nao existe e so no fim troca pelo
-// nome escolhido; o destino anterior so e substituido se tudo deu certo
-// NIVEL TECNICO: the temporary name is unique per export (pid + counter, skipped while the file or its DuckDB
-// .wal exists), so cleaning it up never deletes a file of the user; rename replaces the target in one step
-fn via_partial(path: &Path, write: impl FnOnce(&Path) -> Result<String, String>) -> Result<String, String> {
-    let file_name = path.file_name().ok_or("Invalid file name")?.to_string_lossy();
-    let (partial, wal): (PathBuf, PathBuf) = (0u32..)
-        .map(|n| {
-            let name = format!("{file_name}.{}-{n}.partial", std::process::id());
-            (path.with_file_name(&name), path.with_file_name(format!("{name}.wal")))
-        })
-        .find(|(p, w)| !p.exists() && !w.exists())
-        .expect("a free temporary name");
+// NIVEL BASICO: Grava numa pasta temporaria propria ".<arquivo>.<pid>-<n>.partial\" ao lado do destino e so no fim
+// move o arquivo para o nome escolhido; o destino anterior so e substituido se tudo deu certo
+// NIVEL TECNICO: create_dir is atomic and fails if the folder exists, so the folder is ours alone (no
+// check-then-create race) and cleaning it up never touches a file of the user; the DuckDB .wal lands inside it
+// too. Same folder as the target, so the final rename stays on one disk and replaces the target in one step.
+fn via_partial<T>(path: &Path, write: impl FnOnce(&Path) -> Result<T, String>) -> Result<T, String> {
+    let file_name = path.file_name().ok_or("Invalid file name")?.to_string_lossy().into_owned();
+    let mut n = 0u32;
+    let dir: PathBuf = loop {
+        let dir = path.with_file_name(format!(".{file_name}.{}-{n}.partial", std::process::id()));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => break dir,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(e) => return Err(format!("{}: {e}", dir.display())),
+        }
+    };
+    let partial = dir.join(&file_name);
     let result = write(&partial).and_then(|summary| {
         std::fs::rename(&partial, path).map_err(|e| format!("{}: {e}", path.display()))?;
         Ok(summary)
     });
-    if result.is_err() {
-        let _ = std::fs::remove_file(&partial); // pode nem ter sido criado
-    }
-    let _ = std::fs::remove_file(&wal); // so o DuckDB cria, e so ate o DETACH
+    let _ = std::fs::remove_dir_all(&dir); // so tem o que este processo criou
     result
 }
 
 // NIVEL BASICO: Banco inteiro: format = "duckdb", "sqlite" ou "xlsx"
-pub fn export_database(conn: &Connection, format: &str, path: &Path, progress: Progress) -> Result<String, String> {
+pub fn export_database(conn: &Connection, format: &str, path: &Path, progress: Progress) -> Result<Summary, String> {
     let tables = list_tables(conn)?;
     let n = tables.len();
     via_partial(path, |partial| match format {
@@ -267,9 +276,9 @@ pub fn export_database(conn: &Connection, format: &str, path: &Path, progress: P
             });
             // DETACH sempre: sem ele o arquivo fica preso e nao da para renomear nem apagar
             let detached = conn.execute_batch("DETACH mdb2sql_out").map_err(|e| e.to_string());
-            copied.and(detached).map(|_| format!("{n} tables"))
+            copied.and(detached).map(|_| Summary { count: n, sheets: None })
         }
-        "sqlite" => sqlite_io::export(conn, &tables, partial, progress).map(|_| format!("{n} tables")),
+        "sqlite" => sqlite_io::export(conn, &tables, partial, progress).map(|_| Summary { count: n, sheets: None }),
         "xlsx" => {
             let mut wb = Workbook::new();
             let mut namer = SheetNamer::default();
@@ -279,30 +288,30 @@ pub fn export_database(conn: &Connection, format: &str, path: &Path, progress: P
                 let select = format!("SELECT * FROM {}", ident(t));
                 sheets += write_sheets(&mut wb, &mut namer, conn, t, &select, EXCEL_MAX_DATA_ROWS, &mut || progress(i, n, t))?.len();
             }
-            progress(n, n, "saving the .xlsx file")?;
+            progress(n, n, "[[progress.saving]]")?;
             wb.save(partial).map_err(xlsx_err)?;
-            Ok(format!("{n} tables in {sheets} sheets"))
+            Ok(Summary { count: n, sheets: Some(sheets) })
         }
         other => Err(format!("Unknown export format: {other}")),
     })
 }
 
 // NIVEL BASICO: Tabela atual ou resultado do SQL: format = "csv" ou "xlsx"
-pub fn export_source(conn: &Connection, source: &Source, format: &str, path: &Path, progress: Progress) -> Result<String, String> {
+pub fn export_source(conn: &Connection, source: &Source, format: &str, path: &Path, progress: Progress) -> Result<Summary, String> {
     let base = source.sheet_base().to_string();
     let select = source.select();
     progress(0, 1, &base)?;
     via_partial(path, |partial| match format {
-        "csv" => write_csv(conn, &select, partial, &mut || progress(0, 1, &base)).map(|rows| format!("{rows} rows")),
+        "csv" => write_csv(conn, &select, partial, &mut || progress(0, 1, &base)).map(|rows| Summary { count: rows, sheets: None }),
         "xlsx" => {
             let mut wb = Workbook::new();
             let sheets = write_sheets(&mut wb, &mut SheetNamer::default(), conn, &base, &select, EXCEL_MAX_DATA_ROWS, &mut || {
                 progress(0, 1, &base)
             })?;
-            progress(1, 1, "saving the .xlsx file")?;
+            progress(1, 1, "[[progress.saving]]")?;
             wb.save(partial).map_err(xlsx_err)?;
             let rows: usize = sheets.iter().map(|s| s.1).sum();
-            Ok(format!("{rows} rows in {} sheet(s)", sheets.len()))
+            Ok(Summary { count: rows, sheets: Some(sheets.len()) })
         }
         other => Err(format!("Unknown export format: {other}")),
     })

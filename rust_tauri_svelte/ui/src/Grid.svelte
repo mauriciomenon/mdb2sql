@@ -5,7 +5,8 @@
 
   // actions (so a grade da aba Data): { hide(nome), columns(), showAll(), filter(nome, valor), clearFilters(),
   // anyHidden, filtered }; sem ele o menu so copia
-  let { columns, rows, label, emptyText = 'Table is empty', onstatus, onerror, actions = null } = $props();
+  // t: traducao do idioma escolhido (i18n.js)
+  let { columns, rows, label, emptyText, t, onstatus, onerror, actions = null } = $props();
 
   let selected = $state.raw(null); // { row, col }: celula escolhida para copiar
   let menu = $state.raw(null); // { x, y, header }: menu aberto; header = nome da coluna do cabecalho clicado
@@ -64,13 +65,11 @@
         : rowToTsv(names, selected.row, kind === 'row-header');
     try {
       await navigator.clipboard.writeText(text);
-      onstatus(
-        kind === 'value'
-          ? `Copied value of ${selected.col}`
-          : `Copied row (${names.length} columns${kind === 'row-header' ? ', with header' : ''})`
-      );
+      // chave + valores: o log da tela traduz de novo se o idioma mudar
+      if (kind === 'value') onstatus('grid.copiedValue', { column: selected.col });
+      else onstatus(kind === 'row-header' ? 'grid.copiedRowHeader' : 'grid.copiedRow', { count: names.length });
     } catch (err) {
-      onerror(`Copy failed: ${err}`);
+      onerror(String(err), 'grid.copyFailed');
     }
   }
 
@@ -125,24 +124,24 @@
 </div>
 
 {#if menu?.header}
-  <div class="menu" role="menu" aria-label="Coluna {menu.header}" style="left: {menu.x}px; top: {menu.y}px" use:keepInside>
-    <button type="button" role="menuitem" use:focusNow onclick={() => act('hide', menu.header)}>Ocultar esta coluna</button>
-    <button type="button" role="menuitem" onclick={() => act('columns')}>Colunas...</button>
-    <button type="button" role="menuitem" disabled={!actions.anyHidden} onclick={() => act('showAll')}>Mostrar todas</button>
+  <div class="menu" role="menu" aria-label={t('grid.columnMenu', { name: menu.header })} style="left: {menu.x}px; top: {menu.y}px" use:keepInside>
+    <button type="button" role="menuitem" use:focusNow onclick={() => act('hide', menu.header)}>{t('grid.hideColumn')}</button>
+    <button type="button" role="menuitem" onclick={() => act('columns')}>{t('grid.columns')}</button>
+    <button type="button" role="menuitem" disabled={!actions.anyHidden} onclick={() => act('showAll')}>{t('grid.showAll')}</button>
   </div>
 {:else if menu}
-  <div class="menu" role="menu" aria-label="Cell" style="left: {menu.x}px; top: {menu.y}px" use:keepInside>
+  <div class="menu" role="menu" aria-label={t('grid.cell')} style="left: {menu.x}px; top: {menu.y}px" use:keepInside>
     <button type="button" role="menuitem" use:focusNow onclick={() => copy('value')}>
-      Copy value <kbd>Ctrl+C</kbd>
+      {t('grid.copyValue')} <kbd>{t('grid.copyKey')}</kbd>
     </button>
-    <button type="button" role="menuitem" onclick={() => copy('row')}>Copy row</button>
-    <button type="button" role="menuitem" onclick={() => copy('row-header')}>Copy row with header</button>
+    <button type="button" role="menuitem" onclick={() => copy('row')}>{t('grid.copyRow')}</button>
+    <button type="button" role="menuitem" onclick={() => copy('row-header')}>{t('grid.copyRowHeader')}</button>
     {#if actions}
       <div class="separator" role="separator"></div>
       <button type="button" role="menuitem" onclick={() => act('filter', selected.col, selected.row[selected.col])}>
-        Filtrar por este valor
+        {t('grid.filterValue')}
       </button>
-      <button type="button" role="menuitem" disabled={!actions.filtered} onclick={() => act('clearFilters')}>Limpar filtros</button>
+      <button type="button" role="menuitem" disabled={!actions.filtered} onclick={() => act('clearFilters')}>{t('grid.clearFilters')}</button>
     {/if}
   </div>
 {/if}

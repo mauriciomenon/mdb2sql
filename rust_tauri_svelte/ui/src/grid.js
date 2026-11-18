@@ -1,4 +1,4 @@
-// NIVEL BASICO: Logica da grade sem interface: texto para copiar e busca nas linhas carregadas
+// NIVEL BASICO: Logica da grade sem interface: texto para copiar, colunas ocultas, filtros e busca por palavras
 // NIVEL TECNICO: plain module so `node --test` can run it without a browser
 
 // Valor de uma celula como texto puro (NULL vira vazio)
@@ -39,9 +39,15 @@ export function toggleHidden(hidden, name) {
   return next;
 }
 
-// texto da barra de status; nada oculto = vazio
-export function hiddenStatus(count) {
-  return count ? `${count} ${count === 1 ? 'coluna oculta' : 'colunas ocultas'}` : '';
+// Mostrar todas (hide = false) / Ocultar todas (hide = true) so nas colunas listadas no dialogo Colunas...
+// (com busca, so as que aparecem); devolve um Set novo
+export function setListed(hidden, names, hide) {
+  const next = new Set(hidden);
+  for (const name of names) {
+    if (hide) next.add(name);
+    else next.delete(name);
+  }
+  return next;
 }
 
 // NIVEL BASICO: Filtros da grade: lista de { column, value } somados com AND na consulta ao banco.
@@ -72,18 +78,14 @@ export function hasAllWords(text, words) {
   return words.every((word) => text.includes(word));
 }
 
-// texto de cada celula dobrado uma vez por linha carregada, nao a cada tecla digitada
-const foldedRows = new WeakMap();
-
-function foldedCells(row) {
-  let cells = foldedRows.get(row);
-  if (!cells) foldedRows.set(row, (cells = Object.values(row).map((value) => fold(cellText(value)))));
-  return cells;
+// NIVEL BASICO: Log recolhido: a linha que a barra de status mostra entre as nao lidas: o ultimo erro, senao o ultimo
+// aviso; null quando nao ha nenhum (a barra mostra a ultima acao)
+export function importantEntry(entries) {
+  return entries.findLast((e) => e.level === 'error') ?? entries.findLast((e) => e.level === 'warning') ?? null;
 }
 
-// NIVEL BASICO: A linha aparece quando UMA celula tem todas as palavras (qualquer ordem, sem
-// diferenciar maiusculas nem acentos); a celula e comparada pelo texto que a grade mostra (NULL vazio).
-// Palavras separadas tambem acham texto com varios espacos seguidos, que a grade mostra como um so
-export function rowMatches(row, words) {
-  return !words.length || foldedCells(row).some((cell) => hasAllWords(cell, words));
+// NIVEL BASICO: Erro do motor (DuckDB/SQLite) na barra de status: uma linha so, com o prefixo traduzido e sem o tipo
+// do motor ("Parser Error: "); o texto inteiro (LINE 1, ^^^) fica no log
+export function statusLine(text) {
+  return text.split('\n')[0].replace(/^([^:]+: )[A-Z][A-Za-z ]* Error: /, '$1');
 }

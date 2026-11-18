@@ -48,7 +48,8 @@ pub(crate) fn duck_type(declared: &str) -> String {
     if let Some(&(_, duck)) = EXACT_AS_TEXT.iter().find(|(lite, _)| *lite == d) {
         return duck.to_string();
     }
-    if let Some(decimal) = d.strip_prefix("TEXT_") {
+    // TEXT_DECIMAL(p,s): exato como texto; REAL_DECIMAL(p,s): numero (REAL); os dois voltam DECIMAL(p,s)
+    if let Some(decimal) = d.strip_prefix("TEXT_").or_else(|| d.strip_prefix("REAL_")) {
         return duck_type(decimal);
     }
     if (d.starts_with("DECIMAL(") || d.starts_with("NUMERIC(")) && d.ends_with(')') {
@@ -160,6 +161,20 @@ fn duck_to_lite(value: DuckRef) -> LiteValue {
     }
 }
 
+// NIVEL BASICO: DECIMAL com mais de 15 digitos (a Moeda do Access chega como DECIMAL(19,4)): se TODO valor da coluna
+// volta igual depois de passar por um DOUBLE, a coluna vai ao SQLite como numero (REAL, tipo declarado REAL_DECIMAL(p,s),
+// afinidade REAL): no sqlite3, WHERE > 20, ORDER BY e SUM comparam como numero. Se um valor so cabe exato como
+// texto (mais de ~15 digitos significativos), a coluna inteira fica TEXT_DECIMAL (exata; no sqlite3 compara como texto)
+fn decimal_fits_double(duck: &duckdb::Connection, table: &str, column: &str, duck_type: &str) -> bool {
+    let c = ident(column);
+    let sql = format!(
+        "SELECT count(*) FROM {} WHERE {c} IS NOT NULL AND CAST(CAST({c} AS DOUBLE) AS {duck_type}) <> {c}",
+        ident(table)
+    );
+    // erro (ex.: o DOUBLE arredondado passa do limite do DECIMAL) = nao cabe
+    duck.query_row(&sql, [], |r| r.get::<_, i64>(0)).is_ok_and(|n| n == 0)
+}
+
 // NIVEL BASICO: Grava as tabelas num arquivo SQLite novo (path ainda nao existe)
 // NIVEL TECNICO: the declared type is the DuckDB type name; SQLite derives the affinity from it
 pub fn export(
@@ -169,6 +184,8 @@ pub fn export(
     progress: &mut dyn FnMut(usize, usize, &str) -> Result<(), String>,
 ) -> Result<(), String> {
     let mut lite = rusqlite::Connection::open(path).map_err(|e| format!("Failed to create SQLite: {e}"))?;
+    // uma transacao para o arquivo inteiro: um so commit (cada commit por tabela custava um fsync; 287 tabelas no DB4)
+    let tx = lite.transaction().map_err(|e| e.to_string())?;
     for (i, table) in tables.iter().enumerate() {
         progress(i, tables.len(), table)?;
         let mut stmt = duck
@@ -178,17 +195,31 @@ pub fn export(
             .query_map([], |r| Ok((r.get(1)?, r.get(2)?)))
             .and_then(|rows| rows.collect())
             .map_err(|e| e.to_string())?;
-        let defs: Vec<String> = columns.iter().map(|(n, t)| format!("{} {}", ident(n), lite_type(t))).collect();
+        // tipo declarado e expressao lida do DuckDB, por coluna
+        let mut defs = Vec::new();
+        let mut reads = Vec::new();
+        for (name, duck_type) in &columns {
+            let lite = lite_type(duck_type);
+            if lite.starts_with("TEXT_DECIMAL") && decimal_fits_double(duck, table, name, duck_type) {
+                // "REAL" no nome: afinidade REAL (com DECIMAL o SQLite guardaria 97.0 como INTEGER 97)
+                defs.push(format!("{} REAL_{duck_type}", ident(name)));
+                reads.push(format!("CAST({} AS DOUBLE)", ident(name)));
+            } else {
+                defs.push(format!("{} {lite}", ident(name)));
+                reads.push(ident(name));
+            }
+        }
         let marks = vec!["?"; columns.len()].join(", ");
 
-        let tx = lite.transaction().map_err(|e| e.to_string())?;
         tx.execute(&format!("CREATE TABLE {} ({})", ident(table), defs.join(", ")), [])
             .map_err(|e| format!("{table}: {e}"))?;
         {
             let mut insert = tx
                 .prepare(&format!("INSERT INTO {} VALUES ({marks})", ident(table)))
                 .map_err(|e| e.to_string())?;
-            let mut select = duck.prepare(&format!("SELECT * FROM {}", ident(table))).map_err(|e| e.to_string())?;
+            let mut select = duck
+                .prepare(&format!("SELECT {} FROM {}", reads.join(", "), ident(table)))
+                .map_err(|e| e.to_string())?;
             let mut rows = select.query([]).map_err(|e| e.to_string())?;
             let mut n = 0usize;
             while let Some(row) = rows.next().map_err(|e| e.to_string())? {
@@ -203,7 +234,7 @@ pub fn export(
                 }
             }
         }
-        tx.commit().map_err(|e| e.to_string())?;
     }
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }

@@ -13,3 +13,6 @@ $env:CXXFLAGS = "/d1trimfile:$Root\"
 # numero e data do build no dialogo Sobre (build.rs); o mesmo valor no build e no teste evita recompilar
 $env:MDB2SQL_BUILD_NUMBER = (git rev-list --count HEAD)
 $env:MDB2SQL_BUILD_DATE = Get-Date -Format 'yyyy-MM-dd'
+
+# o build oficial sempre leva o mdbtools dentro do exe: sem .tools\mdbtools-1.0.1-w11-amd64\ o build.rs para
+$env:MDB2SQL_REQUIRE_MDBTOOLS = '1'

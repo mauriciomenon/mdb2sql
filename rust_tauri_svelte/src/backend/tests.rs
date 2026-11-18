@@ -1,17 +1,18 @@
 #[cfg(test)]
 #[allow(clippy::module_inception)] // backend::tests::tests: the wrapper keeps the cfg(test) in this file
 mod tests {
-    use crate::backend::access::{Reader, choose_reader, parse_pg_schema, pg_to_duck};
-    use crate::backend::db_manager::{DBManager, Filter, where_clause};
+    use crate::backend::access::{self, Reader, choose_reader, parse_pg_schema, pg_to_duck};
+    use crate::backend::converted;
+    use crate::backend::db_manager::{DBManager, Filter, Step, search_condition, where_clause};
     use serde_json::json;
-    use crate::backend::export::{self, EXCEL_MAX_DATA_ROWS, SheetNamer, Source};
+    use crate::backend::export::{self, EXCEL_MAX_DATA_ROWS, SheetNamer, Source, Summary};
     use crate::backend::sqlite_io::duck_type;
     use std::fs::File;
     use std::path::{Path, PathBuf};
     use tempfile::tempdir;
 
-    fn no_progress() -> impl FnMut(usize, usize, &str) {
-        |_, _, _| {}
+    fn no_progress() -> impl FnMut(Step, usize, usize, &str) {
+        |_, _, _, _| {}
     }
 
     fn ok_progress() -> impl FnMut(usize, usize, &str) -> Result<(), String> {
@@ -41,7 +42,7 @@ mod tests {
         File::create(&path).unwrap();
 
         let err = manager.validate_database_path(path.to_str().unwrap());
-        assert!(err.unwrap_err().contains("Only .duckdb, .db, .sqlite, .sqlite3, .mdb and .accdb"));
+        assert!(err.unwrap_err().contains("[[err.unsupported]] ."));
     }
 
     #[test]
@@ -55,9 +56,9 @@ mod tests {
         manager.connect(path.to_str().unwrap(), &mut no_progress()).expect("connect sample");
         let tables = manager.list_tables().expect("list tables");
         assert!(!tables.is_empty(), "expected tables in sample.duckdb, got none");
-        let rows = manager.query_table(&tables[0], 2, &[]).expect("query rows");
+        let rows = manager.query_table(&tables[0], 2, &[], "").expect("query rows");
         assert!(!rows.is_empty());
-        assert!(manager.get_row_count(&tables[0], &[]).unwrap() >= rows.len() as i64);
+        assert!(manager.get_row_count(&tables[0], &[], "").unwrap() >= rows.len() as i64);
     }
 
     // Nao depende de data/sample.duckdb (ignorado pelo git): cria o banco no teste
@@ -67,16 +68,16 @@ mod tests {
         let path = sample_duckdb(dir.path());
 
         let manager = DBManager::new();
-        let source = manager.connect(path.to_str().unwrap(), &mut no_progress()).expect("connect");
+        let source = manager.connect(path.to_str().unwrap(), &mut no_progress()).expect("connect").source;
         assert_eq!(source, "DuckDB");
         assert_eq!(manager.list_tables().unwrap(), vec!["Other table", "points"]);
-        assert_eq!(manager.get_row_count("points", &[]).unwrap(), 2);
+        assert_eq!(manager.get_row_count("points", &[], "").unwrap(), 2);
 
         let schema = manager.get_table_schema("points").unwrap();
         let names: Vec<&str> = schema.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, ["id", "name", "ts", "d", "t", "n", "u", "ok", "x"]);
 
-        let rows = manager.query_table("points", 10, &[]).unwrap();
+        let rows = manager.query_table("points", 10, &[], "").unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["id"], 1);
         assert!(rows[1]["name"].is_null());
@@ -86,7 +87,7 @@ mod tests {
         assert_eq!(rows[0]["t"], "23:59:58.5");
         assert_eq!(rows[0]["n"], "12.30");
         assert_eq!(rows[0]["u"], 7);
-        assert!(manager.query_table("missing", 10, &[]).is_err());
+        assert!(manager.query_table("missing", 10, &[], "").is_err());
 
         // somente leitura: o SQL livre nao consegue gravar no arquivo aberto
         assert!(manager.run_sql("INSERT INTO points VALUES (3, 'x', NULL, NULL, NULL, NULL, NULL, NULL, NULL)", 10).is_err());
@@ -136,8 +137,8 @@ mod tests {
             let manager = DBManager::new();
             manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
             let ids = |filters: &[Filter]| -> Vec<i64> {
-                let rows = manager.query_table("t", 100, filters).unwrap();
-                assert_eq!(manager.get_row_count("t", filters).unwrap(), rows.len() as i64, "{path:?}");
+                let rows = manager.query_table("t", 100, filters, "").unwrap();
+                assert_eq!(manager.get_row_count("t", filters, "").unwrap(), rows.len() as i64, "{path:?}");
                 rows.iter().map(|r| r["id"].as_i64().unwrap()).collect()
             };
             assert_eq!(ids(&[filter("si\"gla", json!("U9A"))]), [1, 4], "{path:?}"); // exato: 'u9a' fica fora
@@ -147,10 +148,10 @@ mod tests {
             assert_eq!(ids(&[filter("si\"gla", json!("U9A")), filter("note", json!(null))]), [4]);
             // valor que seria injecao se fosse concatenado: e so um texto que nenhuma linha tem
             assert_eq!(ids(&[filter("si\"gla", json!("' OR 1=1 --"))]), Vec::<i64>::new());
-            assert_eq!(manager.get_row_count("t", &[]).unwrap(), 5);
+            assert_eq!(manager.get_row_count("t", &[], "").unwrap(), 5);
             // o limite Rows continua valendo com filtro
-            assert_eq!(manager.query_table("t", 1, &[filter("si\"gla", json!("U9A"))]).unwrap().len(), 1);
-            assert!(manager.query_table("t", 10, &[filter("missing", json!(1))]).is_err());
+            assert_eq!(manager.query_table("t", 1, &[filter("si\"gla", json!("U9A"))], "").unwrap().len(), 1);
+            assert!(manager.query_table("t", 10, &[filter("missing", json!(1))], "").is_err());
         }
     }
 
@@ -160,10 +161,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let manager = DBManager::new();
         manager.connect(sample_duckdb(dir.path()).to_str().unwrap(), &mut no_progress()).unwrap();
-        let first = manager.query_table("points", 1, &[]).unwrap().remove(0);
+        let first = manager.query_table("points", 1, &[], "").unwrap().remove(0);
         for (column, value) in first.as_object().unwrap() {
             let filters = [filter(column, value.clone())];
-            assert_eq!(manager.get_row_count("points", &filters).unwrap(), 1, "{column} = {value}");
+            assert_eq!(manager.get_row_count("points", &filters, "").unwrap(), 1, "{column} = {value}");
         }
     }
 
@@ -189,16 +190,16 @@ mod tests {
         for (format, label) in [("sqlite", "SQLite"), ("duckdb", "DuckDB")] {
             let out = dir.path().join(format!("out.{format}"));
             let summary = export::export_database(&conn, format, &out, &mut ok_progress()).unwrap();
-            assert_eq!(summary, "2 tables");
+            assert_eq!(summary, Summary { count: 2, sheets: None });
             assert!(!dir.path().join(format!("out.{format}.partial")).exists());
 
             let reopened = DBManager::new();
-            assert_eq!(reopened.connect(out.to_str().unwrap(), &mut no_progress()).unwrap(), label);
+            assert_eq!(reopened.connect(out.to_str().unwrap(), &mut no_progress()).unwrap().source, label);
             assert_eq!(reopened.list_tables().unwrap(), vec!["Other table", "points"]);
-            assert_eq!(reopened.get_row_count("Other table", &[]).unwrap(), 5);
+            assert_eq!(reopened.get_row_count("Other table", &[], "").unwrap(), 5);
             let types: Vec<String> = reopened.get_table_schema("points").unwrap().into_iter().map(|c| c.col_type).collect();
             assert_eq!(types, ["INTEGER", "VARCHAR", "TIMESTAMP", "DATE", "TIME", "DECIMAL(10,2)", "UINTEGER", "BOOLEAN", "DOUBLE"], "{format}");
-            let rows = reopened.query_table("points", 10, &[]).unwrap();
+            let rows = reopened.query_table("points", 10, &[], "").unwrap();
             assert_eq!(rows[0]["name"], "a, \"b\"");
             assert_eq!(rows[0]["ts"], "2026-07-14 10:00:00");
             assert_eq!(rows[0]["n"], "12.30");
@@ -223,8 +224,8 @@ mod tests {
             .unwrap();
         drop(lite);
         let manager = DBManager::new();
-        assert_eq!(manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap(), "SQLite");
-        assert_eq!(manager.get_row_count("t", &[]).unwrap(), 2);
+        assert_eq!(manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap().source, "SQLite");
+        assert_eq!(manager.get_row_count("t", &[], "").unwrap(), 2);
     }
 
     // coluna INTEGER com texto dentro (o SQLite deixa): a tabela entra inteira como texto
@@ -237,12 +238,13 @@ mod tests {
         drop(lite);
         let manager = DBManager::new();
         manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
-        let rows = manager.query_table("t", 10, &[]).unwrap();
+        let rows = manager.query_table("t", 10, &[], "").unwrap();
         assert_eq!((rows[0]["a"].clone(), rows[1]["a"].clone()), ("1".into(), "abc".into()));
     }
 
     #[test]
     fn sqlite_declared_types_map_to_duckdb() {
+        assert_eq!(duck_type("REAL_DECIMAL(19,4)"), "DECIMAL(19,4)");
         for (declared, duck) in [
             ("INTEGER", "INTEGER"),
             ("int(11)", "BIGINT"),
@@ -319,7 +321,7 @@ mod tests {
 
         let csv = dir.path().join("points.csv");
         let table = Source::Table("points".into());
-        assert_eq!(export::export_source(&conn, &table, "csv", &csv, &mut ok_progress()).unwrap(), "2 rows");
+        assert_eq!(export::export_source(&conn, &table, "csv", &csv, &mut ok_progress()).unwrap(), Summary { count: 2, sheets: None });
         let text = std::fs::read_to_string(&csv).unwrap();
         let mut lines = text.split("\r\n");
         assert_eq!(lines.next().unwrap(), "\u{FEFF}id,name,ts,d,t,n,u,ok,x");
@@ -328,9 +330,9 @@ mod tests {
 
         let sql = Source::Sql("SELECT k FROM \"Other table\" WHERE k > 2;".into());
         let xlsx = dir.path().join("result.xlsx");
-        assert_eq!(export::export_source(&conn, &sql, "xlsx", &xlsx, &mut ok_progress()).unwrap(), "2 rows in 1 sheet(s)");
+        assert_eq!(export::export_source(&conn, &sql, "xlsx", &xlsx, &mut ok_progress()).unwrap(), Summary { count: 2, sheets: Some(1) });
         let all = dir.path().join("all.xlsx");
-        assert_eq!(export::export_database(&conn, "xlsx", &all, &mut ok_progress()).unwrap(), "2 tables in 2 sheets");
+        assert_eq!(export::export_database(&conn, "xlsx", &all, &mut ok_progress()).unwrap(), Summary { count: 2, sheets: Some(2) });
         assert!(xlsx.metadata().unwrap().len() > 0 && all.metadata().unwrap().len() > 0);
     }
 
@@ -364,39 +366,24 @@ mod tests {
         assert_eq!(pg_to_duck("REAL"), "FLOAT");
         assert_eq!(pg_to_duck("SERIAL"), "INTEGER");
         assert_eq!(pg_to_duck("NUMERIC (60, 2)"), "DOUBLE");
+        // Moeda: o mdbtools declara NUMERIC(15,2) mas exporta 4 casas
+        assert_eq!(pg_to_duck("NUMERIC(15,2)"), "DECIMAL(19,4)");
+        assert_eq!(pg_to_duck("NUMERIC (15, 2)"), "DECIMAL(15,2)");
     }
 
     // Banco Access real (fora do git): MDB2SQL_TEST_ACCDB=<copia do .accdb> e MDB2SQL_TEST_DUCKDB=<conversao de
-    // referencia>. Abre pelos dois leitores, confere tabelas e linhas contra a referencia e compara os dois
-    // leitores celula a celula. Sem as variaveis o teste nao faz nada.
+    // referencia .duckdb>; MDB2SQL_TEST_SQLITE=<referencia .sqlite> (opcional). Abre pelo mdbtools (e pelo ODBC se
+    // o driver existir), confere tabelas e linhas do SQLite convertido contra as referencias, compara os leitores
+    // celula a celula e testa a pesquisa na tabela inteira. Sem as variaveis o teste nao faz nada.
     #[test]
-    fn real_access_file_reads_the_same_by_odbc_and_mdbtools() {
+    fn real_access_file_converts_to_sqlite_like_the_reference() {
         let (Ok(accdb), Ok(reference)) = (std::env::var("MDB2SQL_TEST_ACCDB"), std::env::var("MDB2SQL_TEST_DUCKDB")) else {
             eprintln!("MDB2SQL_TEST_ACCDB/MDB2SQL_TEST_DUCKDB not set, skipping");
             return;
         };
-        let dir = tempdir().unwrap();
-        let mut outputs = Vec::new();
-        for reader in ["odbc", "mdbtools"] {
-            // unica escrita na variavel; os outros testes nao abrem Access
-            unsafe { std::env::set_var("MDB2SQL_ACCESS_READER", reader) };
-            let manager = DBManager::new();
-            let started = std::time::Instant::now();
-            let source = manager.connect(&accdb, &mut no_progress()).unwrap();
-            eprintln!("{reader}: {source}, {} tables in {:?}", manager.list_tables().unwrap().len(), started.elapsed());
-            let out = dir.path().join(format!("{reader}.duckdb"));
-            export::export_database(&manager.export_connection().unwrap(), "duckdb", &out, &mut ok_progress()).unwrap();
-            outputs.push(out);
-        }
-        unsafe { std::env::remove_var("MDB2SQL_ACCESS_READER") };
-
+        let reference_sqlite = std::env::var("MDB2SQL_TEST_SQLITE").ok();
         let conn = duckdb::Connection::open_in_memory().unwrap();
-        let attach = |path: &Path, name: &str| {
-            conn.execute_batch(&format!("ATTACH '{}' AS {name} (READ_ONLY)", path.display())).unwrap();
-        };
-        attach(Path::new(&reference), "ref");
-        attach(&outputs[0], "odbc");
-        attach(&outputs[1], "mdbt");
+        conn.execute_batch(&format!("ATTACH '{reference}' AS ref (READ_ONLY)")).unwrap();
         let tables: Vec<String> = conn
             .prepare("SELECT table_name FROM duckdb_tables() WHERE database_name = 'ref' ORDER BY 1")
             .unwrap()
@@ -404,23 +391,426 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
+        let q = |t: &str| format!("\"{}\"", t.replace('"', "\"\""));
         let count = |sql: String| -> i64 { conn.query_row(&sql, [], |r| r.get(0)).unwrap_or_else(|e| panic!("{sql}: {e}")) };
-        let mut differences = Vec::new();
-        for t in &tables {
-            let q = format!("\"{}\"", t.replace('"', "\"\""));
-            let expected = count(format!("SELECT count(*) FROM ref.{q}"));
-            assert_eq!(count(format!("SELECT count(*) FROM odbc.{q}")), expected, "odbc {t}");
-            assert_eq!(count(format!("SELECT count(*) FROM mdbt.{q}")), expected, "mdbtools {t}");
-            let diff = count(format!(
-                "SELECT count(*) FROM ((SELECT * FROM odbc.{q} EXCEPT ALL SELECT * FROM mdbt.{q}) \
-                 UNION ALL (SELECT * FROM mdbt.{q} EXCEPT ALL SELECT * FROM odbc.{q}))"
-            ));
-            if diff != 0 {
-                differences.push(format!("{t}: {diff}"));
+        let lite_count = |lite: &rusqlite::Connection, t: &str| -> i64 {
+            lite.query_row(&format!("SELECT count(*) FROM {}", q(t)), [], |r| r.get(0)).unwrap_or_else(|e| panic!("{t}: {e}"))
+        };
+        let reference_lite = reference_sqlite.as_ref().map(|p| rusqlite::Connection::open(p).unwrap());
+
+        let dir = tempdir().unwrap();
+        let readers: Vec<&str> = if access::odbc_installed() { vec!["mdbtools", "odbc"] } else { vec!["mdbtools"] };
+        for reader in &readers {
+            let manager = DBManager::new();
+            let started = std::time::Instant::now();
+            // tempo de cada etapa (ler o Access, gravar o SQLite, carregar), para o README
+            let mut step_started = (Step::Read, std::time::Instant::now());
+            let opened = manager
+                .connect_with(&accdb, Some(reader), &mut |step, _, _, _| {
+                    if step != step_started.0 {
+                        eprintln!("{reader} {:?}: {:?}", step_started.0, step_started.1.elapsed());
+                        step_started = (step, std::time::Instant::now());
+                    }
+                })
+                .unwrap();
+            eprintln!("{reader} {:?}: {:?}", step_started.0, step_started.1.elapsed());
+            let lite_path = opened.converted.as_ref().expect("Access opens through a converted SQLite").path().to_path_buf();
+            let lite = rusqlite::Connection::open_with_flags(&lite_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+            let lite_tables: Vec<String> = lite
+                .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+                .unwrap()
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            assert_eq!(lite_tables, tables, "{reader}: tables of the converted SQLite");
+            let mut rows = 0;
+            for t in &tables {
+                let expected = count(format!("SELECT count(*) FROM ref.{}", q(t)));
+                assert_eq!(lite_count(&lite, t), expected, "{reader} {t}");
+                if let Some(other) = &reference_lite {
+                    assert_eq!(lite_count(other, t), expected, "reference .sqlite x .duckdb {t}");
+                }
+                assert_eq!(manager.get_row_count(t, &[], "").unwrap(), expected, "{reader} session {t}");
+                rows += expected;
+            }
+            eprintln!(
+                "{reader}: {}, {} tables, {rows} rows = reference, in {:?}",
+                opened.source,
+                tables.len(),
+                started.elapsed()
+            );
+            drop(lite);
+            let out = dir.path().join(format!("{reader}.duckdb"));
+            export::export_database(&manager.export_connection().unwrap(), "duckdb", &out, &mut ok_progress()).unwrap();
+            conn.execute_batch(&format!("ATTACH '{}' AS {reader} (READ_ONLY)", out.display())).unwrap();
+
+            // pesquisa na tabela inteira: termo alem das 100 primeiras linhas, todas as palavras na mesma celula
+            if *reader == "mdbtools" {
+                let mut found = Vec::new();
+                for t in &tables {
+                    let hits = manager.get_row_count(t, &[], "tension de campo").unwrap();
+                    if hits > 0 {
+                        let first_page = manager.query_table(t, 100, &[], "").unwrap();
+                        let in_first_page = first_page.iter().any(|row| {
+                            row.as_object().unwrap().values().any(|v| v.as_str().is_some_and(|s| s.contains("TENSION DE CAMPO")))
+                        });
+                        assert_eq!(manager.query_table(t, 1000, &[], "campo TENSIÓN").unwrap().len() as i64, hits, "{t}");
+                        found.push((t.clone(), hits, in_first_page));
+                    }
+                }
+                eprintln!("search \"tension de campo\": {found:?}");
+                assert!(found.iter().any(|(_, _, first)| !first), "a hit beyond the first 100 rows");
+                // adendo: o ponto RTUNO 50 / PNTNO 9 (texto em espanhol) e achado por "tension de campo" e nao por
+                // "tensao de campo" (portugues; sem busca aproximada). Outras linhas do DB4 tem TENSÃO em portugues.
+                if tables.iter().any(|t| t == "RANGER_SOANLG") {
+                    let point = [filter("RTUNO", json!(50)), filter("PNTNO", json!(9))];
+                    let rows = manager.query_table("RANGER_SOANLG", 10, &point, "tension de campo").unwrap();
+                    eprintln!("RANGER_SOANLG RTUNO 50 PNTNO 9: {rows:?}");
+                    assert!(!rows.is_empty());
+                    assert_eq!(manager.get_row_count("RANGER_SOANLG", &point, "tensao de campo").unwrap(), 0);
+                }
             }
         }
-        eprintln!("{} tables, readers differ in: {differences:?}", tables.len());
-        assert!(differences.is_empty(), "{differences:?}");
+        if readers.len() == 2 {
+            let mut differences = Vec::new();
+            for t in &tables {
+                let t = q(t);
+                let diff = count(format!(
+                    "SELECT count(*) FROM ((SELECT * FROM odbc.{t} EXCEPT ALL SELECT * FROM mdbtools.{t}) \
+                     UNION ALL (SELECT * FROM mdbtools.{t} EXCEPT ALL SELECT * FROM odbc.{t}))"
+                ));
+                if diff != 0 {
+                    differences.push(format!("{t}: {diff}"));
+                }
+            }
+            eprintln!("{} tables, readers differ in: {differences:?}", tables.len());
+            assert!(differences.is_empty(), "{differences:?}");
+        }
+    }
+
+    // .mdb pequeno versionado (tests/data/sample.mdb, scripts/make_test_mdb.ps1): pelo mdbtools vira um SQLite
+    // com os tipos e os NULL preservados, e o app le dali. Roda em qualquer maquina com o mdbtools (embutido ou PATH).
+    #[test]
+    fn sample_mdb_converts_to_sqlite_with_types_and_nulls() {
+        let manager = DBManager::new();
+        let opened = manager.connect_with("tests/data/sample.mdb", Some("mdbtools"), &mut no_progress()).unwrap();
+        assert_eq!(opened.source, "mdbtools → SQLite");
+        assert_eq!(manager.list_tables().unwrap(), ["Empty", "Sample Types"]);
+        assert_eq!(manager.get_row_count("Empty", &[], "").unwrap(), 0);
+
+        let lite_path = opened.converted.as_ref().unwrap().path().to_path_buf();
+        assert!(lite_path.starts_with(converted::temp_dir()));
+        let lite = rusqlite::Connection::open_with_flags(&lite_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let declared: Vec<(String, String)> = lite
+            .prepare("SELECT name, type FROM pragma_table_info('Sample Types')")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let declared: Vec<String> = declared.into_iter().map(|(n, t)| format!("{n} {t}")).collect();
+        assert_eq!(
+            declared,
+            [
+                "id INTEGER",
+                "tiny SMALLINT",
+                "small INTEGER",
+                "price REAL_DECIMAL(19,4)",
+                "exact TEXT_DECIMAL(18,4)",
+                "ratio DOUBLE",
+                "name VARCHAR",
+                "note VARCHAR",
+                "happened TIMESTAMP",
+                "flag BOOLEAN",
+                "raw BLOB"
+            ]
+        );
+        // no arquivo: decimal exato como texto, NULL como NULL, binario como BLOB
+        let (exact, raw, null_name): (String, Vec<u8>, Option<String>) = lite
+            .query_row(
+                "SELECT exact, raw, (SELECT name FROM \"Sample Types\" WHERE id = 2) FROM \"Sample Types\" WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((exact.as_str(), raw, null_name), ("12345678901234.5683", vec![0, 1, 254, 255], None));
+        // Moeda que cabe num DOUBLE vai como numero: o sqlite3 compara e soma como numero (nao como texto)
+        let (price_type, over_20, total): (String, i64, f64) = lite
+            .query_row(
+                "SELECT (SELECT typeof(price) FROM \"Sample Types\" WHERE id = 1), count(*), sum(price) FROM \"Sample Types\" WHERE price > 20",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((price_type.as_str(), over_20, total), ("real", 1, 1234567.8912));
+        // o decimal de 18 digitos nao cabe num DOUBLE: fica texto exato
+        let exact_type: String = lite.query_row("SELECT typeof(exact) FROM \"Sample Types\" WHERE id = 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(exact_type, "text");
+        drop(lite);
+
+        // o que o app mostra veio do SQLite e tem os tipos do Access
+        let schema: Vec<String> = manager.get_table_schema("Sample Types").unwrap().into_iter().map(|c| c.col_type).collect();
+        assert_eq!(
+            schema,
+            [
+                "INTEGER", "SMALLINT", "INTEGER", "DECIMAL(19,4)", "DECIMAL(18,4)", "DOUBLE", "VARCHAR", "VARCHAR",
+                "TIMESTAMP", "BOOLEAN", "BLOB"
+            ]
+        );
+        let rows = manager.query_table("Sample Types", 10, &[], "").unwrap();
+        assert_eq!(rows.len(), 3);
+        let first = &rows[0];
+        assert_eq!(first["id"], json!(1));
+        assert_eq!(first["tiny"], json!(255));
+        assert_eq!(first["price"], json!("1234567.8912"));
+        assert_eq!(first["exact"], json!("12345678901234.5683"));
+        assert_eq!(first["ratio"], json!(0.1));
+        assert_eq!(first["name"], json!("Ação, \"aspas\""));
+        assert_eq!(first["note"].as_str().unwrap().lines().collect::<Vec<_>>(), ["linha 1", "linha 2"]);
+        assert_eq!(first["happened"], json!("2026-07-14 10:30:05"));
+        assert_eq!(first["flag"], json!(true));
+        // NULL do Access continua NULL (o Sim/Nao do Access nunca e nulo)
+        let second = rows[1].as_object().unwrap();
+        for (column, value) in second {
+            match column.as_str() {
+                "id" => assert_eq!(value, &json!(2)),
+                "flag" => assert_eq!(value, &json!(false)),
+                _ => assert_eq!(value, &json!(null), "{column}"),
+            }
+        }
+        assert_eq!(rows[2]["happened"], json!("1899-12-30 00:00:00"));
+        assert_eq!(rows[2]["price"], json!("-0.0001"));
+        // shortcut: o mdbtools exporta texto vazio igual a NULL (limite do mdb-export); o ODBC le ""
+        assert_eq!(rows[2]["name"], json!(null));
+
+        // pesquisa no banco: palavras na mesma celula, sem acento e sem maiusculas
+        assert_eq!(manager.get_row_count("Sample Types", &[], "acao ASPAS").unwrap(), 1);
+        assert_eq!(manager.get_row_count("Sample Types", &[], "acao linha").unwrap(), 0);
+
+        // o temporario some quando o Converted vai embora (Apagar, fechar ou sair)
+        drop(opened);
+        assert!(!lite_path.exists());
+    }
+
+    // Moeda/decimal no SQLite convertido: quem abre o arquivo no sqlite3 (ou outro programa) compara e soma como
+    // numero, nao como texto. nwind.mdb do mdbtestdata (copia fora do git): MDB2SQL_TEST_NWIND=<copia>.
+    // Esperado (Products.UnitPrice, Moeda): 37 linhas > 20, soma 1695.11, maiores 263.5, 123.79, 97.0
+    #[test]
+    fn currency_in_the_converted_sqlite_compares_as_a_number() {
+        let Ok(nwind) = std::env::var("MDB2SQL_TEST_NWIND") else {
+            eprintln!("MDB2SQL_TEST_NWIND not set, skipping");
+            return;
+        };
+        let manager = DBManager::new();
+        let opened = manager.connect_with(&nwind, Some("mdbtools"), &mut no_progress()).unwrap();
+        let lite = rusqlite::Connection::open_with_flags(
+            opened.converted.as_ref().unwrap().path(),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let declared: String =
+            lite.query_row("SELECT type FROM pragma_table_info('Products') WHERE name = 'UnitPrice'", [], |r| r.get(0)).unwrap();
+        let types: Vec<(String, i64)> = lite
+            .prepare("SELECT typeof(UnitPrice), count(*) FROM Products GROUP BY 1 ORDER BY 1")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let (count, sum): (i64, f64) =
+            lite.query_row("SELECT count(*), sum(UnitPrice) FROM Products WHERE UnitPrice > 20", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        let top: Vec<rusqlite::types::Value> = lite
+            .prepare("SELECT UnitPrice FROM Products ORDER BY UnitPrice DESC LIMIT 3")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        eprintln!("sqlite3: UnitPrice {declared}, typeof {types:?}, > 20: {count} rows, sum {sum:.2}, top {top:?}");
+        // a mesma conta na aba SQL do app (DuckDB sobre o SQLite carregado)
+        let app = manager
+            .run_sql("SELECT count(*) AS n, sum(UnitPrice) AS s FROM Products WHERE UnitPrice > 20", 10)
+            .unwrap();
+        let app_top = manager.run_sql("SELECT UnitPrice FROM Products ORDER BY UnitPrice DESC LIMIT 3", 10).unwrap();
+        eprintln!("app SQL tab: {:?} top {:?}", app.rows, app_top.rows);
+        assert_eq!(types, [("real".to_string(), 77)]);
+        assert_eq!((count, format!("{sum:.2}")), (37, "1695.11".to_string()));
+        assert_eq!(top, [263.5, 123.79, 97.0].map(rusqlite::types::Value::Real));
+        assert_eq!(app.rows[0]["n"], json!(37));
+        assert_eq!(app.rows[0]["s"], json!("1695.1100"));
+        let app_top: Vec<&serde_json::Value> = app_top.rows.iter().map(|r| &r["UnitPrice"]).collect();
+        assert_eq!(app_top, [&json!("263.5000"), &json!("123.7900"), &json!("97.0000")]);
+    }
+
+    // REGRA_DESEMPENHO: um caso por processo (o pico de memoria e do processo inteiro). Roda so com
+    // MDB2SQL_BENCH_CASE = odbc | mdbtools | open | export_sqlite | export_duckdb e MDB2SQL_BENCH_PATH = arquivo;
+    // MDB2SQL_BENCH_SAVE = onde copiar o SQLite convertido (para medir depois o "reabrir o SQLite salvo").
+    // Imprime "BENCH caso lista=s tabela1=s total=s pico_mb=N" (scripts de medicao no tmp, nao no repo).
+    #[test]
+    fn bench_open_protocol() {
+        let (Ok(case), Ok(path)) = (std::env::var("MDB2SQL_BENCH_CASE"), std::env::var("MDB2SQL_BENCH_PATH")) else {
+            return;
+        };
+        let started = std::time::Instant::now();
+        let manager = DBManager::new();
+        let reader = match case.as_str() {
+            "odbc" | "mdbtools" => Some(case.as_str()),
+            _ => None,
+        };
+        let opened = manager.connect_with(&path, reader, &mut no_progress()).unwrap();
+        let tables = manager.list_tables().unwrap();
+        let list = started.elapsed().as_secs_f64();
+        // primeira tabela visivel: o que a tela pede ao abrir (esquema, 100 linhas, contagem)
+        manager.get_table_schema(&tables[0]).unwrap();
+        manager.query_table(&tables[0], 100, &[], "").unwrap();
+        manager.get_row_count(&tables[0], &[], "").unwrap();
+        let first = started.elapsed().as_secs_f64();
+        let mut total = first;
+        if let Some(format) = case.strip_prefix("export_") {
+            let out = tempdir().unwrap();
+            let t = std::time::Instant::now();
+            export::export_database(&manager.export_connection().unwrap(), format, &out.path().join(format!("x.{format}")), &mut ok_progress())
+                .unwrap();
+            total = t.elapsed().as_secs_f64(); // so a exportacao
+        }
+        if let (Ok(save), Some(lite)) = (std::env::var("MDB2SQL_BENCH_SAVE"), opened.converted.as_ref()) {
+            std::fs::copy(lite.path(), save).unwrap();
+        }
+        let peak = if cfg!(windows) {
+            let out = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-Command", &format!("(Get-Process -Id {}).PeakWorkingSet64", std::process::id())])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().parse::<u64>().unwrap_or(0) / 1_048_576
+        } else {
+            0
+        };
+        println!("BENCH {case} lista={list:.1} tabela1={first:.1} total={total:.1} pico_mb={peak} tabelas={}", tables.len());
+    }
+
+    // REGRA_X11: (ambiente, os-release, servidor X) -> (backend, aviso)
+    #[test]
+    fn linux_display_prefers_x11_and_warns_on_wayland_fallback() {
+        use crate::backend::display::{BACKENDS, Decision, DisplayWarning, HELP_LINK, decide};
+        let run = |vars: &[(&str, &str)], os: &str, x_alive: bool| {
+            let vars: Vec<(String, String)> = vars.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+            let env = move |name: &str| vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
+            decide(&env, os, &|socket| {
+                assert_eq!(socket, "/tmp/.X11-unix/X0");
+                x_alive
+            })
+        };
+        let debian = "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nID=debian\n";
+        let warning = |missing, display: &str, distro: &str, command| Decision::Use {
+            backend: BACKENDS,
+            warning: Some(DisplayWarning { missing, display: display.into(), distro: distro.into(), command, link: HELP_LINK }),
+        };
+        // escolha do usuario: respeitada, sem aviso
+        assert_eq!(run(&[("GDK_BACKEND", "wayland")], debian, false), Decision::UserChoice);
+        // X11 respondendo: x11 primeiro, sem aviso; DISPLAY remoto nao e testado
+        assert_eq!(run(&[("DISPLAY", ":0")], debian, true), Decision::Use { backend: "x11,wayland", warning: None });
+        assert_eq!(run(&[("DISPLAY", "host:10")], debian, false), Decision::Use { backend: BACKENDS, warning: None });
+        // sem DISPLAY, com Wayland: reserva + aviso com o comando da distro
+        let wayland = [("WAYLAND_DISPLAY", "wayland-0")];
+        assert_eq!(
+            run(&wayland, debian, true),
+            warning("no_display", "", "Debian GNU/Linux 13 (trixie)", Some("sudo apt install xwayland"))
+        );
+        // DISPLAY definido mas sem servidor X
+        assert_eq!(
+            run(&[("DISPLAY", ":0.0"), ("WAYLAND_DISPLAY", "wayland-0")], debian, false),
+            warning("no_server", ":0.0", "Debian GNU/Linux 13 (trixie)", Some("sudo apt install xwayland"))
+        );
+        let families = [
+            ("PRETTY_NAME=\"Ubuntu 24.04 LTS\"\nID=ubuntu\nID_LIKE=debian\n", Some("sudo apt install xwayland")),
+            ("PRETTY_NAME=\"Fedora Linux 43\"\nID=fedora\n", Some("sudo dnf install xorg-x11-server-Xwayland")),
+            ("PRETTY_NAME=\"Rocky Linux 10\"\nID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\n", Some("sudo dnf install xorg-x11-server-Xwayland")),
+            ("PRETTY_NAME=\"Arch Linux\"\nID=arch\n", Some("sudo pacman -S xorg-xwayland")),
+            ("PRETTY_NAME=\"openSUSE Tumbleweed\"\nID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"\n", Some("sudo zypper install xwayland")),
+            ("PRETTY_NAME=\"NixOS 25.11\"\nID=nixos\n", None),
+        ];
+        for (os, command) in families {
+            let Decision::Use { warning: Some(w), .. } = run(&wayland, os, true) else { panic!("{os}") };
+            assert_eq!(w.command, command, "{os}");
+            assert!(os.contains(&w.distro), "{os}");
+        }
+        assert_eq!(run(&wayland, "", true), warning("no_display", "", "Linux", None));
+        // sem X11 e sem Wayland: erro (o processo sai com codigo 1)
+        assert_eq!(run(&[], debian, false), Decision::NoDisplay);
+        assert_eq!(run(&[("DISPLAY", ":0")], debian, false), Decision::NoDisplay);
+    }
+
+    // salvar move o SQLite para onde o usuario escolheu; erro mantem o temporario; restos de processos mortos somem
+    #[test]
+    fn converted_sqlite_is_saved_discarded_and_cleaned() {
+        let dir = tempdir().unwrap();
+        let make = || {
+            let path = converted::new_temp_path("t.sqlite").unwrap();
+            rusqlite::Connection::open(&path).unwrap().execute_batch("CREATE TABLE t (x)").unwrap();
+            converted::Converted::new(path)
+        };
+        let lite = make();
+        let temp = lite.path().to_path_buf();
+        let target = dir.path().join("saved.sqlite");
+        assert!(lite.save(&target).is_ok());
+        assert!(target.is_file() && !temp.exists());
+
+        let lite = make();
+        let temp = lite.path().to_path_buf();
+        let (lite, _) = lite.save(&dir.path().join("missing folder").join("x.sqlite")).err().unwrap();
+        assert!(temp.is_file(), "a failed save keeps the temporary");
+        drop(lite);
+        assert!(!temp.exists());
+
+        // limpeza da proxima abertura: so arquivos "<pid>-..." de processo que nao existe mais; os deste ficam
+        let stale = dir.path().join("4294967294-1-old.sqlite");
+        let own = dir.path().join(format!("{}-1-mine.sqlite", std::process::id()));
+        let other = dir.path().join("notes.txt");
+        for f in [&stale, &own, &other] {
+            File::create(f).unwrap();
+        }
+        assert_eq!(converted::clean_stale(dir.path()), 1);
+        assert!(!stale.exists() && own.exists() && other.exists());
+        converted::remove_own(dir.path());
+        assert!(!own.exists() && other.exists());
+    }
+
+    // nomes de temporario reservados de forma exclusiva: chamadas seguidas nunca repetem nem reaproveitam arquivo
+    #[test]
+    fn temporary_names_are_reserved_exclusively() {
+        let a = converted::new_temp_path("x.csv").unwrap();
+        let b = converted::new_temp_path("x.csv").unwrap();
+        assert_ne!(a, b);
+        assert!(a.is_file() && b.is_file());
+        let _ = std::fs::remove_file(a);
+        let _ = std::fs::remove_file(b);
+    }
+
+    #[test]
+    fn search_matches_all_words_in_one_cell_ignoring_case_and_accents() {
+        assert!(search_condition(&["a".into()], "   ").is_none());
+        let (sql, params) = search_condition(&["co\"l".into(), "b".into()], "x y").unwrap();
+        assert_eq!(params.len(), 4);
+        assert!(sql.contains("CAST(\"co\"\"l\" AS VARCHAR)") && sql.contains(" OR ") && sql.contains(" AND "), "{sql}");
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("s.duckdb");
+        duckdb::Connection::open(&path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE t AS SELECT range AS id, CASE WHEN range = 500 THEN 'EXCITAÇÃO TENSÃO DE CAMPO' \
+                 ELSE 'outro' END AS label, CASE WHEN range = 501 THEN 'campo' END AS a, \
+                 CASE WHEN range = 501 THEN 'tensao' END AS b FROM range(1000)",
+            )
+            .unwrap();
+        let manager = DBManager::new();
+        manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+        // linha 500 nao esta nas 100 carregadas, mas a pesquisa roda na tabela inteira
+        assert_eq!(manager.get_row_count("t", &[], "campo tensao").unwrap(), 1, "same cell only (501 splits the words)");
+        assert_eq!(manager.query_table("t", 100, &[], "Tensão campo").unwrap()[0]["id"], json!(500));
+        assert_eq!(manager.get_row_count("t", &[], "50").unwrap(), 20, "numbers match as text: 50, 150..950, 500..509");
+        assert_eq!(manager.get_row_count("t", &[filter("label", json!("outro"))], "campo").unwrap(), 1);
+        assert_eq!(manager.get_row_count("t", &[], "zzz").unwrap(), 0);
     }
 
     // auditoria externa 2: arquivo do usuario com o nome do temporario ("out.csv.partial") nao pode sumir, e o
@@ -435,6 +825,10 @@ mod tests {
         for format in ["csv", "duckdb"] {
             let out = dir.path().join(format!("out.{format}"));
             let user_files = [format!("out.{format}.partial"), format!("out.{format}.partial.wal")];
+            // pasta do usuario com o nome que a exportacao tentaria primeiro: e pulada, nunca reaproveitada nem apagada
+            let taken = dir.path().join(format!(".out.{format}.{}-0.partial", std::process::id()));
+            std::fs::create_dir(&taken).unwrap();
+            std::fs::write(taken.join("keep.txt"), "do usuario").unwrap();
             for name in &user_files {
                 std::fs::write(dir.path().join(name), "do usuario").unwrap();
             }
@@ -460,9 +854,11 @@ mod tests {
             let left: Vec<String> = std::fs::read_dir(dir.path())
                 .unwrap()
                 .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-                .filter(|n| n.starts_with(&format!("out.{format}")) && !user_files.contains(n) && *n != format!("out.{format}"))
+                .filter(|n| n.trim_start_matches('.').starts_with(&format!("out.{format}")))
+                .filter(|n| !user_files.contains(n) && *n != format!("out.{format}") && dir.path().join(n) != taken)
                 .collect();
             assert!(left.is_empty(), "{left:?}");
+            assert_eq!(std::fs::read_to_string(taken.join("keep.txt")).unwrap(), "do usuario");
         }
     }
 
@@ -490,7 +886,7 @@ mod tests {
         reopened.connect(out.to_str().unwrap(), &mut no_progress()).unwrap();
         let types: Vec<String> = reopened.get_table_schema("big").unwrap().into_iter().map(|c| c.col_type).collect();
         assert_eq!(types, ["DECIMAL(38,10)", "HUGEINT", "UBIGINT", "UHUGEINT", "DECIMAL(10,2)"]);
-        let rows = reopened.query_table("big", 10, &[]).unwrap();
+        let rows = reopened.query_table("big", 10, &[], "").unwrap();
         assert_eq!(rows[0]["d"], "1234567890123456789012345678.0123456789");
         assert_eq!(rows[0]["h"], "170141183460469231731687303715884105727");
         assert_eq!(rows[0]["u"], "18446744073709551615");
@@ -522,7 +918,7 @@ mod tests {
             .unwrap();
         let manager = DBManager::new();
         manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
-        let rows = manager.query_table("t", 10, &[filter("id", json!("9007199254740993"))]).unwrap();
+        let rows = manager.query_table("t", 10, &[filter("id", json!("9007199254740993"))], "").unwrap();
         assert_eq!(rows, [json!({ "id": "9007199254740993" })]);
     }
 }

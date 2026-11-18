@@ -1,5 +1,55 @@
 # Changelog - mdb2sql (Rust + Tauri + Svelte)
 
+## 1.3.0
+
+### Novo
+
+- **Access sem nada instalado**: .accdb/.mdb abre pelo mdbtools 1.0.1 que vai dentro do exe (Windows e agora
+  Linux); o driver ODBC do Access so e usado no Windows e se existir. `MDB2SQL_ACCESS_READER=mdbtools` forca o
+  mdbtools. A leitura pelo mdbtools roda varios mdb-export ao mesmo tempo.
+- **Conversao para SQLite**: ao abrir um Access o app grava uma vez um SQLite (arquivo, nao memoria), com
+  os tipos (inteiro, decimal exato, texto, data, booleano, binario) e os NULL. Ao fechar o banco, abrir outro ou
+  sair o app pergunta: **Save...** (padrao ao lado do Access, `<nome>.sqlite`), **Delete** ou **Cancel**;
+  "Remember for this session" repete a escolha ate fechar o app. Temporario nunca fica orfao: se o app cair, a
+  proxima abertura apaga.
+- **Pesquisa na tabela inteira**: a busca da aba Data roda no banco (todas as linhas e colunas, mesma regra: todas
+  as palavras na mesma celula, sem maiusculas nem acentos), com "N of M matching rows".
+- **Idiomas**: ingles (padrao), portugues (Brasil) e espanhol em Settings > Language, gravado; troca na hora.
+  Todos os textos em catalogos (`ui/src/i18n/`); teste confere as chaves e que nenhum texto fica fora.
+- **Log**: painel embaixo (~10% da altura, 3 linhas a 25%, redimensionavel, fonte de codigo menor) com as mensagens
+  da sessao no idioma do app, selecionaveis (Ctrl+C) e **Copy all**. Recolhido por padrao e lembrado; abre e recolhe
+  pela seta no log e na barra de status, View > Log ou Ctrl+L. Recolhido, a barra de status mostra o ultimo erro
+  (destacado), senao o ultimo aviso, senao a ultima acao, com contador de nao lidos; clique nela abre o log. Botao
+  direito na barra de status > **Copy**.
+- Seta Unicode na tela: "Opened via mdbtools → SQLite".
+- Erro do motor (DuckDB/SQLite) na barra de status em uma linha com prefixo traduzido ("SQL query error: ..."); o
+  texto inteiro (LINE 1, ^^^) fica no log.
+- Todo dialogo tem botao visivel (OK/Close/Cancel) com o foco inicial; Enter = botao padrao, Esc fecha (na exportacao,
+  Esc = Cancel). Pergunta do SQLite convertido: Enter = Save..., Esc e o X = Cancel; cancelar o dialogo de arquivo
+  volta para a pergunta.
+- Abrir Access mais rapido: a sessao usa o DuckDB da leitura (sem reler o SQLite convertido) e ate min(nucleos - 1, 6)
+  mdb-export ao mesmo tempo (numeros no README, secao Desempenho).
+- **File > Close database**.
+- **Debian amd64**: `build_debian_amd64_wsl.ps1` (pelo WSL) / `build_debian_amd64.sh` geram .deb e .zip, com o
+  mdbtools dentro do binario.
+
+### Mudado
+
+- Ordem em tudo que aparece: Access, SQLite, DuckDB (dialogo Abrir, exportacao, Sobre, README).
+- Lista de tabelas e seletor de colunas mostram o nome inteiro (quebra a linha; nada de "...").
+- Colunas...: **Show all**/**Hide all** agem so nas colunas listadas pela busca do dialogo.
+- O temporario da exportacao fica numa pasta propria, criada de forma exclusiva ao lado do destino.
+- odbc-api so no Windows (o pacote Linux nao depende do unixODBC).
+- Linux: X11 primeiro (`GDK_BACKEND=x11,wayland` quando o usuario nao definiu), Wayland so de reserva, com aviso
+  "Display mode" e o comando da distro quando o X11 falta (README, secao "Linux: X11 e Wayland").
+
+### Corrigido
+
+- Campo Moeda (Currency) do Access pelo mdbtools perdia a 3a e a 4a casa (`1234567.8912` virava `1234567.89`).
+- SQLite (convertido do Access e Exportar > SQLite): Moeda e decimais com mais de 15 digitos iam como texto, e no
+  sqlite3 `WHERE preco > 20`, `ORDER BY` e `SUM` comparavam como texto (nwind: 47 linhas e soma 1670.87 em vez de
+  37 e 1695.11). Agora vao como REAL quando cabem exatos num DOUBLE (`REAL_DECIMAL(p,s)`).
+
 ## 1.2.0
 
 ### Novo
