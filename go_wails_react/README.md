@@ -56,6 +56,8 @@ Changes in 1.3.0:
 - Names are never cut with "...": long table names in the list and long column names in "Columns..." wrap
   to a second line; the status bar wraps too.
 - Debian 13 amd64 build (`.deb` and `.zip`) with mdbtools inside.
+- Saving the converted SQLite or an export over an existing file asks "Replace file?" first (the native save
+  dialog did not ask; 1.2.0 replaced the file silently).
 - Licenca: GPL v2 ou posterior (sem mudanca desde 1.2.0).
 
 Changes in 1.2.0: short window title; Help > About redone; "Columns..." dialog; right-click > filter by this
