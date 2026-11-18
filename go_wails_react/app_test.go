@@ -200,7 +200,9 @@ func TestMain(m *testing.M) {
 // Access is converted once to a SQLite file that waits for "save or delete"; another file cannot be opened before
 // that, a remembered choice is applied by itself (never over an existing file), and exit removes what is left
 func TestConvertedSQLiteLifecycle(t *testing.T) {
-	cache := t.TempDir()
+	// not t.TempDir: the sqlite extension unpacked here stays loaded in this process, so Windows cannot delete it
+	cache, _ := os.MkdirTemp("", "mdb2sql-cache-")
+	t.Cleanup(func() { os.RemoveAll(cache) }) // best effort
 	t.Setenv("LOCALAPPDATA", cache)
 	t.Setenv("XDG_CACHE_HOME", cache)
 	t.Setenv("MDB2SQL_ACCESS_READER", "")

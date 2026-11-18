@@ -75,6 +75,20 @@ export namespace main {
 	        this.access = source["access"];
 	    }
 	}
+	export class ConversionResult {
+	    done: boolean;
+	    saved: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConversionResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.done = source["done"];
+	        this.saved = source["saved"];
+	    }
+	}
 
 }
 

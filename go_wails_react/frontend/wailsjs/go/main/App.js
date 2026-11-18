@@ -6,6 +6,10 @@ export function CancelJob() {
   return window['go']['main']['App']['CancelJob']();
 }
 
+export function CloseDatabase() {
+  return window['go']['main']['App']['CloseDatabase']();
+}
+
 export function DatabaseName() {
   return window['go']['main']['App']['DatabaseName']();
 }
@@ -26,12 +30,16 @@ export function GetAppInfo() {
   return window['go']['main']['App']['GetAppInfo']();
 }
 
-export function GetRowCount(arg1, arg2) {
-  return window['go']['main']['App']['GetRowCount'](arg1, arg2);
+export function GetLanguage() {
+  return window['go']['main']['App']['GetLanguage']();
 }
 
-export function GetTableData(arg1, arg2, arg3) {
-  return window['go']['main']['App']['GetTableData'](arg1, arg2, arg3);
+export function GetRowCount(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetRowCount'](arg1, arg2, arg3);
+}
+
+export function GetTableData(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetTableData'](arg1, arg2, arg3, arg4);
 }
 
 export function GetTableSchema(arg1) {
@@ -46,12 +54,28 @@ export function LoadDatabase(arg1) {
   return window['go']['main']['App']['LoadDatabase'](arg1);
 }
 
+export function PendingConversion() {
+  return window['go']['main']['App']['PendingConversion']();
+}
+
+export function RememberedChoice() {
+  return window['go']['main']['App']['RememberedChoice']();
+}
+
+export function ResolveConversion(arg1, arg2) {
+  return window['go']['main']['App']['ResolveConversion'](arg1, arg2);
+}
+
 export function RunQuery(arg1, arg2) {
   return window['go']['main']['App']['RunQuery'](arg1, arg2);
 }
 
 export function SelectDatabase() {
   return window['go']['main']['App']['SelectDatabase']();
+}
+
+export function SetLanguage(arg1) {
+  return window['go']['main']['App']['SetLanguage'](arg1);
 }
 
 export function SetTheme(arg1) {

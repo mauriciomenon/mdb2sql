@@ -20,7 +20,7 @@ src="`$HOME/src/$clone"
 if [ ! -d "`$src/.git" ]; then mkdir -p "`$HOME/src"; git clone -q '$winRepo' "`$src"; fi
 cd "`$src"
 git fetch -q '$winRepo' '$commit'
-git checkout -q --detach '$commit'
+git checkout -q --force --detach '$commit'  # a failed build may have left regenerated files
 git clean -q -fdx -e $stack/.tools
 ./$stack/build_debian_amd64.sh
 "@ -replace "`r", ''
