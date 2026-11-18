@@ -115,7 +115,7 @@ install -m 644 README.md LICENSE "$stage/$name/"
 rm -rf "${stage:?}/$name"
 
 # .deb: /usr/bin command, menu entry and icon; Depends = libraries of the binary (dpkg-shlibdeps) plus those of the
-# embedded mdbtools (GLib, libatomic), which dpkg-shlibdeps cannot see inside the binary
+# embedded mdbtools (GLib, through libmdb.so.3), which dpkg-shlibdeps cannot see inside the binary
 pkg=$stage/deb
 install -D -m 755 "$built" "$pkg/usr/bin/$slug"
 install -D -m 644 "scripts/linux/$slug.desktop" "$pkg/usr/share/applications/$slug.desktop"
@@ -126,7 +126,9 @@ echo "Licenca: GPL-2.0-or-later. Texto completo em /usr/share/common-licenses/GP
 mkdir -p "$stage/shlibs/debian" "$pkg/DEBIAN"
 printf 'Source: %s\n\nPackage: %s\nArchitecture: any\n' "$slug" "$slug" >"$stage/shlibs/debian/control"
 depends=$(cd "$stage/shlibs" && dpkg-shlibdeps --ignore-missing-info -O "$pkg/usr/bin/$slug" "$mdb_dir/usr/bin/mdb-export" \
-    -l"$mdb_dir/usr/lib/x86_64-linux-gnu" 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
+    "$mdb_dir/usr/lib/x86_64-linux-gnu/libmdb.so.3" -l"$mdb_dir/usr/lib/x86_64-linux-gnu" 2>/dev/null |
+    sed -n 's/^shlibs:Depends=//p')
+case "$depends" in *libglib2.0-0*) ;; *) fail 1 "Depends sem a GLib (o mdbtools embutido precisa dela): $depends" ;; esac
 [ -n "$depends" ] || fail 1 "dpkg-shlibdeps nao achou as dependencias do binario"
 depends=$(echo "$depends" | sed 's/libmdb3t64[^,]*, *//; s/, *libmdb3t64[^,]*//')
 {

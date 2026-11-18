@@ -115,7 +115,7 @@ describe('App IPC flow', () => {
       ['Build', '412 (2026-11-17)'],
       ['Stack', `Go 1.26.10 + Wails 2.13.0 + React ${React.version}`],
       ['Engine', 'DuckDB 2.0.0'],
-      ['Access reader', 'Microsoft Access ODBC (installed driver); fallback: embedded mdbtools'],
+      ['Access reader', 'Access ODBC driver (Windows); embedded mdbtools as fallback'],
       ['Author', 'Mauricio Menon'],
       ['License', 'GPL v2 or later'],
       ['GitHub', 'https://github.com/mauriciomenon/mdb2sql'],
@@ -136,7 +136,7 @@ describe('App IPC flow', () => {
     const pt = (key, ...args) => translate('pt-BR', key, ...args);
     const dev = Object.fromEntries(aboutRows({ version: '1.3.0', go: '1', wails: '2', duckdb: '3', access: 'mdbtools' }, pt));
     expect(dev.Build).toBe('dev');
-    expect(dev['Leitor Access']).toMatch(/^mdbtools embutido/);
+    expect(dev['Leitor Access']).toBe('mdbtools embutido');
     expect(dev['Licença']).toBe('GPL v2 ou posterior');
   });
 

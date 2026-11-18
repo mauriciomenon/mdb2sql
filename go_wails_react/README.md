@@ -25,8 +25,8 @@ Debian 13 (trixie), amd64:
 | `mdb2sql-1.3.0-debian-amd64-go-wails-react.zip` | folder with the `mdb2sql` binary, `README.md` and `LICENSE`; needs the libraries below |
 
 Debian runtime libraries (the `.deb` declares them; for the `.zip`: `sudo apt install libgtk-3-0t64
-libwebkit2gtk-4.1-0 libglib2.0-0t64 libatomic1`): GTK 3 and WebKitGTK 4.1 draw the window (Wails on Linux),
-GLib and libatomic are used by the embedded mdbtools. Nothing else: DuckDB, mdbtools (with `libmdb.so.3`) and the
+libwebkit2gtk-4.1-0 libglib2.0-0t64`): GTK 3 and WebKitGTK 4.1 draw the window (Wails on Linux),
+GLib is used by the embedded mdbtools. Nothing else: DuckDB, mdbtools (with `libmdb.so.3`) and the
 SQLite extension are inside the binary.
 
 Windows SmartScreen may warn because the files are not code-signed: "More info" > "Run anyway".

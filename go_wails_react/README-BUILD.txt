@@ -55,7 +55,7 @@ Requisitos (Debian 13 amd64):
   wails build usa a tag webkit2_41 (o Debian 13 so tem WebKitGTK 4.1).
 
 Dependencias de execucao do .deb (Depends gerado pelo dpkg-shlibdeps do binario e do mdb-export embutido):
-  libgtk-3-0t64, libwebkit2gtk-4.1-0, libjavascriptcoregtk-4.1-0, libsoup-3.0-0, libglib2.0-0t64, libatomic1,
+  libgtk-3-0t64, libwebkit2gtk-4.1-0, libjavascriptcoregtk-4.1-0, libsoup-3.0-0, libglib2.0-0t64, libgdk-pixbuf-2.0-0,
   libc6 (a lista exata sai no fim do build: "Depends: ..."). O .zip precisa das mesmas bibliotecas
   (sudo apt install libgtk-3-0t64 libwebkit2gtk-4.1-0). DuckDB, mdbtools (com libmdb.so.3) e a extensao sqlite
   estao dentro do binario.
