@@ -74,12 +74,15 @@ pub fn open(db: *Db, io: Io, path: []const u8, opts: Options, progress: *Progres
     const name = std.fmt.bufPrint(&tmp.buf, "{s}{s}{d}-{x}.sqlite", .{ opts.temp_dir, std.fs.path.sep_str, pid(), randomU64(io) }) catch return error.NameTooLong;
     tmp.len = name.len;
     errdefer {
+        db.exec("ROLLBACK") catch {};
         db.closeSource();
         db.exec("DETACH DATABASE IF EXISTS conv") catch {};
         deleteQuiet(io, tmp.slice());
         tmp.len = 0;
     }
     try attachConv(db, tmp.slice());
+    // a conversao inteira numa transacao so: o SQLite grava o arquivo uma vez no fim, e nao a cada tabela
+    try db.exec("BEGIN TRANSACTION");
 
     var used = reader;
     switch (reader) {
@@ -87,14 +90,17 @@ pub fn open(db: *Db, io: Io, path: []const u8, opts: Options, progress: *Progres
             // driver presente mas com falha (instalacao quebrada, arquivo que ele recusa): recomeca com o mdbtools,
             // a nao ser que o ODBC tenha sido forcado ou o usuario tenha cancelado
             if (e == error.Canceled or progress.cancel.load(.monotonic) or isForced(opts.forced) or !tools_ok) return e;
+            db.exec("ROLLBACK") catch {};
             try db.exec("DETACH DATABASE conv");
             deleteQuiet(io, tmp.slice());
             try attachConv(db, tmp.slice());
+            try db.exec("BEGIN TRANSACTION");
             used = .mdbtools;
             try mdbtoolsImport(db, io, path, opts, progress);
         } else unreachable,
         .mdbtools => try mdbtoolsImport(db, io, path, opts, progress),
     }
+    try db.exec("COMMIT");
     try db.exec("DETACH DATABASE conv");
     try db.openReadOnly(tmp.slice());
     db.source = if (used == .odbc) .access_odbc else .access_mdbtools;
@@ -242,7 +248,16 @@ fn toolPath(buf: []u8, dir: []const u8, exe: []const u8) []const u8 {
     return std.fmt.bufPrint(buf, "{s}{s}{s}", .{ dir, std.fs.path.sep_str, exe }) catch "";
 }
 
+// Tempo de cada etapa da ultima conversao pelo mdbtools (o teste de desempenho imprime)
+pub var stats: struct { schema_ms: i64 = 0, export_wait_ms: i64 = 0, load_ms: i64 = 0 } = .{};
+
+fn msSince(io: Io, t0: Io.Timestamp) i64 {
+    return t0.durationTo(Io.Timestamp.now(io, .awake)).toMilliseconds();
+}
+
 fn mdbtoolsImport(db: *Db, io: Io, path: []const u8, opts: Options, progress: *Progress) !void {
+    stats = .{};
+    const t_schema = Io.Timestamp.now(io, .awake);
     const gpa = db.gpa;
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     defer arena_state.deinit();
@@ -257,47 +272,62 @@ fn mdbtoolsImport(db: *Db, io: Io, path: []const u8, opts: Options, progress: *P
     if (!schema.term.success()) return failFmt(db, "err_tool_failed", .{ "mdb-schema", std.mem.trim(u8, schema.stderr, " \r\n") });
     const tables = try parseSchema(arena, schema.stdout);
     progress.begin(tables.len);
+    stats.schema_ms = msSince(io, t_schema);
 
-    // Cada mdb-export le o catalogo do arquivo de novo (~0,5 s no DB4): roda varios ao mesmo tempo, um CSV
-    // temporario por processo, e grava os CSVs no SQLite um por um
-    const parallel = 8;
+    // Cada mdb-export le o catalogo do arquivo de novo (~0,5 s no DB4): roda varios ao mesmo tempo (nucleos - 1, ate
+    // 6), um CSV temporario por processo. Em fila: a tabela i e gravada no SQLite enquanto as seguintes ainda exportam,
+    // e o processo que terminou ja recebe a proxima tabela (antes: lotes de 8 que esperavam o mais lento).
+    const parallel = std.math.clamp((std.Thread.getCpuCount() catch 4) -| 1, 2, max_parallel);
     const tag = randomU64(io);
-    var csv_bufs: [parallel][4096]u8 = undefined;
-    var csv_paths: [parallel][]const u8 = undefined;
+    var csv_bufs: [max_parallel][4096]u8 = undefined;
+    var csv_paths: [max_parallel][]const u8 = undefined;
     for (&csv_paths, &csv_bufs, 0..) |*p, *b, i|
         p.* = std.fmt.bufPrint(b, "{s}{s}{d}-{x}-{d}.csv", .{ opts.temp_dir, std.fs.path.sep_str, pid(), tag, i }) catch return error.NameTooLong;
     defer for (csv_paths) |p| deleteQuiet(io, p);
 
+    var children: [max_parallel]?std.process.Child = @splat(null);
+    // nenhum processo fica para tras: em erro, os que ainda rodam sao encerrados
+    defer for (&children) |*ch| if (ch.*) |*child| child.kill(io);
+    var started: usize = 0;
+    while (started < @min(parallel, tables.len)) : (started += 1)
+        children[started % parallel] = try spawnExport(db, io, opts, path, tables[started].name, csv_paths[started % parallel]);
+
     var sql: std.ArrayList(u8) = .empty;
     defer sql.deinit(gpa);
-    var start: usize = 0;
-    while (start < tables.len) : (start += parallel) {
+    for (tables, 0..) |table, i| {
         try progress.check();
-        const batch = tables[start..@min(start + parallel, tables.len)];
-        var children: [parallel]?std.process.Child = @splat(null);
-        // nenhum processo fica para tras: em erro, os que ainda rodam sao encerrados
-        defer for (&children) |*ch| if (ch.*) |*child| child.kill(io);
-        for (batch, 0..) |table, i| {
-            const out = try Io.Dir.cwd().createFile(io, csv_paths[i], .{});
-            defer out.close(io); // o filho herdou o seu proprio handle
-            children[i] = std.process.spawn(io, .{
-                .argv = &.{ toolPath(&pb, opts.tools_dir, mdbtools_tools[2]), "-D", "%Y-%m-%d %H:%M:%S", "-T", "%Y-%m-%d %H:%M:%S", "-b", "hex", path, table.name },
-                .stdin = .ignore,
-                .stdout = .{ .file = out },
-                .stderr = .ignore,
-                .create_no_window = true,
-            }) catch |e| return failFmt(db, "err_tool_run", .{ "mdb-export", e });
-        }
-        for (batch, 0..) |table, i| {
-            const term = children[i].?.wait(io) catch |e| return failFmt(db, "err_tool_run", .{ "mdb-export", e });
-            children[i] = null;
-            if (!term.success()) return failFmt(db, "err_export_table", .{table.name});
-        }
-        for (batch, 0..) |table, i| {
-            try loadCsv(db, table, csv_paths[i], &sql);
-            progress.add(1);
+        const slot = i % parallel;
+        const t_wait = Io.Timestamp.now(io, .awake);
+        const term = children[slot].?.wait(io) catch |e| return failFmt(db, "err_tool_run", .{ "mdb-export", e });
+        children[slot] = null;
+        stats.export_wait_ms += msSince(io, t_wait);
+        if (!term.success()) return failFmt(db, "err_export_table", .{table.name});
+        const t_load = Io.Timestamp.now(io, .awake);
+        try loadCsv(db, table, csv_paths[slot], &sql);
+        stats.load_ms += msSince(io, t_load);
+        progress.add(1);
+        // o CSV desta vaga ja foi lido: a vaga recebe a proxima tabela da fila
+        if (started < tables.len) {
+            children[slot] = try spawnExport(db, io, opts, path, tables[started].name, csv_paths[slot]);
+            started += 1;
         }
     }
+}
+
+const max_parallel = 6;
+
+// Um mdb-export da tabela para o CSV (o processo herda o arquivo; o pai fecha a sua copia)
+fn spawnExport(db: *Db, io: Io, opts: Options, path: []const u8, table: []const u8, csv_path: []const u8) !std.process.Child {
+    const out = try Io.Dir.cwd().createFile(io, csv_path, .{});
+    defer out.close(io);
+    var pb: [4096]u8 = undefined;
+    return std.process.spawn(io, .{
+        .argv = &.{ toolPath(&pb, opts.tools_dir, mdbtools_tools[2]), "-D", "%Y-%m-%d %H:%M:%S", "-T", "%Y-%m-%d %H:%M:%S", "-b", "hex", path, table },
+        .stdin = .ignore,
+        .stdout = .{ .file = out },
+        .stderr = .ignore,
+        .create_no_window = true,
+    }) catch |e| failFmt(db, "err_tool_run", .{ "mdb-export", e });
 }
 
 // CSV do mdb-export -> tabela do SQLite "conv" com os tipos do Access; NULL = campo vazio sem aspas, "" = texto vazio
@@ -1043,5 +1073,118 @@ test "real Access file through the readers, compared with the reference converte
         try searchBeyondFirstPage(&db);
         try compareNumericQueries(&db);
         if (i == 0) try exportAndCompare(&db, total);
+    }
+}
+
+// Protocolo de desempenho (REGRA_DESEMPENHO): com MDB2SQL_PERF=1, MDB2SQL_TEST_ACCDB e MDB2SQL_TEST_REF (.sqlite; o
+// .duckdb de mesmo nome ao lado). 3 execucoes de cada caso, mediana em segundos. Mesmo codigo do programa: abrir
+// (conversao), contar as tabelas (a lista aparece), esquema + 1a pagina da 1a tabela (a tabela aparece).
+fn median3(v: [3]i64) f64 {
+    var s = v;
+    std.mem.sort(i64, &s, {}, std.sort.asc(i64));
+    return @as(f64, @floatFromInt(s[1])) / 1000.0;
+}
+
+fn now() Io.Timestamp {
+    return Io.Timestamp.now(t.io, .awake);
+}
+
+fn firstTable(db: *Db) !void {
+    if (db.table_names.len == 0) return;
+    var sch = try db.schema(db.table_names[0]);
+    defer sch.deinit();
+    var g = try db.page(.{ .table = db.table_names[0], .tables = db.table_names, .columns = &.{} });
+    defer g.deinit();
+}
+
+fn openAndCount(path: []const u8) !i64 {
+    const t0 = now();
+    var db = dbm.testDb();
+    defer db.close();
+    try db.openReadOnly(path);
+    const counts = try t.allocator.alloc(u64, db.table_names.len);
+    defer t.allocator.free(counts);
+    try db.countMany(db.table_names, counts);
+    try firstTable(&db);
+    return t0.durationTo(now()).toMilliseconds();
+}
+
+test "performance protocol: Access through the readers, saved SQLite, exports, reference files (optional)" {
+    const on = t.environ.getAlloc(t.allocator, "MDB2SQL_PERF") catch return error.SkipZigTest;
+    t.allocator.free(on);
+    const path = try envOrEmpty("MDB2SQL_TEST_ACCDB");
+    defer t.allocator.free(path);
+    const ref = try envOrEmpty("MDB2SQL_TEST_REF");
+    defer t.allocator.free(ref);
+    const tools = try envOr("MDB2SQL_TEST_MDBTOOLS", "mdbtools");
+    defer t.allocator.free(tools);
+    const readers_env = try envOrEmpty("MDB2SQL_TEST_READERS");
+    defer t.allocator.free(readers_env);
+    const readers = if (readers_env.len > 0) readers_env else if (is_windows) "odbc,mdbtools" else "mdbtools";
+    const exporter = @import("exporter.zig");
+    std.debug.print("\nperf {s} (median of 3, s)\n", .{std.fs.path.basename(path)});
+    var it = std.mem.splitScalar(u8, readers, ',');
+    while (it.next()) |reader| {
+        var conv: [3]i64 = undefined;
+        var list: [3]i64 = undefined;
+        var first: [3]i64 = undefined;
+        var reopen: [3]i64 = undefined;
+        var exp_sqlite: [3]i64 = undefined;
+        var exp_duck: [3]i64 = undefined;
+        var st: [3]@TypeOf(stats) = undefined;
+        for (0..3) |run| {
+            var db = dbm.testDb();
+            defer db.close();
+            var p: Progress = .{};
+            var out: TempPath = .{};
+            const t0 = now();
+            _ = try open(&db, t.io, path, .{ .forced = reader, .tools_dir = tools, .temp_dir = ".zig-cache/tmp" }, &p, &out);
+            conv[run] = t0.durationTo(now()).toMilliseconds();
+            st[run] = stats;
+            const counts = try t.allocator.alloc(u64, db.table_names.len);
+            defer t.allocator.free(counts);
+            try db.countMany(db.table_names, counts);
+            list[run] = t0.durationTo(now()).toMilliseconds();
+            try firstTable(&db);
+            first[run] = t0.durationTo(now()).toMilliseconds();
+            // exportar a partir do Access aberto
+            var eb: [2][64]u8 = undefined;
+            const outs = [_][]const u8{
+                try std.fmt.bufPrint(&eb[0], ".zig-cache/tmp/perf-{d}.sqlite", .{run}),
+                try std.fmt.bufPrint(&eb[1], ".zig-cache/tmp/perf-{d}.duckdb", .{run}),
+            };
+            var t1 = now();
+            try exporter.database(&db, t.io, .sqlite, outs[0], &p);
+            exp_sqlite[run] = t1.durationTo(now()).toMilliseconds();
+            t1 = now();
+            try exporter.database(&db, t.io, .duckdb, outs[1], &p);
+            exp_duck[run] = t1.durationTo(now()).toMilliseconds();
+            // reabrir o SQLite salvo (o temporario copiado, como o Salvar faz)
+            db.closeSource();
+            var sb: [64]u8 = undefined;
+            const saved = try std.fmt.bufPrint(&sb, ".zig-cache/tmp/perf-saved-{d}.sqlite", .{run});
+            try Io.Dir.cwd().copyFile(out.slice(), Io.Dir.cwd(), saved, t.io, .{});
+            deleteQuiet(t.io, out.slice());
+            reopen[run] = try openAndCount(saved);
+            for ([_][]const u8{ outs[0], outs[1], saved }) |f| deleteQuiet(t.io, f);
+        }
+        std.debug.print("  {s}: table list {d:.1} | first table {d:.1} | conversion {d:.1}", .{ reader, median3(list), median3(first), median3(conv) });
+        if (std.mem.eql(u8, reader, "mdbtools")) std.debug.print(" (schema {d:.1}, waiting mdb-export {d:.1}, writing SQLite {d:.1})", .{
+            median3(.{ st[0].schema_ms, st[1].schema_ms, st[2].schema_ms }),
+            median3(.{ st[0].export_wait_ms, st[1].export_wait_ms, st[2].export_wait_ms }),
+            median3(.{ st[0].load_ms, st[1].load_ms, st[2].load_ms }),
+        });
+        std.debug.print("\n    reopen saved SQLite {d:.1} | export to SQLite {d:.1} | export to DuckDB {d:.1}\n", .{ median3(reopen), median3(exp_sqlite), median3(exp_duck) });
+    }
+    if (ref.len > 0) {
+        var rs: [3]i64 = undefined;
+        var rd: [3]i64 = undefined;
+        var db_buf: [1024]u8 = undefined;
+        const ref_duck = try std.fmt.bufPrint(&db_buf, "{s}.duckdb", .{ref[0 .. ref.len - std.fs.path.extension(ref).len]});
+        for (0..3) |run| {
+            rs[run] = try openAndCount(ref);
+            rd[run] = openAndCount(ref_duck) catch -1000;
+        }
+        std.debug.print("  reference: open .sqlite {d:.1} | open .duckdb {d:.1}\n", .{ median3(rs), median3(rd) });
     }
 }

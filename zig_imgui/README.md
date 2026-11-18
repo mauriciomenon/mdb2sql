@@ -41,7 +41,7 @@ files). Nothing else is needed to open Access files.
 - Access files (`.accdb`, `.mdb`), in this order:
   1. on Windows, the **Microsoft Access ODBC driver** "Microsoft Access Driver (*.mdb, *.accdb)", 64-bit, when it is
      installed (64-bit Office or the free "Microsoft Access Database Engine 2016 Redistributable"). Optional and
-     faster (DB4: about 17 s instead of about 87 s);
+     faster (DB4: about 7 s instead of about 40 s, see "Performance");
   2. otherwise the **mdbtools** that ship with the program (no installation, no driver, nothing from the computer);
   3. if neither is available (the `mdbtools` folder was deleted), a message says so.
 
@@ -162,11 +162,11 @@ the public mdbtools test data, and the small `testdata/mdb2sql_test.mdb` kept in
 
 - `DB4.accdb` through mdbtools (forced) and through Access ODBC: 287 tables, 113,962 rows both ways, and every table
   name and row count equal to the reference conversion (`2026-07-14 DB4.sqlite`, made by the owner's
-  pandas/pyodbc converter): 0 differences. Conversion to SQLite: about 87 s with mdbtools, about 17 s with ODBC.
+  pandas/pyodbc converter): 0 differences. Conversion to SQLite: about 40 s with mdbtools, about 7 s with ODBC.
   The converted file exported again to `.duckdb` and `.sqlite` and reopened: every count equal. Row counts of the
   287 tables after the conversion: 0.7 s (8.7 s before, through DuckDB's SQLite reader).
 - `DB3 1.accdb` through mdbtools: 287 tables, 113,826 rows, every name and count equal to its reference
-  (`2026-06-25 DB3 1.sqlite`): 0 differences; conversion about 105 s.
+  (`2026-06-25 DB3 1.sqlite`): 0 differences; conversion about 35 s.
 - Whole-table search on the converted DB4 (RANGER_SOSTAT, 36,754 rows): `tension de campo` finds the one row
   `EXCITACION TENSION DE CAMPO`, which is not on the first page; `tensao de campo` finds nothing.
 - Types of the converted DB4 and DB3 1: 1,681 INTEGER, 5,816 REAL and 2,867 text columns; the text ones are the
@@ -238,6 +238,30 @@ the public mdbtools test data, and the small `testdata/mdb2sql_test.mdb` kept in
 - Free SQL results stream (a join without condition no longer fills the memory).
 - Start errors and internal errors show a message box (the release program has no console).
 - Opening, like every other job, can be canceled; the DuckDB connection lives for the whole run.
+
+## Performance (opening Access)
+
+Measured by the performance protocol of README-BUILD.txt (release build, copies of the files, median of 3 runs, the
+same machine: Intel Core Ultra 7 258V, 8 cores, 32 GB, NVMe SSD; whole test process at most about 390 MB). Seconds
+until the table list appears (conversion + row counts); the first table appears 0.1 s later.
+
+| Case | DB4 before | DB4 now | DB3 1 before | DB3 1 now |
+|---|---|---|---|---|
+| Access through ODBC | 16.6 | 6.7 | 19.4 | 6.2 |
+| Access through mdbtools | 73.5 | 39.9 | 46.1 | 35.5 |
+| of which waiting for `mdb-export` | 57.8 | 33.3 | 36.1 | 29.5 |
+| of which writing the SQLite file | 11.3 | 4.4 | 7.4 | 3.8 |
+| Reopen the saved SQLite | 1.4 | 0.5 | 0.4 | 0.4 |
+| Export to SQLite (Access open) | 15.4 | 1.6 | 12.1 | 1.6 |
+| Export to DuckDB (Access open) | 12.2 | 2.4 | 9.3 | 2.5 |
+| Open the reference `.sqlite` / `.duckdb` | 0.5 / 0.3 | 0.5 / 0.4 | 0.6 / 0.3 | 0.4 / 0.3 |
+
+What changed: the conversion and the database exports write in one transaction (SQLite commits the file once
+instead of once per table); `mdb-export` runs as a queue of up to 6 processes (cores - 1), each one taking the next
+table as soon as it ends, and the table it exported is written to SQLite while the others still run (before:
+batches of 8 that waited for the slowest). Table and row counts stay identical to the reference conversions (the
+real-file test checks every table). Most of the remaining mdbtools time is each `mdb-export` process reading the
+file's catalog again (about 0.3 s per table, 287 tables).
 
 ## Known limits
 

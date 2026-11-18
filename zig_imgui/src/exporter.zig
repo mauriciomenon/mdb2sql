@@ -76,10 +76,13 @@ pub fn database(db: *Db, io: Io, format: DbFormat, dest: []const u8, progress: *
     try sql.appendSlice(gpa, if (format == .sqlite) " AS mdb2sql_out (TYPE sqlite)" else " AS mdb2sql_out");
     try db.exec(try zsql(&sql, gpa));
     errdefer {
+        db.exec("ROLLBACK") catch {};
         db.exec("DETACH DATABASE IF EXISTS mdb2sql_out") catch {};
         deleteQuiet(io, part);
         deleteQuiet(io, wal);
     }
+    // todas as tabelas numa transacao so: o arquivo e gravado uma vez no fim (SQLite: sem um commit por tabela)
+    try db.exec("BEGIN TRANSACTION");
 
     progress.begin(db.table_names.len);
     for (db.table_names) |name| {
@@ -92,6 +95,7 @@ pub fn database(db: *Db, io: Io, format: DbFormat, dest: []const u8, progress: *
         try db.exec(try zsql(&sql, gpa));
         progress.add(1);
     }
+    try db.exec("COMMIT");
     try db.exec("DETACH DATABASE mdb2sql_out");
     try commit(io, part, dest);
 }

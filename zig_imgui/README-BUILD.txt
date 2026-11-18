@@ -105,6 +105,10 @@ Debian - dist/debian/amd64/
     $env:MDB2SQL_TEST_READERS = 'mdbtools'               (opcional; padrao: odbc,mdbtools no Windows)
     $env:MDB2SQL_TEST_OUT = 'C:\copia\saida'             (opcional: exporta .duckdb/.sqlite/.xlsx e confere)
     zig build test -Doptimize=ReleaseSafe --summary all
+  Protocolo de desempenho (REGRA_DESEMPENHO): com $env:MDB2SQL_PERF = '1' e as variaveis acima, o mesmo teste mede 3
+  vezes (mediana) cada leitor: ate a lista de tabelas, ate a 1a tabela, conversao (e, no mdbtools, o tempo esperando
+  o mdb-export e gravando o SQLite), reabrir o SQLite salvo, exportar para SQLite e DuckDB, e abrir os arquivos de
+  referencia (.sqlite e o .duckdb de mesmo nome).
   Variaveis do programa: MDB2SQL_DB_PATH (arquivo aberto ao iniciar), MDB2SQL_ACCESS_READER=odbc|mdbtools|auto.
   Temporarios do programa: <TEMP>/mdb2sql-zig/<pid>-<n>.sqlite (o SQLite convertido) e os CSVs do mdbtools.
 

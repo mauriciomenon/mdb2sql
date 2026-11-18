@@ -585,6 +585,12 @@ fn centerNext() void {
     ig.igSetNextWindowPos(.{ .x = vp.*.Pos.x + vp.*.Size.x / 2, .y = vp.*.Pos.y + vp.*.Size.y / 2 }, ig.ImGuiCond_Always, .{ .x = 0.5, .y = 0.5 });
 }
 
+// Dialogo com um botao so (Fechar/OK): Enter (o botao padrao) ou Esc fecham
+fn dialogKeyClose() bool {
+    return ig.igIsKeyPressed_Bool(ig.ImGuiKey_Escape, false) or ig.igIsKeyPressed_Bool(ig.ImGuiKey_Enter, false) or
+        ig.igIsKeyPressed_Bool(ig.ImGuiKey_KeypadEnter, false);
+}
+
 // Botoes de dialogo do mesmo tamanho, alinhados a direita
 fn dialogButtonWidth(labels: []const [:0]const u8) f32 {
     var w: f32 = 88;
@@ -1439,7 +1445,7 @@ const App = struct {
         const close_l = tr("close");
         const bw = dialogButtonWidth(&.{close_l});
         ig.igSetCursorPosX(ig.igGetCursorPosX() + ig.igGetContentRegionAvail().x - bw);
-        if (ig.igButton(close_l, .{ .x = bw, .y = 0 })) ig.igCloseCurrentPopup();
+        if (ig.igButton(close_l, .{ .x = bw, .y = 0 }) or dialogKeyClose()) ig.igCloseCurrentPopup();
     }
 
     // Linux sem X11: aviso curto da abertura (Wayland por reserva): 2 linhas de texto, a distro com o comando
@@ -1483,7 +1489,7 @@ const App = struct {
         if (ig.igTextLink(tr("display_help"))) if (main_io) |io| platform.openUrl(io, dbm.display.help_url);
         ig.igSameLine(0, -1);
         ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - bw));
-        if (ig.igButton(ok_l, .{ .x = bw, .y = 0 }) or ig.igIsKeyPressed_Bool(ig.ImGuiKey_Escape, false)) {
+        if (ig.igButton(ok_l, .{ .x = bw, .y = 0 }) or dialogKeyClose()) {
             app.display_warning = null;
             ig.igCloseCurrentPopup();
         }
@@ -2096,7 +2102,7 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         ig.igSameLine(0, -1);
         if (ig.igButton(hide_l, .{ .x = bw, .y = 0 })) dbm.gridtools.setListed(&sel.hidden, g.columns[0..n_cols], needle, true);
         ig.igSameLine(0, -1);
-        if (ig.igButton(close_l, .{ .x = bw, .y = 0 })) ig.igCloseCurrentPopup();
+        if (ig.igButton(close_l, .{ .x = bw, .y = 0 }) or dialogKeyClose()) ig.igCloseCurrentPopup();
     }
     return changed;
 }
