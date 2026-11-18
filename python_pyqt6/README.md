@@ -113,19 +113,25 @@ Windows 11 Pro (10.0.26300) amd64, Python 3.12.16, PyQt6/Qt 6.10.0, DuckDB 2.0.0
 Copies of two real databases ("2026-07-14 DB4" and "2026-06-25 DB3 1", 287 tables each) and the conversions of
 the same files made by another converter as reference.
 
-- DB4 and DB3 `.accdb`, by mdbtools and by Access ODBC: 287 tables, 113,962 rows (DB4), every table with the same row
-  count as the reference SQLite; all cells identical between the two readers.
+- DB4 and DB3 `.accdb`, by mdbtools and by Access ODBC: 287 tables each, 113,962 rows (DB4) and 113,826 rows (DB3),
+  every table with the same row count as the reference SQLite; all cells identical between the two readers.
+  Release exe on DB4 by mdbtools: "tension de campo" in RANGER_SOSTAT (36,754 rows) finds the only match, row 18,148.
+- Public files of the mdbtools project (mdbtestdata): `nwind.mdb` (Access 97: 9 tables, 4,032 rows, mdbtools only),
+  `ASampleDatabase.accdb` (both readers identical), `DateTestDatabase.mdb` (dates before 1900 and year 9999: see
+  Known limits).
 - Generated `tests/data/sample.mdb` (versioned, made by `tests/data/make_sample_mdb.py`): integer, Byte, Integer,
   Currency (exact `18.0000`, `12.3456`), Double, text with accents, quotes and line breaks, dates, Yes/No, binary
   (empty and NULL), NULL, a table name with spaces; read by both readers, also on Debian.
 - Search beyond the loaded rows, value filters, save / delete / cancel of the converted SQLite, temporary folder of
   a crashed session removed, three language catalogs with the same keys and no screen text outside them.
-  102 automatic tests (pytest + pytest-qt); the real-database comparison runs with `MDB2SQL_TEST_ACCDB`.
+  103 automatic tests (pytest + pytest-qt); the real-database comparison runs with `MDB2SQL_TEST_ACCDB`.
 
 ## Known limits
 
 - mdbtools reads an empty Access text (`""`) as NULL (mdb-export cannot tell them apart); the ODBC driver keeps `""`.
-  It also has the mdbtools limits: attachment and multi-value fields are not read; on Windows the path of the
+- mdbtools 1.0.1 cannot read dates before 1900 or after about 9998 (for example `1898-01-01`, `9999-01-01`):
+  they become NULL. The ODBC driver reads them; Access 97 files (Jet 3, such as `nwind.mdb`) open only by mdbtools.
+- Other mdbtools limits: attachment and multi-value fields are not read; on Windows the path of the
   Access file must be in the Windows ANSI code page.
 - SQLite stores decimals as REAL: values with more than 15 significant digits lose the last digits (Access Currency
   up to 100 billion with 4 decimals is exact). The program shows them again as DECIMAL(p,s).

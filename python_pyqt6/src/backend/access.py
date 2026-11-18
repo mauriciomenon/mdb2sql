@@ -26,6 +26,7 @@ MDBTOOLS = tuple(f"{name}{EXE}" for name in ("mdb-tables", "mdb-schema", "mdb-ex
 READERS = {"odbc": "Access ODBC", "mdbtools": "mdbtools"}
 NULL = "\x01NULL\x01"  # nao aparece em texto real: separa NULL da string vazia no CSV do mdb-export
 TIMESTAMP = "%Y-%m-%d %H:%M:%S"
+INVALID_DATE = "1900-01-00"  # data que o mdbtools 1.0.1 do Linux nao converte (fora de ~1900-9999)
 CHUNK = 10_000
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # so existe no Windows: exe GUI sem janela de console
 
@@ -190,8 +191,12 @@ def mdb_columns(schema: str) -> list[tuple[str, str]]:
     return columns
 
 
-def _csv_rows(csv_path: Path, blobs: list[int]) -> Iterator[list[object]]:
-    """Linhas do CSV do mdb-export (sem o cabecalho): NULL vira None, binario (hex) vira bytes."""
+def _csv_rows(csv_path: Path, blobs: list[int], dates: list[int]) -> Iterator[list[object]]:
+    """Linhas do CSV do mdb-export (sem o cabecalho): NULL vira None, binario (hex) vira bytes.
+
+    !T: mdbtools 1.0.1 cannot convert dates outside ~1900-9999: Windows prints them empty (NULL), Linux prints the
+    !T: invalid 1900-01-00, which would make the whole table unreadable; it becomes NULL too (README: known limits)
+    """
     with open(csv_path, encoding="utf-8", newline="") as handle:
         rows = csv.reader(handle)
         next(rows, None)
@@ -200,6 +205,9 @@ def _csv_rows(csv_path: Path, blobs: list[int]) -> Iterator[list[object]]:
             for index in blobs:
                 if values[index] is not None:
                     values[index] = bytes.fromhex(values[index])
+            for index in dates:
+                if isinstance(values[index], str) and values[index].startswith(INVALID_DATE):
+                    values[index] = None
             yield values
 
 
@@ -237,7 +245,8 @@ def _load_mdbtools(path: Path, lite: sqlite3.Connection, work: Path, progress: P
                     insert = _create(lite, table, columns)
                     csv_path = future.result()
                     blobs = [index for index, (_, kind) in enumerate(columns) if kind == "BLOB"]
-                    lite.executemany(insert, _csv_rows(csv_path, blobs))
+                    dates = [index for index, (_, kind) in enumerate(columns) if kind == "DATETIME"]
+                    lite.executemany(insert, _csv_rows(csv_path, blobs, dates))
                     csv_path.unlink()
             except BaseException:
                 for future in exports:

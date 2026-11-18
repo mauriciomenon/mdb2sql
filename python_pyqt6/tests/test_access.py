@@ -35,6 +35,22 @@ CREATE TABLE [OTHER]
 """
 
 
+def test_csv_rows_null_binary_and_dates_mdbtools_cannot_convert(tmp_path: Path) -> None:
+    # 1900-01-00: o mdbtools 1.0.1 do Linux para datas fora de ~1900-9999 (o do Windows ja manda vazio = NULL)
+    csv_path = tmp_path / "t.csv"
+    csv_path.write_bytes(  # bytes: a quebra de linha do campo fica LF (write_text poria CRLF no Windows)
+        (
+            f'id,when,bin,note\n1,"2021-12-02 00:00:00","00FF","a, ""b"""\n'
+            f'2,"1900-01-00 00:00:00",{access.NULL},"line 1\nline 2"\n3,{access.NULL},"",""\n'
+        ).encode("utf-8")
+    )
+    assert list(access._csv_rows(csv_path, [2], [1])) == [
+        ["1", "2021-12-02 00:00:00", b"\x00\xff", 'a, "b"'],
+        ["2", None, None, "line 1\nline 2"],
+        ["3", None, b"", ""],
+    ]
+
+
 def test_mdb_schema_tables_maps_access_types() -> None:
     tables = access.mdb_schema_tables(SCHEMA)
 
