@@ -107,6 +107,25 @@ Menus:
 The window title is short, `mdb2sql 1.3.0 - Python` (with a file open, `<file> - mdb2sql 1.3.0 - Python`).
 Changes of each version: [CHANGELOG.md](CHANGELOG.md).
 
+## Linux: X11 e Wayland
+
+On Linux the program uses X11 (Qt `xcb`) and falls back to Wayland only when X11 cannot start. In that case a
+"Display mode" warning appears at every start (also in View > Log) naming what is missing and the install command
+for the distribution. A `QT_QPA_PLATFORM` set by the user is always respected and gives no warning. With neither
+X11 nor Wayland the program prints the reason on stderr and exits with code 1.
+
+The package carries Qt, `libX11`, `libxcb-cursor` and the other xcb helper libraries; X11 still needs these from
+the system:
+
+| Needed | Debian / Ubuntu (apt) | Fedora / RHEL (dnf) | Arch (pacman) | openSUSE (zypper) |
+| --- | --- | --- | --- | --- |
+| X server in a Wayland session (`DISPLAY`) | `xwayland` | `xorg-x11-server-Xwayland` | `xorg-xwayland` | `xwayland` |
+| `libxcb.so.1` | `libxcb1` | `libxcb` | `libxcb` | `libxcb1` |
+| `libGL.so.1` | `libgl1` | `libglvnd-glx` | `libglvnd` | `libGL1` |
+| `libEGL.so.1` | `libegl1` | `libglvnd-egl` | `libglvnd` | `libEGL1` |
+
+Other distributions: the warning lists the missing libraries without a command.
+
 ## Tested (2026-11-18)
 
 Windows 11 Pro (10.0.26300) amd64, Python 3.12.16, PyQt6/Qt 6.10.0, DuckDB 2.0.0, SQLite 3.53.1; Debian 13 (WSL).

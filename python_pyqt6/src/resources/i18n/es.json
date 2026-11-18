@@ -144,5 +144,10 @@
   "error.table_not_found": "Tabla no encontrada: {name}",
   "error.export_format": "Formato de exportación no admitido: {suffix}",
   "error.export_self": "El archivo de salida es la base de datos abierta; elija otro nombre",
-  "error.no_rows": "La consulta no devuelve filas"
+  "error.no_rows": "La consulta no devuelve filas",
+  "display.title": "Modo de visualización",
+  "display.body": "X11 no disponible; el programa usa Wayland (respaldo). Falta: {missing}. Para usar X11 en {distro}: {command}. Ayuda: {link}",
+  "display.body_other": "X11 no disponible; el programa usa Wayland (respaldo). Falta: {missing}. Ayuda: {link}",
+  "display.no_server": "servidor X (DISPLAY no definido)",
+  "display.none": "Sin pantalla: X11 (DISPLAY) y Wayland (WAYLAND_DISPLAY) no disponibles."
 }

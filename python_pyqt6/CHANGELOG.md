@@ -27,6 +27,8 @@
 - View > Log (Ctrl+Shift+L): the messages of the session with the time, selectable, Ctrl+C and "Copy all".
   Right-click on the status bar: Copy, Log.
 - Debian amd64: `build_debian_amd64.sh` (and `build_debian_amd64_wsl.ps1` from Windows) build a `.deb` and a `.zip`.
+- Linux: X11 first, Wayland only as fallback, with a "Display mode" warning naming what is missing and the
+  install command for the distribution (README "Linux: X11 e Wayland").
 - Dependencies: no open Dependabot alert for this folder before or after; `pip-audit` (OSV) finds no known
   vulnerability in `uv.lock`.
 - Licenca: GPL v2 ou posterior (sem mudanca desde 1.2.0).

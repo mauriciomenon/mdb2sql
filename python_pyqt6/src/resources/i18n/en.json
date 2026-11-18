@@ -144,5 +144,10 @@
   "error.table_not_found": "Table not found: {name}",
   "error.export_format": "Unsupported export format: {suffix}",
   "error.export_self": "The output file is the open database; choose another name",
-  "error.no_rows": "The query returns no rows"
+  "error.no_rows": "The query returns no rows",
+  "display.title": "Display mode",
+  "display.body": "X11 unavailable; the program is using Wayland (fallback). Missing: {missing}. To use X11 on {distro}: {command}. Help: {link}",
+  "display.body_other": "X11 unavailable; the program is using Wayland (fallback). Missing: {missing}. Help: {link}",
+  "display.no_server": "X server (DISPLAY not set)",
+  "display.none": "No display: X11 (DISPLAY) and Wayland (WAYLAND_DISPLAY) are both unavailable."
 }
