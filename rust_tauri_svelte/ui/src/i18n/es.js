@@ -161,9 +161,8 @@ export default {
 
   'x11.title': 'Modo de visualización',
   'x11.wayland': 'X11 no disponible; usando Wayland.',
-  'x11.missing': 'Falta: {missing}',
-  'x11.noDisplay': 'servidor X (DISPLAY no definido)',
-  'x11.noServer': 'servidor X (sin respuesta en DISPLAY={display})',
+  'x11.noDisplay': 'Servidor X no definido (DISPLAY)',
+  'x11.noServer': 'Servidor X no responde (DISPLAY={display})',
   'x11.copy': 'Copiar comando',
   'x11.help': 'Ayuda',
   'common.ok': 'Aceptar',

@@ -163,10 +163,10 @@
   let schemaColumns = $derived(
     ['schema.number', 'schema.column', 'schema.type', 'schema.null'].map((key) => ({ name: t(key), type: '' }))
   );
-  // aviso de X11 em 3 linhas curtas (dialogo e log): situacao, o que falta, comando da distro (sem comando em
+  // aviso de X11 em 3 linhas curtas (dialogo e log): situacao, o fato (sem rotulo "Falta:"), comando da distro (sem comando em
   // distro desconhecida)
   let x11Missing = $derived(
-    x11 ? t('x11.missing', { missing: t(x11.missing === 'no_display' ? 'x11.noDisplay' : 'x11.noServer', { display: x11.display }) }) : ''
+    x11 ? t(x11.missing === 'no_display' ? 'x11.noDisplay' : 'x11.noServer', { display: x11.display }) : ''
   );
   let x11Text = $derived(
     x11 ? [t('x11.wayland'), x11Missing, x11.command ? `${x11.distro}: ${x11.command}` : ''].filter(Boolean).join(' ') : ''

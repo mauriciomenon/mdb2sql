@@ -161,9 +161,8 @@ export default {
 
   'x11.title': 'Display mode',
   'x11.wayland': 'X11 unavailable; using Wayland.',
-  'x11.missing': 'Missing: {missing}',
-  'x11.noDisplay': 'X server (DISPLAY not set)',
-  'x11.noServer': 'X server (no answer on DISPLAY={display})',
+  'x11.noDisplay': 'X server not set (DISPLAY)',
+  'x11.noServer': 'X server not responding (DISPLAY={display})',
   'x11.copy': 'Copy command',
   'x11.help': 'Help',
   'common.ok': 'OK',
