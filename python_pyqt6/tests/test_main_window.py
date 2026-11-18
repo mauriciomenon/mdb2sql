@@ -338,7 +338,7 @@ def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None
     qtbot.waitUntil(lambda: window.data_proxy.rowCount() == 1, timeout=5000)
     assert window.info_label.text() == "people: Showing 1 of 1 matching rows (3 rows in table) - 2 hidden columns"
     assert window.current_result() == ('SELECT * FROM "people"', "people")
-    window.search_edit.clear()
+    _reloaded(qtbot, window, window.search_edit.clear)
 
     # recarregar a mesma tabela (limite) mantem; o dialogo abre com o estado atual; "Mostrar todas" volta
     _reloaded(qtbot, window, lambda: window.limit_combo.setCurrentIndex(1))
@@ -470,7 +470,7 @@ def test_right_click_filter_runs_in_the_database(qtbot, points_window: MainWindo
     win.search_edit.setText("298")
     qtbot.waitUntil(lambda: win.data_proxy.rowCount() == 1, timeout=5000)
     assert win.info_label.text() == "points: Showing 1 of 1 matching rows (300 rows in table)"
-    win.search_edit.clear()
+    _reloaded(qtbot, win, win.search_edit.clear)  # a pesquisa vai no banco: limpar recarrega a tabela
 
     # remover um a um (botao do filtro) e limpar
     _reloaded(qtbot, win, win.filter_chips.itemAt(1).widget().click)
