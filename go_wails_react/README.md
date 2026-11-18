@@ -43,8 +43,9 @@ Changes in 1.3.0:
   "Cancel"; "Remember for this session" keeps the answer until the program closes (a remembered "Save" goes
   to the same folder and never overwrites: `<file> (2).sqlite`). Converted files left by a crash are deleted at
   the next start.
-- mdbtools exports several tables at once (4 processes): the 287-table test file converts in about 50 s; the
-  same exports one at a time took about 100 s on the same machine.
+- Faster Access open: mdbtools exports up to 6 tables at once, the widest first, and the SQLite file is written in
+  one transaction. The 287-table test file (DB4): mdbtools 72 s → 33 s, ODBC 37 s → 10 s; Export → SQLite 31-72 s
+  → 3 s (median of 3, same machine, see "Tested").
 - The Data search runs in the database over the WHOLE table (not only the loaded rows): every word in one
   cell, any order, ignoring case and accents; the line under the grid says "showing 100 of 412 rows matching
   (36754 in the table)". The SQL tab still searches its loaded result.
@@ -63,6 +64,10 @@ Changes in 1.3.0:
   "selec"`; the engine's full message stays in the log.
 - The save/delete question never traps you: Esc, its x and Cancel close it (nothing is lost, the app stays
   open), Enter is Save, and cancelling the file dialog of Save asks again.
+- Every dialog has its own OK/Close/Cancel button; Enter is the default button and Esc closes (the progress
+  window: Esc is Cancel).
+- Reopening the same Access file (same path, size and date) after saving its SQLite in this session opens that
+  SQLite at once, without a new conversion.
 - Names are never cut with "...": long table names in the list and long column names in "Columns..." wrap
   to a second line; the status bar wraps too.
 - Debian 13 amd64 build (`.deb` and `.zip`) with mdbtools inside.
@@ -115,10 +120,12 @@ Menus: File (Open database..., Open sample data, Close database, Exit), Export (
 Excel; Current table as CSV / Excel; SQL result as CSV / Excel; all with progress and Cancel; a failed export
 leaves no half file), View (Log), Settings (Theme: System, Light, Dark; Language), Help (About).
 
-Opening Access: the progress window counts the tables; Cancel stops it. The 287-table NMR5 test file (115 MB)
-takes about 20-30 s with the ODBC driver and about 50-60 s with mdbtools on Windows (the slowest table,
-RANGER_SOSTAT, needs about 40 s inside mdbtools by itself); more on a busy machine. On Debian the mdbtools of the
-distribution is slower (about 3 min for RANGER_SOSTAT alone).
+Opening Access: the progress window counts the tables; Cancel (or Esc) stops it. The 287-table NMR5 test file
+(115 MB) takes about 10 s with the ODBC driver and about 33 s with mdbtools on Windows (Intel Core Ultra 7 258V, 8
+cores, 32 GB, SSD; `go test ./backend -run Perf` with `MDB2SQL_PERF=1`), more on a busy machine; most of the
+mdbtools time is mdb-export itself (RANGER_SOSTAT alone needs about 25-40 s). On Debian the mdbtools of the
+distribution is slower (about 3 min for RANGER_SOSTAT alone). The table list and the first table appear when the
+conversion ends.
 
 Files the program creates (nothing else):
 

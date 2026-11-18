@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -219,7 +220,7 @@ func importMdbtools(ctx context.Context, db *sql.DB, path string, progress Progr
 		return err
 	}
 	defer os.RemoveAll(tmp)
-	// mdb-export is the slow part (DB4: ~100 s in one process, 40 s of them in RANGER_SOSTAT), so several run at once;
+	// mdb-export is the slow part (DB4: ~100 s in one process, 40 s of them in RANGER_SOSTAT), so up to 6 run at once;
 	// the loads below still go one by one in table order, each waiting for its own CSV
 	ctx, stop := context.WithCancel(ctx)
 	var wg sync.WaitGroup
@@ -229,11 +230,19 @@ func importMdbtools(ctx context.Context, db *sql.DB, path string, progress Progr
 	for i := range exported {
 		exported[i] = make(chan error, 1)
 	}
-	slots := make(chan struct{}, min(4, max(1, runtime.NumCPU()/2)))
+	slots := make(chan struct{}, min(6, max(1, runtime.NumCPU()-1)))
+	// widest tables first (column count, known from mdb-schema): the slowest export (RANGER_SOSTAT, 123 columns)
+	// must not start last
+	order := make([]int, len(tables))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return len(schema[tables[order[a]]]) > len(schema[tables[order[b]]]) })
 	wg.Add(1)
-	go func() { // starts the exports in table order, a few at a time
+	go func() { // starts the exports, a few at a time
 		defer wg.Done()
-		for i, t := range tables {
+		for _, i := range order {
+			t := tables[i]
 			slots <- struct{}{}
 			if ctx.Err() != nil {
 				exported[i] <- ctx.Err()

@@ -385,6 +385,35 @@ describe('App IPC flow', () => {
     expect(screen.getByText('Alpha')).toBeInTheDocument(); // the file stays open
   });
 
+  // owner: every dialog has a visible OK/Close button; Enter = default, Esc = close
+  it('gives every dialog a close button, Enter for the default and Esc to close', async () => {
+    const GetAppInfo = vi.fn(async () => ({ version: '1.3.0', go: '1', wails: '2', duckdb: '3' }));
+    const DisplayWarning = vi.fn(async () => ({ text: 'X11 unavailable; using Wayland.', missing: 'X server not set (DISPLAY)', distro: 'Debian', command: '', help: 'https://x' }));
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetAppInfo, DisplayWarning } } } });
+    render(<App />);
+    const warn = await screen.findByRole('alertdialog', { name: 'Display mode' });
+    expect(screen.getByRole('button', { name: 'OK' })).toHaveFocus();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(warn).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Help' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'About' }));
+    await screen.findByRole('dialog', { name: /mdb2sql/ });
+    expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+    fireEvent.click(screen.getByRole('button', { name: 'Columns...' }));
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByLabelText('Filter columns'), { key: 'Enter' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Columns...' }));
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
   it('keeps the theme in Settings > Theme and saves the choice', async () => {
     const SetTheme = vi.fn(async () => {});
     const GetTheme = vi.fn(async () => 'light');

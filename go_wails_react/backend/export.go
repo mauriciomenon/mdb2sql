@@ -235,6 +235,14 @@ func copyDatabase(ctx context.Context, db *sql.DB, format, path string, items []
 	}
 	// on error the file must still be closed before it is deleted
 	defer conn.ExecContext(context.Background(), "DETACH DATABASE IF EXISTS mdb2sql_out")
+	if format == "sqlite" {
+		// every table in one transaction: one commit for the file, not one per table (the sqlite extension runs
+		// sqlite_query inside a transaction, so PRAGMA synchronous/journal_mode cannot be changed from here)
+		if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
+			return err
+		}
+		defer conn.ExecContext(context.Background(), "ROLLBACK") // no-op after COMMIT
+	}
 	for i, it := range items {
 		progress(i, len(items), it.name)
 		if format == "sqlite" {
@@ -247,6 +255,11 @@ func copyDatabase(ctx context.Context, db *sql.DB, format, path string, items []
 		}
 	}
 	progress(len(items), len(items), "")
+	if format == "sqlite" {
+		if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+			return err
+		}
+	}
 	_, err = conn.ExecContext(ctx, "DETACH DATABASE mdb2sql_out")
 	return err
 }

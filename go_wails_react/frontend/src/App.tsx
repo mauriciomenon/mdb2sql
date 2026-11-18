@@ -316,15 +316,18 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!about && !colsOpen) return;
+    if (!about && !colsOpen && !displayWarn && !job) return;
+    // Esc closes every dialog (the progress window: Cancel); each one also has its own OK/Close/Cancel button
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       setAbout(null);
       setColsOpen(false);
+      setDisplayWarn(null);
+      if (job) window.go?.main?.App?.CancelJob?.();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [about, colsOpen]);
+  }, [about, colsOpen, displayWarn, job]);
 
   // the Data tab searches the whole table in the database: wait for a pause in typing, then query
   useEffect(() => {
@@ -1221,7 +1224,15 @@ function ColumnsDialog({ table, columns, hidden, setHidden, onClose, t }: Column
       <div className="about columns" role="dialog" aria-modal="true" aria-labelledby="cols-title">
         <h2 id="cols-title">{t('cols.title', table)}</h2>
         <div className="col-top">
-          <input type="search" placeholder={t('cols.filter')} aria-label={t('cols.filter')} value={query} onChange={(e) => setQuery(e.target.value)} autoFocus />
+          <input
+            type="search"
+            placeholder={t('cols.filter')}
+            aria-label={t('cols.filter')}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && onClose()} // Enter = the default button (Close)
+            autoFocus
+          />
           <span className="col-count">{t('cols.count', visible, columns.length)}</span>
         </div>
         <div className="col-list" style={{ '--col-w': `${columnCellWidth(columns)}px` } as React.CSSProperties}>

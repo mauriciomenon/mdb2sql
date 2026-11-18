@@ -44,6 +44,8 @@ type App struct {
 	converted, convertedFrom string
 	convChoice              string // "save" or "delete" remembered for this session ("" = ask)
 	convDir                 string // folder of the last "save", used when "save" is remembered
+	convertedFromKey        string               // fileKey of the Access file converted now
+	convCache               map[string]savedConv // session cache: Access fileKey -> SQLite saved from it
 	displayWarn             *DisplayWarning // Linux: X11 missing, running on Wayland (display.go)
 
 	jobMu       sync.Mutex
@@ -234,8 +236,42 @@ func (a *App) resolveConversion(choice string) (ConversionResult, error) {
 		return ConversionResult{Done: true}, fmt.Errorf("%s: %w", dest, err)
 	}
 	a.convDir = filepath.Dir(dest)
+	a.rememberConversion(a.convertedFromKey, dest)
 	a.log("log.convertedSaved", dest)
 	return ConversionResult{Done: true, Saved: dest}, nil
+}
+
+// fileKey identifies a file version: path, size and modification time ("" if it cannot be read)
+func fileKey(path string) string {
+	st, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%s|%d|%d", strings.ToLower(path), st.Size(), st.ModTime().UnixNano())
+}
+
+// savedConv: a SQLite saved from an Access file in this session, and its own fileKey when saved
+type savedConv struct{ dest, destKey string }
+
+func (a *App) rememberConversion(srcKey, dest string) {
+	if srcKey == "" {
+		return
+	}
+	if a.convCache == nil {
+		a.convCache = map[string]savedConv{}
+	}
+	a.convCache[srcKey] = savedConv{dest, fileKey(dest)}
+}
+
+// savedConversion returns the SQLite saved in this session from this same Access file, if neither changed since
+func (a *App) savedConversion(src string) string {
+	if ext := strings.ToLower(filepath.Ext(src)); ext != ".accdb" && ext != ".mdb" {
+		return ""
+	}
+	if s, ok := a.convCache[fileKey(src)]; ok && s.destKey != "" && fileKey(s.dest) == s.destKey {
+		return s.dest
+	}
+	return ""
 }
 
 // replaceOK asks before writing over an existing file: the Wails save dialog does not ask (seen with the
@@ -424,7 +460,13 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 	defer done()
 	a.dbName, a.dbPath = "", "" // Open closes the previous database first
 	start := time.Now()
-	if err := a.dbManager.Open(ctx, validatedPath, a.progress); err != nil {
+	// the same Access file (path, size, date) saved as SQLite in this session: open that file, no new conversion
+	openPath := validatedPath
+	if saved := a.savedConversion(validatedPath); saved != "" {
+		openPath = saved
+		a.log("log.reused", filepath.Base(validatedPath), saved)
+	}
+	if err := a.dbManager.Open(ctx, openPath, a.progress); err != nil {
 		if ctx.Err() != nil {
 			return nil, errors.New(i18n.T("err.loadCancelled"))
 		}
@@ -433,7 +475,7 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 	a.dbName = filepath.Base(validatedPath)
 	a.dbPath = validatedPath
 	if conv := a.dbManager.Converted(); conv != "" {
-		a.converted, a.convertedFrom = conv, validatedPath
+		a.converted, a.convertedFrom, a.convertedFromKey = conv, validatedPath, fileKey(validatedPath)
 		a.log("log.converted", a.dbName, a.dbManager.Source(), time.Since(start).Round(100*time.Millisecond), conv)
 	}
 

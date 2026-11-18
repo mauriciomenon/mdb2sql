@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"mdb2sql/backend"
 	"mdb2sql/i18n"
 	"os"
 	"path/filepath"
@@ -245,22 +246,36 @@ func TestConvertedSQLiteLifecycle(t *testing.T) {
 		t.Fatalf("second converted file left: %v", err)
 	}
 
-	// remembered "save" (folder of the first save): types.sqlite, then types (2).sqlite, never over a file
+	// remembered "save" (folder of the first save): types.sqlite, then types (2).sqlite, never over a file; two
+	// copies of the .mdb, since the same file reopened uses the SQLite saved from it (session cache)
+	copyMDB := func(name string) string {
+		data, _ := os.ReadFile(mdb)
+		p := filepath.Join(t.TempDir(), name)
+		os.WriteFile(p, data, 0o644)
+		return p
+	}
 	app.convChoice, app.convDir = "save", t.TempDir()
-	for _, want := range []string{"types.sqlite", "types (2).sqlite"} {
-		if _, err := app.LoadDatabase(mdb); err != nil {
+	for _, c := range []struct{ src, want string }{{mdb, "types.sqlite"}, {copyMDB("types.mdb"), "types (2).sqlite"}} {
+		if _, err := app.LoadDatabase(c.src); err != nil {
 			t.Fatal(err)
 		}
 		if app.beforeClose(context.Background()) { // the window may close: the choice was applied
 			t.Fatal("close blocked with a remembered choice")
 		}
-		if _, err := os.Stat(filepath.Join(app.convDir, want)); err != nil {
-			t.Fatalf("%s not saved: %v", want, err)
+		if _, err := os.Stat(filepath.Join(app.convDir, c.want)); err != nil {
+			t.Fatalf("%s not saved: %v", c.want, err)
 		}
+	}
+	// session cache: the same .mdb again opens types.sqlite, no new conversion
+	if _, err := app.LoadDatabase(mdb); err != nil || app.converted != "" || app.dbManager.Source() != backend.SourceSQLite {
+		t.Fatalf("reopen: %v, converted %q, source %q", err, app.converted, app.dbManager.Source())
+	}
+	if app.savedConversion(copyMDB("other.mdb")) != "" {
+		t.Fatal("cache hit for a file never converted")
 	}
 	// an exit with a pending file removes it
 	app.convChoice = ""
-	if _, err := app.LoadDatabase(mdb); err != nil {
+	if _, err := app.LoadDatabase(copyMDB("third.mdb")); err != nil {
 		t.Fatal(err)
 	}
 	last := app.converted
