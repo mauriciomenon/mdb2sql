@@ -44,6 +44,8 @@
   "copied.value": "Copied value",
   "dlg.export": "Export to {0}",
   "dlg.open": "Open database",
+  "dlg.replace": "{0} already exists. Replace it?",
+  "dlg.replaceTitle": "Replace file",
   "dlg.saveConverted": "Save the converted SQLite file",
   "empty.formats": "Access (.accdb, .mdb), SQLite, DuckDB",
   "empty.noColumns": "No visible column",

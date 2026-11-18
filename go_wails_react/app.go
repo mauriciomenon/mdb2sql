@@ -213,6 +213,9 @@ func (a *App) resolveConversion(choice string) (ConversionResult, error) {
 			if !strings.EqualFold(filepath.Ext(dest), ".sqlite") {
 				dest += ".sqlite"
 			}
+			if ok, err := a.replaceOK(dest); !ok {
+				return ConversionResult{}, err
+			}
 		}
 	}
 	a.closeDatabase()
@@ -232,6 +235,21 @@ func (a *App) resolveConversion(choice string) (ConversionResult, error) {
 	a.convDir = filepath.Dir(dest)
 	a.log("log.convertedSaved", dest)
 	return ConversionResult{Done: true, Saved: dest}, nil
+}
+
+// replaceOK asks before writing over an existing file: the Wails save dialog does not ask (seen with the
+// release exe: Save over an existing name replaced it without a prompt)
+func (a *App) replaceOK(path string) (bool, error) {
+	if _, err := os.Stat(path); err != nil {
+		return true, nil
+	}
+	ans, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+		Type:          runtime.QuestionDialog,
+		Title:         i18n.T("dlg.replaceTitle"),
+		Message:       i18n.T("dlg.replace", filepath.Base(path)),
+		DefaultButton: "No",
+	})
+	return err == nil && ans == "Yes", err
 }
 
 func (a *App) closeDatabase() {
@@ -522,6 +540,9 @@ func (a *App) saveDialog(name, format string) (string, error) {
 	}
 	if !strings.EqualFold(filepath.Ext(path), "."+format) {
 		path += "." + format
+	}
+	if ok, err := a.replaceOK(path); !ok {
+		return "", err
 	}
 	a.settings.LastDir = filepath.Dir(path)
 	a.saveSettings()
