@@ -484,7 +484,7 @@ td[aria-selected='true'] {
 
 .about h2 {
   white-space: normal;
-  font-size: 18px;
+  font-size: inherit;
 }
 
 .about .version {
@@ -589,6 +589,32 @@ td[aria-selected='true'] {
 /* "Converted SQLite file" dialog */
 .conversion {
   width: min(480px, 100%);
+}
+
+/* dialog title with its x (closes like Esc and Cancel) */
+.dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dialog-head h2 {
+  margin-right: auto;
+}
+
+.dialog-x {
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  font-size: inherit;
+  line-height: 1.2;
+  color: var(--muted);
+}
+
+/* the default button (Enter) shows its focus from the start */
+.conversion .primary:focus {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
 }
 
 .remember {

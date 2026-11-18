@@ -136,6 +136,13 @@ export const logLine = (text: string, at = new Date()) => `${at.toTimeString().s
 type LogLevel = 'info' | 'warn' | 'error';
 type LogEntry = { line: string; text: string; level: LogLevel };
 
+// First line of a message (the status bar shows one line; the log keeps the whole text)
+export const firstLine = (s: string) => s.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? '';
+
+// Engine error of the SQL tab in one line: 'Parser Error: syntax error at or near "selec"\n\nLINE 1...' becomes
+// 'syntax error at or near "selec"'
+export const sqlErrorSummary = (s: string) => firstLine(s).replace(/^[A-Za-z ]*Error:\s*/, '');
+
 // Log panel height: about 10% of the window, at least 3 lines of the 13 px log font, at most 25% of the window
 export const LOG_MIN = 68;
 export const clampLogHeight = (h: number, windowHeight: number) => Math.round(Math.max(LOG_MIN, Math.min(h, windowHeight * 0.25)));
@@ -205,15 +212,17 @@ function App() {
   const [shownTable, setShownTable] = useState(''); // table of the rows shown (the counts below belong to it)
   const [querying, setQuerying] = useState(false);
 
-  const addLog = (text: string, level: LogLevel = 'info') => setLogLines((old) => [...old, { line: logLine(text), text, level }]);
+  // the log keeps the full text; short = the one line the status bar shows for it
+  const addLog = (text: string, level: LogLevel = 'info', short = firstLine(text)) =>
+    setLogLines((old) => [...old, { line: logLine(text), text: short, level }]);
   // every status and error also goes to the Log panel
   const setStatus = (text: string) => {
     setStatusText(text);
     addLog(text);
   };
-  const setError = (text: string) => {
-    setErrorText(text);
-    if (text) addLog(text, 'error');
+  const setError = (text: string, short = firstLine(text)) => {
+    setErrorText(short);
+    if (text) addLog(text, 'error', short);
   };
   // collapse/expand (log header arrow, status bar, View > Log, Ctrl+L); remembered by Go between sessions. What
   // was in the log when it is opened or closed counts as read.
@@ -389,20 +398,27 @@ function App() {
     const bridge = window.go?.main?.App;
     const name = (await bridge?.PendingConversion?.()) ?? '';
     if (!name || !bridge?.ResolveConversion) return true;
-    let answer: { choice: string; remember: boolean } | null = null;
     const remembered = (await bridge.RememberedChoice?.()) ?? '';
-    if (remembered) answer = { choice: remembered, remember: false };
-    else answer = await new Promise((resolve) => setAsk({ name, resolve }));
-    setAsk(null);
-    if (!answer) return false;
-    try {
-      const res = await bridge.ResolveConversion(answer.choice, answer.remember);
-      if (res.done) clearDatabase();
-      return res.done;
-    } catch (err) {
-      clearDatabase(); // Go closed the database before the error (a failed move or delete)
-      fail(err);
-      return true;
+    // Esc, the dialog's x and Cancel give null: nothing happens (the app does not quit). A Save whose file
+    // dialog was cancelled asks again, with Esc still working.
+    for (;;) {
+      const answer: { choice: string; remember: boolean } | null = remembered
+        ? { choice: remembered, remember: false }
+        : await new Promise((resolve) => setAsk({ name, resolve }));
+      setAsk(null);
+      if (!answer) return false;
+      try {
+        const res = await bridge.ResolveConversion(answer.choice, answer.remember);
+        if (res.done) {
+          clearDatabase();
+          return true;
+        }
+        if (remembered) return false;
+      } catch (err) {
+        clearDatabase(); // Go closed the database before the error (a failed move or delete)
+        fail(err);
+        return true;
+      }
     }
   }
 
@@ -548,7 +564,9 @@ function App() {
       if (req !== sqlReq.current) return;
       setResult(null);
       setResultSql('');
-      fail(err);
+      // status bar: one translated line; the engine's full text (LINE 1, carets) goes to the log
+      const full = err instanceof Error ? err.message : String(err);
+      setError(full, t('sql.error', sqlErrorSummary(full)));
     } finally {
       if (req === sqlReq.current) setQuerying(false);
     }
@@ -1142,7 +1160,12 @@ function ConversionDialog({ name, t, onAnswer }: { name: string; t: T; onAnswer:
   return (
     <div className="backdrop">
       <div className="about conversion" role="dialog" aria-modal="true" aria-labelledby="conv-title">
-        <h2 id="conv-title">{t('conv.title')}</h2>
+        <div className="dialog-head">
+          <h2 id="conv-title">{t('conv.title')}</h2>
+          <button className="dialog-x" aria-label={t('about.close')} title={t('about.close')} onClick={() => onAnswer(null)}>
+            ×
+          </button>
+        </div>
         <p>{t('conv.text', name)}</p>
         <label className="remember">
           <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />

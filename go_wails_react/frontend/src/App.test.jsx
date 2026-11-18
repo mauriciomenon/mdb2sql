@@ -23,6 +23,9 @@ const bridge = {
 
 const en = (key, ...args) => translate('en', key, ...args);
 
+// a DuckDB parser error as the SQL tab receives it: several lines, the caret under the error
+const ENGINE_ERROR = 'Parser Error: syntax error at or near "selec"\n\nLINE 1: selec 1\n        ^';
+
 // opens a menubar menu and clicks one of its items
 const menu = (name, item) => {
   fireEvent.click(screen.getByRole('button', { name }));
@@ -341,6 +344,47 @@ describe('App IPC flow', () => {
     expect(await screen.findByText(en('empty.formats'))).toBeInTheDocument();
   });
 
+  // owner got stuck in the exit prompt: Esc and the x always close it (no quit), Enter is Save (focused), and a
+  // Save whose file dialog is cancelled asks again, where Esc still works
+  it('never traps the user in the save/delete prompt on exit', async () => {
+    let pending = '';
+    const LoadDatabase = vi.fn(async () => {
+      pending = 'DB4.sqlite';
+      return tables;
+    });
+    const ResolveConversion = vi.fn(async () => ({ done: false, saved: '' })); // the file dialog was cancelled
+    const Quit = vi.fn();
+    global.window = Object.assign(window, {
+      go: { main: { App: { ...bridge, LoadDatabase, PendingConversion: vi.fn(async () => pending), RememberedChoice: vi.fn(async () => ''), ResolveConversion } } },
+      runtime: { Quit },
+    });
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+
+    menu('File', 'Exit');
+    await screen.findByRole('dialog', { name: 'Converted SQLite file' });
+    expect(screen.getByRole('button', { name: 'Save...' })).toHaveFocus(); // Enter = Save
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(Quit).not.toHaveBeenCalled();
+
+    menu('File', 'Exit');
+    await screen.findByRole('dialog', { name: 'Converted SQLite file' });
+    fireEvent.click(screen.getByRole('button', { name: 'Close' })); // the dialog's x
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    menu('File', 'Exit');
+    await screen.findByRole('dialog', { name: 'Converted SQLite file' });
+    fireEvent.click(screen.getByRole('button', { name: 'Save...' }));
+    await waitFor(() => expect(ResolveConversion).toHaveBeenCalledWith('save', false));
+    expect(await screen.findByRole('dialog', { name: 'Converted SQLite file' })).toBeInTheDocument(); // asked again
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(Quit).not.toHaveBeenCalled();
+    expect(screen.getByText('Alpha')).toBeInTheDocument(); // the file stays open
+  });
+
   it('keeps the theme in Settings > Theme and saves the choice', async () => {
     const SetTheme = vi.fn(async () => {});
     const GetTheme = vi.fn(async () => 'light');
@@ -411,7 +455,7 @@ describe('App IPC flow', () => {
   it('collapses and expands the log, remembers it, and shows the last unread error in the status bar', async () => {
     const SetLogOpen = vi.fn(async () => {});
     const RunQuery = vi.fn(async () => {
-      throw new Error('Parser Error: syntax error at or near "selec"');
+      throw new Error(ENGINE_ERROR);
     });
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, SetLogOpen, RunQuery, GetLogOpen: vi.fn(async () => false) } } } });
     render(<App />);
@@ -419,10 +463,10 @@ describe('App IPC flow', () => {
     menu('File', 'Open sample data');
     await screen.findByText('Alpha');
     fireEvent.click(screen.getByRole('tab', { name: 'SQL' }));
-    fireEvent.change(screen.getByLabelText('SQL'), { target: { value: 'selec 1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Run' }));
     await waitFor(() => expect(screen.getByRole('status').className).toContain('error'));
-    expect(screen.getByRole('status').textContent).toMatch(/syntax error/);
+    // one translated line in the status bar; the engine's full text (LINE 1, caret) only in the log
+    expect(screen.getByRole('status').textContent).toBe('SQL query error: syntax error at or near "selec"');
     expect(screen.getByTitle('1 unread errors or warnings').textContent).toBe('1');
 
     // a later action does not hide the unread error while the log is collapsed
@@ -430,7 +474,7 @@ describe('App IPC flow', () => {
     expect(screen.getByRole('status').textContent).toMatch(/syntax error/);
 
     fireEvent.click(screen.getByRole('status')); // click: expands, the error counts as read
-    expect(screen.getByRole('textbox', { name: 'Log' }).value).toMatch(/syntax error/);
+    expect(screen.getByRole('textbox', { name: 'Log' }).value).toContain(ENGINE_ERROR);
     expect(SetLogOpen).toHaveBeenLastCalledWith(true);
     expect(screen.queryByTitle(/unread/)).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Log' }).style.height).toMatch(/px$/);

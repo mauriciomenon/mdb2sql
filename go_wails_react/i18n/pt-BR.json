@@ -143,6 +143,7 @@
   "sidebar.label": "Tabelas",
   "sidebar.noMatch": "Nenhuma tabela corresponde.",
   "sql.cancel": "Cancelar",
+  "sql.error": "Erro na consulta SQL: {0}",
   "sql.label": "SQL",
   "sql.result": "Resultado SQL",
   "sql.run": "Executar",
