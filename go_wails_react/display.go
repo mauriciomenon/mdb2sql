@@ -68,7 +68,7 @@ func planDisplay(getenv func(string) string, osRelease string) displayPlan {
 	cmd, name := x11Install(osRelease)
 	return displayPlan{backend: "x11,wayland", warn: &DisplayWarning{
 		Text:    i18n.T("display.wayland"),
-		Missing: i18n.T("display.missing", i18n.T("display.missingServer")),
+		Missing: i18n.T("display.missingServer"),
 		Distro:  name,
 		Command: cmd,
 		Help:    displayHelp,
@@ -78,7 +78,7 @@ func planDisplay(getenv func(string) string, osRelease string) displayPlan {
 // DisplayWarning is the startup warning (3 short lines, a Help link and a command to copy); the UI shows it
 type DisplayWarning struct {
 	Text    string `json:"text"`    // "X11 unavailable; using Wayland."
-	Missing string `json:"missing"` // "Missing: X server"
+	Missing string `json:"missing"` // what is missing, stated directly: "X server not set (DISPLAY)"
 	Distro  string `json:"distro"`  // PRETTY_NAME of os-release
 	Command string `json:"command"` // "" when the distribution family is unknown
 	Help    string `json:"help"`    // README section, opened in the browser

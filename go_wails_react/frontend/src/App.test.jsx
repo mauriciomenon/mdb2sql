@@ -701,7 +701,7 @@ describe('App IPC flow', () => {
 
   it('shows the Linux display warning at start: 3 short lines, Copy for the command, Help link, and the log', async () => {
     const help = 'https://github.com/mauriciomenon/mdb2sql/blob/master/go_wails_react/README.md#linux-x11-e-wayland';
-    const w = { text: 'X11 unavailable; using Wayland.', missing: 'Missing: X server', distro: 'Debian GNU/Linux 13 (trixie)', command: 'sudo apt install xwayland', help };
+    const w = { text: 'X11 unavailable; using Wayland.', missing: 'X server not set (DISPLAY)', distro: 'Debian GNU/Linux 13 (trixie)', command: 'sudo apt install xwayland', help };
     const DisplayWarning = vi.fn(async () => w);
     const ClipboardSetText = vi.fn(async () => true);
     const BrowserOpenURL = vi.fn();
@@ -719,7 +719,7 @@ describe('App IPC flow', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'View' }));
     fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /Log/ }));
-    expect(screen.getByRole('textbox', { name: 'Log' }).value).toContain('X11 unavailable; using Wayland. Missing: X server');
+    expect(screen.getByRole('textbox', { name: 'Log' }).value).toContain('X11 unavailable; using Wayland. X server not set (DISPLAY)');
   });
 
   it('handles IPC unavailable gracefully', async () => {

@@ -55,7 +55,7 @@ func TestPlanDisplay(t *testing.T) {
 		}
 		if w := p.warn; w != nil {
 			if w.Distro != c.distro || w.Command != c.command || w.Help != displayHelp ||
-				w.Text != "X11 unavailable; using Wayland." || w.Missing != "Missing: X server" {
+				w.Text != "X11 unavailable; using Wayland." || w.Missing != "X server not set (DISPLAY)" {
 				t.Errorf("%s: %+v", c.name, *w)
 			}
 			// 3 short lines (2 without a command), no raw URL, no "..."
@@ -67,7 +67,7 @@ func TestPlanDisplay(t *testing.T) {
 		}
 	}
 	i18n.SetLang("pt-BR")
-	if w := planDisplay(wayland, osr["debian"]).warn; w.Text != "X11 indisponível; usando Wayland." || w.Missing != "Falta: servidor X" {
+	if w := planDisplay(wayland, osr["debian"]).warn; w.Text != "X11 indisponível; usando Wayland." || w.Missing != "Servidor X não definido (DISPLAY)" {
 		t.Errorf("pt-BR: %+v", *w)
 	}
 }
