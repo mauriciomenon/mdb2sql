@@ -11,6 +11,7 @@
   import Grid from './Grid.svelte';
   import {
     columnCellWidth,
+    importantEntry,
     filterLabel,
     fold,
     hasAllWords,
@@ -57,6 +58,7 @@
   const THEME_KEY = 'mdb2sql.theme';
   const LAST_DIR_KEY = 'mdb2sql.lastDir';
   const LANG_KEY = 'mdb2sql.lang';
+  const LOG_KEY = 'mdb2sql.log'; // 'open' = painel de log aberto (padrao: recolhido)
   // a pesquisa vai ao banco quando a digitacao para por este tempo
   const SEARCH_DELAY_MS = 300;
 
@@ -115,15 +117,28 @@
   let limit = $state(LIMITS[0]);
   let busy = $state(false);
 
-  // status = [chave, valores] (traduz na troca de idioma) ou texto pronto; error = texto do ultimo erro
+  // status = [chave, valores] da ultima acao; error = { err, context } do ultimo erro (null depois de uma acao ok).
+  // Tudo guardado como chave: troca de idioma traduz de novo a barra de status e o log
   let status = $state.raw(['status.noDatabase', {}]);
-  let error = $state('');
-  let statusText = $derived(typeof status === 'string' ? status : t(...status));
+  let error = $state.raw(null);
+  const errorLine = (err, context) => (context ? `${t(context)}: ` : '') + describe(t, err);
+  let statusText = $derived(t(...status));
+  let errorText = $derived(error ? errorLine(error.err, error.context) : '');
   let statusMenu = $state.raw(null); // { x, y } do menu Copiar da barra de status
-  let log = $state.raw([]); // [{ time, text }] desta sessao
-  let showLog = $state(false);
+  // log da sessao: { time, level: 'error' | 'warning' | 'info', key, values } | { ..., err, context } | { ..., render }
+  let log = $state.raw([]);
+  let logOpen = $state(loadSetting(LOG_KEY) === 'open');
+  let seen = $state(0); // entradas do log ja vistas (painel aberto)
   let logArea = $state();
-  let logText = $derived(log.map((entry) => `${entry.time}  ${entry.text}`).join('\n'));
+  const entryText = (e) => (e.render ? e.render() : e.err !== undefined ? errorLine(e.err, e.context) : t(e.key, e.values));
+  let logText = $derived(log.map((e) => `${e.time}  ${entryText(e)}`).join('\n'));
+  // log recolhido: erros e avisos nao vistos; a barra de status mostra o ultimo erro > ultimo aviso > ultima acao
+  let unread = $derived(logOpen ? [] : log.slice(seen).filter((e) => e.level !== 'info'));
+  let headline = $derived.by(() => {
+    const pick = importantEntry(unread);
+    if (pick) return { text: entryText(pick), level: pick.level };
+    return errorText ? { text: errorText, level: 'error' } : { text: statusText, level: 'info' };
+  });
 
   let sql = $state('');
   let sqlResult = $state.raw(null); // { columns, rows, truncated }
@@ -183,27 +198,29 @@
     if (logArea) logArea.scrollTop = logArea.scrollHeight;
   });
 
-  function note(text) {
+  function note(level, entry) {
     const time = new Date().toLocaleTimeString(lang, { hour12: false });
-    log = [...log, { time, text }];
+    log = [...log, { time, level, ...entry }];
   }
 
   const showStatus = (key, values = {}) => {
-    error = '';
+    error = null;
     status = [key, values];
-    note(t(key, values));
+    note('info', { key, values });
   };
-  // texto ja traduzido (mensagens da grade)
-  const showText = (text) => {
-    error = '';
-    status = text;
-    note(text);
-  };
-  // context: chave da frase que vem antes do detalhe ("Could not open the database: ...")
+  // context: chave da frase que vem antes do detalhe do motor ("Could not open the database: <detalhe>")
   const showError = (err, context) => {
-    error = (context ? `${t(context)}: ` : '') + describe(t, err);
-    note(error);
+    error = { err: String(err), context };
+    note('error', error);
   };
+
+  // abre/recolhe o painel de log (seta no log e na barra de status, View > Log, Ctrl+L); a escolha fica gravada
+  function setLog(open) {
+    openMenu = null;
+    logOpen = open;
+    seen = log.length;
+    saveSetting(LOG_KEY, open ? 'open' : 'closed');
+  }
 
   function canExport(scope) {
     if (busy || !openedPath) return false;
@@ -224,7 +241,7 @@
     const stops = [
       listen('open-progress', ({ payload: p }) => {
         status = [`status.${p.step}`, { done: p.done + 1, total: p.total, item: p.item }];
-        if (p.done === 0) note(t(...status));
+        if (p.done === 0) note('info', { key: status[0], values: status[1] });
       }),
       listen('export-progress', ({ payload }) => {
         if (progress) progress = { ...progress, ...payload };
@@ -238,7 +255,7 @@
     invoke('display_warning').then((warning) => {
       if (!warning) return;
       x11 = warning;
-      note(`${t('x11.title')}: ${x11Text}`);
+      note('warning', { render: () => `${t('x11.title')}: ${x11Text}` });
       x11Dialog.showModal();
     });
     // caminho da linha de comando ou de MDB2SQL_DB_PATH
@@ -350,7 +367,7 @@
       lastSql = '';
       saveSetting(LAST_DIR_KEY, dirOf(opened.path));
       showStatus('status.opened', { path: opened.path, count: fmt(tables.length) });
-      note(t('status.via', { source }));
+      note('info', { key: 'status.via', values: { source } });
       resetTable();
       if (tables.length > 0) await openTable(tables[0]);
     } catch (err) {
@@ -446,7 +463,7 @@
     }
     selectedTable = tableName;
     busy = true;
-    error = '';
+    error = null;
     try {
       const asked = filters;
       const words = search.trim();
@@ -568,7 +585,7 @@
       await navigator.clipboard.writeText(text);
       return true;
     } catch (err) {
-      showError(t('grid.copyFailed', { error: String(err) }));
+      showError(String(err), 'grid.copyFailed');
       return false;
     }
   }
@@ -583,7 +600,7 @@
 
   async function copyStatus() {
     statusMenu = null;
-    await copyText(error || statusText);
+    await copyText(headline.text);
   }
 
   async function copyLog() {
@@ -619,8 +636,8 @@
       <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openMenu === 'view'} onclick={(e) => toggleMenu(e, 'view')}>{t('menu.view')}</button>
       {#if openMenu === 'view'}
         <div class="dropdown" role="menu" aria-label={t('menu.view')}>
-          <button type="button" role="menuitemcheckbox" aria-checked={showLog} onclick={() => ((showLog = !showLog), (openMenu = null))}>
-            <span class="check">{showLog ? '✓' : ''}</span>{t('view.log')}
+          <button type="button" role="menuitemcheckbox" aria-checked={logOpen} onclick={() => setLog(!logOpen)}>
+            <span class="check">{logOpen ? '✓' : ''}</span>{t('view.log')} <kbd>{t('view.logKey')}</kbd>
           </button>
         </div>
       {/if}
@@ -822,7 +839,7 @@
           </div>
         </div>
         {#if sqlResult?.columns.length}
-          <Grid columns={sqlResult.columns} rows={sqlResult.rows} label={t('sql.result')} emptyText={t('sql.noRows')} {t} onstatus={showText} onerror={showError} />
+          <Grid columns={sqlResult.columns} rows={sqlResult.rows} label={t('sql.result')} emptyText={t('sql.noRows')} {t} onstatus={showStatus} onerror={showError} />
         {/if}
       {:else if !selectedTable}
         <p class="empty">{t('data.noTable')}</p>
@@ -834,7 +851,7 @@
           label={t('schema.label', { table: selectedTable })}
           emptyText={t('data.empty')}
           {t}
-          onstatus={showText}
+          onstatus={showStatus}
           onerror={showError}
         />
       {:else}
@@ -871,7 +888,7 @@
           label={t('data.rows', { table: selectedTable })}
           emptyText={t(!shownColumns.length ? 'data.allHidden' : filters.length || search.trim() ? 'data.noMatch' : 'data.empty')}
           {t}
-          onstatus={showText}
+          onstatus={showStatus}
           onerror={showError}
           actions={{ ...gridActions, anyHidden: hidden.size > 0, filtered: filters.length > 0 }}
         />
@@ -879,9 +896,10 @@
     </main>
   </div>
 
-  {#if showLog}
+  {#if logOpen}
     <section class="log" aria-labelledby="log-title">
       <div class="log-bar">
+        <button type="button" class="log-toggle" title={t('log.hide')} aria-label={t('log.hide')} aria-expanded="true" onclick={() => setLog(false)}>▾</button>
         <h2 id="log-title">{t('log.title')}</h2>
         <button type="button" class="secondary" onclick={copyLog} disabled={!log.length}>{t('log.copyAll')}</button>
       </div>
@@ -889,8 +907,25 @@
     </section>
   {/if}
 
-  <footer class="statusbar" class:error role="status" aria-live="polite" oncontextmenu={openStatusMenu}>
-    <span class="message">{error || statusText}</span>
+  <!-- recolhido: a linha mais importante (erro > aviso > acao); clique nela abre o log -->
+  <footer
+    class="statusbar"
+    class:error={headline.level === 'error'}
+    class:warning={headline.level === 'warning'}
+    role="status"
+    aria-live="polite"
+    oncontextmenu={openStatusMenu}
+  >
+    <button
+      type="button"
+      class="log-toggle"
+      title={t(logOpen ? 'log.hide' : 'log.show')}
+      aria-label={t(logOpen ? 'log.hide' : 'log.show')}
+      aria-expanded={logOpen}
+      onclick={() => setLog(!logOpen)}>{logOpen ? '▾' : '▴'}</button
+    >
+    <button type="button" class="message" title={t('log.show')} onclick={() => setLog(true)}>{headline.text}</button>
+    {#if unread.length}<span class="badge" title={t('log.unreadTip')}>{unread.length}</span>{/if}
     {#if hidden.size}<span class="source">{t(hidden.size === 1 ? 'status.hiddenOne' : 'status.hiddenMany', { count: hidden.size })}</span>{/if}
     {#if source}<span class="source" title={t('status.viaTip')}>{t('status.via', { source })}</span>{/if}
     <span class="stack">{t('app.stack')}</span>
@@ -905,7 +940,13 @@
 
 <svelte:window
   onclick={() => ((openMenu = null), (statusMenu = null))}
-  onkeydown={(e) => e.key === 'Escape' && ((openMenu = null), (statusMenu = null))}
+  onkeydown={(e) => {
+    if (e.key === 'Escape') (openMenu = null), (statusMenu = null);
+    if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'l') {
+      e.preventDefault();
+      setLog(!logOpen);
+    }
+  }}
 />
 
 <style>
@@ -923,6 +964,8 @@
     --row-hover: #e3edfb;
     --error-bg: #fde8e8;
     --error-text: #9b1c1c;
+    --warn-bg: #fdf3d8;
+    --warn-text: #7a4b00;
   }
 
   @media (prefers-color-scheme: dark) {
@@ -938,6 +981,8 @@
       --row-hover: #2b3a50;
       --error-bg: #4a1f1f;
       --error-text: #ffc9c9;
+      --warn-bg: #45381a;
+      --warn-text: #ffe2a0;
     }
   }
 
@@ -1339,7 +1384,7 @@
   .log-bar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 6px;
   }
 
   .log-bar button {
@@ -1347,12 +1392,34 @@
     font-weight: 400;
   }
 
+  /* ~15% da altura, de 4 linhas a 30%; a borda de baixo do campo redimensiona */
   .log textarea {
-    height: 120px;
+    height: 15vh;
+    min-height: calc(4 * 1.4em + 14px);
+    max-height: 30vh;
     resize: vertical;
     font-family: Consolas, 'Cascadia Mono', monospace;
     font-size: 12px;
+    line-height: 1.4;
     white-space: pre;
+  }
+
+  .log-bar h2 {
+    margin-right: auto;
+  }
+
+  /* seta de abrir/recolher o log: discreta, sem caixa */
+  .log-toggle {
+    padding: 0 6px;
+    border-color: transparent;
+    background: none;
+    color: var(--muted);
+    font-weight: 400;
+    line-height: 1;
+  }
+
+  .log-toggle:hover {
+    color: var(--text);
   }
 
   /* menu Copiar da barra de status */
@@ -1595,9 +1662,46 @@
     color: var(--error-text);
   }
 
+  .statusbar {
+    align-items: center;
+  }
+
   .statusbar .message {
     flex: 1;
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
     overflow-wrap: anywhere;
+    white-space: normal;
+    cursor: pointer;
+  }
+
+  .statusbar.warning {
+    background: var(--warn-bg);
+    border-color: var(--warn-text);
+    color: var(--warn-text);
+  }
+
+  /* contador de erros/avisos nao lidos: numero na cor do fundo sobre um circulo na cor do texto da barra */
+  .statusbar .badge {
+    padding: 0 7px;
+    border-radius: 999px;
+    background: var(--muted);
+    color: var(--surface);
+    font-weight: 600;
+  }
+
+  .statusbar.error .badge {
+    background: var(--error-text);
+    color: var(--error-bg);
+  }
+
+  .statusbar.warning .badge {
+    background: var(--warn-text);
+    color: var(--warn-bg);
   }
 
   .statusbar .source {

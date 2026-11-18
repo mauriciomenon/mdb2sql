@@ -77,3 +77,9 @@ export function searchWords(query) {
 export function hasAllWords(text, words) {
   return words.every((word) => text.includes(word));
 }
+
+// NIVEL BASICO: Log recolhido: a linha que a barra de status mostra entre as nao lidas: o ultimo erro, senao o ultimo
+// aviso; null quando nao ha nenhum (a barra mostra a ultima acao)
+export function importantEntry(entries) {
+  return entries.findLast((e) => e.level === 'error') ?? entries.findLast((e) => e.level === 'warning') ?? null;
+}

@@ -65,13 +65,11 @@
         : rowToTsv(names, selected.row, kind === 'row-header');
     try {
       await navigator.clipboard.writeText(text);
-      onstatus(
-        kind === 'value'
-          ? t('grid.copiedValue', { column: selected.col })
-          : t(kind === 'row-header' ? 'grid.copiedRowHeader' : 'grid.copiedRow', { count: names.length })
-      );
+      // chave + valores: o log da tela traduz de novo se o idioma mudar
+      if (kind === 'value') onstatus('grid.copiedValue', { column: selected.col });
+      else onstatus(kind === 'row-header' ? 'grid.copiedRowHeader' : 'grid.copiedRow', { count: names.length });
     } catch (err) {
-      onerror(t('grid.copyFailed', { error: String(err) }));
+      onerror(String(err), 'grid.copyFailed');
     }
   }
 

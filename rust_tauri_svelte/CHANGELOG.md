@@ -16,8 +16,12 @@
   as palavras na mesma celula, sem maiusculas nem acentos), com "N of M matching rows".
 - **Idiomas**: ingles (padrao), portugues (Brasil) e espanhol em Settings > Language, gravado; troca na hora.
   Todos os textos em catalogos (`ui/src/i18n/`); teste confere as chaves e que nenhum texto fica fora.
-- **Log**: View > Log mostra as mensagens da sessao com hora, selecionaveis (Ctrl+C) e **Copy all**; botao
+- **Log**: painel embaixo (~15% da altura, 4 linhas a 30%, redimensionavel, fonte de codigo menor) com as mensagens
+  da sessao no idioma do app, selecionaveis (Ctrl+C) e **Copy all**. Recolhido por padrao e lembrado; abre e recolhe
+  pela seta no log e na barra de status, View > Log ou Ctrl+L. Recolhido, a barra de status mostra o ultimo erro
+  (destacado), senao o ultimo aviso, senao a ultima acao, com contador de nao lidos; clique nela abre o log. Botao
   direito na barra de status > **Copy**.
+- Seta Unicode na tela: "Opened via mdbtools → SQLite".
 - **File > Close database**.
 - **Debian amd64**: `build_debian_amd64_wsl.ps1` (pelo WSL) / `build_debian_amd64.sh` geram .deb e .zip, com o
   mdbtools dentro do binario.

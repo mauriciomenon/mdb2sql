@@ -127,9 +127,9 @@ test('each grid context menu lists an action once', () => {
 // log copiavel: View > Log abre o painel (texto selecionavel, Ctrl+C), Copiar tudo; barra de status: botao direito > Copiar
 test('log panel and status bar text can be copied', () => {
   const app = markup('./App.svelte');
-  assert.match(app, /role="menuitemcheckbox" aria-checked=\{showLog\}/);
+  assert.match(app, /role="menuitemcheckbox" aria-checked=\{logOpen\} onclick=\{\(\) => setLog\(!logOpen\)\}/);
   assert.match(app, /<textarea bind:this=\{logArea\} readonly value=\{logText\}/);
-  assert.match(app, /<footer class="statusbar"[^>]*oncontextmenu=\{openStatusMenu\}/);
+  assert.match(app, /<footer\s+class="statusbar"[\s\S]*?oncontextmenu=\{openStatusMenu\}/);
   assert.match(app, /onclick=\{copyStatus\}>\{t\('status.copy'\)\}/);
 });
 
@@ -144,4 +144,19 @@ test('X11 warning is short, with a clickable Help link and a Copy command button
     assert.doesNotMatch(en[key], /https?:|\.\.\./, key);
     assert.ok(en[key].length <= 45, key);
   }
+});
+
+// REGRA_VISUAL "Painel de Log": recolhido por padrao e lembrado, seta no log e na barra, View > Log, Ctrl+L,
+// ~15% da altura (4 linhas a 30%), fonte de codigo um passo menor que a base (13 px), linhas sem "..."
+test('log panel collapses and expands in one click and remembers the choice', () => {
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  assert.match(app, /let logOpen = \$state\(loadSetting\(LOG_KEY\) === 'open'\);/);
+  assert.match(app, /saveSetting\(LOG_KEY, open \? 'open' : 'closed'\)/);
+  assert.equal(count(app, 'onclick={() => setLog(false)}'), 1); // seta do cabecalho do log
+  assert.equal(count(app, 'onclick={() => setLog(!logOpen)}'), 2); // View > Log e seta da barra de status
+  assert.match(app, /e\.ctrlKey && !e\.altKey && e\.key\.toLowerCase\(\) === 'l'/);
+  assert.match(app, /onclick=\{\(\) => setLog\(true\)\}>\{headline\.text\}/);
+  const css = app.match(/<style>([\s\S]*)<\/style>/)[1];
+  assert.match(css, /\.log textarea \{[^}]*height: 15vh;[^}]*min-height: calc\(4 \* 1\.4em \+ 14px\);[^}]*max-height: 30vh;[^}]*font-size: 12px;/);
+  for (const [key, text] of Object.entries(en)) if (key.startsWith('status.')) assert.doesNotMatch(text, /\.\.\./, key);
 });

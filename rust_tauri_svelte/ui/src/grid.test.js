@@ -8,6 +8,7 @@ import {
   filterLabel,
   fold,
   hasAllWords,
+  importantEntry,
   rowToTsv,
   searchWords,
   setListed,
@@ -102,4 +103,13 @@ test('table filter uses the same words rule', () => {
   assert.deepEqual(pick('anlg ranger'), ['RANGER_SOANLG']);
   assert.deepEqual(pick('area medicao'), ['Medição Área']);
   assert.deepEqual(pick(''), tables);
+});
+
+test('collapsed log shows the last error, else the last warning, else nothing', () => {
+  const e = (level, n) => ({ level, n });
+  assert.equal(importantEntry([e('warning', 1), e('error', 2), e('warning', 3), e('info', 4)]).n, 2);
+  assert.equal(importantEntry([e('error', 1), e('error', 2)]).n, 2);
+  assert.equal(importantEntry([e('info', 1), e('warning', 2), e('warning', 3)]).n, 3);
+  assert.equal(importantEntry([e('info', 1)]), null);
+  assert.equal(importantEntry([]), null);
 });

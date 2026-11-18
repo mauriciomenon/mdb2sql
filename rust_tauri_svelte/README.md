@@ -44,7 +44,7 @@ O exe do Windows nao e assinado digitalmente: na primeira execucao o SmartScreen
 
 **Access**: o arquivo e lido uma vez e gravado num **SQLite temporario** (com os tipos: inteiro, decimal exato,
 texto, data, booleano e binario, e os NULL); o app le dali. A barra de status mostra a etapa (lendo o Access,
-gravando o SQLite, carregando) e depois "Opened via mdbtools > SQLite" (ou "Access ODBC > SQLite").
+gravando o SQLite, carregando) e depois "Opened via mdbtools → SQLite" (ou "Access ODBC → SQLite").
 Ao **fechar o banco** (File > Close database), **abrir outro** ou **sair**, o app pergunta
 **Save the converted SQLite?**:
 - **Save...**: dialogo de salvar na pasta do Access, nome `<nome do Access>.sqlite`; o SQLite fica onde voce escolher
@@ -148,7 +148,7 @@ SQLite 3.54.1, mdbtools 1.0.1. Copias de bancos reais do NMR5 e um .mdb pequeno 
 
 | Teste | Resultado |
 | --- | --- |
-| `2026-07-14 DB4.accdb` (115 MB) pelo mdbtools -> SQLite, x conversoes de referencia (.duckdb e .sqlite) | 287 tabelas e 113.962 linhas, contagem igual tabela a tabela |
+| `2026-07-14 DB4.accdb` (115 MB) pelo mdbtools → SQLite, x conversoes de referencia (.duckdb e .sqlite) | 287 tabelas e 113.962 linhas, contagem igual tabela a tabela |
 | O mesmo arquivo pelo driver ODBC x mdbtools | iguais celula a celula nas 287 tabelas |
 | `2026-06-25 DB3 1.accdb` (115 MB) pelo mdbtools e pelo ODBC x referencias | 287 tabelas e 113.826 linhas, contagem igual tabela a tabela; ODBC x mdbtools iguais celula a celula |
 | `tests/data/sample.mdb` (versionado, gerado por `scripts/make_test_mdb.ps1`) pelo mdbtools | tipos e NULL preservados no SQLite e na tela (`cargo test`, Windows e Debian) |

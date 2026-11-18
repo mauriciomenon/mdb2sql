@@ -373,7 +373,8 @@ impl DBManager {
                 let (lite, used) = convert_access(&path, reader, progress)?;
                 sqlite_io::import(&conn, lite.path(), &mut |d, t, i| progress(Step::Load, d, t, i))?;
                 converted = Some(lite);
-                (format!("{used} > SQLite"), "memory")
+                // seta Unicode na tela (regra do dono), nunca ">" nem "->"
+                (format!("{used} → SQLite"), "memory")
             }
         };
         *self.open.lock().unwrap() = Some(OpenDb { conn, path, catalog });
