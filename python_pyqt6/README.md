@@ -119,7 +119,7 @@ the same files made by another converter as reference.
   (empty and NULL), NULL, a table name with spaces; read by both readers, also on Debian.
 - Search beyond the loaded rows, value filters, save / delete / cancel of the converted SQLite, temporary folder of
   a crashed session removed, three language catalogs with the same keys and no screen text outside them.
-  108 automatic tests (pytest + pytest-qt); the two real-database comparisons run with `MDB2SQL_TEST_ACCDB`.
+  102 automatic tests (pytest + pytest-qt); the real-database comparison runs with `MDB2SQL_TEST_ACCDB`.
 
 ## Known limits
 

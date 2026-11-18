@@ -34,7 +34,8 @@ a = Analysis(
     datas=[("build/VERSION", "."), ("build/BUILD", "."), ("src/resources/mdb2sql.ico", "resources"),
            ("src/resources/mdb2sql.png", "resources"), ("src/resources/i18n", "resources/i18n")] + [(path, Path(path).parent.name) for path in bundled],
     # pandas importa pytest so em pandas.testing; ferramenta de teste nao vai no exe
-    excludes=["pytest", "_pytest", "pygments", "openpyxl"],
+    # Linux: o _sysconfigdata do Python do uv guarda o caminho de instalacao (pasta do usuario de build); o app nao le
+    excludes=["pytest", "_pytest", "pygments", "openpyxl"] + ([] if exe else ["_sysconfigdata__linux_x86_64-linux-gnu"]),
 )
 pyz = PYZ(a.pure)
 
