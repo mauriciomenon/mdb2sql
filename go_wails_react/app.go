@@ -44,6 +44,7 @@ type App struct {
 	converted, convertedFrom string
 	convChoice              string // "save" or "delete" remembered for this session ("" = ask)
 	convDir                 string // folder of the last "save", used when "save" is remembered
+	displayWarn             string // Linux: X11 missing, running on Wayland (display.go)
 
 	jobMu       sync.Mutex
 	cancel      context.CancelFunc // of the running load or export

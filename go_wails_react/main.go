@@ -38,6 +38,7 @@ func main() {
 	// Cria instancia da struct App com DB manager
 	// !T: NewApp() initializes App struct with DBManager singleton
 	app := NewApp()
+	applyDisplay(app) // Linux: X11 first, Wayland as fallback with a warning; before GTK starts in wails.Run
 
 	winOpts := &windows.Options{}
 	if dir, err := os.UserCacheDir(); err == nil {

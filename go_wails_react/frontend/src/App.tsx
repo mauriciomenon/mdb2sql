@@ -44,6 +44,7 @@ declare global {
           RememberedChoice?: () => Promise<string>;
           ResolveConversion?: (choice: string, remember: boolean) => Promise<Conversion>;
           CloseDatabase?: () => Promise<void>;
+          DisplayWarning?: () => Promise<string>;
         };
       };
     };
@@ -173,6 +174,7 @@ function App() {
   const [resultSql, setResultSql] = useState(''); // SQL of the result shown (what "Export SQL result" writes)
   const [logLines, setLogLines] = useState<string[]>([]);
   const [logOpen, setLogOpen] = useState(false);
+  const [displayWarn, setDisplayWarn] = useState(''); // Linux: X11 missing, running on Wayland
   // "save or delete the converted SQLite" question; resolve gets the answer (null = cancel)
   const [ask, setAsk] = useState<{ name: string; resolve: (a: { choice: string; remember: boolean } | null) => void } | null>(null);
   const started = useRef(false);
@@ -231,6 +233,15 @@ function App() {
         if (l && LANGS.includes(l)) {
           setLang(l);
           setStatusText(translate(l, 'status.none'));
+        }
+      })
+      .catch(() => {});
+    // Linux without X11: the warning of display.go, shown once per start and kept in the log
+    bridge?.DisplayWarning?.()
+      .then((w) => {
+        if (w) {
+          setDisplayWarn(w);
+          addLog(w);
         }
       })
       .catch(() => {});
@@ -952,6 +963,20 @@ function App() {
       )}
 
       {ask && <ConversionDialog name={ask.name} t={t} onAnswer={ask.resolve} />}
+
+      {displayWarn && (
+        <div className="backdrop">
+          <div className="about conversion" role="alertdialog" aria-modal="true" aria-labelledby="display-title">
+            <h2 id="display-title">{t('display.title')}</h2>
+            <p>{displayWarn}</p>
+            <div className="col-actions">
+              <button className="primary end" autoFocus onClick={() => setDisplayWarn('')}>
+                {t('display.ok')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {about && (
         <div className="backdrop" onClick={(e) => e.target === e.currentTarget && setAbout(null)}>

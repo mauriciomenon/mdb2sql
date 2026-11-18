@@ -636,6 +636,20 @@ describe('App IPC flow', () => {
     expect(screen.getByText(/1 match "alp"/)).toBeInTheDocument();
   });
 
+  it('shows the Linux display warning at start (selectable text, OK) and keeps it in the log', async () => {
+    const text = 'X11 unavailable; the program is using Wayland (fallback). Missing: X server (DISPLAY not set).';
+    const DisplayWarning = vi.fn(async () => text);
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, DisplayWarning } } } });
+    render(<App />);
+    const dialog = await screen.findByRole('alertdialog', { name: 'Display mode' });
+    expect(dialog.textContent).toContain(text);
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /Log/ }));
+    expect(screen.getByRole('textbox', { name: 'Log' }).value).toContain(text);
+  });
+
   it('handles IPC unavailable gracefully', async () => {
     global.window = Object.assign(window, { go: undefined });
     render(<App />);

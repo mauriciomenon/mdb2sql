@@ -44,7 +44,7 @@ func TestCatalogsMatch(t *testing.T) {
 
 // every key the Go code passes to T (or keeps in a table for it) exists
 func TestGoKeysExist(t *testing.T) {
-	re := regexp.MustCompile(`"((?:err|log|dlg|filter)\.[A-Za-z]+)"`)
+	re := regexp.MustCompile(`"((?:err|log|dlg|filter|display)\.[A-Za-z]+)"`)
 	files, _ := filepath.Glob("../*.go")
 	more, _ := filepath.Glob("../backend/*.go")
 	n := 0
