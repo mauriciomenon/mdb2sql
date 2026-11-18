@@ -136,9 +136,9 @@ export const logLine = (text: string, at = new Date()) => `${at.toTimeString().s
 type LogLevel = 'info' | 'warn' | 'error';
 type LogEntry = { line: string; text: string; level: LogLevel };
 
-// Log panel height: about 15% of the window, at least 4 lines of the 13 px log font, at most 30% of the window
-export const LOG_MIN = 86;
-export const clampLogHeight = (h: number, windowHeight: number) => Math.round(Math.max(LOG_MIN, Math.min(h, windowHeight * 0.3)));
+// Log panel height: about 10% of the window, at least 3 lines of the 13 px log font, at most 25% of the window
+export const LOG_MIN = 68;
+export const clampLogHeight = (h: number, windowHeight: number) => Math.round(Math.max(LOG_MIN, Math.min(h, windowHeight * 0.25)));
 
 // Status bar with the log collapsed: the last unread error, else the last unread warning, else the status
 export function statusLine(entries: LogEntry[], readMark: number, status: string, error: string) {
@@ -192,7 +192,7 @@ function App() {
   const [logLines, setLogLines] = useState<LogEntry[]>([]);
   const [logOpen, setLogOpen] = useState(false); // collapsed by default
   const [readMark, setReadMark] = useState(0); // log lines before this one were seen
-  const [logHeight, setLogHeight] = useState(() => clampLogHeight(Math.round(window.innerHeight * 0.15), window.innerHeight));
+  const [logHeight, setLogHeight] = useState(() => clampLogHeight(Math.round(window.innerHeight * 0.1), window.innerHeight));
   const [displayWarn, setDisplayWarn] = useState<DisplayWarning | null>(null); // Linux: X11 missing, on Wayland
   // "save or delete the converted SQLite" question; resolve gets the answer (null = cancel)
   const [ask, setAsk] = useState<{ name: string; resolve: (a: { choice: string; remember: boolean } | null) => void } | null>(null);
@@ -202,6 +202,7 @@ function App() {
   const sqlReq = useRef(0);
   const loadedFind = useRef(''); // search of the last table request
   const [shownFind, setShownFind] = useState(''); // search of the rows shown in the Data tab
+  const [shownTable, setShownTable] = useState(''); // table of the rows shown (the counts below belong to it)
   const [querying, setQuerying] = useState(false);
 
   const addLog = (text: string, level: LogLevel = 'info') => setLogLines((old) => [...old, { line: logLine(text), text, level }]);
@@ -264,7 +265,7 @@ function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // dragging the top border of the Log panel resizes it (15% of the window by default, 4 lines to 30%)
+  // dragging the top border of the Log panel resizes it (10% of the window by default, 3 lines to 25%)
   function startLogResize(e: React.MouseEvent) {
     e.preventDefault();
     const startY = e.clientY;
@@ -507,6 +508,7 @@ function App() {
       setTotalCount(total ?? count);
       setSchema(cols ?? []);
       setShownFind(find);
+      setShownTable(tableName);
     } catch (err) {
       if (req === tableReq.current) fail(err);
     }
@@ -914,7 +916,7 @@ function App() {
             <footer className="info">
               {view === 'sql'
                 ? result && t('info.sql', result.rows.length) + (result.more ? t('info.sqlLimit', limit) : '')
-                : t('info.showing', selectedTable, rows.length, rowCount) + (narrowed ? t('info.filtered', totalCount) : '')}
+                : t('info.showing', shownTable, rows.length, rowCount) + (narrowed ? t('info.filtered', totalCount) : '')}
               {sqlSearching && t('info.searchSql', visibleRows.length, search.trim())}
               {copied && ` - ${copied}`}
             </footer>

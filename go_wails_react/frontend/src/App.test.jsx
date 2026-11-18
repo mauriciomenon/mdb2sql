@@ -441,9 +441,9 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show the log' })); // the status bar arrow expands
     expect(screen.getByRole('textbox', { name: 'Log' })).toBeInTheDocument();
 
-    expect(clampLogHeight(10, 800)).toBe(LOG_MIN); // at least 4 lines
-    expect(clampLogHeight(500, 800)).toBe(240); // at most 30% of the window
-    expect(clampLogHeight(120, 800)).toBe(120);
+    expect(clampLogHeight(10, 800)).toBe(LOG_MIN); // at least 3 lines
+    expect(clampLogHeight(500, 800)).toBe(200); // at most 25% of the window
+    expect(clampLogHeight(80, 800)).toBe(80);
     const entries = [
       { line: '', text: 'w', level: 'warn' },
       { line: '', text: 'e', level: 'error' },
