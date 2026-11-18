@@ -43,8 +43,8 @@ Changes in 1.3.0:
   "Cancel"; "Remember for this session" keeps the answer until the program closes (a remembered "Save" goes
   to the same folder and never overwrites: `<file> (2).sqlite`). Converted files left by a crash are deleted at
   the next start.
-- mdbtools exports several tables at once (4 processes): the 287-table test file opens in about half the time
-  of 1.2.0 with mdbtools.
+- mdbtools exports several tables at once (4 processes): the 287-table test file converts in about 50 s; the
+  same exports one at a time took about 100 s on the same machine.
 - The Data search runs in the database over the WHOLE table (not only the loaded rows): every word in one
   cell, any order, ignoring case and accents; the line under the grid says "showing 100 of 412 rows matching
   (36754 in the table)". The SQL tab still searches its loaded result.
@@ -101,7 +101,7 @@ Excel; Current table as CSV / Excel; SQL result as CSV / Excel; all with progres
 leaves no half file), View (Log), Settings (Theme: System, Light, Dark; Language), Help (About).
 
 Opening Access: the progress window counts the tables; Cancel stops it. The 287-table NMR5 test file (115 MB)
-takes about 20-30 s with the ODBC driver and about 45-60 s with mdbtools on Windows (the slowest table,
+takes about 20-30 s with the ODBC driver and about 50-60 s with mdbtools on Windows (the slowest table,
 RANGER_SOSTAT, needs about 40 s inside mdbtools by itself); more on a busy machine. On Debian the mdbtools of the
 distribution is slower (about 3 min for RANGER_SOSTAT alone).
 
