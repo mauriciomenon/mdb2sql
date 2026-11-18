@@ -37,7 +37,8 @@ Open a file with File > Open Database (Ctrl+O), by passing the path on the comma
 **Access files** are converted once, when opened, into a SQLite file in a temporary folder, and the program reads
 from there (status bar: "Converting ... table N of M", then `... via mdbtools, converted to SQLite`). The SQLite
 keeps the column types (integer, decimal, double, text, date, true/false, binary) and NULLs. A 115 MB `.accdb`
-with 287 tables takes about 20 s by mdbtools and 8 s by ODBC. The source file is never changed.
+with 287 tables takes about 20 s by mdbtools (up to 2 min on a busy machine) and 8 s by ODBC. The source file is
+never changed.
 When the file is closed (File > Close Database, Ctrl+W), another file is opened or the program is closed, it asks
 what to do with the converted SQLite:
 
@@ -100,8 +101,8 @@ Menus:
 - **Settings > Theme**: System, Light or Dark. **Settings > Language**: English (default), Português (Brasil),
   Español; applies when the program is reopened. Both are saved (Windows registry `HKCU\Software\MDB2SQL`,
   Linux `~/.config/MDB2SQL/MDB2SQL.conf`).
-- **Help > About**: name, version, build number and date, stack and library versions, Access readers (bundled
-  mdbtools, ODBC driver installed or not), author, license, and the GitHub and GitLab links.
+- **Help > About**: name, version, build number and date, stack and library versions, the Access reader in use
+  ("Embedded mdbtools", or "Access ODBC driver (Windows); embedded mdbtools as fallback"), author, license, links.
 
 The window title is short, `mdb2sql 1.3.0 - Python` (with a file open, `<file> - mdb2sql 1.3.0 - Python`).
 Changes of each version: [CHANGELOG.md](CHANGELOG.md).

@@ -17,6 +17,8 @@
   ones is found. Same rule as before: all words, any order, in one cell, no case or accents. The status bar says
   `Showing 25 of 25 matching rows (36,754 rows in table)`.
 - Order everywhere: Access, SQLite, DuckDB (Open dialog filters, Export menu, About, README).
+- Help > About shows the Access reader in use: "Embedded mdbtools", or "Access ODBC driver (Windows); embedded
+  mdbtools as fallback" when the driver exists (the optional driver is no longer listed as "not installed").
 - Languages: English (default), Português (Brasil), Español, in Settings > Language (saved; applies when the
   program is reopened). Every text of the windows, dialogs, messages, About and tooltips comes from
   `src/resources/i18n/<language>.json`.
