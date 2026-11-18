@@ -154,9 +154,10 @@ pub const err_opengl = "\nThe graphics driver must support OpenGL 3.3 (a remote 
 
 // Linux display mode (X11 first, Wayland as fallback)
 pub const display_title = "Display mode";
-pub const display_warning = "X11 unavailable; the program is using Wayland (fallback). Missing: {s}. To use X11 on {s}: {s}. Help: {s}";
-pub const display_warning_other = "X11 unavailable; the program is using Wayland (fallback). Missing: {s}. Help: {s}";
-pub const display_no_server = "X server (DISPLAY not set)";
+pub const display_headline = "X11 unavailable; using Wayland.";
+pub const display_missing = "Missing: {s}";
+pub const display_no_server = "X server";
+pub const display_help = "Help";
 pub const display_none = "mdb2sql: cannot open a window: neither X11 nor Wayland is available ({t}). Help: {s}\n";
 pub const ok = "OK";
 

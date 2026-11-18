@@ -572,7 +572,8 @@ const App = struct {
     quit: bool = false,
     capture_mode: bool = false, // --capture (auxiliar de teste)
     // Linux sem X11: aviso da abertura (texto copiavel, terminado em 0); null = sem aviso
-    display_warning: ?[:0]u8 = null,
+    display_warning: ?dbm.display.Warning = null,
+    display_cmd: [320:0]u8 = @splat(0), // o comando de instalacao, na caixa selecionavel
     display_shown: bool = false,
     display_dismiss: bool = false, // --capture: fecha o aviso no passo seguinte
 
@@ -1328,9 +1329,10 @@ const App = struct {
         if (ig.igButton(close_l, .{ .x = bw, .y = 0 })) ig.igCloseCurrentPopup();
     }
 
-    // Linux sem X11: aviso da abertura (Wayland por reserva), com texto selecionavel, Copiar e OK
+    // Linux sem X11: aviso curto da abertura (Wayland por reserva): 2 linhas de texto, a distro com o comando
+    // selecionavel e Copiar, o link Ajuda (abre o navegador) e OK
     fn drawDisplayWarning(app: *App) void {
-        const msg = app.display_warning orelse return;
+        const w = if (app.display_warning) |*x| x else return;
         var tb: [96]u8 = undefined;
         const title = idLabel(&tb, "display_title", "display");
         if (!app.display_shown) {
@@ -1344,15 +1346,30 @@ const App = struct {
             app.display_warning = null;
             return ig.igCloseCurrentPopup();
         }
-        // caixa somente leitura com quebra de linha: o texto (comando, link) pode ser selecionado e copiado
-        const fs = ig.igGetFontSize();
-        _ = ig.igInputTextMultiline("##displaytext", msg.ptr, msg.len + 1, .{ .x = fs * 34, .y = ig.igGetTextLineHeight() * 5 + 2 * ig.igGetStyle().*.FramePadding.y }, ig.ImGuiInputTextFlags_ReadOnly | ig.ImGuiInputTextFlags_WordWrap, null, null);
+        const text = w.text();
+        const lines_end = if (w.command_len > 0) std.mem.lastIndexOfScalar(u8, text[0..w.command_start], '\n') orelse text.len else text.len;
+        ig.igPushTextWrapPos(ig.igGetFontSize() * 34);
+        textSlice(text[0..lines_end]);
+        ig.igPopTextWrapPos();
         const copy_l = tr("copy");
         const ok_l = tr("ok");
         const bw = dialogButtonWidth(&.{ copy_l, ok_l });
-        ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - 2 * bw - ig.igGetStyle().*.ItemSpacing.x));
-        if (ig.igButton(copy_l, .{ .x = bw, .y = 0 })) setClipboard(msg);
+        if (w.command_len > 0) {
+            // "<distro>:" e o comando numa caixa somente leitura (selecionavel) com Copiar ao lado
+            ig.igAlignTextToFramePadding();
+            textSlice(text[lines_end + 1 .. w.command_start]);
+            ig.igSameLine(0, -1);
+            const cmd = std.fmt.bufPrintSentinel(&app.display_cmd, "{s}", .{w.command()}, 0) catch "";
+            ig.igSetNextItemWidth(@max(textWidth(cmd) + 2 * ig.igGetStyle().*.FramePadding.x + 4, ig.igGetFontSize() * 12));
+            _ = ig.igInputText("##displaycmd", &app.display_cmd, app.display_cmd.len + 1, ig.ImGuiInputTextFlags_ReadOnly, null, null);
+            ig.igSameLine(0, -1);
+            if (ig.igButton(copy_l, .{ .x = bw, .y = 0 })) setClipboard(cmd);
+        }
+        ig.igSpacing();
+        ig.igAlignTextToFramePadding();
+        if (ig.igTextLink(tr("display_help"))) if (main_io) |io| platform.openUrl(io, dbm.display.help_url);
         ig.igSameLine(0, -1);
+        ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - bw));
         if (ig.igButton(ok_l, .{ .x = bw, .y = 0 }) or ig.igIsKeyPressed_Bool(ig.ImGuiKey_Escape, false)) {
             app.display_warning = null;
             ig.igCloseCurrentPopup();
@@ -1922,7 +1939,7 @@ fn prefsPath(a: std.mem.Allocator, env: anytype) !?[]const u8 {
 
 // Abre o GLFW no sistema de janelas decidido por display.decide. Devolve o texto do aviso quando ficou no Wayland
 // por reserva; sem X11 e sem Wayland, mensagem no stderr e saida 3.
-fn initLinuxDisplay(a: std.mem.Allocator, io: std.Io, env: anytype) !?[:0]u8 {
+fn initLinuxDisplay(a: std.mem.Allocator, io: std.Io, env: anytype) !?dbm.display.Warning {
     const display = dbm.display;
     var missing: std.ArrayList([]const u8) = .empty;
     const x_display = env.get("DISPLAY");
@@ -1941,8 +1958,7 @@ fn initLinuxDisplay(a: std.mem.Allocator, io: std.Io, env: anytype) !?[:0]u8 {
     var os_buf: [4096]u8 = undefined;
     const os_release = std.Io.Dir.cwd().readFile(io, "/etc/os-release", &os_buf) catch
         std.Io.Dir.cwd().readFile(io, "/usr/lib/os-release", &os_buf) catch "";
-    var buf: [1024]u8 = undefined;
-    return try a.dupeSentinel(u8, display.warning(&buf, os_release, !has_display, missing.items), 0);
+    return display.warning(os_release, !has_display, missing.items);
 }
 
 fn openBackend(b: dbm.display.Backend) !void {
@@ -2041,7 +2057,7 @@ fn run(init: std.process.Init) !void {
     // janela pelo libdecor, que carrega o GTK; no WSLg recem-reiniciado o programa caiu 2 vezes dentro dele.
     if (platform.is_windows) try glfw.init() else if (try initLinuxDisplay(arena, init.io, init.environ_map)) |w| {
         app.display_warning = w;
-        logLine(w);
+        logLine(w.text()); // no log as 3 linhas viram uma
     }
     defer glfw.terminate();
     glfw.windowHint(.context_version_major, 3);

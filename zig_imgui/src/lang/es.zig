@@ -154,9 +154,10 @@ pub const err_opengl = "\nEl controlador de video debe admitir OpenGL 3.3 (un es
 
 // modo de visualizacion en Linux (X11 primero, Wayland como reserva)
 pub const display_title = "Modo de visualización";
-pub const display_warning = "X11 no disponible; el programa usa Wayland (reserva). Falta: {s}. Para usar X11 en {s}: {s}. Ayuda: {s}";
-pub const display_warning_other = "X11 no disponible; el programa usa Wayland (reserva). Falta: {s}. Ayuda: {s}";
-pub const display_no_server = "servidor X (DISPLAY no definido)";
+pub const display_headline = "X11 no disponible; usando Wayland.";
+pub const display_missing = "Falta: {s}";
+pub const display_no_server = "servidor X";
+pub const display_help = "Ayuda";
 pub const display_none = "mdb2sql: no se pudo abrir la ventana: ni X11 ni Wayland están disponibles ({t}). Ayuda: {s}\n";
 pub const ok = "Aceptar";
 
