@@ -147,12 +147,13 @@
   "error.no_rows": "The query returns no rows",
   "display.title": "Display mode",
   "display.using_wayland": "X11 unavailable; using Wayland.",
-  "display.missing": "Missing: {missing}",
-  "display.no_server": "X server",
+  "display.no_server": "X server not set (DISPLAY)",
   "display.help": "Help",
   "display.copy": "Copy",
   "display.none": "No display: X11 (DISPLAY) and Wayland (WAYLAND_DISPLAY) are both unavailable.",
   "log.toggle_tip": "Show or hide the log (Ctrl+L)",
   "log.hide": "Hide log",
-  "log.unread_tip": "Errors and warnings not seen in the log"
+  "log.unread_tip": "Errors and warnings not seen in the log",
+  "display.not_installed": "{libs} not installed",
+  "display.not_installed_many": "{libs} not installed"
 }

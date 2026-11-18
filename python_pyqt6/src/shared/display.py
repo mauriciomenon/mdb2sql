@@ -70,8 +70,12 @@ def decide(env: Mapping[str, str], release: str, missing: list[str]) -> tuple[st
         return "", Notice([tr("display.none")], "", None)
     family, pretty = os_release(release)
     no_server = not env.get("DISPLAY")
-    lines = [tr("display.using_wayland"),
-             tr("display.missing", missing=", ".join(missing + ([tr("display.no_server")] if no_server else [])))]
+    # segunda linha: o fato, sem rotulo ("Servidor X nao definido (DISPLAY)", "libxcb.so.1 nao instalada")
+    facts = ([tr("display.no_server")] if no_server else []) + (
+        [tr("display.not_installed" if len(missing) == 1 else "display.not_installed_many", libs=", ".join(missing))]
+        if missing else []
+    )
+    lines = [tr("display.using_wayland"), "; ".join(facts)]
     if not family:
         return "xcb;wayland", Notice(lines, pretty, None)  # outra distribuicao: so o que falta, sem comando
     packages = [SYSTEM_LIBS[name][family] for name in missing] + ([XWAYLAND[family]] if no_server else [])

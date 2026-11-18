@@ -46,10 +46,10 @@ def test_user_choice_is_respected() -> None:
 def test_no_x_server_falls_back_to_wayland_with_the_distro_command(release, command, distro) -> None:
     platform, notice = decide(WAYLAND, release, [])
     assert platform == "xcb;wayland" and notice == Notice(
-        ["X11 unavailable; using Wayland.", "Missing: X server"], distro, command
+        ["X11 unavailable; using Wayland.", "X server not set (DISPLAY)"], distro, command
     )
     # tres linhas curtas, sem URL no texto (o link Ajuda e clicavel no dialogo)
-    assert notice.text() == f"X11 unavailable; using Wayland.\nMissing: X server\n{distro}: {command}"
+    assert notice.text() == f"X11 unavailable; using Wayland.\nX server not set (DISPLAY)\n{distro}: {command}"
 
 
 @pytest.mark.parametrize(
@@ -64,13 +64,13 @@ def test_no_x_server_falls_back_to_wayland_with_the_distro_command(release, comm
 def test_missing_libraries_are_named_with_their_packages(release, command) -> None:
     platform, notice = decide(X11, release, ["libxcb.so.1", "libEGL.so.1"])
     assert platform == "xcb;wayland" and notice.command == command
-    assert notice.lines[1] == "Missing: libxcb.so.1, libEGL.so.1"
+    assert notice.lines[1] == "libxcb.so.1, libEGL.so.1 not installed"
 
 
 def test_other_distro_lists_what_is_missing_without_a_command() -> None:
     platform, notice = decide(WAYLAND, OTHER, ["libGL.so.1"])
     assert platform == "xcb;wayland"
-    assert notice.text() == "X11 unavailable; using Wayland.\nMissing: libGL.so.1, X server"
+    assert notice.text() == "X11 unavailable; using Wayland.\nX server not set (DISPLAY); libGL.so.1 not installed"
 
 
 def test_neither_x11_nor_wayland_is_an_error() -> None:
@@ -82,8 +82,11 @@ def test_message_in_the_chosen_language() -> None:
     i18n.set_language("pt_BR")
     _, notice = decide(WAYLAND, DEBIAN, [])
     assert notice.text() == (
-        "X11 indisponível; usando Wayland.\nFalta: servidor X\nDebian GNU/Linux 13 (trixie): sudo apt install xwayland"
+        "X11 indisponível; usando Wayland.\nServidor X não definido (DISPLAY)\n"
+        "Debian GNU/Linux 13 (trixie): sudo apt install xwayland"
     )
+    _, notice = decide(X11, DEBIAN, ["libxcb.so.1"])
+    assert notice.lines[1] == "libxcb.so.1 não instalada"
 
 
 def test_missing_libs_uses_dlopen(monkeypatch) -> None:

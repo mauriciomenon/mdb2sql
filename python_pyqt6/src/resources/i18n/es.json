@@ -147,12 +147,13 @@
   "error.no_rows": "La consulta no devuelve filas",
   "display.title": "Modo de visualización",
   "display.using_wayland": "X11 no disponible; usando Wayland.",
-  "display.missing": "Falta: {missing}",
-  "display.no_server": "servidor X",
+  "display.no_server": "Servidor X no definido (DISPLAY)",
   "display.help": "Ayuda",
   "display.copy": "Copiar",
   "display.none": "Sin pantalla: X11 (DISPLAY) y Wayland (WAYLAND_DISPLAY) no disponibles.",
   "log.toggle_tip": "Mostrar u ocultar el registro (Ctrl+L)",
   "log.hide": "Ocultar registro",
-  "log.unread_tip": "Errores y avisos aún no vistos en el registro"
+  "log.unread_tip": "Errores y avisos aún no vistos en el registro",
+  "display.not_installed": "{libs} no instalada",
+  "display.not_installed_many": "{libs} no instaladas"
 }
