@@ -6,7 +6,7 @@
 
 - **Access sem nada instalado**: .accdb/.mdb abre pelo mdbtools 1.0.1 que vai dentro do exe (Windows e agora
   Linux); o driver ODBC do Access so e usado no Windows e se existir. `MDB2SQL_ACCESS_READER=mdbtools` forca o
-  mdbtools.
+  mdbtools. A leitura pelo mdbtools roda ate 4 mdb-export ao mesmo tempo (DB4: ~2x mais rapida).
 - **Conversao para SQLite**: ao abrir um Access o app grava uma vez um SQLite (arquivo, nao memoria) e le dali, com
   os tipos (inteiro, decimal exato, texto, data, booleano, binario) e os NULL. Ao fechar o banco, abrir outro ou
   sair o app pergunta: **Save...** (padrao ao lado do Access, `<nome>.sqlite`), **Delete** ou **Cancel**;

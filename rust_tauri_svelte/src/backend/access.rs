@@ -14,6 +14,8 @@ use odbc_api::{
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
 
 pub const ACCESS_DRIVER: &str = "Microsoft Access Driver (*.mdb, *.accdb)";
 pub const MDBTOOLS_VERSION: &str = "1.0.1";
@@ -384,54 +386,94 @@ fn import_mdbtools(
     ]);
     let schema = parse_pg_schema(&run(schema_cmd)?);
 
-    // na pasta dos temporarios do app, com o prefixo do processo: se o app cair, a proxima abertura apaga
-    let csv = super::converted::new_temp_path("mdbtools.csv")?;
-    let result = (|| {
-        for (i, table) in tables.iter().enumerate() {
-            progress(i, tables.len(), table);
-            let file = std::fs::File::create(&csv).map_err(|e| e.to_string())?;
-            let mut export = mdb_tool(dir, "mdb-export");
-            let iso = "%Y-%m-%d %H:%M:%S";
-            export.args(["-D", iso, "-T", iso, "-b", "hex", path, table]).stdout(file);
-            let out = export.output().map_err(|e| e.to_string())?;
-            if !out.status.success() {
-                return Err(format!("mdb-export {table}: {}", String::from_utf8_lossy(&out.stderr).trim()));
-            }
-
-            // tipos por posicao; BLOB chega em hex e e convertido depois. Sem tipos no esquema: tudo texto
-            let types = schema.get(&table.to_lowercase());
-            let typing = match types {
-                Some(t) => {
-                    let list: Vec<String> = t.iter().map(|t| literal(if t == "BLOB" { "VARCHAR" } else { t })).collect();
-                    format!("types = [{}]", list.join(", "))
+    // NIVEL TECNICO: one mdb-export process per table, up to 4 at a time (each one reads the file on its own);
+    // the DuckDB connection loads the CSVs one by one in this thread, in the order they finish. On an error the
+    // channel closes, workers stop at their next send and every CSV is deleted (here or at exit: remove_own).
+    let workers = std::thread::available_parallelism().map_or(2, |n| n.get()).clamp(1, 4);
+    let next = AtomicUsize::new(0);
+    let (sender, finished) = mpsc::channel::<(usize, Result<PathBuf, String>)>();
+    let tables = &tables;
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let (sender, next) = (sender.clone(), &next);
+            scope.spawn(move || {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    if i >= tables.len() {
+                        break;
+                    }
+                    if let Err(mpsc::SendError((_, Ok(csv)))) = sender.send((i, export_csv(dir, path, &tables[i]))) {
+                        let _ = std::fs::remove_file(csv); // a carga ja parou por erro
+                        break;
+                    }
                 }
-                None => "all_varchar = true".to_string(),
-            };
-            // allow_quoted_nulls = false: "" e texto vazio; so o campo sem nada e NULL
-            duck.execute_batch(&format!(
-                "CREATE TABLE {} AS SELECT * FROM read_csv({}, header = true, delim = ',', quote = '\"', escape = '\"', \
-                 allow_quoted_nulls = false, {typing})",
-                ident(table),
-                literal(&csv.to_string_lossy())
-            ))
-            .map_err(|e| format!("{table}: {e}"))?;
-
-            for (c, t) in types.into_iter().flatten().enumerate() {
-                if t == "BLOB" {
-                    let name: String = duck
-                        .query_row(&format!("SELECT name FROM pragma_table_info({}) WHERE cid = {c}", literal(table)), [], |r| r.get(0))
-                        .map_err(|e| e.to_string())?;
-                    duck.execute_batch(&format!(
-                        "ALTER TABLE {0} ALTER COLUMN {1} TYPE BLOB USING unhex({1})",
-                        ident(table),
-                        ident(&name)
-                    ))
-                    .map_err(|e| format!("{table}: {e}"))?;
-                }
-            }
+            });
+        }
+        drop(sender);
+        // into_iter: o receptor vive dentro deste bloco; um erro (?) o fecha antes do scope esperar os workers
+        for (done, (i, csv)) in finished.into_iter().enumerate() {
+            progress(done, tables.len(), &tables[i]);
+            let csv = csv?;
+            let loaded = load_csv(duck, &csv, &tables[i], schema.get(&tables[i].to_lowercase()));
+            let _ = std::fs::remove_file(&csv);
+            loaded?;
         }
         Ok(())
+    })
+}
+
+// NIVEL BASICO: mdb-export de uma tabela para um CSV temporario novo (pasta dos temporarios do app: se o app cair,
+// a proxima abertura apaga)
+fn export_csv(dir: &Path, path: &str, table: &str) -> Result<PathBuf, String> {
+    let csv = super::converted::new_temp_path("mdbtools.csv")?;
+    let written = (|| {
+        let file = std::fs::File::create(&csv).map_err(|e| e.to_string())?;
+        let mut export = mdb_tool(dir, "mdb-export");
+        let iso = "%Y-%m-%d %H:%M:%S";
+        export.args(["-D", iso, "-T", iso, "-b", "hex", path, table]).stdout(file);
+        let out = export.output().map_err(|e| e.to_string())?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(format!("mdb-export {table}: {}", String::from_utf8_lossy(&out.stderr).trim()))
+        }
     })();
-    let _ = std::fs::remove_file(&csv);
-    result
+    match written {
+        Ok(()) => Ok(csv),
+        Err(e) => {
+            let _ = std::fs::remove_file(&csv);
+            Err(e)
+        }
+    }
+}
+
+// NIVEL BASICO: CSV do mdb-export vira tabela do DuckDB com os tipos do mdb-schema (por posicao); BLOB chega em hex
+// e e convertido depois. Sem tipos no esquema: tudo texto
+fn load_csv(duck: &duckdb::Connection, csv: &Path, table: &str, types: Option<&Vec<String>>) -> Result<(), String> {
+    let typing = match types {
+        Some(t) => {
+            let list: Vec<String> = t.iter().map(|t| literal(if t == "BLOB" { "VARCHAR" } else { t })).collect();
+            format!("types = [{}]", list.join(", "))
+        }
+        None => "all_varchar = true".to_string(),
+    };
+    // allow_quoted_nulls = false: "" e texto vazio; so o campo sem nada e NULL
+    duck.execute_batch(&format!(
+        "CREATE TABLE {} AS SELECT * FROM read_csv({}, header = true, delim = ',', quote = '\"', escape = '\"', \
+         allow_quoted_nulls = false, {typing})",
+        ident(table),
+        literal(&csv.to_string_lossy())
+    ))
+    .map_err(|e| format!("{table}: {e}"))?;
+
+    for (c, t) in types.into_iter().flatten().enumerate() {
+        if t == "BLOB" {
+            let name: String = duck
+                .query_row(&format!("SELECT name FROM pragma_table_info({}) WHERE cid = {c}", literal(table)), [], |r| r.get(0))
+                .map_err(|e| e.to_string())?;
+            duck.execute_batch(&format!("ALTER TABLE {0} ALTER COLUMN {1} TYPE BLOB USING unhex({1})", ident(table), ident(&name)))
+                .map_err(|e| format!("{table}: {e}"))?;
+        }
+    }
+    Ok(())
 }

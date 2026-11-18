@@ -129,13 +129,14 @@ SQLite 3.54.1, mdbtools 1.0.1. Copias de bancos reais do NMR5 e um .mdb pequeno 
 | --- | --- |
 | `2026-07-14 DB4.accdb` (115 MB) pelo mdbtools -> SQLite, x conversoes de referencia (.duckdb e .sqlite) | 287 tabelas e 113.962 linhas, contagem igual tabela a tabela |
 | O mesmo arquivo pelo driver ODBC x mdbtools | iguais celula a celula nas 287 tabelas |
-| `2026-06-25 DB3 1.accdb` pelo mdbtools e pelo ODBC x referencias | @DB3@ |
+| `2026-06-25 DB3 1.accdb` (115 MB) pelo mdbtools e pelo ODBC x referencias | 287 tabelas e 113.826 linhas, contagem igual tabela a tabela; ODBC x mdbtools iguais celula a celula |
 | `tests/data/sample.mdb` (versionado, gerado por `scripts/make_test_mdb.ps1`) pelo mdbtools | tipos e NULL preservados no SQLite e na tela (`cargo test`, Windows e Debian) |
 | Pesquisa `tension de campo` no DB4 | acha RTUNO 50 / PNTNO 9 em RANGER_SOANLG, fora das 100 primeiras linhas |
 
 ## Limites conhecidos
 
-- Pelo mdbtools o Access demora mais que pelo ODBC (DB4: @TEMPO@ para ler, gravar o SQLite e carregar); salvar o
+- Pelo mdbtools o Access demora mais que pelo ODBC (DB4: ~1,5 min pelo mdbtools, com ate 4 mdb-export ao mesmo
+  tempo, e ~0,5 min pelo ODBC, somando ler, gravar o SQLite e carregar, medidos com a maquina ocupada); salvar o
   SQLite e abri-lo nas proximas vezes evita reler o Access.
 - O mdbtools nao distingue texto vazio de NULL: um campo `""` do Access chega como NULL (pelo ODBC chega `""`).
 - SQLite e Access ficam em memoria enquanto abertos (RAM ~ tamanho dos dados); um banco de varios GB nao cabe.
