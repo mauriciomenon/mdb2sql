@@ -182,6 +182,8 @@ def test_log_panel_collapsed_shows_the_most_important_line(qtbot) -> None:
     # erro > aviso > ultima acao: com o painel recolhido, o erro fica na barra (destacado) mesmo depois de outra acao
     win._set_message(win.info_label, "SQL error: boom", error=True)
     win._set_message(win.info_label, "Export cancelled: x.csv not written", warning=True)
+    for n in range(40):  # historico maior que o painel: ao abrir, o fim (a linha mais nova) fica visivel
+        win.log(f"line {n}")
     win._set_message(win.status_label, "Loaded: a.duckdb (1 tables) via DuckDB")
     assert win.status_label.text() == "SQL error: boom" and "color" in win.status_label.styleSheet()
     assert win.log_unread.text() == "(2)" and not win.log_unread.isHidden()
@@ -191,6 +193,8 @@ def test_log_panel_collapsed_shows_the_most_important_line(qtbot) -> None:
     assert not win.log_dock.isHidden() and win.log_unread.isHidden() and QSettings().value("log_visible") in (True, "true")
     assert win.log_toggle.arrowType() == Qt.ArrowType.DownArrow
     assert "SQL error: boom" in win.log_view.toPlainText()
+    bar = win.log_view.verticalScrollBar()
+    qtbot.waitUntil(lambda: bar.maximum() > 0 and bar.value() == bar.maximum(), timeout=5000)
     assert win.log_dock.maximumHeight() <= max(round(win.height() * 0.25), win.log_view.minimumHeight() + 32)
     win.log_collapse.click()
     assert win.log_dock.isHidden() and QSettings().value("log_visible") in (False, "false")

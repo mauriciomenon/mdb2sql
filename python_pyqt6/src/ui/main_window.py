@@ -479,6 +479,9 @@ class MainWindow(QMainWindow):
             # ~10% da altura (minimo 3 linhas; maximo 25%, em resizeEvent); a borda continua arrastavel
             self.resizeDocks([self.log_dock], [max(self.log_view.minimumHeight() + 32, round(self.height() * 0.10))],
                              Qt.Orientation.Vertical)
+            # abre no fim: a ultima linha (o erro que a barra de status mostrava) fica visivel; depois do layout
+            bar = self.log_view.verticalScrollBar()
+            QTimer.singleShot(0, lambda: bar.setValue(bar.maximum()))
         self._refresh_log_status()
 
     def _refresh_log_status(self) -> None:
