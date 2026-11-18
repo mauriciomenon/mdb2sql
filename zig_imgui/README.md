@@ -220,6 +220,9 @@ the public mdbtools test data, and the small `testdata/mdb2sql_test.mdb` kept in
 - The single executable (Windows) needs `%LOCALAPPDATA%` to be writable.
 - The open and save dialogs block the window while open (running work continues). On Linux without `zenity` there
   is no dialog: type the path in the box.
+- On Linux the window uses X11 (XWayland on a Wayland desktop); native Wayland only when there is no X11. Under
+  native Wayland GLFW decorates the window through libdecor/GTK, where two early WSLg starts crashed
+  (README-BUILD.txt, section 7).
 - The SQL result search and the table filter ignore case and accents of ASCII and Latin-1 letters only; the Data
   search, done by the database, covers all of Unicode.
 - Excel keeps at most 32,767 characters per cell and 16,384 columns per sheet (the status line says how many were

@@ -98,7 +98,8 @@ Debian - dist/debian/amd64/
   zig build test --summary all        inclui o .mdb versionado lido pelo mdbtools (o build poe os dois na pasta do teste)
   zig build -Doptimize=ReleaseSafe -Dconsole=true     exe de release que mantem o console (Windows)
   Teste opcional com um Access real (use uma COPIA): conversao pelos leitores, contagens contra o conversor de
-  referencia, pesquisa na tabela inteira e exportacoes:
+  referencia, pesquisa na tabela inteira, tipos declarados no SQLite e 6 consultas com filtro numerico, ORDER BY e
+  SUM comparadas (SQL do programa e SQLite direto, convertido e referencia) e exportacoes:
     $env:MDB2SQL_TEST_ACCDB = 'C:\copia\DB4.accdb'
     $env:MDB2SQL_TEST_REF = 'C:\copia\ref_DB4.sqlite'    (opcional: .sqlite ou .duckdb do conversor de referencia)
     $env:MDB2SQL_TEST_READERS = 'mdbtools'               (opcional; padrao: odbc,mdbtools no Windows)
@@ -106,6 +107,15 @@ Debian - dist/debian/amd64/
     zig build test -Doptimize=ReleaseSafe --summary all
   Variaveis do programa: MDB2SQL_DB_PATH (arquivo aberto ao iniciar), MDB2SQL_ACCESS_READER=odbc|mdbtools|auto.
   Temporarios do programa: <TEMP>/mdb2sql-zig/<pid>-<n>.sqlite (o SQLite convertido) e os CSVs do mdbtools.
+
+  Linux, janela: o programa pede ao GLFW o X11 (XWayland num desktop Wayland) e so usa o Wayland nativo se nao
+  houver X11. Motivo: no Wayland o GLFW decora a janela pelo libdecor, que carrega o GTK (LD_DEBUG=libs mostrava
+  libdecor-0, libgtk-3, libgdk-3); no WSLg, logo depois de a VM do WSL reiniciar, 2 de 8 inicios do build 258 cairam
+  ("Gdk-CRITICAL gdk_seat_get_keyboard: assertion GDK_IS_SEAT failed" e em seguida "Segmentation fault at address
+  0x40", antes do 1o quadro). Sem backtrace: a queda nao se repetiu em 26 inicios seguintes (20 deles, metade sob
+  gdb), entao o quadro exato nao foi capturado; a mensagem do GDK aponta para o plugin GTK do libdecor. Com o X11
+  (commit 9abc9f3): GTK/libdecor/Wayland nao sao mais carregados e 20 de 20 inicios passaram (10 sob gdb). Se
+  cair de novo: gdb -batch -ex run -ex bt --args mdb2sql-zig ... e anote o quadro.
 
   Capturas de tela (auxiliar de teste, fora da interface): o programa abre o banco sem janela visivel, sem mouse
   nem foco, passa sozinho pelos estados e grava um PNG por estado; nao le nem grava as configuracoes salvas e
