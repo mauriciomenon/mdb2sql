@@ -32,9 +32,11 @@ Requisitos (Windows):
   gh autenticado (gh auth login) enquanto o repositorio mdbtools_custom for privado: o download anonimo da
   release falha e o setup_tools.ps1 tenta o "gh release download".
 Requisitos (Debian 13 amd64, ou o Debian do WSL):
-  uv, curl e dpkg-deb no PATH (sudo apt install curl dpkg; uv: https://docs.astral.sh/uv/). Para rodar os testes e
+  curl, tar e dpkg-deb no PATH (sudo apt install curl dpkg). Para rodar os testes e
   o app: as bibliotecas do "Depends" do .deb (Qt xcb/egl, glib, fontconfig), presentes numa instalacao desktop.
   scripts/setup_tools_linux.sh baixa para .tools/ (sha256 conferido):
+  .tools/uv/           uv 0.13.7 (o mesmo do build Windows), uv-x86_64-unknown-linux-gnu.tar.gz,
+                       sha256 c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83
   .tools/python/       Python 3.12.16, via uv
   .tools/mdbtools/     mdb-tables, mdb-schema, mdb-export e libmdb.so.3 dos pacotes Debian 13
                        mdbtools_1.0.1-0.1_amd64.deb   sha256 77b2d317b9429f22de27e903586228836c013c81c8b6ed3a990ea8bf94b3bc52

@@ -24,14 +24,14 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
     git status --short --untracked-files=no >&2
     exit 2
 fi
-for tool in uv dpkg-deb dpkg-query curl; do
-    command -v "$tool" >/dev/null || { echo "$tool nao encontrado (sudo apt install dpkg curl; uv: https://docs.astral.sh/uv/)" >&2; exit 3; }
+for tool in dpkg-deb dpkg-query curl tar; do
+    command -v "$tool" >/dev/null || { echo "$tool nao encontrado (sudo apt install dpkg curl tar)" >&2; exit 3; }
 done
 echo "Source: $(git describe --tags --always) ($(git rev-parse HEAD))"
 
 ./clean.sh
 scripts/setup_tools_linux.sh
-export UV_PYTHON_INSTALL_DIR="$root_dir/.tools/python" UV_PYTHON_PREFERENCE=only-managed UV_LOCKED=1
+export PATH="$root_dir/.tools/uv:$PATH" UV_PYTHON_INSTALL_DIR="$root_dir/.tools/python" UV_PYTHON_PREFERENCE=only-managed UV_LOCKED=1
 
 uv sync
 QT_QPA_PLATFORM=offscreen uv run --no-sync pytest -q -p no:cacheprovider

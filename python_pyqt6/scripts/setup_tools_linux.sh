@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # Debian amd64: baixa para .tools/ as ferramentas fixas, com sha256 conferido (equivale ao setup_tools.ps1):
+#   uv/          uv fixo (o do sistema pode nao conhecer o Python de .python-version)
 #   python/      Python de .python-version (via uv, que confere o sha256)
 #   mdbtools/    mdb-tables/mdb-schema/mdb-export + libmdb.so.3 dos pacotes Debian 13 (vao no pacote do app)
 #   duckdb_ext/  extensao sqlite do DuckDB linux_amd64 (le e grava .sqlite offline; vai no pacote)
-# Chamado por ../build_debian_amd64.sh; sozinho: scripts/setup_tools_linux.sh
+# Chamado por ../build_debian_amd64.sh (que poe .tools/uv no PATH); sozinho: scripts/setup_tools_linux.sh
 set -Eeuo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root_dir"
 
-command -v uv >/dev/null || { echo "uv nao encontrado no PATH (https://docs.astral.sh/uv/)" >&2; exit 3; }
-export UV_PYTHON_INSTALL_DIR="$root_dir/.tools/python"
-uv python install "$(head -n1 .python-version)" --no-bin
-uv python find "$(head -n1 .python-version)" --managed-python
-
-# Versoes fixas: mdbtools 1.0.1 de Debian 13 (o mesmo 1.0.1 do exe do Windows); extensao da versao do DuckDB do uv.lock
+# Versoes fixas: uv igual ao do build Windows; mdbtools 1.0.1 de Debian 13 (o mesmo 1.0.1 do exe do Windows);
+# extensao sqlite da versao do DuckDB do uv.lock
+uv_version="0.13.7"
+uv_url="https://github.com/astral-sh/uv/releases/download/$uv_version/uv-x86_64-unknown-linux-gnu.tar.gz"
+uv_sha="c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83"
 debian_pool="https://deb.debian.org/debian/pool/main/m/mdbtools"
 mdbtools_debs=(
     "mdbtools_1.0.1-0.1_amd64.deb 77b2d317b9429f22de27e903586228836c013c81c8b6ed3a990ea8bf94b3bc52"
@@ -35,6 +35,19 @@ fetch() {
         exit 1
     fi
 }
+
+if [[ "$(cat .tools/uv/.sha256 2>/dev/null)" != "$uv_sha" ]]; then
+    rm -rf .tools/uv
+    mkdir -p .tools/uv
+    fetch "$uv_url" .tools/uv/uv.tar.gz "$uv_sha"
+    tar -xzf .tools/uv/uv.tar.gz -C .tools/uv --strip-components=1
+    rm .tools/uv/uv.tar.gz
+    printf '%s' "$uv_sha" >.tools/uv/.sha256
+fi
+export PATH="$root_dir/.tools/uv:$PATH" UV_PYTHON_INSTALL_DIR="$root_dir/.tools/python"
+uv --version
+uv python install "$(head -n1 .python-version)" --no-bin
+uv python find "$(head -n1 .python-version)" --managed-python
 
 stamp="$(printf '%s\n' "${mdbtools_debs[@]}" | sha256sum | cut -d' ' -f1)"
 if [[ "$(cat .tools/mdbtools/.sha256 2>/dev/null)" != "$stamp" ]]; then
