@@ -5,6 +5,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const options = @import("build_options");
+const i18n = @import("i18n.zig");
 
 pub const version: []const u8 = options.version;
 pub const zig_version = builtin.zig_version_string;
@@ -12,10 +13,8 @@ pub const zig_version = builtin.zig_version_string;
 pub const name = "mdb2sql";
 // Titulo curto da janela e das caixas de mensagem; os detalhes ficam no Sobre
 pub const window_title = name ++ " " ++ version ++ " - Zig";
-pub const tagline = "Opens Access, SQLite and DuckDB databases, searches them and exports to DuckDB, SQLite, Excel and CSV.";
-pub const access_engine = "Microsoft Access ODBC driver or mdbtools " ++ options.mdbtools_version;
 pub const author = "Mauricio Menon";
-pub const license = "GPL v2 or later (GPL-2.0-or-later)";
+pub const mdbtools_version = options.mdbtools_version;
 
 pub const Link = struct { label: [:0]const u8, url: [:0]const u8 };
 pub const links = [_]Link{
@@ -46,7 +45,7 @@ pub fn stackText(buf: []u8, imgui: []const u8) []const u8 {
 
 test "window title is short and carries the zon version" {
     _ = try std.SemanticVersion.parse(version);
-    try std.testing.expectEqualStrings("mdb2sql 1.2.0 - Zig", window_title); // muda junto com build.zig.zon
+    try std.testing.expectEqualStrings("mdb2sql 1.3.0 - Zig", window_title); // muda junto com build.zig.zon
 }
 
 test "only the two About links may be opened" {
@@ -54,35 +53,39 @@ test "only the two About links may be opened" {
     try std.testing.expectEqualStrings("https://gitlab.com/mauricio.menon/mdb2sql", allowedLink("https://gitlab.com/mauricio.menon/mdb2sql").?);
     try std.testing.expectEqual(2, links.len);
     for ([_][]const u8{
-        "",                                                "https://github.com/mauriciomenon/mdb2sql/",
-        "https://github.com/mauriciomenon/mdb2sql?x=1",    "http://github.com/mauriciomenon/mdb2sql",
-        "HTTPS://GITHUB.COM/mauriciomenon/mdb2sql",        "https://github.com/mauriciomenon/mdb2sql\x00calc.exe",
-        "https://gitlab.com/mauricio.menon/mdb2sql.evil",  "file:///C:/Windows/System32/calc.exe",
-        "C:\\Windows\\System32\\calc.exe",                 "https://example.com",
+        "",                                               "https://github.com/mauriciomenon/mdb2sql/",
+        "https://github.com/mauriciomenon/mdb2sql?x=1",   "http://github.com/mauriciomenon/mdb2sql",
+        "HTTPS://GITHUB.COM/mauriciomenon/mdb2sql",       "https://github.com/mauriciomenon/mdb2sql\x00calc.exe",
+        "https://gitlab.com/mauricio.menon/mdb2sql.evil", "file:///C:/Windows/System32/calc.exe",
+        "C:\\Windows\\System32\\calc.exe",                "https://example.com",
     }) |bad| try std.testing.expect(allowedLink(bad) == null);
 }
 
-test "about texts: build, stack with versions, Access engine" {
+test "about texts: build, stack with versions" {
     var bb: [64]u8 = undefined;
     try std.testing.expectEqualStrings("dev", buildText(&bb, "", ""));
     try std.testing.expectEqualStrings("57 (2026-11-15)", buildText(&bb, "57", "2026-11-15"));
     var sb: [96]u8 = undefined;
     var want: [96]u8 = undefined;
     try std.testing.expectEqualStrings(try std.fmt.bufPrint(&want, "Zig {s} + Dear ImGui 1.93.0", .{zig_version}), stackText(&sb, "1.93.0"));
-    try std.testing.expect(std.mem.startsWith(u8, access_engine, "Microsoft Access ODBC driver or mdbtools 1."));
 }
 
 test "UI texts: one Export button, no copyright line, no lecturing hints" {
     const ui = @embedFile("main.zig");
-    try std.testing.expectEqual(1, std.mem.count(u8, ui, "button(\"Export")); // o Export... da barra de cima
-    try std.testing.expectEqual(1, std.mem.count(u8, ui, "button(\"Columns...\")"));
+    try std.testing.expectEqual(1, std.mem.count(u8, ui, "button(tr(\"export_button\"))")); // o Exportar... da barra de cima
+    try std.testing.expectEqual(1, std.mem.count(u8, ui, "button(tr(\"columns_button\"))"));
+    // cada exportacao aparece uma vez (o botao e o menu Arquivo > Exportar usam a mesma lista exportItems)
+    inline for (.{ "export_db_sqlite", "export_db_xlsx", "export_db_duckdb" }) |k|
+        try std.testing.expectEqual(1, std.mem.count(u8, ui, "tr(\"" ++ k ++ "\")"));
     for ([_][]const u8{ "Copyright", "(C) 20", "read-only\")", "not available\")", "any order, ignores", "Remember", "Please ", "Make sure" }) |bad| {
         try std.testing.expect(std.mem.indexOf(u8, ui, bad) == null);
     }
 }
 
-test "license: GPL v2 or later in About, LICENSE file is the GPL v2 text" {
-    try std.testing.expectEqualStrings("GPL v2 or later (GPL-2.0-or-later)", license);
+test "license: GPL v2 or later in About (three languages), LICENSE file is the GPL v2 text" {
+    try std.testing.expectEqualStrings("GPL v2 or later (GPL-2.0-or-later)", i18n.catalogs[0].about_license_text);
+    try std.testing.expectEqualStrings("GPL v2 ou posterior (GPL-2.0-or-later)", i18n.catalogs[1].about_license_text);
+    try std.testing.expectEqualStrings("GPL v2 o posterior (GPL-2.0-or-later)", i18n.catalogs[2].about_license_text);
     const text = @embedFile("LICENSE"); // o mesmo arquivo que vai no zip e no instalador
     var lines = std.mem.tokenizeAny(u8, text, "\r\n");
     try std.testing.expectEqualStrings("GNU GENERAL PUBLIC LICENSE", std.mem.trim(u8, lines.next().?, " "));

@@ -32,7 +32,10 @@ pub fn parse(args: []const []const u8) error{Usage}!?Options {
 }
 
 // Roteiro das capturas: cada passo leva a interface a um estado e grava <nome>.png no tamanho dado
-pub const Action = enum { show, filter, columns, close_columns, other_table, about };
+// prompt: pergunta do SQLite convertido (fechar o arquivo); prompt_delete: responde Apagar e confere que o
+// temporario sumiu. Os passos de idioma trocam o idioma da tela (a captura comeca em ingles).
+// display_warning: aviso do Linux sem X11 na abertura (pulado quando nao ha aviso).
+pub const Action = enum { display_warning, log_error, log_error_open, exit_esc, show, filter, columns, close_columns, other_table, about, log, settings_menu, lang_en, lang_pt_br, lang_es, prompt, prompt_delete };
 pub const Step = struct { name: []const u8, action: Action, w: u32, h: u32 };
 pub const default_size = [2]u32{ 1280, 800 }; // tamanho em que o programa abre
 pub const max_size = [2]u32{ 1920, 1129 }; // area de trabalho de 1920x1200 menos a barra de tarefas e o titulo
@@ -43,6 +46,7 @@ pub const first_table = "RANGER_SOSTAT";
 pub const second_table = "RANGER_SOANLG";
 
 pub const plan = [_]Step{
+    .{ .name = "0_display_warning", .action = .display_warning, .w = default_size[0], .h = default_size[1] },
     .{ .name = "a_table", .action = .show, .w = default_size[0], .h = default_size[1] },
     .{ .name = "d_filter", .action = .filter, .w = default_size[0], .h = default_size[1] },
     .{ .name = "c_columns_default", .action = .columns, .w = default_size[0], .h = default_size[1] },
@@ -52,7 +56,25 @@ pub const plan = [_]Step{
     .{ .name = "f_narrow", .action = .close_columns, .w = narrow_size[0], .h = narrow_size[1] },
     .{ .name = "e_soanlg", .action = .other_table, .w = default_size[0], .h = default_size[1] },
     .{ .name = "e_soanlg_max", .action = .other_table, .w = max_size[0], .h = max_size[1] },
+    .{ .name = "g_log", .action = .log, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "h_menu_language", .action = .settings_menu, .w = default_size[0], .h = default_size[1] },
     .{ .name = "b_about", .action = .about, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "j_prompt_en", .action = .prompt, .w = default_size[0], .h = default_size[1] },
+    // fechar o programa com o Access convertido: a pergunta aparece e o Esc a fecha (o programa continua aberto)
+    .{ .name = "j_exit_esc", .action = .exit_esc, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "i_table_pt_br", .action = .lang_pt_br, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "b_about_pt_br", .action = .about, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "j_prompt_pt_br", .action = .prompt, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "g_log_pt_br", .action = .log, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "i_table_es", .action = .lang_es, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "b_about_es", .action = .about, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "j_prompt_es", .action = .prompt, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "i_table_en", .action = .lang_en, .w = default_size[0], .h = default_size[1] },
+    // erro real (SQL errado) com o Log recolhido (a barra mostra o erro) e depois aberto
+    .{ .name = "l_log_collapsed_error", .action = .log_error, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "l_log_open_error", .action = .log_error_open, .w = default_size[0], .h = default_size[1] },
+    // Apagar; com MDB2SQL_CAPTURE_SAVE=1, Salvar (na pasta das capturas, <origem>.sqlite)
+    .{ .name = "k_closed", .action = .prompt_delete, .w = default_size[0], .h = default_size[1] },
 };
 
 // PNG RGBA 8 bits. `pixels` vem do glReadPixels: linhas de baixo para cima, 4 bytes por pixel.

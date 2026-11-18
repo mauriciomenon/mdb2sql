@@ -3,3 +3,4 @@ dist/
 .zig-cache/
 zig-out/
 zig-pkg/
+!testdata/mdb2sql_test.mdb

@@ -1,297 +1,332 @@
 # MDB2SQL (Zig + Dear ImGui)
 
-Desktop program to open Microsoft Access (`.mdb`, `.accdb`), SQLite (`.sqlite`, `.sqlite3`) and DuckDB
-(`.duckdb`, `.db`) databases, browse and search their tables, run SQL, and export them to DuckDB, SQLite,
-Excel (`.xlsx`, one sheet per table) and CSV. Written in Zig with Dear ImGui (GLFW + OpenGL 3.3) and the
-DuckDB C API. Version **1.2.0**. Windows 10/11 x64.
+Desktop program to open Microsoft Access (`.accdb`, `.mdb`), SQLite (`.sqlite`, `.sqlite3`, `.db`) and DuckDB
+(`.duckdb`) databases, browse and search their tables, run SQL, and export them to SQLite, Excel (`.xlsx`, one sheet
+per table), CSV and DuckDB. Written in Zig with Dear ImGui (GLFW + OpenGL 3.3) and the DuckDB C API. Version
+**1.3.0**. Windows 10/11 x64 and Debian 13 amd64. English (default), Portuguese (Brazil) and Spanish.
 
-The file you open is never changed: DuckDB and SQLite files are attached read-only, and an Access file is
-read once and converted into an in-memory DuckDB database.
+The file you open is never changed. An Access file is read once, without Microsoft Access, by the **mdbtools that
+ship with the program**, and converted into a SQLite file; the program then reads that SQLite file. SQLite and DuckDB
+files are attached read-only.
 
 ## Which file to download
 
-Release `zig_imgui-v1.2.0`, all three contain the same program:
+Release `zig_imgui-v1.3.0`; every file holds the same program:
 
 | File | What it is | When to use it |
 | --- | --- | --- |
-| `mdb2sql-1.2.0-w11-amd64-zig-imgui.exe` | single executable (about 37 MB) | copy anywhere and double-click; nothing to install |
-| `mdb2sql-1.2.0-w11-amd64-zig-imgui.zip` | the program folder | unzip anywhere and run `mdb2sql-zig.exe`; keep the files together |
-| `mdb2sql-1.2.0-w11-amd64-zig-imgui-installer.exe` | installer (NSIS) | installs for the current user (no administrator), Start menu shortcut, uninstall in Settings > Apps |
+| `mdb2sql-1.3.0-w11-amd64-zig-imgui.exe` | single executable (Windows) | copy anywhere and double-click; nothing to install |
+| `mdb2sql-1.3.0-w11-amd64-zig-imgui.zip` | the program folder (Windows) | unzip anywhere and run `mdb2sql-zig.exe`; keep the files together |
+| `mdb2sql-1.3.0-w11-amd64-zig-imgui-installer.exe` | installer (NSIS) | installs for the current user (no administrator), Start menu shortcut, uninstall in Settings > Apps |
+| `mdb2sql-1.3.0-debian-amd64-zig-imgui.deb` | Debian package | `sudo apt install ./mdb2sql-1.3.0-debian-amd64-zig-imgui.deb`; command `mdb2sql-zig`, menu entry |
+| `mdb2sql-1.3.0-debian-amd64-zig-imgui.zip` | the program folder (Linux) | unzip and run `mdb2sql-zig`; needs the runtime packages listed below |
 
 The single executable carries the program folder compressed inside it. On its first run it extracts the folder
-once to `%LOCALAPPDATA%\mdb2sql\zig-imgui-1.2.0-<hash>\` (about 110 MB, a few seconds) and starts the program
-from there; the next runs start at once. Older `zig-imgui-*` folders there are deleted automatically (other
-programs' folders in `%LOCALAPPDATA%\mdb2sql\` are left alone).
+once to `%LOCALAPPDATA%\mdb2sql\zig-imgui-1.3.0-<hash>\` and starts the program from there; the next runs start at
+once. Older `zig-imgui-*` folders there are deleted automatically.
 
-The program folder (zip, installer, cache) holds `mdb2sql-zig.exe`, `duckdb.dll` (DuckDB 2.0.0),
-`sqlite_scanner.duckdb_extension` (DuckDB's SQLite reader, loaded from disk, never downloaded) and
-`mdbtools\` (static mdbtools 1.0.1: `mdb-tables`, `mdb-schema`, `mdb-export`, with their GPL/LGPL license
-files).
+The program folder holds `mdb2sql-zig(.exe)`, the DuckDB 2.0.0 library (`duckdb.dll` / `libduckdb.so`),
+`sqlite_scanner.duckdb_extension` (DuckDB's SQLite reader and writer, loaded from disk, never downloaded) and
+`mdbtools/` (mdbtools 1.0.1 built statically: `mdb-tables`, `mdb-schema`, `mdb-export`, with their GPL/LGPL license
+files). Nothing else is needed to open Access files.
 
 ## Requirements
 
-- Windows 10 or 11, 64 bits, with a graphics driver that supports OpenGL 3.3 (any normal PC; a remote desktop
+- Windows 10 or 11, 64 bits, or Debian 13 amd64, with a graphics driver that supports OpenGL 3.3 (a remote desktop
   session or a virtual machine without 3D may fail to start, and then a message says so).
-- Nothing else for DuckDB and SQLite files.
-- Access files (`.mdb`, `.accdb`) are read, in this order:
-  1. by the **Microsoft Access ODBC driver** "Microsoft Access Driver (*.mdb, *.accdb)", 64-bit, when it is
-     installed (it comes with 64-bit Office or with the free "Microsoft Access Database Engine 2016
-     Redistributable", x64). Optional;
-  2. otherwise by the **mdbtools** that ship with the program (no installation);
-  3. if neither is available (for example the `mdbtools` folder was deleted), a message tells what to install.
+- Debian: the `.deb` pulls in what the program loads at run time: `libgl1`, `libx11-6`, `libxrandr2`,
+  `libxinerama1`, `libxcursor1`, `libxi6` (GLFW), `zenity` (open and save dialogs), `xdg-utils` (links in About),
+  `fonts-dejavu-core` (text with accents), plus `libc6`, `libstdc++6` and `libgcc-s1` found by `dpkg-shlibdeps`.
+  With the `.zip`, install those packages yourself.
+- Access files (`.accdb`, `.mdb`), in this order:
+  1. on Windows, the **Microsoft Access ODBC driver** "Microsoft Access Driver (*.mdb, *.accdb)", 64-bit, when it is
+     installed (64-bit Office or the free "Microsoft Access Database Engine 2016 Redistributable"). Optional and
+     faster (DB4: about 7 s instead of about 40 s, see "Performance");
+  2. otherwise the **mdbtools** that ship with the program (no installation, no driver, nothing from the computer);
+  3. if neither is available (the `mdbtools` folder was deleted), a message says so.
 
-  The status line says which way was used ("opened with Access ODBC" or "opened with mdbtools").
-  `MDB2SQL_ACCESS_READER=odbc` or `=mdbtools` forces one of them (`auto` or unset: the order above).
+  `MDB2SQL_ACCESS_READER=mdbtools` forces mdbtools (also on a computer with the ODBC driver), `=odbc` forces ODBC,
+  `auto` or unset: the order above. The status line says which way was used.
+
+## Linux: X11 and Wayland
+
+The program opens its window with X11 (on a Wayland desktop, through XWayland). Native Wayland is only the fallback:
+when X11 is not available (no `DISPLAY`, or one of the X11 libraries below is missing), the program opens on Wayland
+and shows a **Display mode** warning at every start (also in **View > Log**) naming what is missing and the command
+to install it. With neither X11 nor Wayland it prints the reason on the terminal and exits with code 3.
+
+To choose yourself (no warning): `MDB2SQL_DISPLAY=x11` or `MDB2SQL_DISPLAY=wayland`; an empty `WAYLAND_DISPLAY=`
+also means X11 only.
+
+| What X11 needs | Debian / Ubuntu (`apt install`) | Fedora / RHEL (`dnf install`) | Arch (`pacman -S`) | openSUSE (`zypper install`) |
+|---|---|---|---|---|
+| X server on a Wayland desktop | `xwayland` | `xorg-x11-server-Xwayland` | `xorg-xwayland` | `xwayland` |
+| `libX11.so.6` | `libx11-6` | `libX11` | `libx11` | `libX11-6` |
+| `libXrandr.so.2` | `libxrandr2` | `libXrandr` | `libxrandr` | `libXrandr2` |
+| `libXinerama.so.1` | `libxinerama1` | `libXinerama` | `libxinerama` | `libXinerama1` |
+| `libXcursor.so.1` | `libxcursor1` | `libXcursor` | `libxcursor` | `libXcursor1` |
+| `libXi.so.6` | `libxi6` | `libXi` | `libxi` | `libXi6` |
+
+The `.deb` already depends on these libraries; on Debian the warning normally means the desktop runs without
+XWayland (`sudo apt install xwayland`). Why X11 first: under native Wayland GLFW draws the window frame through
+libdecor, which loads GTK; two early starts on WSLg crashed inside it (README-BUILD.txt, section 7).
+
+## Access files: one conversion to SQLite
+
+Opening an `.accdb`/`.mdb` converts every table once into a temporary SQLite file in `<TEMP>/mdb2sql-zig/` and the
+program reads that file (the status line says `read with mdbtools, converted to SQLite`). Types are kept as SQLite
+stores them: integers (`Byte`, `Integer`, `Long Integer`, `Numeric (p, 0)` up to 18 digits) as INTEGER (declared
+BIGINT), `Single`, `Double`, `Currency` and the other `Numeric` as REAL (declared DOUBLE; exact up to 15 significant
+digits), dates as ISO text (`2026-07-14 10:30:00`, declared VARCHAR: ISO text sorts and compares in date order),
+Yes/No as 0/1, OLE/binary as BLOB, text as TEXT; NULL stays NULL. Every number has numeric affinity, so a filter
+(`WHERE SCALE > 100`), `ORDER BY` and `SUM` compare numbers, in the program and in any tool that opens the saved file.
+
+When the file is closed (**File > Close**), another file is opened, or the program exits, a short dialog asks what to
+do with that SQLite file:
+
+- **Save...** - save dialog, by default next to the source file as `<source>.sqlite`;
+- **Delete** - the temporary file is deleted;
+- **Cancel** - nothing is closed (the program stays open).
+
+The first answer is remembered until the program closes (a remembered **Save** writes into the same folder; if that
+name already exists the save dialog opens). Temporary files are never left behind: they are deleted on **Delete**,
+and if the program crashes, the next start deletes the temporaries of programs that are no longer running.
 
 ## How to use
 
 ### Opening a file
 
-- **File > Open...** (Ctrl+O) or **Browse...**: Windows dialog, filtered by database type.
-- Type or paste the path in the box and press **Open** (or Enter).
-- Drag the file from Explorer onto the window.
-- Command line: `mdb2sql-zig.exe "C:\data\file.accdb"` (also works with the single exe and the shortcut).
-- Environment variable `MDB2SQL_DB_PATH`: opened at start when no file is given on the command line.
+- **File > Open...** (Ctrl+O) or **Browse...**: open dialog filtered by type (Access first, then SQLite and DuckDB);
+  Windows dialog on Windows, `zenity` on Linux.
+- Type or paste the path in the box and press **Open** (or Enter). Drag the file onto the window.
+- Command line: `mdb2sql-zig "C:\data\file.accdb"`; environment variable `MDB2SQL_DB_PATH` when no file is given.
 
-While a file opens, the status line shows the time, a progress bar (tables converted or counted) and
-**Cancel**. When it is done it shows `Loaded: <file> (<n> tables) - opened with <DuckDB | SQLite | Access ODBC |
-mdbtools>`.
+While a file opens, the status line shows the time, a progress bar (tables converted or counted) and **Cancel**.
 
 ### Window
 
-- **Table list** (left): every table with its row count; the box on top filters by name (same word rule as
-  the searches). Click a table to load it.
-- **Data** tab: 100 rows per page, **< Prev** / **Next >**, search box (Enter), click a column header to sort
-  (click again: descending, again: no sort). The search runs in the database over the whole table, not only
-  the page shown. **Export...** (top bar) > **Current table to CSV / Excel** exports the whole table with the
-  search, filters and sort shown.
-- **Columns...** (Data tab and SQL result): one check box per column, **Show all**, **Hide all** and a box to
-  find a column by name; tick or untick several and close. Right-click a column header: **Hide this column**,
-  **Columns...**, **Show all**. Hidden columns last until another table, result or file is loaded; the line
-  above the grid says `N columns hidden`. The search still looks at every column and exports still write
-  every column.
-- **Filter by this value** (right-click a cell of the Data tab): adds `column = value` to the database query
-  (exact text as shown; a NULL cell filters `IS NULL`), so it finds rows beyond the page loaded and the row
-  count and pages follow it. Several filters add up (AND) and combine with the search. Each active filter is a
-  button above the grid (`SUBNAM = 'U02'  x`, click to remove it); **Clear filters** removes all. Choosing
-  another table clears them. The column name is quoted and the value is a bound parameter, never SQL text.
-- **Schema** tab: column, type, nullable.
-- **SQL** tab: write any SQL and press **Run** (or Ctrl+Enter). The first 10,000 rows are shown; a bigger
-  result says so, and its export writes all rows. The search box under the buttons filters the rows shown
-  (only those 10,000 loaded rows).
-- **Search rule** (Data search, SQL result search and table filter): the text is split into words; a row
-  matches when one cell holds every word, in any order, ignoring case and accents. `tensao de campo` and
-  `campo tensao` both find `EXCITAÇÃO TENSÃO DE CAMPO`; words found only in different cells of the row do
-  not match. An empty search shows every row. The search boxes show this rule in a one-line tooltip.
-  The open file is read-only: `CREATE`, `INSERT` and the like fail on it (an Access file is a copy in
-  memory, so changes there are possible but are lost when another file is opened).
-- Every grid: click a cell to select it, **Ctrl+C** copies the value, right-click opens **Copy value** /
-  **Copy row (TAB separated)**, with the option to include the header line (Data tab: also **Filter by this
-  value** and **Clear filters**). A copied row pastes into one Excel row.
-- Long work (opening, loading a table, SQL, export) runs in the background: the window stays responsive and
-  **Cancel** stops it.
+- **Table list** (left): every table with its row count, the whole name shown (the panel starts as wide as the
+  longest name, up to 40% of the window, and scrolls sideways beyond that); the box on top filters by name.
+- **Data** tab: 100 rows per page, **< Prev** / **Next >**, search box (Enter), click a column header to sort.
+  The search runs in the database over the **whole table** (every column), for Access, SQLite and DuckDB alike, before
+  the paging: the row count and pages follow it.
+- **Columns...** (Data tab and SQL result): one check box per column, a box to find a column by name, **Show all** and
+  **Hide all** (with text in the find box they act only on the columns listed). Right-click a column header:
+  **Hide this column**, **Columns...**, **Show all**. Hidden columns are still searched and exported.
+- **Filter by this value** (right-click a cell of the Data tab): exact `column = value` filter in the database
+  query; several add up (AND) and combine with the search; each is a button above the grid (click to remove).
+- **Schema** tab: column, type, nullable. **SQL** tab: any SQL, **Run** (Ctrl+Enter), first 10,000 rows shown.
+- **Search rule**: the text is split into words; a row matches when one cell holds every word, in any order,
+  ignoring case and accents (`Tensión campo` finds `EXCITACION TENSION DE CAMPO`; `tensao` does not: there is no
+  fuzzy matching).
+- A NULL cell is shown empty (as in the other stacks); copy gives an empty value.
+- Every grid: click a cell, **Ctrl+C** copies it, right-click: **Copy value** / **Copy row (TAB separated)**.
+- Long work runs in the background with **Cancel**.
 
 ### Menus
 
-- **File**
-  - **Open...** (Ctrl+O).
-  - **Export** (also the **Export...** button next to Open):
-    - **Database to DuckDB (.duckdb)...** - every table, DuckDB types.
-    - **Database to SQLite (.sqlite)...** - every table.
-    - **Database to Excel (.xlsx, one sheet per table)...** - sheet name = table name, made valid for Excel
-      (at most 31 characters, without `\ / ? * [ ] :`, never repeated); header on row 1, frozen; numbers
-      stay numbers. A table with more than 1,048,575 rows continues in sheets `<name> (2)`, `<name> (3)`...
-    - **Current table / Current table schema / Current SQL result to CSV...** - UTF-8 with BOM (Excel shows
-      the accents), comma separated, CRLF, quotes doubled; NULL is an empty field, empty text is `""`.
-    - **... to Excel (.xlsx)...** - one sheet (split as above if needed).
-    - Export to `.mdb`/`.accdb` is **not** available (there is no reliable library to write Access files).
-  - **Exit**.
-- **Settings > Theme**: **System** (follows the Windows light/dark setting), **Light**, **Dark**. Saved.
-- **Help > About mdb2sql**: name and version, what the program does, build number and date, the stack with
-  versions (Zig, Dear ImGui, GLFW + OpenGL, DuckDB), the Access reader (ODBC or mdbtools), author, license and
-  two links that open in the default browser: GitHub and GitLab (only these two fixed addresses can be opened).
-
-The save dialog opens in the folder of the open file and suggests a name (file or table name). An export first
-writes `<chosen file>.part` and only replaces the chosen file when everything worked; on error or Cancel the
-`.part` file is deleted and an existing file keeps its old content. The program refuses to export over the
-file that is open.
+- **File**: **Open...**, **Export** (also the **Export...** button): **Database to SQLite**, **Database to Excel**
+  (one sheet per table), **Database to DuckDB**, **Current table / schema / SQL result to CSV or Excel**; **Close**;
+  **Exit**. Export to `.accdb`/`.mdb` is not available (no reliable library writes Access files).
+- **Log** panel at the bottom (**View > Log**, Ctrl+L, or the arrow at the left of the status bar and in the panel
+  header): every message of the session with its time, in a monospace font one step smaller; select and Ctrl+C, or
+  **Copy all**, **Clear**. About 10% of the window high (at least 3 lines, at most 25%), resized by dragging its top
+  edge; open/closed state and height are saved; closed by default. While it is closed, the status bar shows the most
+  important message not yet seen in the log (last error in red, else last warning, else the last action) with a
+  count of new ones; clicking it opens the log. Right-click the status bar: **Copy** (the whole text).
+- Numbers are right-aligned in the grids and in the row counts of the table list (headers too); arrows are `←` `→`.
+- **Settings > Theme**: System, Light, Dark. **Settings > Language**: English, Português (Brasil), Español. Both are
+  saved and apply at once, without restarting.
+- **Help > About mdb2sql**: version, build, stack, Access reader, license and the GitHub and GitLab links.
 
 ### Saved settings
 
-`%APPDATA%\mdb2sql\zig-imgui.ini`: theme and the last folder used (the dialogs start there when no file is
-open). Delete it to go back to the defaults.
+Windows: `%APPDATA%\mdb2sql\zig-imgui.ini`; Linux: `~/.config/mdb2sql/zig-imgui.ini` (`$XDG_CONFIG_HOME` if set).
+Theme, language and the last folder used.
 
 ### Command line
 
 ```
-mdb2sql-zig.exe [file] [--table NAME] [--sql "SELECT ..."] [--search TEXT] [--cell ROW,COL]
-                [--theme system|light|dark] [--about] [--menu File|Settings|Help|Export] [--export KIND]
+mdb2sql-zig [file] [--table NAME] [--sql "SELECT ..."] [--search TEXT] [--cell ROW,COL]
+            [--theme system|light|dark] [--lang en|pt_br|es] [--about] [--menu File|View|Settings|Help|Export]
+            [--export KIND]
 ```
 
-`--table` selects a table, `--sql` runs a statement and shows the SQL tab, `--search` fills the Data search,
-`--cell ROW,COL` (from 1) selects a cell and opens its copy menu, `--theme` picks the colors for this run only,
-`--about` opens About, `--menu` opens that menu, `--export db_duckdb|db_sqlite|db_xlsx|table_csv|table_xlsx|
-result_csv|result_xlsx` opens the save dialog of that export. They exist for scripts and screenshots; an
-unknown flag shows this text in a message box.
+The flags set the start state (for scripts and screenshots); `--theme` and `--lang` apply to this run only.
 
 ## Tested
 
-On Windows 11 Pro x64 (build 26300), release build (ReleaseSafe) of this version, Zig 0.17.1,
-DuckDB 2.0.0, Dear ImGui 1.93.0, GLFW 3.4, Microsoft Access ODBC driver installed. With copies of the real
-NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 rows):
+Windows 11 Pro x64 (build 26300) and Debian 13 (WSL 2), Zig 0.17.1, DuckDB 2.0.0, Dear ImGui 1.93.0, GLFW 3.4.
+Databases used: COPIES of the real NMR5 files `2026-07-14 DB4.accdb` and `2026-06-25 DB3 1.accdb`, `nwind.mdb` from
+the public mdbtools test data, and the small `testdata/mdb2sql_test.mdb` kept in this folder.
 
-- `DB4.accdb` through Access ODBC and, forced, through mdbtools: 287 tables, 113,962 rows both ways, every
-  table count equal. Conversion time (release build): 10 to 20 s with ODBC, about 75 s with mdbtools (eight
-  `mdb-export` processes at a time).
-- `DB4.sqlite` (about 8 s to open: the row count of 287 tables through the SQLite reader) and `DB4.duckdb`
-  (about 1 s): 287 tables, RANGER_SOSTAT 36,754 rows.
-- Through the real window and save dialog (driven by UI Automation): `DB4.accdb` > Export > Database to Excel;
-  the dialog opened in the folder of the `.accdb` suggesting `DB4.xlsx`; 113,962 rows written in about 5 s.
-- DB4 exported to `.duckdb` and `.sqlite`, reopened: 287 tables, every count equal to the source.
-- DB4 exported to `.xlsx` (22 MB) and read back with openpyxl: 287 sheets; RANGER_SOSTAT 36,754,
-  RANGER_SOANLG 4,460, RANGER_SOTEXT 3,516 and RANGER_SOACCU 27 data rows, numbers read as numbers.
-- Search in DB4.duckdb, table RANGER_SOSTAT (36,754 rows, 123 columns): `freios supervisao` finds the 3 rows
-  `SUPERVISÃO DE FREIOS UG 12 - ...` (1.1.0 found none: it looked for the whole text as one piece). Time on that
-  table: about 0.15 s for one word, 0.2 to 0.4 s for two to six words. The SQL result search over 10,000 real
-  rows x 123 columns takes about 10 ms per keystroke.
-- Unit tests (`zig build test`, 56 plus 1 of the single-exe packer; the real-Access one runs only when `MDB2SQL_TEST_ACCDB` is set): SQL building and whitelists, paging, streaming results, sheet names and
-  splitting, the xlsx zip read back by Zig's zip reader (CRC and headers checked), CSV, Access reader choice,
-  Access type mapping and `mdb-schema` parsing, settings file and default dialog folder, worker thread jobs,
-  cancel, and a long session (25 rounds of reopen, SQL errors, a 10-billion-row result, exports and cancels)
-  with the leak-checking allocator. Search: every word in one cell, any order, case and accents
-  (`EXCITACAO` finds `Excitação`), words only in different cells, empty search, invalid or cut UTF-8.
+- `DB4.accdb` through mdbtools (forced) and through Access ODBC: 287 tables, 113,962 rows both ways, and every table
+  name and row count equal to the reference conversion (`2026-07-14 DB4.sqlite`, made by the owner's
+  pandas/pyodbc converter): 0 differences. Conversion to SQLite: about 40 s with mdbtools, about 7 s with ODBC.
+  The converted file exported again to `.duckdb` and `.sqlite` and reopened: every count equal. Row counts of the
+  287 tables after the conversion: 0.7 s (8.7 s before, through DuckDB's SQLite reader).
+- `DB3 1.accdb` through mdbtools: 287 tables, 113,826 rows, every name and count equal to its reference
+  (`2026-06-25 DB3 1.sqlite`): 0 differences; conversion about 35 s.
+- Whole-table search on the converted DB4 (RANGER_SOSTAT, 36,754 rows): `tension de campo` finds the one row
+  `EXCITACION TENSION DE CAMPO`, which is not on the first page; `tensao de campo` finds nothing.
+- Types of the converted DB4 and DB3 1: 1,681 INTEGER, 5,816 REAL and 2,867 text columns; the text ones are the
+  2,861 Access text/memo columns and the 6 DateTime columns (ISO text); no number is stored as text. Six queries with
+  a numeric filter, `ORDER BY ... LIMIT` and `SUM` on RTUNO, PNTNO, SCALE and BIAS (and the max of a date) give the
+  same result through the program's SQL and directly in SQLite, on the converted file and on the reference: 0
+  differences in 6 x 4 results, on both databases.
+- Unit tests (`zig build test`) on Windows and on Debian, among them: the versioned `.mdb` read by the embedded
+  mdbtools into a SQLite file (the file is a real SQLite file in the temporary folder, 3 tables with 3/2/0 rows,
+  types read back, `typeof` in SQLite integer/real for every number, numeric filter, `SUM` and `ORDER BY` on the
+  Currency column, ISO date, 0/1, binary, accents, quotes, NULLs, the whole-table search
+  without accents through the SQLite path); a file that is not Access fails with a message and leaves no
+  temporary; crash cleanup of old temporaries; the three language catalogs have the same keys and arguments; no
+  screen text outside the catalogs (`main.zig`, `dialog.zig`, `platform.zig` are scanned); **Show all / Hide all**
+  only on the listed columns; the session log; settings with the language.
+- Screenshots of the release program, taken by its hidden test aid `--capture` (README-BUILD.txt) on copies of
+  `DB4.accdb` and `nwind.mdb` read by mdbtools: table, filter, Columns at the default and maximized size, narrow
+  window, Log, Settings > Language, About and the converted-SQLite dialog in the three languages, and the window
+  after **Delete** (the capture also checks that the temporary file is gone).
+
+### Changes in 1.3.0
+
+- Access first: open dialog, file filters, error messages, About and this README list Access, then SQLite, then
+  DuckDB; the export menu lists SQLite, Excel, CSV and DuckDB last.
+- Access files are converted once into a SQLite file (before: into DuckDB memory) and read from there, with the
+  **Save... / Delete / Cancel** dialog on close, open or exit, the answer remembered for the session, and crash
+  cleanup on the next start. `Numeric (p, 0)` columns are now integers (sorting `RTUNO` is numeric, no `.0`), and
+  `Currency` and decimal `Numeric` are REAL: no number is stored as text in the SQLite file.
+- Row counts of SQLite files and of converted Access files are computed by SQLite itself: opening DB4.sqlite no
+  longer spends about 8 s counting.
+- Languages: English (default), Portuguese (Brazil), Spanish, in **Settings > Language**, saved, applied at once.
+  Every screen text, dialog, message, tooltip and About line comes from `src/lang/en.zig`, `pt_br.zig`, `es.zig`.
+- Log panel docked at the bottom (time + text, monospace, selectable, **Copy all**), closed by default, with the
+  status bar moved to the bottom showing the last unseen error or warning; right-click the status bar to copy it.
+- Numbers right-aligned in the grids and in the table list; `← Prev` / `Next →` with Unicode arrows.
+- A NULL cell is shown empty (before: a grey `NULL`), as in the other stacks.
+- Columns dialog: **Show all** / **Hide all** act only on the columns listed by the find box.
+- Table list: the whole table name is shown (panel as wide as the longest name, sideways scrolling beyond 40% of the
+  window).
+- **File > Close** closes the open file.
+- Linux: X11 first, Wayland only as a fallback with a **Display mode** warning at start (section "Linux: X11 and
+  Wayland"); `MDB2SQL_DISPLAY=x11|wayland` chooses without warning.
+- Debian 13 amd64 build: `.deb` and `.zip`, mdbtools 1.0.1 compiled from its pinned source, GLFW/OpenGL, `zenity`
+  dialogs; `build_debian_amd64_wsl.ps1` builds it through WSL.
+- Unit tests now read the small versioned `testdata/mdb2sql_test.mdb` with the embedded mdbtools on every run.
 
 ### Changes in 1.2.0
 
 - Short window title: `mdb2sql 1.2.0 - Zig`; the details moved to Help > About, now laid out as a table with
   the stack versions and clickable GitHub and GitLab links.
-- **Columns...** and the column header right-click menu hide or show several columns at once. The dialog takes
-  about 65% of the window width (420 to 900 px) and up to 70% of its height, can be resized, and lays the check
-  boxes out in 1 to 6 columns (4 at the default window size) with vertical scrolling only.
+- **Columns...** and the column header right-click menu hide or show several columns at once (about 65% of the window
+  width, 420 to 900 px, up to 70% of its height, 1 to 6 check box columns, vertical scrolling only).
 - Right-click a cell > **Filter by this value**: exact-value filter in the database query, shown as removable
   buttons, with **Clear filters**.
 - One export action per place: the **Export CSV...** / **Export Excel...** buttons of the Data and SQL tabs
-  repeated the **Export...** menu (same items) and were removed.
-- Slightly smaller text: Segoe UI at 16 px instead of 17 (about 6%); the About title stays 1.4 times the text.
-- Shorter texts on screen: the search boxes say only `search`, `filter tables` and `search the rows shown`
-  (the word rule moved to a tooltip); the read-only note of the SQL tab and the "Export to .mdb/.accdb: not
-  available" line of the Export menu were removed (the README says it).
-- Nothing cut on a narrow window: the table name and row count line wraps, filter buttons move to the next line
-  when they do not fit, and a table name or column header narrower than its text shows the full name as a
-  tooltip. Grid columns start at the width of their header and content (no maximum width).
-- Whole DOUBLE/FLOAT values show without `.0` in the grids (`2316` instead of `2316.0`), as in the other
-  stacks; copy, Filter by this value and exports keep the value as the database gives it.
-- Excel export fixes: a table name of 22 or more non-ASCII characters (for example Japanese) stopped the
-  program while naming the sheet; sheet names are now sized for any Unicode text (characters above U+FFFF count
-  as 2, as in Excel). Texts cut at 32,767 characters and columns past 16,384 are now counted and shown in the
-  status line at the end of the export (they were dropped without a word).
-- License: GPL v2 or later (before: proprietary, all rights reserved). `LICENSE` goes in the zip and the installer.
-- Tested: unit tests for the exact filter SQL (quoted column, bound value, quotes and an injection attempt in the
-  value, NULL, empty text, AND with the search, row limit) on DuckDB, SQLite and the in-memory Access copy, the
-  filter list and its button label, the short title, the two allowed links and the license. Screenshots of the release
-  program on copies of DB4.duckdb and DB4.accdb (read by mdbtools), taken by its hidden test aid `--capture`
-  (README-BUILD.txt): table, active filter, Columns with several hidden at the default and a maximized size, a
-  narrow window, RANGER_SOANLG and About.
-- On a narrow window the Data toolbar buttons move to the next line, and the About and Columns dialogs stay
-  centered when the window is resized.
+  repeated the **Export...** menu and were removed.
+- Segoe UI at 16 px instead of 17; shorter texts on screen; nothing cut on a narrow window.
+- Whole DOUBLE/FLOAT values show without `.0` in the grids; copy, filter and exports keep the database value.
+- Excel export fixes (long non-ASCII sheet names; cut cells and columns are counted and reported).
+- License: GPL v2 or later (before: proprietary, all rights reserved).
 
 ### Changes in 1.1.1
 
-- Search by words: the Data search, the SQL result search and the table filter split the text into words and
-  find a cell that holds all of them, in any order, ignoring case and accents. Before, the whole text had to
-  appear as one piece, so `tensao de campo` did not find `EXCITAÇÃO TENSÃO DE CAMPO`; the SQL result search
-  and the table filter also did not ignore accents. The search hints say so.
-- Program icon on the exe, the window, the single executable and the installer; the window title shows the
-  version (`mdb2sql 1.1.1 - Zig + Dear ImGui`).
+- Search by words: every word in one cell, any order, ignoring case and accents.
+- Program icon on the exe, the window, the single executable and the installer.
 
-### Stability
+### Stability (1.1.0)
 
-The previous version could fail in these ways; 1.1.0 fixes them:
+- Free SQL results stream (a join without condition no longer fills the memory).
+- Start errors and internal errors show a message box (the release program has no console).
+- Opening, like every other job, can be canceled; the DuckDB connection lives for the whole run.
 
-- A free SQL statement with a big result (for example a join without condition) was materialized whole in
-  memory before the first 10,000 rows were shown: memory grew until the program died. Results now stream; only
-  the rows shown are computed (`SELECT * FROM RANGER_SOSTAT a, RANGER_SOSTAT b`, 1.35 billion rows, shows its
-  first 10,000 rows at once and memory stays flat).
-- A start error (for example no OpenGL 3.3) or an internal error closed the release program without any
-  message (it has no console). Both now show a message box.
-- Closing the window while a file was opening waited until the whole open finished (a hang of minutes on a
-  big Access file). Opening, like every other job, can now be canceled and stops between tables.
-- A cancel pressed while switching databases could interrupt a connection that was being closed. The DuckDB
-  connection now lives for the whole run, so Cancel is always safe.
-- A failed parameter bind destroyed an uninitialized DuckDB result.
-- During this work, the new Excel export crashed on the real DB4 (buffer full in the middle of a row); fixed
-  before release and covered by a test with random cell sizes.
+## Performance (opening Access)
+
+Measured by the performance protocol of README-BUILD.txt (release build, copies of the files, median of 3 runs, the
+same machine: Intel Core Ultra 7 258V, 8 cores, 32 GB, NVMe SSD; whole test process at most about 390 MB). Seconds
+until the table list appears (conversion + row counts); the first table appears 0.1 s later.
+
+| Case | DB4 before | DB4 now | DB3 1 before | DB3 1 now |
+|---|---|---|---|---|
+| Access through ODBC | 16.6 | 6.7 | 19.4 | 6.2 |
+| Access through mdbtools | 73.5 | 39.9 | 46.1 | 35.5 |
+| of which waiting for `mdb-export` | 57.8 | 33.3 | 36.1 | 29.5 |
+| of which writing the SQLite file | 11.3 | 4.4 | 7.4 | 3.8 |
+| Reopen the saved SQLite | 1.4 | 0.5 | 0.4 | 0.4 |
+| Export to SQLite (Access open) | 15.4 | 1.6 | 12.1 | 1.6 |
+| Export to DuckDB (Access open) | 12.2 | 2.4 | 9.3 | 2.5 |
+| Open the reference `.sqlite` / `.duckdb` | 0.5 / 0.3 | 0.5 / 0.4 | 0.6 / 0.3 | 0.4 / 0.3 |
+
+What changed: the conversion and the database exports write in one transaction (SQLite commits the file once
+instead of once per table); `mdb-export` runs as a queue of up to 6 processes (cores - 1), each one taking the next
+table as soon as it ends, and the table it exported is written to SQLite while the others still run (before:
+batches of 8 that waited for the slowest). Table and row counts stay identical to the reference conversions (the
+real-file test checks every table). Most of the remaining mdbtools time is each `mdb-export` process reading the
+file's catalog again (about 0.3 s per table, 287 tables).
 
 ## Known limits
 
-- Windows x64 only (only the Windows libduckdb is pinned).
-- An Access file is converted entirely into memory when opened (DB4: about 350 MB of RAM with ODBC). Files of
-  several GB need as much memory.
-- The Access ODBC driver may create a `.laccdb` lock file next to the `.accdb` while it reads it (normal
-  Access behavior); it is removed when the reading ends.
-- mdbtools reads Access 97 `.mdb` text as Latin-1: characters 0x80-0x9F of Windows-1252 may come out wrong.
-  Access 2000 and later files are fine.
-- Opening a large SQLite file is slower than DuckDB (the row count of every table is computed when it opens).
-- The single executable needs `%LOCALAPPDATA%` to be writable (it extracts there).
-- The save and open dialogs are the classic Windows ones and block the window while open (running work continues).
-- The SQL result search and the table filter ignore case and accents of ASCII and Latin-1 letters (á, Ç, Ñ,
-  ÿ...) only; other scripts are compared as written. The Data search, done by DuckDB, covers all of Unicode.
-  Copy works on one cell or one row.
-- SQL tab: values are shown as text. A statement that cannot be wrapped in a `SELECT` (PRAGMA, SET, ...) runs as
-  written and only text, integer, float and boolean columns are decoded; others show `(not text)`.
-- An `.xlsx` sheet is limited to 4 GB of XML (no ZIP64); far beyond DB4 (whole DB4: 22 MB).
-- Excel keeps at most 32,767 characters per cell and 16,384 columns per sheet: longer texts are cut and extra
-  columns left out in the `.xlsx` (not in CSV/DuckDB/SQLite); the status line says how many after the export.
-- Grids show at most 512 columns (Dear ImGui limit); exports write all of them.
-- The GUI itself has no automated tests (Dear ImGui exposes no UI Automation tree); it was checked with
-  screenshots of the release program on the real DB4 files, driven by the command line flags.
+- x86_64 only (Windows and Debian). Other systems are not built in this version.
+- mdbtools reads Access 97 `.mdb` text as Latin-1: characters 0x80-0x9F of Windows-1252 may come out wrong. Access
+  2000 and later files are fine. mdbtools cannot tell an empty text from NULL: both come out as NULL.
+- In the converted SQLite file, `Currency` and `Numeric` values with decimals are REAL: exact up to 15 significant
+  digits (any value below 100 billion with 4 decimals); longer values are rounded to the nearest double. `Numeric`
+  integers longer than 18 digits are REAL too. (DB4 and DB3 1 have no Currency and no Numeric with decimals.)
+- The ODBC driver may create a `.laccdb` lock file next to the `.accdb` while it reads it (normal Access behavior).
+- The single executable (Windows) needs `%LOCALAPPDATA%` to be writable.
+- The open and save dialogs block the window while open (running work continues). On Linux without `zenity` there
+  is no dialog: type the path in the box.
+- On Linux without X11 the window opens on native Wayland, where GLFW decorates it through libdecor/GTK; two early
+  WSLg starts crashed there (README-BUILD.txt, section 7).
+- The SQL result search and the table filter ignore case and accents of ASCII and Latin-1 letters only; the Data
+  search, done by the database, covers all of Unicode.
+- Excel keeps at most 32,767 characters per cell and 16,384 columns per sheet (the status line says how many were
+  cut). Grids show at most 512 columns (Dear ImGui limit); exports write all of them.
+- The GUI has no UI Automation tree (Dear ImGui); it is checked with the `--capture` screenshots.
 
 ## Build
 
-One command from a clean clone (downloads the pinned tools, builds, tests, makes the three files):
-
 ```powershell
-pwsh -NoProfile -File build_w11_amd64.ps1   # -> dist\w11\amd64\
+pwsh -NoProfile -File build_w11_amd64.ps1          # Windows -> dist\w11\amd64\
+pwsh -NoProfile -File build_debian_amd64_wsl.ps1   # Debian through WSL -> dist\debian\amd64\
 ```
 
-Everything about building, products, folders and cleaning: [README-BUILD.txt](README-BUILD.txt).
+On Debian itself: `./build_debian_amd64.sh`. Everything about building, products and cleaning:
+[README-BUILD.txt](README-BUILD.txt).
 
 ## Dependencies
 
 | Dependency | Version | Use | How it is pinned |
 |---|---|---|---|
-| [Zig](https://ziglang.org) | 0.17.1 | compiler | sha256 in `scripts/setup_tools.ps1` |
+| [Zig](https://ziglang.org) | 0.17.1 | compiler | sha256 in `scripts/setup_tools.ps1` and `scripts/setup_tools_linux.sh` |
 | [Dear ImGui](https://github.com/ocornut/imgui) | 1.93.0 docking, commit `6d32174` | UI, GLFW and OpenGL3 backends | hash in `build.zig.zon` |
 | [cimgui](https://github.com/cimgui/cimgui) | tag `1.93dock`, commit `2a6a93f` | C API of Dear ImGui | hash in `build.zig.zon` |
 | [zglfw](https://github.com/zig-gamedev/zglfw) | commit `2450fe3` (GLFW 3.4) | window, input, OpenGL context | hash in `build.zig.zon` |
-| [libduckdb](https://github.com/duckdb/duckdb/releases/tag/v2.0.0) | 2.0.0, `duckdb-shared-libs-windows-amd64.tar.gz` | database engine (`duckdb.dll`) | hash in `build.zig.zon` |
-| DuckDB `sqlite_scanner` extension | v2.0.0 windows_amd64 (signed by DuckDB) | SQLite read and write | sha256 in `scripts/setup_tools.ps1` |
-| [mdbtools_custom](https://github.com/mauriciomenon/mdbtools_custom/releases/tag/win-static-1.0.1) | 1.0.1 static, `mdbtools-1.0.1-w11-amd64.zip` | Access reader without ODBC | sha256 in `scripts/setup_tools.ps1` |
-| [NSIS](https://nsis.sourceforge.io) | 3.13 | installer | sha256 in `scripts/setup_tools.ps1` |
+| [libduckdb](https://github.com/duckdb/duckdb/releases/tag/v2.0.0) | 2.0.0, `duckdb-shared-libs-{windows,linux}-amd64.tar.gz` | database engine | hash in `build.zig.zon` |
+| DuckDB `sqlite_scanner` extension | v2.0.0 windows_amd64 / linux_amd64 (signed by DuckDB) | SQLite read and write | sha256 in the setup scripts |
+| [mdbtools_custom](https://github.com/mauriciomenon/mdbtools_custom/releases/tag/win-static-1.0.1) | 1.0.1 static, Windows | Access reader | sha256 in `scripts/setup_tools.ps1` |
+| [mdbtools](https://github.com/mdbtools/mdbtools/releases/tag/v1.0.1) | 1.0.1 source, built static on Linux | Access reader | sha256 in `scripts/setup_tools_linux.sh` |
+| [NSIS](https://nsis.sourceforge.io) | 3.13 | Windows installer | sha256 in `scripts/setup_tools.ps1` |
 
-The NMR5 `.duckdb` files were written by DuckDB 2.0.0 (storage version 69); older libduckdb versions refuse them.
-The DuckDB extension must be the same version as `duckdb.dll`. The Excel writer (zip + XML) and the gzip
-payload of the single executable use only Zig's standard library.
+SQLite comes inside DuckDB's `sqlite_scanner` extension (no separate SQLite library). The Excel writer and the
+gzip payload of the single executable use only Zig's standard library.
 
 ## Layout
 
 - `src/query.zig` - extension check, SQL builder with bound parameters and whitelisted identifiers, paging.
-- `src/db.zig` - DuckDB C API: the program's in-memory instance, read-only `ATTACH` of the file, streaming
-  results, tables, schema, page, counts.
-- `src/access.zig` - Access reader: ODBC (odbc32) and mdbtools, reader choice, type mapping.
-- `src/exporter.zig` - exports to DuckDB, SQLite, xlsx and CSV, with progress and cancel.
-- `src/xlsx.zig` - streaming `.xlsx` writer (deflated zip, inline strings) and sheet names.
-- `src/csv.zig`, `src/gridtools.zig` - CSV and TAB-separated row copy, word search (case and accent folding), right-click filters.
-- `src/worker.zig` - the background jobs (open, table, page, SQL, export) and the thread slot the UI polls.
-- `src/settings.zig` - saved settings, default dialog folder, Windows theme.
-- `src/about.zig` - window title, About data and the two links it may open. `src/dialog.zig` - Windows open/save dialogs.
-- `src/main.zig` - the GUI. `src/shim.c` - three ImGui struct fields `translate-c` cannot reach.
-- `src/launcher.zig`, `src/pack.zig` - the single executable and the build tool that compresses its payload.
-- `scripts/installer.nsi` - the NSIS installer. `assets/` - the program icon and its Windows resource file.
+- `src/db.zig` - DuckDB C API: the in-memory instance, read-only `ATTACH` of the file, streaming results, counts.
+- `src/access.zig` - Access reader (mdbtools, ODBC on Windows), conversion to SQLite, temporary files and cleanup.
+- `src/exporter.zig`, `src/xlsx.zig`, `src/csv.zig` - exports. `src/gridtools.zig` - row copy, word search, filters.
+- `src/worker.zig` - background jobs. `src/settings.zig` - saved settings. `src/log.zig` - session log.
+- `src/i18n.zig` and `src/lang/` - the language catalogs (one file per language, same keys).
+- `src/about.zig` - window title and About data. `src/dialog.zig` - open/save dialogs. `src/platform.zig` - the
+  Windows/Linux differences of the GUI. `src/main.zig` - the GUI. `src/capture.zig` - the screenshot test aid.
+- `src/launcher.zig`, `src/pack.zig` - the Windows single executable.
+- `testdata/mdb2sql_test.mdb` (made by `scripts/make_test_mdb.ps1`) - the small Access file of the unit tests.
+- `scripts/` - setup, build, test and packaging scripts. `assets/` - icon, Windows resource, Linux menu entry.
 
 ## License
 
 GPL v2 or later (`GPL-2.0-or-later`), full text in [LICENSE](LICENSE).
 
-Third-party parts keep their own licenses: mdbtools (in `mdbtools\`) is GPL/LGPL, DuckDB is MIT, Dear ImGui is
-MIT, GLFW is zlib.
+Third-party parts keep their own licenses: mdbtools (in `mdbtools/`) is GPL/LGPL, DuckDB is MIT, Dear ImGui is MIT,
+GLFW is zlib.

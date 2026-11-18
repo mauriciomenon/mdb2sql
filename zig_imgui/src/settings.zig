@@ -1,13 +1,28 @@
-// Preferencias gravadas entre execucoes (%APPDATA%\mdb2sql\zig-imgui.ini) e pasta padrao dos dialogos
-// !T: Persisted settings (theme, last folder used) and the default folder of the save dialogs
+// Preferencias gravadas entre execucoes (%APPDATA%\mdb2sql\zig-imgui.ini; Linux: ~/.config/mdb2sql/zig-imgui.ini) e
+// pasta padrao dos dialogos
+// !T: Persisted settings (theme, language, last folder used) and the default folder of the save dialogs
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
+const Lang = @import("i18n.zig").Lang;
 
 pub const Theme = enum { system, light, dark };
 
+// Painel de Log (REGRA_VISUAL): ~10% da altura, ate 25% (o minimo de 3 linhas e conferido pela UI)
+pub const default_log_frac: f32 = 0.10;
+pub const max_log_frac: f32 = 0.25;
+
+pub fn clampLogFrac(f: f32) f32 {
+    if (!(f > 0)) return default_log_frac; // NaN ou zero
+    return @min(f, max_log_frac);
+}
+
 pub const Settings = struct {
     theme: Theme = .system,
+    lang: Lang = .en,
+    log_open: bool = false, // painel de Log aberto (padrao: recolhido)
+    log_frac: f32 = default_log_frac, // altura do painel de Log, fracao da janela
     last_dir_buf: [2048]u8 = undefined,
     last_dir_len: usize = 0,
 
@@ -30,13 +45,16 @@ pub const Settings = struct {
             const key = line[0..eq];
             const value = line[eq + 1 ..];
             if (std.mem.eql(u8, key, "theme")) s.theme = std.meta.stringToEnum(Theme, value) orelse .system;
+            if (std.mem.eql(u8, key, "lang")) s.lang = std.meta.stringToEnum(Lang, value) orelse .en;
             if (std.mem.eql(u8, key, "last_dir")) s.setLastDir(value);
+            if (std.mem.eql(u8, key, "log_open")) s.log_open = std.mem.eql(u8, value, "1");
+            if (std.mem.eql(u8, key, "log_frac")) s.log_frac = clampLogFrac(std.fmt.parseFloat(f32, value) catch default_log_frac);
         }
         return s;
     }
 
     pub fn write(s: *const Settings, w: *Io.Writer) Io.Writer.Error!void {
-        try w.print("theme={t}\r\nlast_dir={s}\r\n", .{ s.theme, s.lastDir() });
+        try w.print("theme={t}\r\nlang={t}\r\nlog_open={d}\r\nlog_frac={d:.3}\r\nlast_dir={s}\r\n", .{ s.theme, s.lang, @intFromBool(s.log_open), s.log_frac, s.lastDir() });
     }
 
     pub fn load(io: Io, path: []const u8) Settings {
@@ -71,7 +89,7 @@ pub fn defaultDir(source_path: []const u8, last_dir: []const u8) []const u8 {
 // Caminho completo sugerido ao dialogo (pasta + nome); sem pasta, so o nome
 pub fn suggest(buf: []u8, dir: []const u8, name: []const u8) []const u8 {
     if (dir.len == 0) return name;
-    const sep = if (dir[dir.len - 1] == '\\' or dir[dir.len - 1] == '/') "" else "\\";
+    const sep = if (dir[dir.len - 1] == '\\' or dir[dir.len - 1] == '/') "" else std.fs.path.sep_str;
     return std.fmt.bufPrint(buf, "{s}{s}{s}", .{ dir, sep, name }) catch name;
 }
 
@@ -83,10 +101,12 @@ pub fn fileName(buf: []u8, base: []const u8, ext: []const u8) []const u8 {
     return w.buffered();
 }
 
-// Tema do Windows para "Sistema": HKCU\...\Themes\Personalize\AppsUseLightTheme (sem a chave: claro)
+// Tema do sistema para "Sistema". Windows: HKCU\...\Themes\Personalize\AppsUseLightTheme (sem a chave: claro).
+// Linux: GTK_THEME terminado em ":dark" ou com "-dark" no nome e escuro; o resto, claro.
 extern "advapi32" fn RegGetValueW(key: usize, sub: [*:0]const u16, value: [*:0]const u16, flags: u32, kind: ?*u32, data: ?*anyopaque, size: ?*u32) callconv(.winapi) i32;
 
-pub fn systemPrefersLight() bool {
+pub fn systemPrefersLight(gtk_theme: []const u8) bool {
+    if (builtin.os.tag != .windows) return std.ascii.findIgnoreCase(gtk_theme, "dark") == null;
     const L = std.unicode.utf8ToUtf16LeStringLiteral;
     var v: u32 = 1;
     var size: u32 = @sizeOf(u32);
@@ -96,11 +116,11 @@ pub fn systemPrefersLight() bool {
     return v != 0;
 }
 
-pub fn isLight(theme: Theme) bool {
+pub fn isLight(theme: Theme, gtk_theme: []const u8) bool {
     return switch (theme) {
         .light => true,
         .dark => false,
-        .system => systemPrefersLight(),
+        .system => systemPrefersLight(gtk_theme),
     };
 }
 
@@ -109,18 +129,19 @@ pub fn isLight(theme: Theme) bool {
 const t = std.testing;
 
 test "default folder of the save dialog" {
-    try t.expectEqualStrings("C:\\dados", defaultDir("C:\\dados\\2026-07-14 DB4.accdb", "D:\\ultima"));
+    const s = std.fs.path.sep_str;
+    try t.expectEqualStrings("C:" ++ s ++ "dados", defaultDir("C:" ++ s ++ "dados" ++ s ++ "2026-07-14 DB4.accdb", "D:\\ultima"));
     try t.expectEqualStrings("D:\\ultima", defaultDir("", "D:\\ultima"));
     try t.expectEqualStrings("", defaultDir("", ""));
     var b: [256]u8 = undefined;
-    try t.expectEqualStrings("C:\\dados\\DB4.xlsx", suggest(&b, "C:\\dados", "DB4.xlsx"));
+    try t.expectEqualStrings("C:" ++ s ++ "dados" ++ s ++ "DB4.xlsx", suggest(&b, "C:" ++ s ++ "dados", "DB4.xlsx"));
     try t.expectEqualStrings("C:\\DB4.xlsx", suggest(&b, "C:\\", "DB4.xlsx"));
     try t.expectEqualStrings("DB4.xlsx", suggest(&b, "", "DB4.xlsx"));
     try t.expectEqualStrings("a_b_c.csv", fileName(&b, "a/b:c", ".csv"));
 }
 
 test "settings round trip through the file" {
-    var s: Settings = .{ .theme = .dark };
+    var s: Settings = .{ .theme = .dark, .lang = .pt_br, .log_open = true, .log_frac = 0.22 };
     s.setLastDir("C:\\pasta com espaço");
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
@@ -129,9 +150,21 @@ test "settings round trip through the file" {
     try s.save(t.io, path);
     const back = Settings.load(t.io, path);
     try t.expectEqual(.dark, back.theme);
+    try t.expectEqual(.pt_br, back.lang);
+    try t.expect(back.log_open);
+    try t.expectApproxEqAbs(@as(f32, 0.22), back.log_frac, 0.001);
+    // padrao: Log recolhido, 10%; fracao fora do limite volta para dentro
+    try t.expect(!Settings.parse("").log_open);
+    try t.expectEqual(default_log_frac, Settings.parse("").log_frac);
+    try t.expectEqual(max_log_frac, Settings.parse("log_frac=0.9").log_frac);
+    try t.expectEqual(default_log_frac, Settings.parse("log_frac=x").log_frac);
     try t.expectEqualStrings("C:\\pasta com espaço", back.lastDir());
     // arquivo ausente ou estranho: padroes
     try t.expectEqual(.system, Settings.load(t.io, "nao/existe.ini").theme);
     try t.expectEqual(.system, Settings.parse("theme=roxo\nlixo\n").theme);
-    _ = isLight(.system); // le o registro sem quebrar
+    try t.expectEqual(.en, Settings.load(t.io, "nao/existe.ini").lang); // ingles e o padrao
+    try t.expectEqual(.es, Settings.parse("lang=es\n").lang);
+    try t.expectEqual(.en, Settings.parse("lang=klingon\n").lang);
+    _ = isLight(.system, ""); // le o registro sem quebrar
+    if (builtin.os.tag != .windows) try t.expect(!systemPrefersLight("Adwaita:dark") and systemPrefersLight("Adwaita"));
 }

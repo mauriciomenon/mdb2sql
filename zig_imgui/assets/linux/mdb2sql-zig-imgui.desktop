@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=mdb2sql (Zig)
+Comment=Open Access, SQLite and DuckDB files and export them
+Comment[pt_BR]=Abre arquivos Access, SQLite e DuckDB e exporta
+Comment[es]=Abre archivos Access, SQLite y DuckDB y los exporta
+Exec=mdb2sql-zig %f
+Icon=mdb2sql-zig-imgui
+Terminal=false
+Categories=Office;Database;
+MimeType=application/vnd.ms-access;application/x-msaccess;application/vnd.sqlite3;application/x-sqlite3;

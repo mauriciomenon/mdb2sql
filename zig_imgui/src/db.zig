@@ -17,6 +17,9 @@ pub const xlsx = @import("xlsx.zig");
 pub const exporter = @import("exporter.zig");
 pub const access = @import("access.zig");
 pub const settings = @import("settings.zig");
+pub const i18n = @import("i18n.zig");
+pub const log = @import("log.zig");
+pub const display = @import("display.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Error = error{ DuckDb, Canceled } || query.BuildError || query.PathError;
@@ -32,9 +35,13 @@ pub const Source = enum {
         return switch (s) {
             .duckdb => "DuckDB",
             .sqlite => "SQLite",
-            .access_odbc => "Access ODBC",
-            .access_mdbtools => "mdbtools",
+            .access_odbc => i18n.tr("source_access_odbc"),
+            .access_mdbtools => i18n.tr("source_access_mdbtools"),
         };
+    }
+
+    pub fn isAccess(s: Source) bool {
+        return s == .access_odbc or s == .access_mdbtools;
     }
 };
 
@@ -45,11 +52,33 @@ pub const Grid = struct {
     rows: []const []?[]const u8 = &.{},
     truncated: bool = false, // o resultado tinha mais que max_rows linhas (as outras nao foram lidas)
     float_cols: []const bool = &.{}, // colunas DOUBLE/FLOAT: a grade mostra 2.0 como 2 (so na tela, como no Go)
+    num_cols: []const bool = &.{}, // colunas numericas: a grade alinha a direita (valor e cabecalho)
 
     pub fn deinit(self: *Grid) void {
         self.arena.deinit();
     }
 };
+
+// !T: One-line summary of an engine error for the status bar: the first line, without DuckDB's "<Kind> Error: "
+// prefix and without the "LINE 1: ..." pointer. The full text goes to the log.
+pub fn errorSummary(msg: []const u8) []const u8 {
+    var s = std.mem.trim(u8, msg, " \t\r\n");
+    if (std.mem.indexOfScalar(u8, s, '\n')) |nl| s = s[0..nl];
+    if (std.mem.indexOf(u8, s, "LINE ")) |l| s = s[0..l];
+    if (std.mem.indexOf(u8, s, " Error: ")) |e| {
+        const kind = s[0..e];
+        if (kind.len > 0 and kind.len <= 24 and std.mem.indexOfScalar(u8, kind, ' ') == null) s = s[e + " Error: ".len ..];
+    }
+    return std.mem.trim(u8, s, " \t\r");
+}
+
+test "engine error summary: first line, no DuckDB kind prefix, no LINE pointer" {
+    try t.expectEqualStrings("syntax error at or near \"SELEC\"", errorSummary("Parser Error: syntax error at or near \"SELEC\"\n\nLINE 1: SELEC 1\n        ^"));
+    try t.expectEqualStrings("syntax error at or near \"SELEC\"", errorSummary("Parser Error: syntax error at or near \"SELEC\"  LINE 1: SELEC 1   ^^^^^"));
+    try t.expectEqualStrings("Table with name nope does not exist!", errorSummary("Catalog Error: Table with name nope does not exist!\nDid you mean \"note\"?"));
+    try t.expectEqualStrings("File not found", errorSummary("File not found"));
+    try t.expectEqualStrings("mdb-export failed on table X", errorSummary("mdb-export failed on table X"));
+}
 
 // Versao da libduckdb carregada (ex.: "v2.0.0")
 pub fn libraryVersion() []const u8 {
@@ -151,10 +180,7 @@ fn at(comptime T: type, data: ?*anyopaque) [*]T {
 // Tipos que viram numero numa planilha
 pub fn isNumericType(ty: c.duckdb_type) bool {
     return switch (ty) {
-        c.DUCKDB_TYPE_TINYINT, c.DUCKDB_TYPE_SMALLINT, c.DUCKDB_TYPE_INTEGER, c.DUCKDB_TYPE_BIGINT,
-        c.DUCKDB_TYPE_UTINYINT, c.DUCKDB_TYPE_USMALLINT, c.DUCKDB_TYPE_UINTEGER, c.DUCKDB_TYPE_UBIGINT,
-        c.DUCKDB_TYPE_FLOAT, c.DUCKDB_TYPE_DOUBLE, c.DUCKDB_TYPE_DECIMAL, c.DUCKDB_TYPE_HUGEINT,
-        c.DUCKDB_TYPE_UHUGEINT => true,
+        c.DUCKDB_TYPE_TINYINT, c.DUCKDB_TYPE_SMALLINT, c.DUCKDB_TYPE_INTEGER, c.DUCKDB_TYPE_BIGINT, c.DUCKDB_TYPE_UTINYINT, c.DUCKDB_TYPE_USMALLINT, c.DUCKDB_TYPE_UINTEGER, c.DUCKDB_TYPE_UBIGINT, c.DUCKDB_TYPE_FLOAT, c.DUCKDB_TYPE_DOUBLE, c.DUCKDB_TYPE_DECIMAL, c.DUCKDB_TYPE_HUGEINT, c.DUCKDB_TYPE_UHUGEINT => true,
         else => false,
     };
 }
@@ -252,11 +278,20 @@ pub const Db = struct {
     }
 
     // !T: Viewer path: extension whitelist + read-only ATTACH; a missing file is a DuckDB error.
-    // Access files go through access.zig (converted into a memory database).
+    // Access files go through access.zig (converted into a SQLite file, then opened here).
     pub fn openReadOnly(self: *Db, path: []const u8) Error!void {
         const kind = try query.sourceKind(path);
         if (kind == .access) return error.UnsupportedExtension;
         try self.start();
+        // .db e de SQLite ou de DuckDB: tenta DuckDB e, se ele recusar o arquivo, SQLite
+        if (std.ascii.eqlIgnoreCase(std.fs.path.extension(path), ".db")) {
+            self.attachAs(path, .duckdb) catch return self.attachAs(path, .sqlite);
+            return;
+        }
+        return self.attachAs(path, kind);
+    }
+
+    fn attachAs(self: *Db, path: []const u8, kind: query.SourceKind) Error!void {
         self.closeSource();
         if (kind == .sqlite) try self.loadSqlite();
         var sql: std.ArrayList(u8) = .empty;
@@ -272,24 +307,11 @@ pub const Db = struct {
         self.source = if (kind == .sqlite) .sqlite else .duckdb;
     }
 
-    // Banco "src" vazio em memoria, para o Access convertido; depois finishMemory
-    pub fn beginMemory(self: *Db) Error!void {
-        try self.start();
-        self.closeSource();
-        try self.exec("ATTACH ':memory:' AS src");
-        try self.exec("USE src");
-    }
-
-    pub fn finishMemory(self: *Db, source: Source) Error!void {
-        try self.refreshTables();
-        self.source = source;
-    }
-
     // Extensao sqlite do DuckDB, lida do arquivo ao lado do programa (sem internet)
     pub fn loadSqlite(self: *Db) Error!void {
         if (self.sqlite_loaded) return;
         if (self.sqlite_ext.len == 0) {
-            self.setErrorText("SQLite support missing: sqlite_scanner.duckdb_extension is not next to the program");
+            self.setErrorText(i18n.tr("err_sqlite_missing"));
             return error.DuckDb;
         }
         var sql: std.ArrayList(u8) = .empty;
@@ -382,6 +404,9 @@ pub const Db = struct {
         const floats = try a.alloc(bool, rows.n_cols);
         for (floats, 0..) |*f, i| f.* = i < rows.types.len and (rows.types[i] == c.DUCKDB_TYPE_DOUBLE or rows.types[i] == c.DUCKDB_TYPE_FLOAT);
         grid.float_cols = floats;
+        const nums = try a.alloc(bool, rows.n_cols);
+        for (nums, 0..) |*n, i| n.* = i < rows.types.len and isNumericType(rows.types[i]);
+        grid.num_cols = nums;
 
         var list: std.ArrayList([]?[]const u8) = .empty;
         var buf: [64]u8 = undefined;
@@ -451,11 +476,25 @@ pub const Db = struct {
     pub fn countMany(self: *Db, names: []const []const u8, out: []u64) Error!void {
         var sql: std.ArrayList(u8) = .empty;
         defer sql.deinit(self.gpa);
+        // SQLite (e o Access convertido): o COUNT(*) roda no proprio SQLite (sqlite_query), que conta pela arvore
+        // do indice sem ler as colunas; pelo leitor do DuckDB o DB4 levava ~8 s
+        const native = if (self.source) |s| s != .duckdb else false;
+        var inner: std.ArrayList(u8) = .empty;
+        defer inner.deinit(self.gpa);
         for (names, 0..) |name, i| {
             if (!query.contains(self.table_names, name)) return error.TableNotFound;
             if (i > 0) try sql.appendSlice(self.gpa, " UNION ALL ");
-            try sql.print(self.gpa, "SELECT {d}, COUNT(*) FROM ", .{i});
-            try query.writeIdent(&sql, self.gpa, name);
+            if (native) {
+                inner.clearRetainingCapacity();
+                try inner.appendSlice(self.gpa, "SELECT COUNT(*) FROM ");
+                try query.writeIdent(&inner, self.gpa, name);
+                try sql.print(self.gpa, "SELECT {d}, * FROM sqlite_query('src', ", .{i});
+                try query.writeLiteral(&sql, self.gpa, inner.items);
+                try sql.append(self.gpa, ')');
+            } else {
+                try sql.print(self.gpa, "SELECT {d}, COUNT(*) FROM ", .{i});
+                try query.writeIdent(&sql, self.gpa, name);
+            }
         }
         try sql.append(self.gpa, 0);
         @memset(out, 0);
@@ -488,6 +527,9 @@ test {
     _ = exporter;
     _ = access;
     _ = settings;
+    _ = i18n;
+    _ = log;
+    _ = display;
 }
 
 // Cria um banco de teste gravavel e fecha
@@ -626,7 +668,7 @@ fn expectExactFilters(db: *Db) !void {
     try t.expectEqualStrings("U9A", g.rows[0][0].?);
 }
 
-test "exact value filter on DuckDB, SQLite and the in-memory Access copy" {
+test "exact value filter on DuckDB and SQLite (the converted Access file)" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var b1: [256]u8 = undefined;
@@ -650,13 +692,9 @@ test "exact value filter on DuckDB, SQLite and the in-memory Access copy" {
 
     try db.openReadOnly(duck);
     try expectExactFilters(&db);
+    // o Access convertido e lido deste mesmo jeito (access.zig grava um SQLite)
     try db.openReadOnly(lite);
     try t.expectEqual(.sqlite, db.source.?);
-    try expectExactFilters(&db);
-    // Access: access.zig converte o arquivo para um banco em memoria como este
-    try db.beginMemory();
-    try db.exec(try std.fmt.bufPrintSentinel(&sql_buf, "CREATE TABLE {s}" ++ filter_ddl, .{ident.items}, 0));
-    try db.finishMemory(.access_odbc);
     try expectExactFilters(&db);
 }
 
@@ -667,6 +705,7 @@ test "grid marks DOUBLE/FLOAT columns and keeps their original text" {
     var g = try db.run("SELECT 2316.0::DOUBLE AS d, 2.5::DOUBLE AS e, '2.0' AS s, 2::FLOAT AS f, 2 AS i, 2.0::DECIMAL(4,1) AS m", &.{});
     defer g.deinit();
     try t.expectEqualSlices(bool, &.{ true, true, false, true, false, false }, g.float_cols);
+    try t.expectEqualSlices(bool, &.{ true, true, false, true, true, true }, g.num_cols); // numeros a direita
     // a celula guarda o texto do banco: copia e "Filter by this value" (CAST AS VARCHAR = ?) continuam iguais
     try t.expectEqualStrings("2316.0", g.rows[0][0].?);
     try t.expectEqualStrings("2.0", g.rows[0][2].?);
@@ -720,6 +759,25 @@ test "reopen closes the previous file" {
     const second = tmpPath(&b2, &tmp, "second.db");
     try makeSample(first);
     try makeSample(second);
+    // .db de SQLite tambem abre (a extensao serve aos dois formatos)
+    {
+        var b3: [256]u8 = undefined;
+        const lite_db = tmpPath(&b3, &tmp, "lite.db");
+        var w = testDb();
+        defer w.close();
+        try w.open(":memory:", false);
+        try w.loadSqlite();
+        var sb: [400]u8 = undefined;
+        try w.exec(try std.fmt.bufPrintSentinel(&sb, "ATTACH '{s}' AS l (TYPE sqlite)", .{lite_db}, 0));
+        try w.exec("CREATE TABLE l.t AS SELECT 1 AS x");
+        try w.exec("DETACH l");
+        var r = testDb();
+        defer r.close();
+        try r.openReadOnly(lite_db);
+        try t.expectEqual(.sqlite, r.source.?);
+        try r.openReadOnly(second);
+        try t.expectEqual(.duckdb, r.source.?);
+    }
 
     var db = Db.init(t.allocator);
     defer db.close();

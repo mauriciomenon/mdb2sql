@@ -146,6 +146,29 @@ pub fn wholeFloatText(s: []const u8) []const u8 {
     return int;
 }
 
+// !T: Single-button dialogs (Columns, About, display warning): Esc always closes; Enter closes only when no item has
+// the focus (with focus the item keeps the Enter: the search box only filters, a focused button runs itself).
+pub fn dialogCloses(esc: bool, enter: bool, item_has_focus: bool) bool {
+    return esc or (enter and !item_has_focus);
+}
+
+test "Columns dialog keys: Enter in the search box does not close, Esc always does" {
+    try t.expect(!dialogCloses(false, true, true)); // Enter com o foco na caixa de busca: so filtra
+    try t.expect(dialogCloses(false, true, false)); // Enter sem item com foco: botao padrao (Fechar)
+    try t.expect(dialogCloses(true, false, true)); // Esc fecha mesmo com a caixa em foco
+    try t.expect(!dialogCloses(false, false, false));
+}
+
+// Dialogo Colunas: a coluna aparece na lista se o nome contem o texto da busca (sem diferenciar caixa)
+pub fn columnListed(name: []const u8, needle: []const u8) bool {
+    return needle.len == 0 or std.ascii.findIgnoreCase(name, needle) != null;
+}
+
+// Mostrar todas / Ocultar todas: so as colunas listadas pela busca do dialogo mudam
+pub fn setListed(hidden: anytype, names: []const [:0]const u8, needle: []const u8, hide: bool) void {
+    for (names, 0..) |name, c| if (columnListed(name, needle)) hidden.setValue(c, hide);
+}
+
 // Dialogo Columns: ~65% da largura da janela principal, entre 420 e 900 px, e nunca maior que a propria janela
 pub fn columnsDialogWidth(main_w: f32) f32 {
     return @max(0, @min(std.math.clamp(main_w * 0.65, 420, 900), main_w - 16));
@@ -166,6 +189,21 @@ test "whole DOUBLE values are shown without .0, the rest as it came" {
     try t.expectEqualStrings("0", wholeFloatText("0.0"));
     for ([_][]const u8{ "2.5", "2.05", "1e+20", "1.0e+20", "inf", "-inf", "nan", ".0", "-.0", "x.0", "", "10" }) |s|
         try t.expectEqualStrings(s, wholeFloatText(s));
+}
+
+test "Columns dialog: Show all / Hide all act only on the columns the search lists" {
+    const names = [_][:0]const u8{ "RTUNO", "PNTNAM", "PNTNO", "SUBNAM", "rtu_alias" };
+    var hidden: std.StaticBitSet(8) = .empty;
+    setListed(&hidden, &names, "rtu", true); // RTUNO e rtu_alias
+    try t.expect(hidden.isSet(0) and hidden.isSet(4) and hidden.count() == 2);
+    setListed(&hidden, &names, "pnt", true);
+    try t.expectEqual(4, hidden.count());
+    setListed(&hidden, &names, "RTUNO", false); // so ela volta
+    try t.expect(!hidden.isSet(0) and hidden.isSet(4) and hidden.count() == 3);
+    setListed(&hidden, &names, "", false); // sem busca: todas
+    try t.expectEqual(0, hidden.count());
+    setListed(&hidden, &names, "", true);
+    try t.expectEqual(5, hidden.count());
 }
 
 test "Columns dialog: width follows the main window within 420..900, grid of 1 to 6 columns" {
