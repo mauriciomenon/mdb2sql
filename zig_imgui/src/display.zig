@@ -78,7 +78,7 @@ pub fn field(os_release: []const u8, key: []const u8) []const u8 {
     return "";
 }
 
-// Aviso curto, em 3 linhas: "X11 indisponivel; usando Wayland." / "Falta: <libs | servidor X>" /
+// Aviso curto, em 3 linhas: "X11 indisponivel; usando Wayland." / "Servidor X nao definido (DISPLAY)" ou "<lib> nao instalada" /
 // "<PRETTY_NAME>: <comando>" (a 3a so quando a distro e conhecida). O link "Ajuda" fica na janela, nao no texto.
 pub const Warning = struct {
     buf: [1024]u8 = undefined,
@@ -106,18 +106,22 @@ pub fn warning(os_release: []const u8, no_server: bool, missing: []const []const
         what.writeAll(i18n.tr("display_no_server")) catch {};
         if (fam != .other) pkgs.print(" {s}", .{server_package[@backingInt(fam)]}) catch {};
     }
+    // 2a linha: o fato, sem rotulo ("Servidor X nao definido (DISPLAY); libXi.so.6 nao instalada")
     for (missing) |lib| {
-        if (what.end > 0) what.writeAll(", ") catch {};
-        what.writeAll(lib) catch {};
+        if (what.end > 0) what.writeAll("; ") catch {};
+        const known = for (x11_libs) |l| {
+            if (std.mem.eql(u8, l, lib)) break true;
+        } else false;
+        var lb: [200]u8 = undefined;
+        what.writeAll(if (known) i18n.fmt(&lb, "display_not_installed", .{lib}) else lib) catch {};
         if (fam == .other) continue;
         for (x11_libs, 0..) |l, i| if (std.mem.eql(u8, l, lib)) pkgs.print(" {s}", .{packages[@backingInt(fam)][i]}) catch {};
     }
     var out: Warning = .{};
     var w: std.Io.Writer = .fixed(&out.buf);
-    var line: [300]u8 = undefined;
     w.writeAll(i18n.tr("display_headline")) catch {};
     w.writeByte('\n') catch {};
-    w.writeAll(i18n.fmt(&line, "display_missing", .{what.buffered()})) catch {};
+    w.writeAll(what.buffered()) catch {};
     if (fam != .other and pkgs.end > 0) {
         var name = field(os_release, "PRETTY_NAME");
         if (name.len == 0) name = field(os_release, "NAME");
@@ -168,26 +172,30 @@ test "display warning: 3 short lines per distro family, the command apart for Co
     try t.expectEqualStrings("Debian GNU/Linux 13 (trixie)", field(debian_os, "PRETTY_NAME"));
 
     var w = warning(debian_os, true, &.{});
-    try t.expectEqualStrings("X11 unavailable; using Wayland.\nMissing: X server\nDebian GNU/Linux 13 (trixie): sudo apt install xwayland", w.text());
+    try t.expectEqualStrings("X11 unavailable; using Wayland.\nX server not set (DISPLAY)\nDebian GNU/Linux 13 (trixie): sudo apt install xwayland", w.text());
     try t.expectEqualStrings("sudo apt install xwayland", w.command());
     w = warning(ubuntu_os, false, &.{ "libXcursor.so.1", "libXi.so.6" });
-    try t.expectEqualStrings("X11 unavailable; using Wayland.\nMissing: libXcursor.so.1, libXi.so.6\nUbuntu 24.04.3 LTS: sudo apt install libxcursor1 libxi6", w.text());
+    try t.expectEqualStrings("X11 unavailable; using Wayland.\nlibXcursor.so.1 not installed; libXi.so.6 not installed\nUbuntu 24.04.3 LTS: sudo apt install libxcursor1 libxi6", w.text());
     try t.expectEqualStrings("sudo dnf install xorg-x11-server-Xwayland libX11", warning(fedora_os, true, &.{"libX11.so.6"}).command());
     try t.expectEqualStrings("sudo pacman -S xorg-xwayland", warning(arch_os, true, &.{}).command());
     try t.expectEqualStrings("sudo zypper install libXrandr2", warning(suse_os, false, &.{"libXrandr.so.2"}).command());
     // distro desconhecida: so o que falta, sem comando
     w = warning(void_os, true, &.{"libX11.so.6"});
-    try t.expectEqualStrings("X11 unavailable; using Wayland.\nMissing: X server, libX11.so.6", w.text());
+    try t.expectEqualStrings("X11 unavailable; using Wayland.\nX server not set (DISPLAY); libX11.so.6 not installed", w.text());
     try t.expectEqualStrings("", w.command());
     try t.expectEqualStrings("", warning("", true, &.{}).command());
     // motivo que nao e biblioteca (X11 que nao abriu): listado, sem comando
-    try t.expectEqualStrings("", warning(debian_os, false, &.{"X11 (DISPLAY=:0: PlatformError)"}).command());
+    w = warning(debian_os, false, &.{"X11 (DISPLAY=:0: PlatformError)"});
+    try t.expectEqualStrings("", w.command());
+    try t.expectEqualStrings("X11 unavailable; using Wayland.\nX11 (DISPLAY=:0: PlatformError)", w.text());
     // traduzido; nada de URL nem de "..." no texto
     i18n.lang = .pt_br;
-    try t.expectEqualStrings("X11 indisponível; usando Wayland.\nFalta: servidor X\nDebian GNU/Linux 13 (trixie): sudo apt install xwayland", warning(debian_os, true, &.{}).text());
+    try t.expectEqualStrings("X11 indisponível; usando Wayland.\nServidor X não definido (DISPLAY)\nDebian GNU/Linux 13 (trixie): sudo apt install xwayland", warning(debian_os, true, &.{}).text());
+    try t.expect(std.mem.indexOf(u8, warning(debian_os, false, &.{"libXi.so.6"}).text(), "\nlibXi.so.6 não instalada\n") != null);
     i18n.lang = .es;
-    try t.expect(std.mem.startsWith(u8, warning(arch_os, true, &.{}).text(), "X11 no disponible; usando Wayland.\nFalta: servidor X\n"));
-    inline for (i18n.catalogs) |C| for ([_][]const u8{ C.display_headline, C.display_missing, C.display_help }) |s| {
+    try t.expect(std.mem.startsWith(u8, warning(arch_os, true, &.{}).text(), "X11 no disponible; usando Wayland.\nServidor X no definido (DISPLAY)\n"));
+    try t.expect(std.mem.indexOf(u8, warning(arch_os, false, &.{"libXi.so.6"}).text(), "\nlibXi.so.6 no instalada\n") != null);
+    inline for (i18n.catalogs) |C| for ([_][]const u8{ C.display_headline, C.display_not_installed, C.display_no_server, C.display_help }) |s| {
         try t.expect(std.mem.indexOf(u8, s, "...") == null and std.mem.indexOf(u8, s, "http") == null);
     };
 }

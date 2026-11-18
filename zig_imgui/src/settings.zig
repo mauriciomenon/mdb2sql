@@ -9,9 +9,20 @@ const Lang = @import("i18n.zig").Lang;
 
 pub const Theme = enum { system, light, dark };
 
+// Painel de Log (REGRA_VISUAL): ~10% da altura, ate 25% (o minimo de 3 linhas e conferido pela UI)
+pub const default_log_frac: f32 = 0.10;
+pub const max_log_frac: f32 = 0.25;
+
+pub fn clampLogFrac(f: f32) f32 {
+    if (!(f > 0)) return default_log_frac; // NaN ou zero
+    return @min(f, max_log_frac);
+}
+
 pub const Settings = struct {
     theme: Theme = .system,
     lang: Lang = .en,
+    log_open: bool = false, // painel de Log aberto (padrao: recolhido)
+    log_frac: f32 = default_log_frac, // altura do painel de Log, fracao da janela
     last_dir_buf: [2048]u8 = undefined,
     last_dir_len: usize = 0,
 
@@ -36,12 +47,14 @@ pub const Settings = struct {
             if (std.mem.eql(u8, key, "theme")) s.theme = std.meta.stringToEnum(Theme, value) orelse .system;
             if (std.mem.eql(u8, key, "lang")) s.lang = std.meta.stringToEnum(Lang, value) orelse .en;
             if (std.mem.eql(u8, key, "last_dir")) s.setLastDir(value);
+            if (std.mem.eql(u8, key, "log_open")) s.log_open = std.mem.eql(u8, value, "1");
+            if (std.mem.eql(u8, key, "log_frac")) s.log_frac = clampLogFrac(std.fmt.parseFloat(f32, value) catch default_log_frac);
         }
         return s;
     }
 
     pub fn write(s: *const Settings, w: *Io.Writer) Io.Writer.Error!void {
-        try w.print("theme={t}\r\nlang={t}\r\nlast_dir={s}\r\n", .{ s.theme, s.lang, s.lastDir() });
+        try w.print("theme={t}\r\nlang={t}\r\nlog_open={d}\r\nlog_frac={d:.3}\r\nlast_dir={s}\r\n", .{ s.theme, s.lang, @intFromBool(s.log_open), s.log_frac, s.lastDir() });
     }
 
     pub fn load(io: Io, path: []const u8) Settings {
@@ -128,7 +141,7 @@ test "default folder of the save dialog" {
 }
 
 test "settings round trip through the file" {
-    var s: Settings = .{ .theme = .dark, .lang = .pt_br };
+    var s: Settings = .{ .theme = .dark, .lang = .pt_br, .log_open = true, .log_frac = 0.22 };
     s.setLastDir("C:\\pasta com espaço");
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
@@ -138,6 +151,13 @@ test "settings round trip through the file" {
     const back = Settings.load(t.io, path);
     try t.expectEqual(.dark, back.theme);
     try t.expectEqual(.pt_br, back.lang);
+    try t.expect(back.log_open);
+    try t.expectApproxEqAbs(@as(f32, 0.22), back.log_frac, 0.001);
+    // padrao: Log recolhido, 10%; fracao fora do limite volta para dentro
+    try t.expect(!Settings.parse("").log_open);
+    try t.expectEqual(default_log_frac, Settings.parse("").log_frac);
+    try t.expectEqual(max_log_frac, Settings.parse("log_frac=0.9").log_frac);
+    try t.expectEqual(default_log_frac, Settings.parse("log_frac=x").log_frac);
     try t.expectEqualStrings("C:\\pasta com espaço", back.lastDir());
     // arquivo ausente ou estranho: padroes
     try t.expectEqual(.system, Settings.load(t.io, "nao/existe.ini").theme);

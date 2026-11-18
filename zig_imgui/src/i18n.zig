@@ -70,7 +70,7 @@ test "translations differ from English where words are involved" {
 // Texto de tela fora do catalogo: literal com espaco ou comecando por maiuscula (chaves e IDs sao minusculos,
 // sem espaco). Excecoes: SQL, nomes de produto, atalhos, variaveis de ambiente e mensagens do --capture.
 fn uiTextOutsideCatalog(src: []const u8) ?[]const u8 {
-    const allowed_lines = [_][]const u8{ "c.failed", "c.skip(", "sql.appendSlice(", "@import(", "extern ", "\\x00*.", "--file-filter=", "segoeui", "SQLite format 3" };
+    const allowed_lines = [_][]const u8{ "c.failed", "c.skip(", "sql.appendSlice(", "@import(", "extern ", "\\x00*.", "--file-filter=", "segoeui", "consola.ttf", "copyZ(&app.sql", "SQLite format 3" };
     const allowed = [_][]const u8{ "GLFW {d}.{d}.{d} + OpenGL 3.3", "DuckDB {s}", "#version 330", "X11 (DISPLAY={s}: {t})", "Ctrl+O", "Ctrl+L", "Ctrl+C" };
     var lines = std.mem.splitScalar(u8, src, '\n');
     while (lines.next()) |full| {
@@ -151,8 +151,14 @@ test "no lecturing hints and no copyright line in any catalog" {
             const s: []const u8 = @field(C, d);
             for ([_][]const u8{ "Copyright", "(C) 20", "Remember", "Please", "Make sure", "Lembre", "Por favor", "Verifique", "Recuerde", "Asegúrese" }) |bad|
                 try t.expect(std.ascii.findIgnoreCase(s, bad) == null);
+            // setas sao Unicode (→ ←), nunca "->", "< " ou " >"
+            try t.expect(std.mem.indexOf(u8, s, "->") == null and !std.mem.startsWith(u8, s, "< ") and !std.mem.endsWith(u8, s, " >"));
         }
+        // mensagens do app sem "..." (o log e a barra de status mostram estas)
+        inline for (.{ "busy_converting", "busy_opening", "busy_loading", "busy_running", "busy_exporting", "converted_deleted", "status_loaded", "status_closed" }) |k|
+            try t.expect(std.mem.indexOf(u8, @field(C, k), "...") == null);
     }
+    try t.expect(std.mem.indexOf(u8, catalogs[0].next, "→") != null and std.mem.indexOf(u8, catalogs[1].prev, "←") != null);
 }
 
 test "tr and fmt follow the current language" {

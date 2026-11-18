@@ -15,8 +15,8 @@ pub const tab_schema = "Schema";
 pub const tab_sql = "SQL";
 pub const select_table = "Select a table";
 pub const search = "search";
-pub const prev = "< Prev";
-pub const next = "Next >";
+pub const prev = "← Prev";
+pub const next = "Next →";
 pub const columns_button = "Columns...";
 pub const columns_tip = "Hidden columns are still searched and exported.";
 pub const page_line = "{s}: page {d} of {d} | rows {d}-{d} of {d}{s}{s}";
@@ -104,13 +104,16 @@ pub const converted_deleted = "Converted SQLite deleted";
 
 // Log window
 pub const log_title = "Log";
+pub const log_hide = "Hide the log (Ctrl+L)";
+pub const log_show = "Show the log (Ctrl+L)";
+pub const log_unread = "({d} new)";
 
 // work in progress
-pub const busy_converting = "Converting the Access database...";
-pub const busy_opening = "Opening database...";
-pub const busy_loading = "Loading table...";
-pub const busy_running = "Running query...";
-pub const busy_exporting = "Exporting...";
+pub const busy_converting = "Converting the Access database";
+pub const busy_opening = "Opening database";
+pub const busy_loading = "Loading table";
+pub const busy_running = "Running query";
+pub const busy_exporting = "Exporting";
 pub const busy_elapsed = "{s} {d:.1} s";
 pub const progress_overlay = "{d} / {d} {s}";
 pub const unit_tables = "tables";
@@ -133,6 +136,9 @@ pub const canceled = "Canceled";
 pub const err_not_db = "Not a database file: use .accdb, .mdb, .sqlite, .sqlite3, .db or .duckdb";
 pub const err_cannot_write = "Cannot write the file: it is open in another program or the folder is read-only ({t})";
 pub const err_generic = "Error: {t}";
+pub const err_sql = "SQL query error: {s}";
+pub const err_db = "Database error: {s}";
+pub const err_plain = "{s}";
 pub const err_worker = "Could not start the worker thread: {t}";
 pub const err_settings = "Could not save the settings: {t}";
 pub const err_choose_other = "Choose another file: this one is the database that is open";
@@ -155,8 +161,8 @@ pub const err_opengl = "\nThe graphics driver must support OpenGL 3.3 (a remote 
 // Linux display mode (X11 first, Wayland as fallback)
 pub const display_title = "Display mode";
 pub const display_headline = "X11 unavailable; using Wayland.";
-pub const display_missing = "Missing: {s}";
-pub const display_no_server = "X server";
+pub const display_no_server = "X server not set (DISPLAY)";
+pub const display_not_installed = "{s} not installed";
 pub const display_help = "Help";
 pub const display_none = "mdb2sql: cannot open a window: neither X11 nor Wayland is available ({t}). Help: {s}\n";
 pub const ok = "OK";

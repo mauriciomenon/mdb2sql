@@ -128,8 +128,13 @@ While a file opens, the status line shows the time, a progress bar (tables conve
 - **File**: **Open...**, **Export** (also the **Export...** button): **Database to SQLite**, **Database to Excel**
   (one sheet per table), **Database to DuckDB**, **Current table / schema / SQL result to CSV or Excel**; **Close**;
   **Exit**. Export to `.accdb`/`.mdb` is not available (no reliable library writes Access files).
-- **View > Log** (Ctrl+L): every message of the session with its time; select and Ctrl+C, or **Copy all**,
-  **Clear**. Right-click the status line: **Copy** (the whole text) or **Log**.
+- **Log** panel at the bottom (**View > Log**, Ctrl+L, or the arrow at the left of the status bar and in the panel
+  header): every message of the session with its time, in a monospace font one step smaller; select and Ctrl+C, or
+  **Copy all**, **Clear**. About 10% of the window high (at least 3 lines, at most 25%), resized by dragging its top
+  edge; open/closed state and height are saved; closed by default. While it is closed, the status bar shows the most
+  important message not yet seen in the log (last error in red, else last warning, else the last action) with a
+  count of new ones; clicking it opens the log. Right-click the status bar: **Copy** (the whole text).
+- Numbers are right-aligned in the grids and in the row counts of the table list (headers too); arrows are `←` `→`.
 - **Settings > Theme**: System, Light, Dark. **Settings > Language**: English, Português (Brasil), Español. Both are
   saved and apply at once, without restarting.
 - **Help > About mdb2sql**: version, build, stack, Access reader, license and the GitHub and GitLab links.
@@ -194,8 +199,9 @@ the public mdbtools test data, and the small `testdata/mdb2sql_test.mdb` kept in
   longer spends about 8 s counting.
 - Languages: English (default), Portuguese (Brazil), Spanish, in **Settings > Language**, saved, applied at once.
   Every screen text, dialog, message, tooltip and About line comes from `src/lang/en.zig`, `pt_br.zig`, `es.zig`.
-- **View > Log** with every message of the session (time + text), selectable, **Copy all**; right-click the status
-  line to copy it.
+- Log panel docked at the bottom (time + text, monospace, selectable, **Copy all**), closed by default, with the
+  status bar moved to the bottom showing the last unseen error or warning; right-click the status bar to copy it.
+- Numbers right-aligned in the grids and in the table list; `← Prev` / `Next →` with Unicode arrows.
 - A NULL cell is shown empty (before: a grey `NULL`), as in the other stacks.
 - Columns dialog: **Show all** / **Hide all** act only on the columns listed by the find box.
 - Table list: the whole table name is shown (panel as wide as the longest name, sideways scrolling beyond 40% of the

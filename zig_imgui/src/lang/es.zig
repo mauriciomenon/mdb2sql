@@ -15,8 +15,8 @@ pub const tab_schema = "Esquema";
 pub const tab_sql = "SQL";
 pub const select_table = "Seleccione una tabla";
 pub const search = "buscar";
-pub const prev = "< Anterior";
-pub const next = "Siguiente >";
+pub const prev = "← Anterior";
+pub const next = "Siguiente →";
 pub const columns_button = "Columnas...";
 pub const columns_tip = "Las columnas ocultas siguen en la búsqueda y en la exportación.";
 pub const page_line = "{s}: página {d} de {d} | filas {d}-{d} de {d}{s}{s}";
@@ -104,13 +104,16 @@ pub const converted_deleted = "SQLite convertido eliminado";
 
 // ventana Registro
 pub const log_title = "Registro";
+pub const log_hide = "Ocultar el registro (Ctrl+L)";
+pub const log_show = "Mostrar el registro (Ctrl+L)";
+pub const log_unread = "({d} nuevos)";
 
 // trabajo en curso
-pub const busy_converting = "Convirtiendo la base de datos Access...";
-pub const busy_opening = "Abriendo la base de datos...";
-pub const busy_loading = "Cargando la tabla...";
-pub const busy_running = "Ejecutando la consulta...";
-pub const busy_exporting = "Exportando...";
+pub const busy_converting = "Convirtiendo la base de datos Access";
+pub const busy_opening = "Abriendo la base de datos";
+pub const busy_loading = "Cargando la tabla";
+pub const busy_running = "Ejecutando la consulta";
+pub const busy_exporting = "Exportando";
 pub const busy_elapsed = "{s} {d:.1} s";
 pub const progress_overlay = "{d} / {d} {s}";
 pub const unit_tables = "tablas";
@@ -133,6 +136,9 @@ pub const canceled = "Cancelado";
 pub const err_not_db = "No es un archivo de base de datos: use .accdb, .mdb, .sqlite, .sqlite3, .db o .duckdb";
 pub const err_cannot_write = "No se puede escribir el archivo: está abierto en otro programa o la carpeta es de solo lectura ({t})";
 pub const err_generic = "Error: {t}";
+pub const err_sql = "Error en la consulta SQL: {s}";
+pub const err_db = "Error de la base de datos: {s}";
+pub const err_plain = "{s}";
 pub const err_worker = "No se pudo iniciar la tarea en segundo plano: {t}";
 pub const err_settings = "No se pudo guardar la configuración: {t}";
 pub const err_choose_other = "Elija otro archivo: este es la base de datos abierta";
@@ -155,8 +161,8 @@ pub const err_opengl = "\nEl controlador de video debe admitir OpenGL 3.3 (un es
 // modo de visualizacion en Linux (X11 primero, Wayland como reserva)
 pub const display_title = "Modo de visualización";
 pub const display_headline = "X11 no disponible; usando Wayland.";
-pub const display_missing = "Falta: {s}";
-pub const display_no_server = "servidor X";
+pub const display_no_server = "Servidor X no definido (DISPLAY)";
+pub const display_not_installed = "{s} no instalada";
 pub const display_help = "Ayuda";
 pub const display_none = "mdb2sql: no se pudo abrir la ventana: ni X11 ni Wayland están disponibles ({t}). Ayuda: {s}\n";
 pub const ok = "Aceptar";

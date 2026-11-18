@@ -22,11 +22,16 @@ void shim_capture_frame(float w, float h) {
     io->DisplayFramebufferScale.y = 1;
 }
 
-void shim_add_font(const char *path, float size_pixels) {
-    ImFontAtlas_AddFontFromFileTTF(igGetIO_Nil()->Fonts, path, size_pixels, NULL, NULL);
+ImFont *shim_add_font(const char *path, float size_pixels) {
+    return ImFontAtlas_AddFontFromFileTTF(igGetIO_Nil()->Fonts, path, size_pixels, NULL, NULL);
 }
 
 void shim_clipper_range(const ImGuiListClipper *clipper, int *start, int *end) {
     *start = clipper->DisplayStart;
     *end = clipper->DisplayEnd;
+}
+
+// --capture: tecla simulada (o teste do Esc na pergunta de saida)
+void shim_key(int key, bool down) {
+    ImGuiIO_AddKeyEvent(igGetIO_Nil(), (ImGuiKey)key, down);
 }

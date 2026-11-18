@@ -15,8 +15,8 @@ pub const tab_schema = "Esquema";
 pub const tab_sql = "SQL";
 pub const select_table = "Selecione uma tabela";
 pub const search = "pesquisar";
-pub const prev = "< Anterior";
-pub const next = "Próxima >";
+pub const prev = "← Anterior";
+pub const next = "Próxima →";
 pub const columns_button = "Colunas...";
 pub const columns_tip = "Colunas ocultas continuam na pesquisa e na exportação.";
 pub const page_line = "{s}: página {d} de {d} | linhas {d}-{d} de {d}{s}{s}";
@@ -104,13 +104,16 @@ pub const converted_deleted = "SQLite convertido apagado";
 
 // janela Log
 pub const log_title = "Log";
+pub const log_hide = "Recolher o log (Ctrl+L)";
+pub const log_show = "Mostrar o log (Ctrl+L)";
+pub const log_unread = "({d} novos)";
 
 // trabalho em andamento
-pub const busy_converting = "Convertendo o banco Access...";
-pub const busy_opening = "Abrindo o banco...";
-pub const busy_loading = "Carregando a tabela...";
-pub const busy_running = "Executando a consulta...";
-pub const busy_exporting = "Exportando...";
+pub const busy_converting = "Convertendo o banco Access";
+pub const busy_opening = "Abrindo o banco";
+pub const busy_loading = "Carregando a tabela";
+pub const busy_running = "Executando a consulta";
+pub const busy_exporting = "Exportando";
 pub const busy_elapsed = "{s} {d:.1} s";
 pub const progress_overlay = "{d} / {d} {s}";
 pub const unit_tables = "tabelas";
@@ -133,6 +136,9 @@ pub const canceled = "Cancelado";
 pub const err_not_db = "Não é um arquivo de banco: use .accdb, .mdb, .sqlite, .sqlite3, .db ou .duckdb";
 pub const err_cannot_write = "Não foi possível gravar o arquivo: ele está aberto em outro programa ou a pasta é somente leitura ({t})";
 pub const err_generic = "Erro: {t}";
+pub const err_sql = "Erro na consulta SQL: {s}";
+pub const err_db = "Erro no banco: {s}";
+pub const err_plain = "{s}";
 pub const err_worker = "Não foi possível iniciar a tarefa em segundo plano: {t}";
 pub const err_settings = "Não foi possível salvar as configurações: {t}";
 pub const err_choose_other = "Escolha outro arquivo: este é o banco que está aberto";
@@ -155,8 +161,8 @@ pub const err_opengl = "\nO driver de vídeo precisa suportar OpenGL 3.3 (área 
 // modo de exibicao no Linux (X11 primeiro, Wayland como reserva)
 pub const display_title = "Modo de exibição";
 pub const display_headline = "X11 indisponível; usando Wayland.";
-pub const display_missing = "Falta: {s}";
-pub const display_no_server = "servidor X";
+pub const display_no_server = "Servidor X não definido (DISPLAY)";
+pub const display_not_installed = "{s} não instalada";
 pub const display_help = "Ajuda";
 pub const display_none = "mdb2sql: não foi possível abrir a janela: nem X11 nem Wayland disponíveis ({t}). Ajuda: {s}\n";
 pub const ok = "OK";

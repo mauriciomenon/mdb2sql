@@ -34,10 +34,11 @@ extern fn ImGui_ImplOpenGL3_Shutdown() void;
 
 // src/shim.c: campos de structs que o translate-c deixa opacos
 extern fn shim_io_setup() void;
-extern fn shim_add_font(path: [*:0]const u8, size_pixels: f32) void;
+extern fn shim_add_font(path: [*:0]const u8, size_pixels: f32) ?*ig.ImFont;
 extern fn shim_clipper_range(clipper: *const ig.ImGuiListClipper, start: *c_int, end: *c_int) void;
 extern fn shim_capture_setup() void;
 extern fn shim_capture_frame(w: f32, h: f32) void;
+extern fn shim_key(key: c_int, down: bool) void;
 
 fn glProc(comptime T: type, name: [*:0]const u8) !T {
     return @ptrCast(glfw.getProcAddress(name) orelse return error.APIUnavailable);
@@ -123,6 +124,7 @@ const Capture = struct {
     deleted_tmp: ?access.TempPath = null, // passo final: o temporario que tem de sumir
     save_end: bool = false, // MDB2SQL_CAPTURE_SAVE=1: o passo final responde Salvar em vez de Apagar
     saved_path: ?[]const u8 = null, // Salvar: o arquivo que tem de existir (do gpa)
+    esc_frames: u32 = 0, // passo exit_esc: quadros desde o pedido de saida; Esc solto aos 12
 
     fn size(c: *const Capture) [2]u32 {
         const s = dbm.capture.plan[@min(c.step, dbm.capture.plan.len - 1)];
@@ -138,6 +140,9 @@ const Capture = struct {
 
     // O estado pedido pelo passo ja esta na tela (o passo Apagar termina sem banco aberto)
     fn settled(c: *const Capture, app: *const App) bool {
+        // saida pedida, pergunta aberta, Esc: a pergunta fecha e o programa continua aberto
+        if (dbm.capture.plan[c.step].action == .exit_esc)
+            return c.esc_frames > 14 and app.leave == null and !app.quit and ready(app);
         if (dbm.capture.plan[c.step].action == .prompt_delete)
             return !app.slot.busy() and app.choice == null and app.leave == null and !app.db.isOpen() and app.converted == null;
         return ready(app);
@@ -168,10 +173,20 @@ const Capture = struct {
         const action = cap.plan[c.step].action;
         // cada passo comeca sem os dialogos do passo anterior
         if (action != .about) app.about_open = false;
-        app.show_log = action == .log;
+        // so os passos de Log abrem o painel (a captura nao le nem grava as configuracoes)
+        app.prefs.log_open = action == .log or action == .log_error_open;
+        if (app.prefs.log_open) markLogRead();
         if (action != .prompt and action != .prompt_delete) app.leave = null;
         if (action != .display_warning) app.display_dismiss = true;
         switch (action) {
+            .exit_esc => {
+                if (app.converted == null) {
+                    c.skip(app.gpa, "not an Access file (no exit prompt)");
+                    return false;
+                }
+                c.esc_frames = 0;
+                app.requestLeave(.exit);
+            },
             .display_warning => if (app.display_warning == null) {
                 c.skip(app.gpa, "no display warning (X11 in use)");
                 return false;
@@ -202,7 +217,12 @@ const Capture = struct {
                 if (app.selected != i) app.want_select = i;
             },
             .about => app.want_about = true,
-            .log => {},
+            .log, .log_error_open => {},
+            .log_error => {
+                // erro de verdade (SQL errado) com o Log recolhido: a barra de status mostra o erro em destaque
+                copyZ(&app.sql, "SELEC 1");
+                app.want_run = true;
+            },
             .settings_menu => app.start_menu = .Settings,
             .lang_en, .lang_pt_br, .lang_es => app.want_lang = switch (action) {
                 .lang_pt_br => .pt_br,
@@ -238,6 +258,16 @@ const Capture = struct {
     fn after(c: *Capture, app: *App, io: std.Io) bool {
         if (c.failed == null and ig.igGetTime() > 900) c.failed = "timeout: the state did not settle in 15 minutes";
         if (c.failed != null or c.step == dbm.capture.plan.len) return true;
+        if (c.applied and dbm.capture.plan[c.step].action == .exit_esc) {
+            c.esc_frames += 1;
+            if (c.esc_frames == 12) {
+                if (app.leave == null) c.failed = "the exit prompt did not open";
+                shim_key(ig.ImGuiKey_Escape, true);
+            }
+            if (c.esc_frames == 13) shim_key(ig.ImGuiKey_Escape, false);
+            if (c.esc_frames == 200 and app.leave != null) c.failed = "Esc did not close the exit prompt";
+            if (app.quit) c.failed = "Esc on the exit prompt closed the program";
+        }
         if (!c.applied or !c.settled(app)) {
             c.settle = 0;
             return false;
@@ -414,11 +444,43 @@ fn setupSizes(scale: f32) void {
 // ------------------------------------------------------------------- texto e log
 
 var session_log: dbm.log.Log = .{};
+const log_pad_y: f32 = 4; // margem vertical do painel de Log
+var mono_font: ?*ig.ImFont = null; // fonte monoespacada do painel de Log (null = a fonte da interface)
 var log_gpa: std.mem.Allocator = std.heap.page_allocator; // trocado pelo gpa do programa em run()
 
 fn logLine(s: []const u8) void {
+    logEvent(.info, s);
+}
+
+// Com o Log recolhido a barra de status mostra a linha mais importante ainda nao vista no Log: ultimo erro >
+// ultimo aviso > o status normal (ultima acao). Abrir o Log zera os contadores.
+const Level = enum { info, warn, err };
+var alert: struct { level: Level = .info, buf: [1024]u8 = undefined, len: usize = 0, unread_err: u32 = 0, unread_warn: u32 = 0 } = .{};
+
+fn logEvent(level: Level, s: []const u8) void {
+    logEventShort(level, s, s);
+}
+
+// `full` vai para o log (texto inteiro do motor, sem cortar); `short` e a linha da barra de status
+fn logEventShort(level: Level, full: []const u8, short: []const u8) void {
     var hb: [8]u8 = undefined;
-    session_log.add(log_gpa, dbm.log.localTime(&hb), s);
+    session_log.add(log_gpa, dbm.log.localTime(&hb), full);
+    const s = short;
+    if (level == .info) return;
+    if (level == .err) alert.unread_err += 1 else alert.unread_warn += 1;
+    // um aviso nao esconde um erro ainda nao visto
+    if (level == .warn and alert.unread_err > 0) return;
+    alert.level = level;
+    alert.len = @min(s.len, alert.buf.len);
+    @memcpy(alert.buf[0..alert.len], s[0..alert.len]);
+    for (alert.buf[0..alert.len]) |*ch| if (ch.* == '\n') {
+        ch.* = ' '; // uma linha na barra de status
+    };
+}
+
+fn markLogRead() void {
+    alert.unread_err = 0;
+    alert.unread_warn = 0;
 }
 
 const Msg = struct {
@@ -435,7 +497,15 @@ const Msg = struct {
     // Texto pronto (mensagem do banco ou de outro texto ja traduzido)
     fn setText(m: *Msg, is_err: bool, s: []const u8) void {
         m.replace(is_err, s);
-        logLine(m.buf[0..m.len]);
+        logEvent(if (is_err) .err else .info, m.buf[0..m.len]);
+    }
+
+    // Erro do motor: uma linha na tela com o prefixo traduzido (key = "err_sql" ou "err_db"); o texto inteiro no log
+    fn setEngineError(m: *Msg, comptime key: []const u8, full: []const u8) void {
+        var b: [1024]u8 = undefined;
+        m.replace(true, i18n.fmt(&b, key, .{dbm.errorSummary(full)}));
+        var fb: [1100]u8 = undefined;
+        logEventShort(.err, i18n.fmt(&fb, key, .{full}), m.buf[0..m.len]);
     }
 
     // So troca o texto (sem nova linha no log): a mesma mensagem refeita em outro idioma
@@ -501,6 +571,12 @@ fn sameLineIfFits(width: f32, spacing: f32) void {
     const gap = if (spacing < 0) st.*.ItemSpacing.x else spacing;
     const right = ig.igGetWindowPos().x + ig.igGetWindowWidth() - st.*.WindowPadding.x;
     if (ig.igGetItemRectMax().x + gap + width <= right) ig.igSameLine(0, spacing);
+}
+
+// Proximo item encostado a direita do espaco que sobra (numero numa celula de tabela), menos `reserve` px
+fn rightAlign(width: f32, reserve: f32) void {
+    const avail = ig.igGetContentRegionAvail().x - reserve;
+    if (avail > width) ig.igSetCursorPosX(ig.igGetCursorPosX() + avail - width);
 }
 
 // Janela/dialogo sempre no centro da janela principal (mesmo redimensionada)
@@ -618,7 +694,7 @@ const App = struct {
     want_lang: ?i18n.Lang = null,
     want_about: bool = false,
     about_open: bool = false,
-    show_log: bool = false,
+    log_seen: usize = 0, // tamanho do log no ultimo quadro (linha nova: rola para o fim)
     focus_sql: bool = false,
     reveal_selected: bool = false, // rola a lista de tabelas ate a selecionada (ex.: --table)
     start_table: []const u8 = "", // --table: tabela inicial do proximo open
@@ -700,7 +776,9 @@ const App = struct {
 
     fn fail(app: *App, msg: *Msg, err: anyerror) void {
         switch (err) {
-            error.DuckDb, error.Failed => msg.setText(true, app.db.lastError()),
+            // motor: uma linha com prefixo na tela, o texto inteiro no log; as mensagens do programa ja vem traduzidas
+            error.DuckDb => if (msg == &app.sql_msg) msg.setEngineError("err_sql", app.db.lastError()) else msg.setEngineError("err_db", app.db.lastError()),
+            error.Failed => msg.setEngineError("err_plain", app.db.lastError()),
             error.Canceled => msg.set(true, "canceled", .{}),
             error.UnsupportedExtension => msg.set(true, "err_not_db", .{}),
             error.AccessDenied, error.FileBusy, error.PermissionDenied => msg.set(true, "err_cannot_write", .{err}),
@@ -913,7 +991,9 @@ const App = struct {
     }
 
     // Executa a resposta do dialogo do SQLite convertido (na thread da UI, sem trabalho rodando)
-    fn resolve(app: *App, ch: Choice) void {
+    // from_prompt: respondida no dialogo (cancelar o dialogo de arquivo volta para a pergunta); senao e a resposta
+    // lembrada da sessao (cancelar desiste da acao)
+    fn resolve(app: *App, ch: Choice, from_prompt: bool) void {
         const cv = app.converted orelse {
             app.leave = null;
             return;
@@ -937,7 +1017,8 @@ const App = struct {
                 dest = dialog.pick(app.io, .save_sqlite, app.hwnd, initial, &path_buf);
                 if (dest == null) {
                     if (dialog.unavailable) app.status.set(true, "err_no_dialog", .{});
-                    app.leave = null; // cancelou o dialogo de salvar: nada fecha
+                    // cancelou o dialogo de salvar: nada fecha; veio da pergunta, ela volta (Esc continua valendo)
+                    if (!from_prompt) app.leave = null;
                     return;
                 }
             }
@@ -990,15 +1071,14 @@ const App = struct {
         if (app.slot.busy()) return; // um trabalho por vez; os pedidos abaixo ficam para depois
         if (app.choice) |ch| {
             app.choice = null;
-            app.resolve(ch);
-        }
-        if (app.leave) |action| {
+            app.resolve(ch, true);
+        } else if (app.leave) |action| {
             if (app.converted == null) {
                 app.leave = null;
                 app.finishLeave(action);
-            } else if (app.session_choice) |ch| app.resolve(ch);
-            if (app.leave != null) return; // esperando a resposta sobre o SQLite convertido
+            } else if (app.session_choice) |ch| app.resolve(ch, false);
         }
+        if (app.leave != null) return; // esperando a resposta sobre o SQLite convertido
         if (app.want_filter != null or app.want_unfilter != null or app.want_clear_filters) {
             app.editFilters();
             app.page = 0;
@@ -1156,9 +1236,16 @@ const App = struct {
             defer ig.igEndPopup();
             app.exportItems();
         }
-        ig.igSameLine(0, -1);
-        app.drawStatus();
         ig.igSeparator();
+
+        // Embaixo: painel de Log (quando aberto, com a borda de cima arrastavel) e a barra de status
+        const st = ig.igGetStyle();
+        const status_h = ig.igGetFrameHeight() + st.*.ItemSpacing.y + 1;
+        const avail_h = ig.igGetContentRegionAvail().y - status_h;
+        const split_h: f32 = 6;
+        const log_h: f32 = if (app.prefs.log_open) logPanelHeight(app.prefs.log_frac, vp.*.WorkSize.y) else 0;
+        // aberto: a borda arrastavel e o painel, cada um com o seu espacamento
+        const content_h = @max(ig.igGetFrameHeight() * 3, avail_h - log_h - (if (app.prefs.log_open) split_h + 2 * st.*.ItemSpacing.y else 0));
 
         if (!app.opening() and app.db.isOpen()) {
             // painel das tabelas na largura do nome mais longo (ate 40% da janela; alem disso rola na horizontal,
@@ -1166,19 +1253,45 @@ const App = struct {
             if (app.tables_w == 0) {
                 var longest: f32 = 0;
                 for (app.db.table_names) |n| longest = @max(longest, textWidth(n));
-                const st = ig.igGetStyle();
                 const w = longest + textWidth("0000000") + 4 * st.*.CellPadding.x + 2 * st.*.WindowPadding.x + st.*.ScrollbarSize + 8;
                 app.tables_w = std.math.clamp(w, 260, @max(260, vp.*.WorkSize.x * 0.4));
             }
             ig.igPushID_Int(@intCast(app.opened % 1_000_000));
-            if (ig.igBeginChild_Str("##tables", .{ .x = app.tables_w, .y = 0 }, ig.ImGuiChildFlags_ResizeX | ig.ImGuiChildFlags_Borders, 0)) app.drawTables();
+            if (ig.igBeginChild_Str("##tables", .{ .x = app.tables_w, .y = content_h }, ig.ImGuiChildFlags_ResizeX | ig.ImGuiChildFlags_Borders, 0)) app.drawTables();
             ig.igEndChild();
             ig.igPopID();
             ig.igSameLine(0, -1);
-            if (ig.igBeginChild_Str("##content", .{ .x = 0, .y = 0 }, 0, 0)) app.drawContent();
+            if (ig.igBeginChild_Str("##content", .{ .x = 0, .y = content_h }, 0, 0)) app.drawContent();
             ig.igEndChild();
+        } else ig.igDummy(.{ .x = 1, .y = content_h });
+        if (app.prefs.log_open) {
+            // borda arrastavel: muda a altura do Log (fracao da janela, gravada ao soltar)
+            _ = ig.igInvisibleButton("##logsplit", .{ .x = @max(1, ig.igGetContentRegionAvail().x), .y = split_h }, 0);
+            if (ig.igIsItemHovered(0) or ig.igIsItemActive()) ig.igSetMouseCursor(ig.ImGuiMouseCursor_ResizeNS);
+            if (ig.igIsItemActive()) {
+                const dy = ig.igGetMouseDragDelta(0, 0).y; // desde o quadro anterior (zerado logo abaixo)
+                ig.igResetMouseDragDelta(0);
+                app.prefs.log_frac = settings.clampLogFrac(app.prefs.log_frac - dy / @max(1, vp.*.WorkSize.y));
+            }
+            if (ig.igIsItemDeactivated()) app.savePrefs();
+            app.drawLogPanel(log_h);
         }
-        app.drawLog();
+        ig.igSeparator();
+        app.drawStatus();
+    }
+
+    // Altura do painel de Log: fracao da janela (~10%), entre 3 linhas (+ cabecalho) e 25%
+    fn logPanelHeight(frac: f32, win_h: f32) f32 {
+        // cabecalho + 3 linhas da fonte do log (um passo menor) + as margens da caixa e do painel
+        const min_h = ig.igGetFrameHeightWithSpacing() + 3 * @max(13, ig.igGetFontSize() - 2) + 2 * ig.igGetStyle().*.FramePadding.y + 2 * log_pad_y + 2;
+        return std.math.clamp(frac * win_h, min_h, @max(min_h, settings.max_log_frac * win_h));
+    }
+
+    fn setLogOpen(app: *App, open: bool) void {
+        if (open) markLogRead();
+        if (app.prefs.log_open == open) return;
+        app.prefs.log_open = open;
+        app.savePrefs();
     }
 
     // Itens de exportacao (menu Arquivo > Exportar e botao Exportar...)
@@ -1230,7 +1343,7 @@ const App = struct {
         }
         if (ig.igBeginMenu(view_l, true)) {
             defer ig.igEndMenu();
-            _ = ig.igMenuItem_BoolPtr(tr("menu_log"), "Ctrl+L", &app.show_log, true);
+            if (ig.igMenuItem_Bool(tr("menu_log"), "Ctrl+L", app.prefs.log_open, true)) app.setLogOpen(!app.prefs.log_open);
         }
         if (ig.igBeginMenu(settings_l, true)) {
             defer ig.igEndMenu();
@@ -1257,7 +1370,7 @@ const App = struct {
             if (ig.igMenuItem_Bool(tr("menu_about"), null, false, true)) app.want_about = true;
         }
         if (ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_O)) app.want_browse = true;
-        if (ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_L)) app.show_log = !app.show_log;
+        if (ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_L)) app.setLogOpen(!app.prefs.log_open);
     }
 
     // O menu de --menu, uma vez, so depois que o banco abriu e nada esta rodando
@@ -1383,9 +1496,18 @@ const App = struct {
         const want = app.leave != null and app.choice == null and app.converted != null;
         if (want and !ig.igIsPopupOpen_Str(title, 0)) _ = ig.igOpenPopup_Str(title, 0);
         centerNext();
-        if (!ig.igBeginPopupModal(title, null, ig.ImGuiWindowFlags_AlwaysAutoResize | ig.ImGuiWindowFlags_NoSavedSettings)) return;
+        // X do dialogo, Esc ou Cancelar fecham a pergunta (inclusive na saida do programa); Enter = Salvar...
+        var open = true;
+        if (!ig.igBeginPopupModal(title, &open, ig.ImGuiWindowFlags_AlwaysAutoResize | ig.ImGuiWindowFlags_NoSavedSettings)) {
+            if (!open) app.leave = null; // o X fecha o popup antes de chegar aqui
+            return;
+        }
         defer ig.igEndPopup();
         if (!want) return ig.igCloseCurrentPopup();
+        if (!open or ig.igIsKeyPressed_Bool(ig.ImGuiKey_Escape, false)) {
+            app.leave = null;
+            return ig.igCloseCurrentPopup();
+        }
         const cv = app.converted.?;
         var mb: [600]u8 = undefined;
         // largura controlada: o nome longo quebra a linha em vez de alargar o dialogo
@@ -1401,41 +1523,66 @@ const App = struct {
         const row_w = 3 * bw + 2 * st.*.ItemSpacing.x;
         ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - row_w));
         if (ig.igButton(save_l, .{ .x = bw, .y = 0 })) app.choice = .save;
+        // foco inicial visivel no botao padrao; Enter (com o foco nele) salva
+        if (ig.igIsWindowAppearing()) {
+            ig.igSetItemDefaultFocus();
+            ig.igSetKeyboardFocusHere(-1);
+            ig.igSetNavCursorVisible(true);
+        }
         var sb: [600]u8 = undefined;
         itemTooltip(i18n.fmtZ(&sb, "converted_save_tip", .{std.fs.path.stem(zstr(&cv.source))}));
         ig.igSameLine(0, -1);
         if (ig.igButton(delete_l, .{ .x = bw, .y = 0 })) app.choice = .delete;
         ig.igSameLine(0, -1);
-        if (ig.igButton(cancel_l, .{ .x = bw, .y = 0 }) or ig.igIsKeyPressed_Bool(ig.ImGuiKey_Escape, false)) {
+        if (ig.igButton(cancel_l, .{ .x = bw, .y = 0 })) {
             app.leave = null;
             ig.igCloseCurrentPopup();
         }
     }
 
-    // Janela Log: mensagens da sessao com a hora; texto selecionavel (Ctrl+C) e Copiar tudo
-    fn drawLog(app: *App) void {
-        if (!app.show_log) return;
-        const vp = ig.igGetMainViewport();
-        ig.igSetNextWindowSize(.{ .x = @min(760, vp.*.Size.x * 0.7), .y = @min(340, vp.*.Size.y * 0.5) }, ig.ImGuiCond_Appearing);
-        ig.igSetNextWindowPos(.{ .x = vp.*.Pos.x + vp.*.Size.x / 2, .y = vp.*.Pos.y + vp.*.Size.y * 0.6 }, ig.ImGuiCond_Appearing, .{ .x = 0.5, .y = 0.5 });
-        var tb: [96]u8 = undefined;
-        const open = ig.igBegin(idLabel(&tb, "log_title", "log"), &app.show_log, ig.ImGuiWindowFlags_NoSavedSettings | ig.ImGuiWindowFlags_NoCollapse);
-        defer ig.igEnd();
-        if (!open) return;
-        if (button(tr("copy_all"))) setClipboard(session_log.slice());
+    // Painel de Log embaixo: cabecalho (seta para recolher, titulo, Copiar tudo, Limpar) e as mensagens da sessao
+    // com a hora, em fonte monoespacada um passo menor; texto selecionavel (Ctrl+C). Rola sozinho para a ultima linha.
+    fn drawLogPanel(app: *App, h: f32) void {
+        markLogRead(); // aberto: tudo esta a vista
+        defer ig.igEndChild();
+        ig.igPushStyleVar_Vec2(ig.ImGuiStyleVar_WindowPadding, .{ .x = 8, .y = log_pad_y }); // painel enxuto
+        const visible = ig.igBeginChild_Str("##logpanel", .{ .x = 0, .y = h }, ig.ImGuiChildFlags_Borders, ig.ImGuiWindowFlags_NoScrollbar);
+        ig.igPopStyleVar(1);
+        if (!visible) return;
+        if (ig.igArrowButton("##logclose", ig.ImGuiDir_Down)) app.setLogOpen(false);
+        itemTooltip(tr("log_hide"));
         ig.igSameLine(0, -1);
-        if (button(tr("clear"))) session_log.clear();
+        ig.igAlignTextToFramePadding();
+        textSlice(tr("log_title"));
+        const copy_l = tr("copy_all");
+        const clear_l = tr("clear");
+        const right = buttonWidth(copy_l) + buttonWidth(clear_l) + ig.igGetStyle().*.ItemSpacing.x;
+        ig.igSameLine(0, -1);
+        ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - right));
+        if (button(copy_l)) setClipboard(session_log.slice());
+        ig.igSameLine(0, -1);
+        if (button(clear_l)) session_log.clear();
         // somente leitura: o ImGui seleciona e copia (Ctrl+C) sem mudar o texto
         const empty = struct {
             var z: [1:0]u8 = .{0};
         };
         const buf: [*]u8 = if (session_log.text.items.len > 0) session_log.text.items.ptr else &empty.z;
         const len = if (session_log.text.items.len > 0) session_log.text.items.len else 1;
+        if (len != app.log_seen) ig.igSetNextWindowScroll(.{ .x = 0, .y = 1e9 }); // linha nova: vai para o fim
+        app.log_seen = len;
+        ig.igPushFont(mono_font, @max(13, ig.igGetFontSize() - 2));
         _ = ig.igInputTextMultiline("##logtext", @ptrCast(buf), len, .{ .x = -1, .y = -1 }, ig.ImGuiInputTextFlags_ReadOnly, null, null);
+        ig.igPopFont();
     }
 
-    // Status, ou o trabalho em andamento (com progresso e Cancelar) quando ele ja demora o bastante para ser notado
+    // Barra de status (embaixo): seta que abre/recolhe o Log, depois o trabalho em andamento (progresso e Cancelar)
+    // ou a mensagem. Com o Log recolhido: o erro ou aviso ainda nao visto no Log (destacado, com a contagem), senao o
+    // status; clicar na linha abre o Log.
     fn drawStatus(app: *App) void {
+        const open = app.prefs.log_open;
+        if (ig.igArrowButton("##logtoggle", if (open) ig.ImGuiDir_Down else ig.ImGuiDir_Up)) app.setLogOpen(!open);
+        itemTooltip(if (open) tr("log_hide") else tr("log_show"));
+        ig.igSameLine(0, -1);
         const elapsed = ig.igGetTime() - app.busy_since;
         if (app.slot.busy() and elapsed > 0.15) {
             const r = &app.slot.req;
@@ -1461,12 +1608,31 @@ const App = struct {
             if (button(tr("cancel"))) app.slot.cancel();
             return;
         }
-        if (app.status.len == 0) ig.igTextDisabled("%s", tr("no_db").ptr) else app.status.draw();
-        // clique direito na linha de status: Copiar (o texto inteiro, como aparece)
+        ig.igAlignTextToFramePadding();
+        const unread = alert.unread_err + alert.unread_warn;
+        var shown: []const u8 = app.status.text();
+        if (!open and unread > 0) {
+            // erro em vermelho, aviso em ambar
+            shown = alert.buf[0..alert.len];
+            const c: [3]f32 = if (alert.level == .err)
+                (if (light_theme) .{ 0.70, 0.15, 0.12 } else .{ 1, 0.48, 0.45 })
+            else
+                (if (light_theme) .{ 0.62, 0.40, 0.0 } else .{ 0.95, 0.75, 0.30 });
+            ig.igPushStyleColor_Vec4(ig.ImGuiCol_Text, .{ .x = c[0], .y = c[1], .z = c[2], .w = 1 });
+            textSlice(shown);
+            ig.igPopStyleColor(1);
+        } else if (app.status.len == 0) ig.igTextDisabled("%s", tr("no_db").ptr) else app.status.draw();
+        const line_clicked = ig.igIsItemClicked(0);
+        // clique direito na linha de status: Copiar (o texto inteiro, como aparece) e Log
         if (ig.igBeginPopupContextItem("##status_menu", ig.ImGuiPopupFlags_MouseButtonRight)) {
             defer ig.igEndPopup();
-            if (ig.igMenuItem_Bool(tr("copy"), null, false, app.status.len > 0)) setClipboard(app.status.text());
-            if (ig.igMenuItem_Bool(tr("menu_log"), null, false, true)) app.show_log = true;
+            if (ig.igMenuItem_Bool(tr("copy"), null, false, shown.len > 0)) setClipboard(shown);
+            if (ig.igMenuItem_Bool(tr("log_show"), null, false, !open)) app.setLogOpen(true);
+        }
+        if (!open and line_clicked) app.setLogOpen(true);
+        if (!open and unread > 1) {
+            ig.igSameLine(0, -1);
+            textT("log_unread", .{unread});
         }
     }
 
@@ -1481,7 +1647,19 @@ const App = struct {
         ig.igTableSetupScrollFreeze(0, 1);
         ig.igTableSetupColumn(tr("col_table"), ig.ImGuiTableColumnFlags_WidthFixed, 0, 0);
         ig.igTableSetupColumn(tr("col_rows"), ig.ImGuiTableColumnFlags_WidthFixed, 0, 0);
-        ig.igTableHeadersRow();
+        // cabecalho com "Linhas" a direita, como os numeros
+        ig.igTableNextRow(ig.ImGuiTableRowFlags_Headers, ig.igTableGetHeaderRowHeight());
+        if (ig.igTableSetColumnIndex(0)) ig.igTableHeader(tr("col_table"));
+        if (ig.igTableSetColumnIndex(1)) {
+            const x0 = ig.igGetCursorPosX();
+            ig.igPushStyleColor_U32(ig.ImGuiCol_Text, 0); // nome invisivel: a largura automatica ainda conta com ele
+            ig.igTableHeader(tr("col_rows"));
+            ig.igPopStyleColor(1);
+            ig.igSameLine(0, 0);
+            ig.igSetCursorPosX(x0);
+            rightAlign(textWidth(tr("col_rows")), 0);
+            textSlice(tr("col_rows"));
+        }
         var fbuf: [app.table_filter.len]u8 = undefined;
         const words = dbm.gridtools.fold(&fbuf, zstr(&app.table_filter));
         for (app.db.table_names, 0..) |name, i| {
@@ -1506,7 +1684,9 @@ const App = struct {
             _ = ig.igTableNextColumn();
             if (i < app.counts.len) {
                 var nb: [24]u8 = undefined;
-                textSlice(std.fmt.bufPrint(&nb, "{d}", .{app.counts[i]}) catch "");
+                const n = std.fmt.bufPrint(&nb, "{d}", .{app.counts[i]}) catch "";
+                rightAlign(textWidth(n), 0);
+                textSlice(n);
             }
         }
     }
@@ -1742,11 +1922,27 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
             if (!ig.igTableSetColumnIndex(@intCast(c))) continue;
             const avail = ig.igGetContentRegionAvail().x;
             ig.igPushID_Int(@intCast(c));
-            ig.igTableHeader(name.ptr);
+            var hovered = false;
+            if (c < g.num_cols.len and g.num_cols[c]) {
+                // coluna numerica: o nome a direita, deixando lugar para a seta de ordenacao
+                // o cabecalho com o nome invisivel mantem o ajuste automatico da largura pelo nome
+                const x0 = ig.igGetCursorPosX();
+                ig.igPushStyleColor_U32(ig.ImGuiCol_Text, 0);
+                ig.igTableHeader(name.ptr);
+                ig.igPopStyleColor(1);
+                hovered = ig.igIsItemHovered(0);
+                ig.igSameLine(0, 0);
+                ig.igSetCursorPosX(x0);
+                rightAlign(textWidth(name), if (sort != null) ig.igGetFontSize() * 0.8 else 0);
+                textSlice(name);
+            } else {
+                ig.igTableHeader(name.ptr);
+                hovered = ig.igIsItemHovered(0);
+            }
             ig.igPopID();
             // a largura inicial ja inclui o cabecalho (auto-fit do ImGui); estreitada a mao, o nome vai no tooltip
-            if (ig.igIsItemHovered(0) and textWidth(name) > avail) tooltip(name);
-            if (ig.igIsMouseReleased_Nil(1) and ig.igIsItemHovered(0)) {
+            if (hovered and textWidth(name) > avail) tooltip(name);
+            if (ig.igIsMouseReleased_Nil(1) and hovered) {
                 sel.header_col = c;
                 open_header = true;
             }
@@ -1795,7 +1991,10 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
                 const float = c < g.float_cols.len and g.float_cols[c];
                 if (cell) |s| {
                     ig.igSameLine(0, 0);
-                    textSlice(if (float) dbm.gridtools.wholeFloatText(s) else s);
+                    const txt = if (float) dbm.gridtools.wholeFloatText(s) else s;
+                    // numero alinhado a direita (o cabecalho tambem); texto a esquerda
+                    if (c < g.num_cols.len and g.num_cols[c]) rightAlign(textWidth(txt), 0);
+                    textSlice(txt);
                 }
             }
         }
@@ -2057,7 +2256,7 @@ fn run(init: std.process.Init) !void {
     // janela pelo libdecor, que carrega o GTK; no WSLg recem-reiniciado o programa caiu 2 vezes dentro dele.
     if (platform.is_windows) try glfw.init() else if (try initLinuxDisplay(arena, init.io, init.environ_map)) |w| {
         app.display_warning = w;
-        logLine(w.text()); // no log as 3 linhas viram uma
+        logEvent(.warn, w.text()); // no log as 3 linhas viram uma
     }
     defer glfw.terminate();
     glfw.windowHint(.context_version_major, 3);
@@ -2080,12 +2279,23 @@ fn run(init: std.process.Init) !void {
     applyTheme(settings.isLight(theme, app.gtk_theme), app.hwnd);
     // Segoe UI (Windows) ou DejaVu/Noto Sans (Linux) quando existe (acentos legiveis); senao fica a fonte embutida
     // do ImGui. 16 px; titulos seguem proporcionais (FontSizeBase)
-    for (platform.fonts) |font| {
+    // Os glifos (acentos, setas U+2190-21FF) entram no atlas sob demanda (fontes dinamicas do Dear ImGui 1.92+)
+    const ui_font = for (platform.fonts) |font| {
         if (std.Io.Dir.cwd().access(init.io, font, .{})) |_| {
-            shim_add_font(font, 16 * scale);
+            _ = shim_add_font(font, 16 * scale);
+            break true;
+        } else |_| {}
+    } else blk: {
+        ig.igGetStyle().*.FontScaleDpi = scale;
+        break :blk false;
+    };
+    // monoespacada para o painel de Log (Consolas, DejaVu Sans Mono), so depois da fonte da interface (a 1a e a padrao)
+    if (ui_font) for (platform.mono_fonts) |font| {
+        if (std.Io.Dir.cwd().access(init.io, font, .{})) |_| {
+            mono_font = shim_add_font(font, 14 * scale);
             break;
         } else |_| {}
-    } else ig.igGetStyle().*.FontScaleDpi = scale;
+    };
 
     // no --capture o GLFW nao entrega mouse nem teclado reais ao ImGui
     if (!ImGui_ImplGlfw_InitForOpenGL(window, capture_opts == null)) return error.PlatformError;

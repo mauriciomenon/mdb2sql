@@ -52,11 +52,33 @@ pub const Grid = struct {
     rows: []const []?[]const u8 = &.{},
     truncated: bool = false, // o resultado tinha mais que max_rows linhas (as outras nao foram lidas)
     float_cols: []const bool = &.{}, // colunas DOUBLE/FLOAT: a grade mostra 2.0 como 2 (so na tela, como no Go)
+    num_cols: []const bool = &.{}, // colunas numericas: a grade alinha a direita (valor e cabecalho)
 
     pub fn deinit(self: *Grid) void {
         self.arena.deinit();
     }
 };
+
+// !T: One-line summary of an engine error for the status bar: the first line, without DuckDB's "<Kind> Error: "
+// prefix and without the "LINE 1: ..." pointer. The full text goes to the log.
+pub fn errorSummary(msg: []const u8) []const u8 {
+    var s = std.mem.trim(u8, msg, " \t\r\n");
+    if (std.mem.indexOfScalar(u8, s, '\n')) |nl| s = s[0..nl];
+    if (std.mem.indexOf(u8, s, "LINE ")) |l| s = s[0..l];
+    if (std.mem.indexOf(u8, s, " Error: ")) |e| {
+        const kind = s[0..e];
+        if (kind.len > 0 and kind.len <= 24 and std.mem.indexOfScalar(u8, kind, ' ') == null) s = s[e + " Error: ".len ..];
+    }
+    return std.mem.trim(u8, s, " \t\r");
+}
+
+test "engine error summary: first line, no DuckDB kind prefix, no LINE pointer" {
+    try t.expectEqualStrings("syntax error at or near \"SELEC\"", errorSummary("Parser Error: syntax error at or near \"SELEC\"\n\nLINE 1: SELEC 1\n        ^"));
+    try t.expectEqualStrings("syntax error at or near \"SELEC\"", errorSummary("Parser Error: syntax error at or near \"SELEC\"  LINE 1: SELEC 1   ^^^^^"));
+    try t.expectEqualStrings("Table with name nope does not exist!", errorSummary("Catalog Error: Table with name nope does not exist!\nDid you mean \"note\"?"));
+    try t.expectEqualStrings("File not found", errorSummary("File not found"));
+    try t.expectEqualStrings("mdb-export failed on table X", errorSummary("mdb-export failed on table X"));
+}
 
 // Versao da libduckdb carregada (ex.: "v2.0.0")
 pub fn libraryVersion() []const u8 {
@@ -382,6 +404,9 @@ pub const Db = struct {
         const floats = try a.alloc(bool, rows.n_cols);
         for (floats, 0..) |*f, i| f.* = i < rows.types.len and (rows.types[i] == c.DUCKDB_TYPE_DOUBLE or rows.types[i] == c.DUCKDB_TYPE_FLOAT);
         grid.float_cols = floats;
+        const nums = try a.alloc(bool, rows.n_cols);
+        for (nums, 0..) |*n, i| n.* = i < rows.types.len and isNumericType(rows.types[i]);
+        grid.num_cols = nums;
 
         var list: std.ArrayList([]?[]const u8) = .empty;
         var buf: [64]u8 = undefined;
@@ -680,6 +705,7 @@ test "grid marks DOUBLE/FLOAT columns and keeps their original text" {
     var g = try db.run("SELECT 2316.0::DOUBLE AS d, 2.5::DOUBLE AS e, '2.0' AS s, 2::FLOAT AS f, 2 AS i, 2.0::DECIMAL(4,1) AS m", &.{});
     defer g.deinit();
     try t.expectEqualSlices(bool, &.{ true, true, false, true, false, false }, g.float_cols);
+    try t.expectEqualSlices(bool, &.{ true, true, false, true, true, true }, g.num_cols); // numeros a direita
     // a celula guarda o texto do banco: copia e "Filter by this value" (CAST AS VARCHAR = ?) continuam iguais
     try t.expectEqualStrings("2316.0", g.rows[0][0].?);
     try t.expectEqualStrings("2.0", g.rows[0][2].?);
