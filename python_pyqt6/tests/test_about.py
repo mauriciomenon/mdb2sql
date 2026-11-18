@@ -4,12 +4,14 @@ import tomllib
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QLabel, QPushButton
 
 from backend.access import odbc_available
 from shared import about, i18n
 from shared.bundle import bundled
-from ui.dialogs import AboutDialog
+from shared.display import decide
+from ui.dialogs import AboutDialog, ColumnsDialog, DisplayWarning
 from ui.main_window import MainWindow
 
 GITHUB = "https://github.com/mauriciomenon/mdb2sql"
@@ -61,6 +63,19 @@ def test_version_from_frozen_bundle(tmp_path, monkeypatch) -> None:
     (tmp_path / "BUILD").write_text("123 2026-11-15\n", encoding="utf-8")
     assert about.build_info() == "build 123 (2026-11-15)"
     assert dict(about.about_fields())["Build"] == "123 (2026-11-15)"
+
+
+def test_every_dialog_has_an_explicit_default_button_and_esc_closes(qtbot) -> None:
+    # REGRA_VISUAL: botao explicito (OK/Fechar), Enter = botao padrao, Esc = fechar; nunca so o X
+    _, notice = decide({"WAYLAND_DISPLAY": "wayland-0"}, "ID=debian\n", [])
+    for dialog, label in ((AboutDialog(), "OK"), (ColumnsDialog(["a"], set()), "Close"),
+                          (DisplayWarning(notice), "OK")):
+        qtbot.addWidget(dialog)
+        dialog.show()
+        defaults = [b.text() for b in dialog.findChildren(QPushButton) if b.isDefault()]
+        assert defaults == [label], type(dialog).__name__  # visivel, e o que o Enter aciona
+        QTest.keyClick(dialog, Qt.Key.Key_Escape)
+        assert not dialog.isVisible(), type(dialog).__name__
 
 
 def test_help_menu_opens_about_with_clickable_links(qtbot) -> None:

@@ -11,7 +11,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -235,11 +235,15 @@ def _load_mdbtools(path: Path, lite: sqlite3.Connection, work: Path, progress: P
                 )
             return csv_path
 
-        # o mdb-export leva ~20 s numa tabela grande: varios processos em paralelo, carga no SQLite em ordem
-        with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 1)) as pool:
-            exports = [pool.submit(export, index, table) for index, table in enumerate(tables)]
+        # o mdb-export de uma tabela grande domina o tempo (DB4: RANGER_SOSTAT, 123 colunas, ~27 s): as mais largas
+        # (proxy de tamanho) comecam primeiro, num nucleo a menos que a maquina (max. 6), e cada CSV pronto e
+        # gravado no SQLite assim que termina, sem esperar as anteriores
+        order = sorted(tables, key=lambda name: -len(schema[name]))
+        with ThreadPoolExecutor(max_workers=max(1, min((os.cpu_count() or 2) - 1, 6))) as pool:
+            exports = {pool.submit(export, index, table): table for index, table in enumerate(order)}
             try:
-                for done, (table, future) in enumerate(zip(tables, exports)):
+                for done, future in enumerate(as_completed(exports)):
+                    table = exports[future]
                     progress(done, len(tables), table)
                     columns = schema[table]
                     insert = _create(lite, table, columns)

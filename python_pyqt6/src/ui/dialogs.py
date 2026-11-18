@@ -74,7 +74,7 @@ class AboutDialog(QDialog):
             self.form.addRow(tr("about.label", label=label), link)
 
         buttons = QDialogButtonBox()
-        buttons.addButton(tr("button.ok"), QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.addButton(tr("button.ok"), QDialogButtonBox.ButtonRole.AcceptRole).setDefault(True)  # Enter
         buttons.accepted.connect(self.accept)
 
         layout = QVBoxLayout(self)
