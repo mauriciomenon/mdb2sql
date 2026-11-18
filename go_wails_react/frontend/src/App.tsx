@@ -179,7 +179,8 @@ function App() {
   // request numbers: an answer that is not the latest one (another table, query or file since) is dropped
   const tableReq = useRef(0);
   const sqlReq = useRef(0);
-  const loadedFind = useRef(''); // search of the rows shown in the Data tab
+  const loadedFind = useRef(''); // search of the last table request
+  const [shownFind, setShownFind] = useState(''); // search of the rows shown in the Data tab
   const [querying, setQuerying] = useState(false);
 
   const addLog = (text: string) => setLogLines((old) => [...old, logLine(text)]);
@@ -437,6 +438,7 @@ function App() {
       setRowCount(count);
       setTotalCount(total ?? count);
       setSchema(cols ?? []);
+      setShownFind(find);
     } catch (err) {
       if (req === tableReq.current) fail(err);
     }
@@ -530,7 +532,8 @@ function App() {
   // hidden columns only leave the Data grid: search, copy row and exports still use every column
   const shownColumns = useMemo(() => (view === 'data' ? gridColumns.filter((c) => !hidden.has(c)) : gridColumns), [view, gridColumns, hidden]);
   const hiddenCount = gridColumns.length - shownColumns.length;
-  const narrowed = filters.length > 0 || tableSearch !== '';
+  // the search of the rows on screen, not of the one being typed: the counts below belong to those rows
+  const narrowed = filters.length > 0 || shownFind !== '';
   const copyCell = () => sel && copyText(cellText(sel.row[sel.col]), t('copied.value'));
   const copyRow = (withHeader: boolean) =>
     sel && copyText(rowToTsv(gridColumns, sel.row, withHeader), t(withHeader ? 'copied.rowHeader' : 'copied.row'));
