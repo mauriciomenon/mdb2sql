@@ -1,11 +1,13 @@
-// NIVEL BASICO: Leitura de .mdb/.accdb para o DuckDB em memoria
-// Ordem: a) driver ODBC "Microsoft Access Driver (*.mdb, *.accdb)" (64 bits) se instalado;
-//        b) reserva: mdbtools estatico embutido no exe, extraido para %LOCALAPPDATA%\mdb2sql\;
-//        c) nenhum dos dois: mensagem dizendo o que instalar.
-// MDB2SQL_ACCESS_READER=odbc|mdbtools forca um dos caminhos.
+// NIVEL BASICO: Leitura de .mdb/.accdb para um DuckDB (depois gravado em SQLite, ver db_manager.rs)
+// Ordem: a) so no Windows: driver ODBC "Microsoft Access Driver (*.mdb, *.accdb)" (64 bits) se instalado;
+//        b) mdbtools estatico embutido no exe (Windows e Linux), extraido para a pasta de dados do usuario;
+//        c) nenhum dos dois: mensagem dizendo o que falta.
+// MDB2SQL_ACCESS_READER=odbc|mdbtools forca um dos caminhos (mdbtools: testar a leitura sem Access nenhum).
 
 use super::db_manager::{ident, literal};
+#[cfg(windows)]
 use duckdb::types::Value as DuckValue;
+#[cfg(windows)]
 use odbc_api::{
     ConnectionOptions, Cursor, DataType, Nullable, ResultSetMetadata, environment, escape_attribute_value,
 };
@@ -56,21 +58,34 @@ pub(crate) fn choose_reader(forced: Option<&str>, odbc: bool, mdbtools: &Result<
 }
 
 // NIVEL BASICO: O driver ODBC do Access (da mesma arquitetura do exe, 64 bits) esta instalado?
+#[cfg(windows)]
 pub fn odbc_installed() -> bool {
     environment()
         .and_then(|env| env.drivers())
         .is_ok_and(|drivers| drivers.iter().any(|d| d.description == ACCESS_DRIVER))
 }
 
-// NIVEL BASICO: Copia todas as tabelas do Access para o DuckDB em memoria; devolve o leitor usado
+// fora do Windows nao existe driver ODBC do Access
+#[cfg(not(windows))]
+pub fn odbc_installed() -> bool {
+    false
+}
+
+// o mdbtools vai dentro do exe deste build? (senao e o do PATH)
+pub fn mdbtools_embedded() -> bool {
+    cfg!(mdbtools_embedded)
+}
+
+// NIVEL BASICO: Copia todas as tabelas do Access para o DuckDB; devolve o leitor usado
+// forced: "odbc", "mdbtools" ou None (escolha automatica; ver choose_reader)
 pub fn import(
     duck: &duckdb::Connection,
     path: &str,
+    forced: Option<&str>,
     progress: &mut dyn FnMut(usize, usize, &str),
 ) -> Result<String, String> {
-    let forced = std::env::var("MDB2SQL_ACCESS_READER").ok();
     let tools = mdbtools_dir();
-    let reader = choose_reader(forced.as_deref(), odbc_installed(), &tools)?;
+    let reader = choose_reader(forced, odbc_installed(), &tools)?;
     match reader {
         Reader::Odbc => import_odbc(duck, path, progress),
         Reader::Mdbtools => import_mdbtools(duck, &tools?, path, progress),
@@ -80,8 +95,14 @@ pub fn import(
 }
 
 // ---------------------------------------------------------------------------------------------
-// a) ODBC
+// a) ODBC (so Windows)
 
+#[cfg(not(windows))]
+fn import_odbc(_: &duckdb::Connection, _: &str, _: &mut dyn FnMut(usize, usize, &str)) -> Result<(), String> {
+    Err("the Access ODBC driver exists only on Windows".into())
+}
+
+#[cfg(windows)]
 enum Fetch {
     Float,
     Binary,
@@ -91,6 +112,7 @@ enum Fetch {
 // NIVEL BASICO: Tipo ODBC da coluna vira tipo do DuckDB e o jeito de buscar o valor
 // NIVEL TECNICO: numbers that must stay exact (DECIMAL, integers, dates) travel as text and
 // DuckDB casts them on append; floating point goes as f64 to keep every digit
+#[cfg(windows)]
 fn odbc_column(data_type: DataType) -> (String, Fetch) {
     let text = |t: &str| (t.to_string(), Fetch::Text);
     match data_type {
@@ -116,6 +138,7 @@ fn odbc_column(data_type: DataType) -> (String, Fetch) {
     }
 }
 
+#[cfg(windows)]
 fn import_odbc(duck: &duckdb::Connection, path: &str, progress: &mut dyn FnMut(usize, usize, &str)) -> Result<(), String> {
     let err = |e: odbc_api::Error| e.to_string();
     let env = environment().map_err(err)?;
@@ -185,23 +208,53 @@ fn import_odbc(duck: &duckdb::Connection, path: &str, progress: &mut dyn FnMut(u
 // ---------------------------------------------------------------------------------------------
 // b) mdbtools
 
-// NIVEL BASICO: mdbtools estatico dentro do exe (baixado pelo scripts\setup_tools.ps1, sha256 conferido)
+// nome do executavel no sistema do build
 #[cfg(windows)]
+#[allow(unused_macros)] // so usado com o mdbtools embutido
+macro_rules! exe {
+    ($name:literal) => {
+        concat!($name, ".exe")
+    };
+}
+#[cfg(not(windows))]
+#[allow(unused_macros)] // so usado com o mdbtools embutido
+macro_rules! exe {
+    ($name:literal) => {
+        $name
+    };
+}
+
+// NIVEL BASICO: mdbtools estatico dentro do exe (Windows: release win-static-1.0.1, sha256 conferido pelo
+// scripts\setup_tools.ps1; Linux: compilado do fonte 1.0.1, sha256 conferido, pelo scripts/build_debian.sh).
 // COPYING (GPL, os exes) e COPYING.LIB (LGPL, a libmdb ligada neles) vao junto, como a licenca pede
+#[cfg(mdbtools_embedded)]
 const MDBTOOLS_FILES: [(&str, &[u8]); 6] = [
-    ("mdb-tables.exe", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/.tools/mdbtools-1.0.1-w11-amd64/mdb-tables.exe"))),
-    ("mdb-schema.exe", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/.tools/mdbtools-1.0.1-w11-amd64/mdb-schema.exe"))),
-    ("mdb-export.exe", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/.tools/mdbtools-1.0.1-w11-amd64/mdb-export.exe"))),
-    ("COPYING", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/.tools/mdbtools-1.0.1-w11-amd64/COPYING"))),
-    ("COPYING.LIB", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/.tools/mdbtools-1.0.1-w11-amd64/COPYING.LIB"))),
-    ("VERSION.txt", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/.tools/mdbtools-1.0.1-w11-amd64/VERSION.txt"))),
+    (exe!("mdb-tables"), include_bytes!(concat!(env!("MDBTOOLS_DIR"), "/", exe!("mdb-tables")))),
+    (exe!("mdb-schema"), include_bytes!(concat!(env!("MDBTOOLS_DIR"), "/", exe!("mdb-schema")))),
+    (exe!("mdb-export"), include_bytes!(concat!(env!("MDBTOOLS_DIR"), "/", exe!("mdb-export")))),
+    ("COPYING", include_bytes!(concat!(env!("MDBTOOLS_DIR"), "/COPYING"))),
+    ("COPYING.LIB", include_bytes!(concat!(env!("MDBTOOLS_DIR"), "/COPYING.LIB"))),
+    ("VERSION.txt", include_bytes!(concat!(env!("MDBTOOLS_DIR"), "/VERSION.txt"))),
 ];
 
-// NIVEL BASICO: Extrai o mdbtools para %LOCALAPPDATA%\mdb2sql\rust-tauri-svelte-<versao>\mdbtools (uma pasta
+// pasta de dados do usuario: %LOCALAPPDATA% no Windows, $XDG_DATA_HOME ou ~/.local/share nos outros
+#[cfg(mdbtools_embedded)]
+fn user_data_dir() -> Result<PathBuf, String> {
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+    if cfg!(windows) {
+        var("LOCALAPPDATA").ok_or_else(|| "LOCALAPPDATA is not set".to_string())
+    } else {
+        var("XDG_DATA_HOME")
+            .or_else(|| var("HOME").map(|home| home.join(".local").join("share")))
+            .ok_or_else(|| "HOME is not set".to_string())
+    }
+}
+
+// NIVEL BASICO: Extrai o mdbtools para <dados do usuario>/mdb2sql/rust-tauri-svelte-<versao>/mdbtools (uma pasta
 // por versao do app) e apaga as pastas de versoes antigas deste stack; os outros stacks usam outro prefixo
-#[cfg(windows)]
+#[cfg(mdbtools_embedded)]
 fn mdbtools_dir() -> Result<PathBuf, String> {
-    let base = PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is not set")?).join("mdb2sql");
+    let base = user_data_dir()?.join("mdb2sql");
     let prefix = "rust-tauri-svelte-";
     let current = format!("{prefix}{}", env!("CARGO_PKG_VERSION"));
     let dir = base.join(&current).join("mdbtools");
@@ -213,6 +266,11 @@ fn mdbtools_dir() -> Result<PathBuf, String> {
             // grava ao lado e renomeia: um exe pela metade nunca fica com o nome final
             let partial = dir.join(format!("{name}.partial"));
             std::fs::write(&partial, bytes).map_err(io)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&partial, std::fs::Permissions::from_mode(0o755)).map_err(io)?;
+            }
             std::fs::rename(&partial, &file).map_err(io)?;
         }
     }
@@ -226,8 +284,8 @@ fn mdbtools_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-// fora do Windows usa o mdbtools do sistema (pacote mdbtools), pelo PATH
-#[cfg(not(windows))]
+// build sem o mdbtools embutido (desenvolvimento, CI de lint): usa o mdbtools do sistema, pelo PATH
+#[cfg(not(mdbtools_embedded))]
 fn mdbtools_dir() -> Result<PathBuf, String> {
     Ok(PathBuf::new())
 }
@@ -254,6 +312,11 @@ fn run(mut cmd: Command) -> Result<String, String> {
 // NIVEL BASICO: Tipo do "mdb-schema ... postgres" vira tipo do DuckDB
 pub(crate) fn pg_to_duck(pg: &str) -> String {
     let t = pg.trim().to_ascii_uppercase();
+    // Moeda (Currency) do Access: o mdbtools 1.0.1 escreve "NUMERIC(15,2)" (sem espacos; o Numeric de verdade sai
+    // "NUMERIC (p, s)") mas exporta 4 casas; com DECIMAL(15,2) 1234567.8912 viraria 1234567.89
+    if t == "NUMERIC(15,2)" {
+        return "DECIMAL(19,4)".into();
+    }
     if let Some(args) = t.strip_prefix("NUMERIC").map(|a| a.trim().trim_start_matches('(').trim_end_matches(')')) {
         let nums: Vec<u32> = args.split(',').filter_map(|a| a.trim().parse().ok()).collect();
         return match nums.as_slice() {
@@ -321,7 +384,8 @@ fn import_mdbtools(
     ]);
     let schema = parse_pg_schema(&run(schema_cmd)?);
 
-    let csv = std::env::temp_dir().join(format!("mdb2sql-{}-mdbtools.csv", std::process::id()));
+    // na pasta dos temporarios do app, com o prefixo do processo: se o app cair, a proxima abertura apaga
+    let csv = super::converted::new_temp_path("mdbtools.csv")?;
     let result = (|| {
         for (i, table) in tables.iter().enumerate() {
             progress(i, tables.len(), table);
@@ -368,6 +432,6 @@ fn import_mdbtools(
         }
         Ok(())
     })();
-    let _ = std::fs::remove_file(&csv); // temporario; se sobrar, o %TEMP% e limpo pelo Windows
+    let _ = std::fs::remove_file(&csv);
     result
 }

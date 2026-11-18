@@ -169,6 +169,8 @@ pub fn export(
     progress: &mut dyn FnMut(usize, usize, &str) -> Result<(), String>,
 ) -> Result<(), String> {
     let mut lite = rusqlite::Connection::open(path).map_err(|e| format!("Failed to create SQLite: {e}"))?;
+    // uma transacao para o arquivo inteiro: um so commit (cada commit por tabela custava um fsync; 287 tabelas no DB4)
+    let tx = lite.transaction().map_err(|e| e.to_string())?;
     for (i, table) in tables.iter().enumerate() {
         progress(i, tables.len(), table)?;
         let mut stmt = duck
@@ -181,7 +183,6 @@ pub fn export(
         let defs: Vec<String> = columns.iter().map(|(n, t)| format!("{} {}", ident(n), lite_type(t))).collect();
         let marks = vec!["?"; columns.len()].join(", ");
 
-        let tx = lite.transaction().map_err(|e| e.to_string())?;
         tx.execute(&format!("CREATE TABLE {} ({})", ident(table), defs.join(", ")), [])
             .map_err(|e| format!("{table}: {e}"))?;
         {
@@ -203,7 +204,7 @@ pub fn export(
                 }
             }
         }
-        tx.commit().map_err(|e| e.to_string())?;
     }
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }

@@ -8,10 +8,9 @@ import {
   filterLabel,
   fold,
   hasAllWords,
-  hiddenStatus,
-  rowMatches,
   rowToTsv,
   searchWords,
+  setListed,
   toggleHidden,
   tsvField,
   visibleColumns,
@@ -26,12 +25,21 @@ test('several columns are hidden at once and shown again, order kept', () => {
   hidden = toggleHidden(toggleHidden(hidden, 'note'), 'id');
   assert.equal(before.size, 0); // o Set antigo nao muda (a tela so reage a um Set novo)
   assert.deepEqual(visibleColumns(columns, hidden), [{ name: 'SIGLA' }]);
-  assert.equal(hiddenStatus(hidden.size), '2 colunas ocultas');
   hidden = toggleHidden(hidden, 'id');
   assert.deepEqual(visibleColumns(columns, hidden).map((c) => c.name), ['id', 'SIGLA']);
-  assert.equal(hiddenStatus(hidden.size), '1 coluna oculta');
-  assert.equal(hiddenStatus(0), '');
   assert.deepEqual(visibleColumns(columns, new Set(['id', 'SIGLA', 'note'])), []);
+});
+
+// Colunas... com busca: Mostrar/Ocultar todas valem so para as colunas listadas; as outras ficam como estavam
+test('Show all / Hide all act only on the listed (searched) columns', () => {
+  let hidden = new Set(['note']);
+  hidden = setListed(hidden, ['RTUNO', 'RTUNAM'], true);
+  assert.deepEqual([...hidden].sort(), ['RTUNAM', 'RTUNO', 'note']);
+  hidden = setListed(hidden, ['RTUNO'], false);
+  assert.deepEqual([...hidden].sort(), ['RTUNAM', 'note']);
+  const before = hidden;
+  assert.notEqual(setListed(before, [], true), before); // sempre um Set novo
+  assert.deepEqual([...before].sort(), ['RTUNAM', 'note']);
 });
 
 // a grade mostra cellText: igual as outras stacks, DOUBLE inteiro sem ".0" e NULL vazio
@@ -47,11 +55,6 @@ test('Columns... cell fits the longest name and type', () => {
   const columns = [{ name: 'RTUNO', type: 'DOUBLE' }, { name: 'PNTNAM', type: 'VARCHAR' }];
   assert.equal(columnCellWidth(columns), 'calc(7.2ch + 7ch + 44px)');
   assert.equal(columnCellWidth([]), 'calc(1.2ch + 1ch + 44px)'); // tabela sem colunas nao quebra o CSS
-});
-
-test('hidden columns are still searched', () => {
-  const row = { id: 1, SIGLA: 'U9A' };
-  assert.ok(rowMatches(row, searchWords('u9a'))); // a busca olha a linha inteira, nao so as colunas visiveis
 });
 
 test('filters add up, one per column, and keep the value type', () => {
@@ -92,47 +95,6 @@ test('row is TAB-separated in column order, header optional', () => {
   assert.equal(rowToTsv(names, row, true), 'id\tname\tnote\r\n1\t\t"x\ty"');
 });
 
-const matches = (row, query) => rowMatches(row, searchWords(query));
-
-test('search looks in every column as displayed, ignoring case', () => {
-  const row = { id: 42, name: 'Ranger', when: '2026-07-14 10:00:00', on: false, ratio: 0.5, gone: null };
-  assert.ok(matches(row, '  rang '));
-  assert.ok(matches(row, '42'));
-  assert.ok(matches(row, '07-14 10:00'));
-  assert.ok(matches(row, 'false'));
-  assert.ok(matches(row, '0.5'));
-  assert.ok(!matches(row, 'null')); // NULL e so marcador da grade, nao dado
-  assert.ok(!matches(row, 'zzz'));
-});
-
-test('empty query returns every row', () => {
-  const rows = [{ a: 'x' }, { a: null }, {}];
-  assert.equal(rows.filter((row) => matches(row, '')).length, 3);
-  assert.equal(rows.filter((row) => matches(row, ' \t ')).length, 3);
-});
-
-test('all words, any order, ignoring case and accents, inside one cell', () => {
-  const row = { id: 7, PNTNAM: 'EXCITAÇÃO TENSÃO DE CAMPO' };
-  assert.ok(matches(row, 'tensao de campo'));
-  assert.ok(matches(row, 'campo tensao'));
-  assert.ok(matches(row, 'EXCITAÇÃO TENSÃO DE CAMPO')); // a frase exata continua achando
-  assert.ok(matches({ x: 'Excitação' }, 'EXCITACAO'));
-  assert.ok(matches({ x: 'Año de la señal' }, 'ano senal'));
-  assert.ok(!matches(row, 'tensao rotor')); // falta uma palavra: fora
-});
-
-test('words found only in different cells do not match', () => {
-  const row = { RTUNAM: 'U18A TENSÃO', PNTNAM: 'CAMPO' };
-  assert.ok(!matches(row, 'tensao campo'));
-  assert.ok(matches(row, 'tensao u18a'));
-});
-
-// causa do "nao achou": a grade junta espacos seguidos num so; quem busca pelo texto que ve nao achava nada
-test('text with repeated spaces is found by the single-spaced text the grid shows', () => {
-  const row = { TMPNAM: 'BP_50   TEMPERATURA AMBIENTE ELEV 144', PNTNAM: 'GERADOR  FREQUENCIA\nDA UNIDADE' };
-  assert.ok(matches(row, 'BP_50 TEMPERATURA AMBIENTE'));
-  assert.ok(matches(row, 'gerador frequencia da unidade'));
-});
 
 test('table filter uses the same words rule', () => {
   const tables = ['RANGER_SOANLG', 'RANGER_SOSTAT', 'Medição Área'];

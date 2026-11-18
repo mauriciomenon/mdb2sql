@@ -3,3 +3,5 @@ dist/
 target/
 ui/dist/
 src-tauri/
+# .mdb pequeno do teste automatico (scripts/make_test_mdb.ps1); a raiz ignora *.mdb
+!tests/data/sample.mdb

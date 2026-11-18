@@ -1,5 +1,39 @@
 # Changelog - mdb2sql (Rust + Tauri + Svelte)
 
+## 1.3.0
+
+### Novo
+
+- **Access sem nada instalado**: .accdb/.mdb abre pelo mdbtools 1.0.1 que vai dentro do exe (Windows e agora
+  Linux); o driver ODBC do Access so e usado no Windows e se existir. `MDB2SQL_ACCESS_READER=mdbtools` forca o
+  mdbtools.
+- **Conversao para SQLite**: ao abrir um Access o app grava uma vez um SQLite (arquivo, nao memoria) e le dali, com
+  os tipos (inteiro, decimal exato, texto, data, booleano, binario) e os NULL. Ao fechar o banco, abrir outro ou
+  sair o app pergunta: **Save...** (padrao ao lado do Access, `<nome>.sqlite`), **Delete** ou **Cancel**;
+  "Remember for this session" repete a escolha ate fechar o app. Temporario nunca fica orfao: se o app cair, a
+  proxima abertura apaga.
+- **Pesquisa na tabela inteira**: a busca da aba Data roda no banco (todas as linhas e colunas, mesma regra: todas
+  as palavras na mesma celula, sem maiusculas nem acentos), com "N of M matching rows".
+- **Idiomas**: ingles (padrao), portugues (Brasil) e espanhol em Settings > Language, gravado; troca na hora.
+  Todos os textos em catalogos (`ui/src/i18n/`); teste confere as chaves e que nenhum texto fica fora.
+- **Log**: View > Log mostra as mensagens da sessao com hora, selecionaveis (Ctrl+C) e **Copy all**; botao
+  direito na barra de status > **Copy**.
+- **File > Close database**.
+- **Debian amd64**: `build_debian_amd64_wsl.ps1` (pelo WSL) / `build_debian_amd64.sh` geram .deb e .zip, com o
+  mdbtools dentro do binario.
+
+### Mudado
+
+- Ordem em tudo que aparece: Access, SQLite, DuckDB (dialogo Abrir, exportacao, Sobre, README).
+- Lista de tabelas e seletor de colunas mostram o nome inteiro (quebra a linha; nada de "...").
+- Colunas...: **Show all**/**Hide all** agem so nas colunas listadas pela busca do dialogo.
+- O temporario da exportacao fica numa pasta propria, criada de forma exclusiva ao lado do destino.
+- odbc-api so no Windows (o pacote Linux nao depende do unixODBC).
+
+### Corrigido
+
+- Campo Moeda (Currency) do Access pelo mdbtools perdia a 3a e a 4a casa (`1234567.8912` virava `1234567.89`).
+
 ## 1.2.0
 
 ### Novo

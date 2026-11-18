@@ -1,10 +1,11 @@
 // NIVEL BASICO: Gerenciador do banco aberto em Rust
-// Abre .duckdb/.db, .sqlite/.sqlite3 e .mdb/.accdb, lista tabelas, executa queries
+// Abre .accdb/.mdb, .sqlite/.sqlite3/.db e .duckdb, lista tabelas, executa queries
 //
 // NIVEL TECNICO: every format ends up in one in-memory DuckDB connection: a DuckDB file is
 // ATTACHed READ_ONLY as "src" (and made current with USE), SQLite and Access tables are copied
 // into the in-memory database. The rest of the app only sees DuckDB.
 
+use super::converted::{self, Converted};
 use super::{access, sqlite_io};
 use duckdb::types::ValueRef;
 use duckdb::{Connection, Rows};
@@ -98,6 +99,44 @@ pub(crate) fn where_clause(filters: &[Filter]) -> Result<(String, Vec<duckdb::ty
         params.push(param);
     }
     let sql = if terms.is_empty() { String::new() } else { format!(" WHERE {}", terms.join(" AND ")) };
+    Ok((sql, params))
+}
+
+// NIVEL BASICO: Pesquisa da aba Data na tabela inteira, no banco: a linha entra quando UMA celula tem todas as
+// palavras (qualquer ordem, sem diferenciar maiusculas nem acentos). Devolve a condicao (sem WHERE) e os parametros.
+// NIVEL TECNICO: every column is compared as text (CAST AS VARCHAR) after lower(strip_accents()); the words go as
+// bound parameters folded the same way, so "tensao" finds "TENSÃO". NULL never matches. Empty search = None.
+pub(crate) fn search_condition(columns: &[String], search: &str) -> Option<(String, Vec<duckdb::types::Value>)> {
+    let words: Vec<&str> = search.split_whitespace().collect();
+    if words.is_empty() || columns.is_empty() {
+        return None;
+    }
+    let fold = |sql: &str| format!("lower(strip_accents({sql}))");
+    let mut params = Vec::new();
+    let cells: Vec<String> = columns
+        .iter()
+        .map(|col| {
+            let cell = fold(&format!("CAST({} AS VARCHAR)", ident(col)));
+            let all: Vec<String> = words
+                .iter()
+                .map(|w| {
+                    params.push(duckdb::types::Value::Text(w.to_string()));
+                    format!("contains({cell}, {})", fold("?"))
+                })
+                .collect();
+            format!("({})", all.join(" AND "))
+        })
+        .collect();
+    Some((format!("({})", cells.join(" OR ")), params))
+}
+
+// filtros (AND) e pesquisa juntos num WHERE so
+fn where_all(filters: &[Filter], columns: &[String], search: &str) -> Result<(String, Vec<duckdb::types::Value>), String> {
+    let (mut sql, mut params) = where_clause(filters)?;
+    if let Some((cond, more)) = search_condition(columns, search) {
+        sql = if sql.is_empty() { format!(" WHERE {cond}") } else { format!("{sql} AND {cond}") };
+        params.extend(more);
+    }
     Ok((sql, params))
 }
 
@@ -204,6 +243,53 @@ fn rows_to_json(
     Ok((results, false))
 }
 
+// NIVEL BASICO: Etapa da abertura, para a barra de status: ler o Access, gravar o SQLite, carregar as tabelas
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Step {
+    Read,
+    Convert,
+    Load,
+}
+
+// NIVEL BASICO: Resultado da abertura: por onde foi lido e o SQLite convertido (so Access)
+pub struct Connected {
+    pub source: String,
+    pub converted: Option<Converted>,
+}
+
+// DuckDB em memoria sem baixar extensao da internet sozinho (o build bundled vem com autoinstall ligado)
+fn new_duckdb() -> Result<Connection, String> {
+    let conn = Connection::open_in_memory().map_err(|e| format!("Failed to start DuckDB: {e}"))?;
+    conn.execute_batch("SET autoinstall_known_extensions = false; SET autoload_known_extensions = false;")
+        .map_err(|e| format!("Failed to configure DuckDB: {e}"))?;
+    Ok(conn)
+}
+
+// NIVEL BASICO: Access -> SQLite temporario, uma vez: le com tipos (ODBC ou mdbtools) num DuckDB de rascunho e
+// grava o SQLite com os tipos declarados (mesmo gravador do Exportar > SQLite). Devolve o arquivo e o leitor.
+// Em erro o temporario some (Drop de Converted / o rascunho e descartado).
+fn convert_access(
+    path: &str,
+    reader: Option<&str>,
+    progress: &mut dyn FnMut(Step, usize, usize, &str),
+) -> Result<(Converted, String), String> {
+    let scratch = new_duckdb()?;
+    let used = access::import(&scratch, path, reader, &mut |d, t, i| progress(Step::Read, d, t, i))?;
+    let tables = list_tables(&scratch)?;
+    let name = Path::new(path).file_stem().map_or("access".into(), |s| s.to_string_lossy().into_owned());
+    let file = converted::new_temp_path(&format!("{name}.sqlite"))?;
+    let written = sqlite_io::export(&scratch, &tables, &file, &mut |d, t, i| {
+        progress(Step::Convert, d, t, i);
+        Ok(())
+    });
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&file);
+        return Err(format!("SQLite: {e}"));
+    }
+    Ok((Converted::new(file), used))
+}
+
 // NIVEL BASICO: Banco aberto: conexao, caminho e catalogo onde estao as tabelas
 struct OpenDb {
     conn: Connection,
@@ -230,16 +316,15 @@ impl DBManager {
     pub(crate) fn validate_database_path(&self, db_path: &str) -> Result<String, String> {
         let abs_path = Path::new(db_path)
             .canonicalize()
-            .map_err(|e| format!("Invalid database path: {}", e))?;
+            .map_err(|e| format!("[[err.badPath]] {db_path} ({e})"))?;
 
+        // [[chave]]: a interface troca pela frase do catalogo do idioma escolhido
         if format_of(&abs_path).is_none() {
             let ext = abs_path.extension().and_then(|s| s.to_str()).unwrap_or("");
-            return Err(format!(
-                "Only .duckdb, .db, .sqlite, .sqlite3, .mdb and .accdb files are supported, got: .{ext}"
-            ));
+            return Err(format!("[[err.unsupported]] .{ext}"));
         }
         if !abs_path.is_file() {
-            return Err(format!("Database file not found: {}", abs_path.display()));
+            return Err(format!("[[err.badPath]] {}", abs_path.display()));
         }
 
         // canonicalize no Windows devolve \\?\C:\...; o driver ODBC e o mdbtools nao entendem esse prefixo
@@ -247,25 +332,32 @@ impl DBManager {
         Ok(text.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(text))
     }
 
-    // NIVEL BASICO: Abre o banco; devolve por qual caminho ele foi lido (DuckDB, SQLite, Access ODBC, mdbtools)
-    // Se falhar, o banco aberto antes continua aberto.
-    // NIVEL TECNICO: progress(done, total, table) is called while SQLite/Access tables are copied
-    pub fn connect(
+    // NIVEL BASICO: Abre o banco; devolve por qual caminho ele foi lido e, para Access, o SQLite convertido
+    // Leitor do Access: MDB2SQL_ACCESS_READER (odbc|mdbtools) ou automatico. Se falhar, o banco aberto antes
+    // continua aberto.
+    pub fn connect(&self, db_path: &str, progress: &mut dyn FnMut(Step, usize, usize, &str)) -> Result<Connected, String> {
+        let forced = std::env::var("MDB2SQL_ACCESS_READER").ok();
+        self.connect_with(db_path, forced.as_deref(), progress)
+    }
+
+    // NIVEL BASICO: connect com o leitor do Access escolhido (testes forcam o mdbtools sem mexer no ambiente)
+    // NIVEL TECNICO: Access is read once into a scratch DuckDB (typed), written once to a SQLite file and the
+    // session then reads that file the same way as any .sqlite. progress(step, done, total, table) runs per table.
+    pub fn connect_with(
         &self,
         db_path: &str,
-        progress: &mut dyn FnMut(usize, usize, &str),
-    ) -> Result<String, String> {
+        reader: Option<&str>,
+        progress: &mut dyn FnMut(Step, usize, usize, &str),
+    ) -> Result<Connected, String> {
         let path = self.validate_database_path(db_path)?;
-        let conn = Connection::open_in_memory().map_err(|e| format!("Failed to start DuckDB: {e}"))?;
-        // nada de baixar extensao da internet sozinho (o build bundled vem com autoinstall ligado)
-        conn.execute_batch("SET autoinstall_known_extensions = false; SET autoload_known_extensions = false;")
-            .map_err(|e| format!("Failed to configure DuckDB: {e}"))?;
+        let conn = new_duckdb()?;
 
         let mut format = format_of(Path::new(&path)).expect("validated extension");
         // .db tambem e extensao comum de SQLite: decide pelo cabecalho do arquivo
         if format == Format::DuckDb && sqlite_io::is_sqlite_file(Path::new(&path)) {
             format = Format::Sqlite;
         }
+        let mut converted = None;
         let (source, catalog) = match format {
             Format::DuckDb => {
                 // DuckDB nao entende "?access_mode=..." no caminho (isso e DSN do go-duckdb); read-only vai no ATTACH
@@ -274,18 +366,28 @@ impl DBManager {
                 ("DuckDB".to_string(), "src")
             }
             Format::Sqlite => {
-                sqlite_io::import(&conn, Path::new(&path), progress)?;
+                sqlite_io::import(&conn, Path::new(&path), &mut |d, t, i| progress(Step::Load, d, t, i))?;
                 ("SQLite".to_string(), "memory")
             }
-            Format::Access => (access::import(&conn, &path, progress)?, "memory"),
+            Format::Access => {
+                let (lite, used) = convert_access(&path, reader, progress)?;
+                sqlite_io::import(&conn, lite.path(), &mut |d, t, i| progress(Step::Load, d, t, i))?;
+                converted = Some(lite);
+                (format!("{used} > SQLite"), "memory")
+            }
         };
         *self.open.lock().unwrap() = Some(OpenDb { conn, path, catalog });
-        Ok(source)
+        Ok(Connected { source, converted })
+    }
+
+    // NIVEL BASICO: Fecha o banco aberto (o SQLite convertido e cuidado por quem chamou)
+    pub fn close(&self) {
+        *self.open.lock().unwrap() = None;
     }
 
     fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
         match self.open.lock().unwrap().as_ref() {
-            None => Err("No database connected".to_string()),
+            None => Err("[[err.noDatabase]]".to_string()),
             Some(open) => f(&open.conn),
         }
     }
@@ -322,6 +424,11 @@ impl DBManager {
         }
     }
 
+    // nomes das colunas na ordem da tabela (a pesquisa olha todas)
+    fn column_names(&self, table_name: &str) -> Result<Vec<String>, String> {
+        Ok(self.get_table_schema(table_name)?.into_iter().map(|c| c.name).collect())
+    }
+
     // NIVEL BASICO: Retorna schema (colunas e tipos) de uma tabela
     pub fn get_table_schema(&self, table_name: &str) -> Result<Vec<ColumnSchema>, String> {
         self.validate_table_name(table_name)?;
@@ -346,16 +453,17 @@ impl DBManager {
         })
     }
 
-    // NIVEL BASICO: Executa SELECT na tabela e retorna ate `limit` linhas como JSON;
-    // os filtros entram no WHERE da consulta (acham linhas alem das carregadas)
+    // NIVEL BASICO: Executa SELECT na tabela e retorna ate `limit` linhas como JSON; filtros e pesquisa entram
+    // no WHERE da consulta (acham linhas na tabela inteira, alem das carregadas)
     pub fn query_table(
         &self,
         table_name: &str,
         limit: i32,
         filters: &[Filter],
+        search: &str,
     ) -> Result<Vec<serde_json::Value>, String> {
         self.validate_table_name(table_name)?;
-        let (filter_sql, params) = where_clause(filters)?;
+        let (filter_sql, params) = where_all(filters, &self.column_names(table_name)?, search)?;
         self.with_conn(|conn| {
             let query = format!("SELECT * FROM {}{} LIMIT {}", ident(table_name), filter_sql, limit);
             let mut stmt = conn
@@ -396,10 +504,10 @@ impl DBManager {
         })
     }
 
-    // NIVEL BASICO: Retorna numero de linhas da tabela que passam pelos filtros (sem filtro: todas)
-    pub fn get_row_count(&self, table_name: &str, filters: &[Filter]) -> Result<i64, String> {
+    // NIVEL BASICO: Retorna numero de linhas da tabela que passam pelos filtros e pela pesquisa (sem nada: todas)
+    pub fn get_row_count(&self, table_name: &str, filters: &[Filter], search: &str) -> Result<i64, String> {
         self.validate_table_name(table_name)?;
-        let (filter_sql, params) = where_clause(filters)?;
+        let (filter_sql, params) = where_all(filters, &self.column_names(table_name)?, search)?;
         self.with_conn(|conn| {
             let query = format!("SELECT COUNT(*) FROM {}{}", ident(table_name), filter_sql);
             conn.query_row(&query, duckdb::params_from_iter(params), |row| row.get(0))
