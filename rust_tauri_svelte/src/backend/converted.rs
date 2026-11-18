@@ -56,6 +56,7 @@ impl Converted {
         Converted { path, _guard: guard }
     }
 
+    #[cfg(test)] // o app nao le mais o arquivo convertido (a sessao usa o DuckDB da leitura); os testes conferem
     pub fn path(&self) -> &Path {
         &self.path
     }

@@ -266,14 +266,15 @@ fn new_duckdb() -> Result<Connection, String> {
     Ok(conn)
 }
 
-// NIVEL BASICO: Access -> SQLite temporario, uma vez: le com tipos (ODBC ou mdbtools) num DuckDB de rascunho e
-// grava o SQLite com os tipos declarados (mesmo gravador do Exportar > SQLite). Devolve o arquivo e o leitor.
-// Em erro o temporario some (Drop de Converted / o rascunho e descartado).
+// NIVEL BASICO: Access -> SQLite temporario, uma vez: le com tipos (ODBC ou mdbtools) num DuckDB em memoria e
+// grava o SQLite com os tipos declarados (mesmo gravador do Exportar > SQLite). Devolve o arquivo, o leitor e o
+// proprio DuckDB, que vira o motor da sessao: o SQLite foi gravado dele (mesmos dados e tipos; teste com o .mdb e com
+// o DB4) e reler o arquivo so custava tempo (REGRA_DESEMPENHO: sem conversao dupla). Em erro o temporario some.
 fn convert_access(
     path: &str,
     reader: Option<&str>,
     progress: &mut dyn FnMut(Step, usize, usize, &str),
-) -> Result<(Converted, String), String> {
+) -> Result<(Converted, String, Connection), String> {
     let scratch = new_duckdb()?;
     let used = access::import(&scratch, path, reader, &mut |d, t, i| progress(Step::Read, d, t, i))?;
     let tables = list_tables(&scratch)?;
@@ -287,7 +288,7 @@ fn convert_access(
         let _ = std::fs::remove_file(&file);
         return Err(format!("SQLite: {e}"));
     }
-    Ok((Converted::new(file), used))
+    Ok((Converted::new(file), used, scratch))
 }
 
 // NIVEL BASICO: Banco aberto: conexao, caminho e catalogo onde estao as tabelas
@@ -350,7 +351,7 @@ impl DBManager {
         progress: &mut dyn FnMut(Step, usize, usize, &str),
     ) -> Result<Connected, String> {
         let path = self.validate_database_path(db_path)?;
-        let conn = new_duckdb()?;
+        let mut conn = new_duckdb()?;
 
         let mut format = format_of(Path::new(&path)).expect("validated extension");
         // .db tambem e extensao comum de SQLite: decide pelo cabecalho do arquivo
@@ -370,8 +371,8 @@ impl DBManager {
                 ("SQLite".to_string(), "memory")
             }
             Format::Access => {
-                let (lite, used) = convert_access(&path, reader, progress)?;
-                sqlite_io::import(&conn, lite.path(), &mut |d, t, i| progress(Step::Load, d, t, i))?;
+                let (lite, used, engine) = convert_access(&path, reader, progress)?;
+                conn = engine;
                 converted = Some(lite);
                 // seta Unicode na tela (regra do dono), nunca ">" nem "->"
                 (format!("{used} → SQLite"), "memory")

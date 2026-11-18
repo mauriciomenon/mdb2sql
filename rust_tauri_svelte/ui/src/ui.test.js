@@ -174,3 +174,17 @@ test('converted SQLite question never traps the user', () => {
   assert.match(app, /convertDialog\.querySelector\('button\.save'\)\.focus\(\)/);
   assert.match(app, /dialog\.convert button\.save:focus \{\s*outline: 2px solid/);
 });
+
+// REGRA_VISUAL "Dialogos: sempre com OK": todo dialogo tem botao visivel de fechar/OK; Enter = botao padrao; Esc fecha
+test('every dialog has a visible default button, Enter and Esc', () => {
+  const app = markup('./App.svelte');
+  const dialogs = [...app.matchAll(/<dialog[\s\S]*?<\/dialog>/g)].map((m) => m[0]);
+  assert.equal(dialogs.length, 5); // Sobre, X11, SQLite convertido, Colunas, progresso
+  for (const d of dialogs) assert.match(d, /<button type="button" class="[^"]*(default|save)[^"]*"/, d.slice(0, 80));
+  const code = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  for (const name of ['aboutDialog', 'x11Dialog', 'progressDialog']) {
+    assert.ok(code.includes(`${name}.querySelector('button.default')`), name); // foco inicial no botao padrao
+  }
+  assert.match(code, /onkeydown=\{\(e\) => e\.key === 'Enter' && columnsDialog\.close\(\)\}/);
+  assert.match(code, /oncancel=\{\(e\) => \{\s*e\.preventDefault\(\);\s*invoke\('cancel_export'\);/);
+});

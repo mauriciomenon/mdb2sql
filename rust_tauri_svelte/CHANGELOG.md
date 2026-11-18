@@ -6,8 +6,8 @@
 
 - **Access sem nada instalado**: .accdb/.mdb abre pelo mdbtools 1.0.1 que vai dentro do exe (Windows e agora
   Linux); o driver ODBC do Access so e usado no Windows e se existir. `MDB2SQL_ACCESS_READER=mdbtools` forca o
-  mdbtools. A leitura pelo mdbtools roda ate 4 mdb-export ao mesmo tempo (DB4: ~2x mais rapida).
-- **Conversao para SQLite**: ao abrir um Access o app grava uma vez um SQLite (arquivo, nao memoria) e le dali, com
+  mdbtools. A leitura pelo mdbtools roda varios mdb-export ao mesmo tempo.
+- **Conversao para SQLite**: ao abrir um Access o app grava uma vez um SQLite (arquivo, nao memoria), com
   os tipos (inteiro, decimal exato, texto, data, booleano, binario) e os NULL. Ao fechar o banco, abrir outro ou
   sair o app pergunta: **Save...** (padrao ao lado do Access, `<nome>.sqlite`), **Delete** ou **Cancel**;
   "Remember for this session" repete a escolha ate fechar o app. Temporario nunca fica orfao: se o app cair, a
@@ -22,6 +22,13 @@
   (destacado), senao o ultimo aviso, senao a ultima acao, com contador de nao lidos; clique nela abre o log. Botao
   direito na barra de status > **Copy**.
 - Seta Unicode na tela: "Opened via mdbtools → SQLite".
+- Erro do motor (DuckDB/SQLite) na barra de status em uma linha com prefixo traduzido ("SQL query error: ..."); o
+  texto inteiro (LINE 1, ^^^) fica no log.
+- Todo dialogo tem botao visivel (OK/Close/Cancel) com o foco inicial; Enter = botao padrao, Esc fecha (na exportacao,
+  Esc = Cancel). Pergunta do SQLite convertido: Enter = Save..., Esc e o X = Cancel; cancelar o dialogo de arquivo
+  volta para a pergunta.
+- Abrir Access mais rapido: a sessao usa o DuckDB da leitura (sem reler o SQLite convertido) e ate min(nucleos - 1, 6)
+  mdb-export ao mesmo tempo (numeros no README, secao Desempenho).
 - **File > Close database**.
 - **Debian amd64**: `build_debian_amd64_wsl.ps1` (pelo WSL) / `build_debian_amd64.sh` geram .deb e .zip, com o
   mdbtools dentro do binario.

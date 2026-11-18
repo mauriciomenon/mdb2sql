@@ -388,10 +388,11 @@ fn import_mdbtools(
     ]);
     let schema = parse_pg_schema(&run(schema_cmd)?);
 
-    // NIVEL TECNICO: one mdb-export process per table, up to 4 at a time (each one reads the file on its own);
+    // NIVEL TECNICO: one mdb-export process per table, up to min(cores - 1, 6) at a time (each one reads the file on its own);
     // the DuckDB connection loads the CSVs one by one in this thread, in the order they finish. On an error the
     // channel closes, workers stop at their next send and every CSV is deleted (here or at exit: remove_own).
-    let workers = std::thread::available_parallelism().map_or(2, |n| n.get()).clamp(1, 4);
+    // min(nucleos - 1, 6): um nucleo fica para a interface e para a carga no DuckDB (REGRA_DESEMPENHO)
+    let workers = std::thread::available_parallelism().map_or(2, |n| n.get()).saturating_sub(1).clamp(1, 6);
     let next = AtomicUsize::new(0);
     let (sender, finished) = mpsc::channel::<(usize, Result<PathBuf, String>)>();
     let tables = &tables;

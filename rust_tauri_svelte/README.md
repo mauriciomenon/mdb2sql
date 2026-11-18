@@ -42,9 +42,9 @@ O exe do Windows nao e assinado digitalmente: na primeira execucao o SmartScreen
 - digitar ou colar o caminho no campo **Database** e **Open database** (aspas do "Copiar como caminho" sao aceitas);
 - linha de comando: `mdb2sql.exe "D:\dados\banco.accdb"`; ou a variavel `MDB2SQL_DB_PATH` com o caminho.
 
-**Access**: o arquivo e lido uma vez e gravado num **SQLite temporario** (com os tipos: inteiro, decimal exato,
-texto, data, booleano e binario, e os NULL); o app le dali. A barra de status mostra a etapa (lendo o Access,
-gravando o SQLite, carregando) e depois "Opened via mdbtools → SQLite" (ou "Access ODBC → SQLite").
+**Access**: o arquivo e lido uma vez (num DuckDB em memoria, que e o motor da tela) e gravado uma vez num **SQLite
+temporario** com os mesmos dados e tipos (inteiro, decimal exato, texto, data, booleano e binario, e os NULL); nada e
+convertido duas vezes. A barra de status mostra a etapa (lendo o Access, gravando o SQLite) e depois "Opened via mdbtools → SQLite" (ou "Access ODBC → SQLite").
 Ao **fechar o banco** (File > Close database), **abrir outro** ou **sair**, o app pergunta
 **Save the converted SQLite?**:
 - **Save...**: dialogo de salvar na pasta do Access, nome `<nome do Access>.sqlite`; o SQLite fica onde voce escolher
@@ -154,11 +154,34 @@ SQLite 3.54.1, mdbtools 1.0.1. Copias de bancos reais do NMR5 e um .mdb pequeno 
 | `tests/data/sample.mdb` (versionado, gerado por `scripts/make_test_mdb.ps1`) pelo mdbtools | tipos e NULL preservados no SQLite e na tela (`cargo test`, Windows e Debian) |
 | Pesquisa `tension de campo` no DB4 | acha RTUNO 50 / PNTNO 9 em RANGER_SOANLG, fora das 100 primeiras linhas |
 
+## Desempenho
+
+Protocolo comum das 4 stacks (REGRA_DESEMPENHO): build release, copias dos bancos, 3 execucoes por caso, mediana,
+um caso por processo (pico de memoria do processo). Maquina: Intel Core Ultra 7 258V (8 nucleos), 31,5 GB RAM, SSD
+NVMe, Windows 11. "Lista" = ate a lista de tabelas; "1a tabela" = lista + esquema, 100 linhas e contagem da primeira
+tabela; a conversao para SQLite termina junto com a lista. Exportar: so o tempo da exportacao, com o Access aberto pelo
+ODBC. Antes = 1.3.0 com a releitura do SQLite e 4 mdb-export; depois = sem releitura e min(nucleos - 1, 6) mdb-export.
+
+| Caso (s) | DB4 antes | DB4 depois | DB3 1 antes | DB3 1 depois | Pico de memoria |
+| --- | --- | --- | --- | --- | --- |
+| Access pelo ODBC: lista / 1a tabela | 18,7 / 18,8 | 10,3 / 10,4 | 20,4 / 20,6 | 11,0 / 11,1 | ~327 MB |
+| Access pelo mdbtools: lista / 1a tabela | 49,8 / 49,9 | 35,2 / 35,3 | 76,8 / 77,0 | 41,2 / 41,3 | ~226 MB |
+| Reabrir o SQLite salvo | 3,3 | 2,9 | 4,8 | 4,0 | ~207 MB |
+| Exportar para SQLite (so a exportacao) | 4,7 | 3,3 | 5,5 | 3,1 | ~329 MB |
+| Exportar para DuckDB (so a exportacao) | 3,4 | 3,3 | 4,7 | 3,2 | ~415 MB |
+| Abrir o .sqlite de referencia | 4,0 | 3,2 | 3,4 | 3,0 | ~208 MB |
+| Abrir o .duckdb de referencia | 0,2 | 0,2 | 0,2 | 0,1 | ~52 MB |
+
+Contagens tabela a tabela iguais a referencia antes e depois (teste com Access real). Nao feito: mostrar a lista de
+tabelas antes do fim da conversao (o motor da tela e o DuckDB que a leitura preenche; abrir tabela no meio da carga
+pede uma segunda conexao e travas por tabela; ganho so na espera da 1a tela), tabelas grandes primeiro (o mdbtools
+nao informa o tamanho antes do mdb-export) e cache ao reabrir o mesmo .accdb (o temporario e salvo ou apagado ao
+fechar; salvar o SQLite e reabri-lo ja da o mesmo ganho: ~3 s).
+
 ## Limites conhecidos
 
-- Pelo mdbtools o Access demora mais que pelo ODBC (DB4: ~1,5 min pelo mdbtools, com ate 4 mdb-export ao mesmo
-  tempo, e ~0,5 min pelo ODBC, somando ler, gravar o SQLite e carregar, medidos com a maquina ocupada); salvar o
-  SQLite e abri-lo nas proximas vezes evita reler o Access.
+- Pelo mdbtools o Access demora mais que pelo ODBC (numeros na secao Desempenho); salvar o SQLite e abri-lo nas
+  proximas vezes evita reler o Access.
 - O mdbtools nao distingue texto vazio de NULL: um campo `""` do Access chega como NULL (pelo ODBC chega `""`).
 - SQLite e Access ficam em memoria enquanto abertos (RAM ~ tamanho dos dados); um banco de varios GB nao cabe.
 - A pesquisa compara o texto de cada valor como o DuckDB o escreve (ex.: `2.0` para um DOUBLE que a grade mostra `2`).

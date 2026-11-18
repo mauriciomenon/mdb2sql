@@ -643,6 +643,52 @@ mod tests {
         assert_eq!(app_top, [&json!("263.5000"), &json!("123.7900"), &json!("97.0000")]);
     }
 
+    // REGRA_DESEMPENHO: um caso por processo (o pico de memoria e do processo inteiro). Roda so com
+    // MDB2SQL_BENCH_CASE = odbc | mdbtools | open | export_sqlite | export_duckdb e MDB2SQL_BENCH_PATH = arquivo;
+    // MDB2SQL_BENCH_SAVE = onde copiar o SQLite convertido (para medir depois o "reabrir o SQLite salvo").
+    // Imprime "BENCH caso lista=s tabela1=s total=s pico_mb=N" (scripts de medicao no tmp, nao no repo).
+    #[test]
+    fn bench_open_protocol() {
+        let (Ok(case), Ok(path)) = (std::env::var("MDB2SQL_BENCH_CASE"), std::env::var("MDB2SQL_BENCH_PATH")) else {
+            return;
+        };
+        let started = std::time::Instant::now();
+        let manager = DBManager::new();
+        let reader = match case.as_str() {
+            "odbc" | "mdbtools" => Some(case.as_str()),
+            _ => None,
+        };
+        let opened = manager.connect_with(&path, reader, &mut no_progress()).unwrap();
+        let tables = manager.list_tables().unwrap();
+        let list = started.elapsed().as_secs_f64();
+        // primeira tabela visivel: o que a tela pede ao abrir (esquema, 100 linhas, contagem)
+        manager.get_table_schema(&tables[0]).unwrap();
+        manager.query_table(&tables[0], 100, &[], "").unwrap();
+        manager.get_row_count(&tables[0], &[], "").unwrap();
+        let first = started.elapsed().as_secs_f64();
+        let mut total = first;
+        if let Some(format) = case.strip_prefix("export_") {
+            let out = tempdir().unwrap();
+            let t = std::time::Instant::now();
+            export::export_database(&manager.export_connection().unwrap(), format, &out.path().join(format!("x.{format}")), &mut ok_progress())
+                .unwrap();
+            total = t.elapsed().as_secs_f64(); // so a exportacao
+        }
+        if let (Ok(save), Some(lite)) = (std::env::var("MDB2SQL_BENCH_SAVE"), opened.converted.as_ref()) {
+            std::fs::copy(lite.path(), save).unwrap();
+        }
+        let peak = if cfg!(windows) {
+            let out = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-Command", &format!("(Get-Process -Id {}).PeakWorkingSet64", std::process::id())])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().parse::<u64>().unwrap_or(0) / 1_048_576
+        } else {
+            0
+        };
+        println!("BENCH {case} lista={list:.1} tabela1={first:.1} total={total:.1} pico_mb={peak} tabelas={}", tables.len());
+    }
+
     // REGRA_X11: (ambiente, os-release, servidor X) -> (backend, aviso)
     #[test]
     fn linux_display_prefers_x11_and_warns_on_wayland_fallback() {

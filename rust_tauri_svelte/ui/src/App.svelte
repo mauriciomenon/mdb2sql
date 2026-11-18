@@ -259,6 +259,7 @@
       x11 = warning;
       note('warning', { render: () => `${t('x11.title')}: ${x11Text}` });
       x11Dialog.showModal();
+      x11Dialog.querySelector('button.default').focus();
     });
     // caminho da linha de comando ou de MDB2SQL_DB_PATH
     invoke('startup_path').then((path) => {
@@ -450,6 +451,7 @@
     try {
       aboutInfo = await invoke('about', { svelteVersion: __SVELTE_VERSION__ });
       aboutDialog.showModal();
+      aboutDialog.querySelector('button.default').focus(); // Enter = Fechar (o showModal focaria o 1o link)
     } catch (err) {
       showError(err);
     }
@@ -574,6 +576,8 @@
       saveSetting(LAST_DIR_KEY, dirOf(path));
       progress = { label, done: 0, total: 0, item: '' };
       progressDialog.showModal();
+      await tick();
+      progressDialog.querySelector('button.default')?.focus();
       const done = await invoke('export', { scope, format, path, table: selectedTable || null, sql: lastSql || null });
       const values = {
         count: fmt(done.count),
@@ -709,7 +713,7 @@
         {/each}
       </dl>
     {/if}
-    <button type="button" onclick={() => aboutDialog.close()}>{t('common.close')}</button>
+    <button type="button" class="default" onclick={() => aboutDialog.close()}>{t('common.close')}</button>
   </dialog>
 
   <!-- Linux: X11 indisponivel, janela no Wayland (reserva); texto selecionavel -->
@@ -728,7 +732,7 @@
     {/if}
     <div class="actions">
       <a href={x11?.link} onclick={(e) => openLink(e, x11.link)} onauxclick={(e) => e.preventDefault()}>{t('x11.help')}</a>
-      <button type="button" class="close" onclick={() => x11Dialog.close()}>{t('common.ok')}</button>
+      <button type="button" class="close default" onclick={() => x11Dialog.close()}>{t('common.ok')}</button>
     </div>
   </dialog>
 
@@ -770,7 +774,14 @@
     style="--cell: {columnCellWidth(columns)}"
   >
     <h2 id="columns-title">{t('columns.title', { table: selectedTable })}</h2>
-    <input class="column-search" type="search" bind:value={columnSearch} aria-label={t('columns.search')} placeholder={t('columns.search')} />
+    <input
+      class="column-search"
+      type="search"
+      bind:value={columnSearch}
+      aria-label={t('columns.search')}
+      placeholder={t('columns.search')}
+      onkeydown={(e) => e.key === 'Enter' && columnsDialog.close()}
+    />
     <div class="column-list" role="group" aria-label={t('columns.list')}>
       {#each listedColumns as col (col.name)}
         <label title="{col.name} ({col.type})">
@@ -786,12 +797,20 @@
       <button type="button" class="secondary" onclick={() => (hidden = setListed(hidden, listedColumns.map((c) => c.name), false))}>{t('columns.showAll')}</button>
       <button type="button" class="secondary" onclick={() => (hidden = setListed(hidden, listedColumns.map((c) => c.name), true))}>{t('columns.hideAll')}</button>
       <span>{t('columns.count', { shown: shownColumns.length, total: columns.length })}</span>
-      <button type="button" class="close" onclick={() => columnsDialog.close()}>{t('common.close')}</button>
+      <button type="button" class="close default" onclick={() => columnsDialog.close()}>{t('common.close')}</button>
     </div>
   </dialog>
 
-  <!-- Esc nao fecha: a exportacao para pelo botao Cancelar -->
-  <dialog bind:this={progressDialog} class="progress" aria-labelledby="progress-title" oncancel={(e) => e.preventDefault()}>
+  <!-- Esc = Cancelar a exportacao (o dialogo fecha quando ela para) -->
+  <dialog
+    bind:this={progressDialog}
+    class="progress"
+    aria-labelledby="progress-title"
+    oncancel={(e) => {
+      e.preventDefault();
+      invoke('cancel_export');
+    }}
+  >
     {#if progress}
       <h2 id="progress-title">{progress.label}</h2>
       <progress max={progress.total || 1} value={progress.total ? progress.done : 0}></progress>
@@ -800,7 +819,7 @@
           ? `: ${describe(t, progress.item)}`
           : ''}
       </p>
-      <button type="button" class="secondary" onclick={() => invoke('cancel_export')}>{t('common.cancel')}</button>
+      <button type="button" class="secondary default" onclick={() => invoke('cancel_export')}>{t('common.cancel')}</button>
     {/if}
   </dialog>
 
