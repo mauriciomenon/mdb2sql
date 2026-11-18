@@ -6,7 +6,9 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel
 
+from backend.access import odbc_available
 from shared import about, i18n
+from shared.bundle import bundled
 from ui.dialogs import AboutDialog
 from ui.main_window import MainWindow
 
@@ -39,10 +41,11 @@ def test_about_fields() -> None:
     assert fields["Build"] == "dev"
     assert re.fullmatch(r"Python [\d.]+\S* \+ PyQt6 [\d.]+ \(Qt [\d.]+\)", fields["Stack"])
     assert re.fullmatch(r"SQLite [\d.]+, DuckDB [\d.]+\S*, XlsxWriter [\d.]+, pyodbc ([\d.]+|-)", fields["Libraries"])
-    # mdbtools primeiro (vai no pacote); depois o driver ODBC, se a maquina tiver
-    assert re.fullmatch(
-        r"(mdbtools [\d.]+ \(bundled\)|mdbtools not bundled); Access ODBC driver (not )?installed", fields["Access"]
+    # o leitor em uso; o driver ODBC e opcional e nunca aparece como "nao instalado"
+    expected = "Access ODBC driver (Windows); embedded mdbtools as fallback" if odbc_available() else (
+        "Embedded mdbtools" if (bundled("mdbtools") / "VERSION.txt").is_file() else "mdbtools not bundled (source run)"
     )
+    assert fields["Access"] == expected and "not installed" not in fields["Access"]
     assert fields["Author"] == "Mauricio Menon"
     assert about.LINKS == (("GitHub", GITHUB), ("GitLab", GITLAB))
     assert "@" not in "".join(fields.values())

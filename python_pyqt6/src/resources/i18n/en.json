@@ -3,7 +3,6 @@
   "language.en": "English",
   "language.pt_BR": "Português (Brasil)",
   "language.es": "Español",
-
   "menu.file": "&File",
   "menu.edit": "&Edit",
   "menu.view": "&View",
@@ -15,7 +14,6 @@
   "menu.about": "&About",
   "menu.tables_panel": "&Tables Panel",
   "menu.log": "&Log",
-
   "action.open": "&Open Database...",
   "action.reload": "&Reload",
   "action.close": "&Close Database",
@@ -38,7 +36,6 @@
   "theme.system": "&System",
   "theme.light": "&Light",
   "theme.dark": "&Dark",
-
   "export.db_sqlite": "Database to &SQLite...",
   "export.db_duckdb": "Database to &DuckDB...",
   "export.db_xlsx": "Database to &Excel (one sheet per table)...",
@@ -52,7 +49,6 @@
   "export.done_tables": "Exported {count} tables to {path}",
   "export.done_rows": "Exported {count} rows to {path}",
   "export.failed": "Export failed: {message}",
-
   "tip.open": "Open an Access, SQLite or DuckDB file (Ctrl+O)",
   "tip.reload": "Reload the database and its table list (F5)",
   "tip.export": "Export the database, the current table or the SQL result",
@@ -60,7 +56,6 @@
   "tip.words": "All words, any order; ignores case and accents",
   "tip.run_sql": "Run the SQL of the SQL tab (Ctrl+Enter)",
   "tip.columns": "Exports always write every column",
-
   "dialog.open": "Open Database",
   "dialog.export_db": "Export Database",
   "dialog.export_result": "Export Current Table/Result",
@@ -70,7 +65,6 @@
   "filter.duckdb": "DuckDB database",
   "filter.xlsx": "Excel workbook",
   "filter.csv": "CSV UTF-8",
-
   "toolbar.main": "Main toolbar",
   "tables.title": "Tables",
   "tables.filter": "Filter tables",
@@ -85,7 +79,6 @@
   "button.ok": "OK",
   "button.close": "Close",
   "button.cancel": "Cancel",
-
   "status.empty": "No database loaded",
   "status.ready": "Ready",
   "status.not_found": "Error: {name} not found",
@@ -109,31 +102,26 @@
   "status.sql_error": "SQL error: {message}",
   "status.language_restart": "Language changes when mdb2sql is reopened",
   "status.converted_saved": "SQLite saved: {path}",
-
   "filters.one": "Filter:",
   "filters.many": "Filters:",
   "filters.remove": "Remove this filter",
   "filters.remove_name": "Remove filter {filter}",
-
   "columns.title": "Columns",
   "columns.search": "Search column",
   "columns.visible": "Visible columns",
   "columns.show_all": "Show all",
   "columns.hide_all": "Hide all",
   "columns.hide_this": "Hide this column",
-
   "log.title": "Log",
   "log.copy_all": "Copy all",
   "log.orphans_removed": "Removed {count} temporary folder(s) left by an earlier session",
   "log.converted_deleted": "SQLite converted from {name} deleted",
-
   "converted.title": "Converted SQLite",
   "converted.text": "Keep the SQLite converted from {name}?",
   "converted.save": "Save SQLite...",
   "converted.delete": "Delete",
   "converted.remember": "Remember for this session",
   "converted.save_title": "Save Converted SQLite",
-
   "about.title": "About",
   "about.summary": "Opens Access (.accdb, .mdb), SQLite and DuckDB databases and exports to SQLite, DuckDB, Excel and CSV.",
   "about.label": "{label}:",
@@ -143,11 +131,9 @@
   "about.author": "Author",
   "about.license": "License",
   "about.license_text": "GPL v2 or later",
-  "about.mdbtools": "mdbtools {version} (bundled)",
-  "about.mdbtools_missing": "mdbtools not bundled",
-  "about.odbc_yes": "Access ODBC driver installed",
-  "about.odbc_no": "Access ODBC driver not installed",
-
+  "about.reader_mdbtools": "Embedded mdbtools",
+  "about.reader_odbc": "Access ODBC driver (Windows); embedded mdbtools as fallback",
+  "about.mdbtools_missing": "mdbtools not bundled (source run)",
   "error.reader_var": "MDB2SQL_ACCESS_READER={value}: use odbc or mdbtools",
   "error.no_reader": "No Access reader: the bundled mdbtools is missing and no Access ODBC driver is installed",
   "error.no_odbc": "Access ODBC driver '{driver}' (64-bit) is not installed",

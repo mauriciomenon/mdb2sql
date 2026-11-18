@@ -3,7 +3,6 @@
   "language.en": "English",
   "language.pt_BR": "Português (Brasil)",
   "language.es": "Español",
-
   "menu.file": "&Arquivo",
   "menu.edit": "&Editar",
   "menu.view": "E&xibir",
@@ -15,7 +14,6 @@
   "menu.about": "&Sobre",
   "menu.tables_panel": "Painel de &Tabelas",
   "menu.log": "&Log",
-
   "action.open": "&Abrir Banco...",
   "action.reload": "&Recarregar",
   "action.close": "&Fechar Banco",
@@ -38,7 +36,6 @@
   "theme.system": "&Sistema",
   "theme.light": "&Claro",
   "theme.dark": "&Escuro",
-
   "export.db_sqlite": "Banco para &SQLite...",
   "export.db_duckdb": "Banco para &DuckDB...",
   "export.db_xlsx": "Banco para &Excel (uma aba por tabela)...",
@@ -52,7 +49,6 @@
   "export.done_tables": "{count} tabelas exportadas para {path}",
   "export.done_rows": "{count} linhas exportadas para {path}",
   "export.failed": "Falha na exportação: {message}",
-
   "tip.open": "Abrir arquivo Access, SQLite ou DuckDB (Ctrl+O)",
   "tip.reload": "Recarregar o banco e a lista de tabelas (F5)",
   "tip.export": "Exportar o banco, a tabela atual ou o resultado SQL",
@@ -60,7 +56,6 @@
   "tip.words": "Todas as palavras, em qualquer ordem; sem diferença de maiúsculas e acentos",
   "tip.run_sql": "Executar o SQL da aba SQL (Ctrl+Enter)",
   "tip.columns": "Exportar sempre grava todas as colunas",
-
   "dialog.open": "Abrir Banco",
   "dialog.export_db": "Exportar Banco",
   "dialog.export_result": "Exportar Tabela/Resultado Atual",
@@ -70,7 +65,6 @@
   "filter.duckdb": "Banco DuckDB",
   "filter.xlsx": "Pasta de trabalho do Excel",
   "filter.csv": "CSV UTF-8",
-
   "toolbar.main": "Barra principal",
   "tables.title": "Tabelas",
   "tables.filter": "Filtrar tabelas",
@@ -85,7 +79,6 @@
   "button.ok": "OK",
   "button.close": "Fechar",
   "button.cancel": "Cancelar",
-
   "status.empty": "Nenhum banco aberto",
   "status.ready": "Pronto",
   "status.not_found": "Erro: {name} não encontrado",
@@ -109,31 +102,26 @@
   "status.sql_error": "Erro de SQL: {message}",
   "status.language_restart": "O idioma muda ao reabrir o mdb2sql",
   "status.converted_saved": "SQLite salvo: {path}",
-
   "filters.one": "Filtro:",
   "filters.many": "Filtros:",
   "filters.remove": "Remover este filtro",
   "filters.remove_name": "Remover filtro {filter}",
-
   "columns.title": "Colunas",
   "columns.search": "Buscar coluna",
   "columns.visible": "Colunas visíveis",
   "columns.show_all": "Mostrar todas",
   "columns.hide_all": "Ocultar todas",
   "columns.hide_this": "Ocultar esta coluna",
-
   "log.title": "Log",
   "log.copy_all": "Copiar tudo",
   "log.orphans_removed": "{count} pasta(s) temporária(s) de uma sessão anterior apagada(s)",
   "log.converted_deleted": "SQLite convertido de {name} apagado",
-
   "converted.title": "SQLite convertido",
   "converted.text": "Manter o SQLite convertido de {name}?",
   "converted.save": "Salvar SQLite...",
   "converted.delete": "Apagar",
   "converted.remember": "Lembrar nesta sessão",
   "converted.save_title": "Salvar SQLite Convertido",
-
   "about.title": "Sobre",
   "about.summary": "Abre bancos Access (.accdb, .mdb), SQLite e DuckDB e exporta para SQLite, DuckDB, Excel e CSV.",
   "about.label": "{label}:",
@@ -143,11 +131,9 @@
   "about.author": "Autor",
   "about.license": "Licença",
   "about.license_text": "GPL v2 ou posterior",
-  "about.mdbtools": "mdbtools {version} (embutido)",
-  "about.mdbtools_missing": "mdbtools não embutido",
-  "about.odbc_yes": "driver ODBC do Access instalado",
-  "about.odbc_no": "driver ODBC do Access não instalado",
-
+  "about.reader_mdbtools": "mdbtools embutido",
+  "about.reader_odbc": "Driver ODBC do Access (Windows); mdbtools embutido como reserva",
+  "about.mdbtools_missing": "mdbtools não embutido (código-fonte)",
   "error.reader_var": "MDB2SQL_ACCESS_READER={value}: use odbc ou mdbtools",
   "error.no_reader": "Nenhum leitor de Access: o mdbtools embutido não foi encontrado e não há driver ODBC do Access",
   "error.no_odbc": "Driver ODBC do Access '{driver}' (64 bits) não instalado",

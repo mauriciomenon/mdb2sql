@@ -3,7 +3,6 @@
   "language.en": "English",
   "language.pt_BR": "Português (Brasil)",
   "language.es": "Español",
-
   "menu.file": "&Archivo",
   "menu.edit": "&Editar",
   "menu.view": "&Ver",
@@ -15,7 +14,6 @@
   "menu.about": "&Acerca de",
   "menu.tables_panel": "Panel de &Tablas",
   "menu.log": "&Registro",
-
   "action.open": "&Abrir Base de Datos...",
   "action.reload": "&Recargar",
   "action.close": "&Cerrar Base de Datos",
@@ -38,7 +36,6 @@
   "theme.system": "&Sistema",
   "theme.light": "&Claro",
   "theme.dark": "&Oscuro",
-
   "export.db_sqlite": "Base de Datos a &SQLite...",
   "export.db_duckdb": "Base de Datos a &DuckDB...",
   "export.db_xlsx": "Base de Datos a &Excel (una hoja por tabla)...",
@@ -52,7 +49,6 @@
   "export.done_tables": "{count} tablas exportadas a {path}",
   "export.done_rows": "{count} filas exportadas a {path}",
   "export.failed": "Error al exportar: {message}",
-
   "tip.open": "Abrir un archivo Access, SQLite o DuckDB (Ctrl+O)",
   "tip.reload": "Recargar la base de datos y su lista de tablas (F5)",
   "tip.export": "Exportar la base de datos, la tabla actual o el resultado SQL",
@@ -60,7 +56,6 @@
   "tip.words": "Todas las palabras, en cualquier orden; sin distinguir mayúsculas ni acentos",
   "tip.run_sql": "Ejecutar el SQL de la pestaña SQL (Ctrl+Enter)",
   "tip.columns": "Exportar siempre escribe todas las columnas",
-
   "dialog.open": "Abrir Base de Datos",
   "dialog.export_db": "Exportar Base de Datos",
   "dialog.export_result": "Exportar Tabla/Resultado Actual",
@@ -70,7 +65,6 @@
   "filter.duckdb": "Base de datos DuckDB",
   "filter.xlsx": "Libro de Excel",
   "filter.csv": "CSV UTF-8",
-
   "toolbar.main": "Barra principal",
   "tables.title": "Tablas",
   "tables.filter": "Filtrar tablas",
@@ -85,7 +79,6 @@
   "button.ok": "Aceptar",
   "button.close": "Cerrar",
   "button.cancel": "Cancelar",
-
   "status.empty": "Ninguna base de datos abierta",
   "status.ready": "Listo",
   "status.not_found": "Error: {name} no encontrado",
@@ -109,31 +102,26 @@
   "status.sql_error": "Error de SQL: {message}",
   "status.language_restart": "El idioma cambia al volver a abrir mdb2sql",
   "status.converted_saved": "SQLite guardado: {path}",
-
   "filters.one": "Filtro:",
   "filters.many": "Filtros:",
   "filters.remove": "Quitar este filtro",
   "filters.remove_name": "Quitar filtro {filter}",
-
   "columns.title": "Columnas",
   "columns.search": "Buscar columna",
   "columns.visible": "Columnas visibles",
   "columns.show_all": "Mostrar todas",
   "columns.hide_all": "Ocultar todas",
   "columns.hide_this": "Ocultar esta columna",
-
   "log.title": "Registro",
   "log.copy_all": "Copiar todo",
   "log.orphans_removed": "{count} carpeta(s) temporal(es) de una sesión anterior eliminada(s)",
   "log.converted_deleted": "SQLite convertido de {name} eliminado",
-
   "converted.title": "SQLite convertido",
   "converted.text": "¿Conservar el SQLite convertido de {name}?",
   "converted.save": "Guardar SQLite...",
   "converted.delete": "Eliminar",
   "converted.remember": "Recordar en esta sesión",
   "converted.save_title": "Guardar SQLite Convertido",
-
   "about.title": "Acerca de",
   "about.summary": "Abre bases de datos Access (.accdb, .mdb), SQLite y DuckDB y exporta a SQLite, DuckDB, Excel y CSV.",
   "about.label": "{label}:",
@@ -143,11 +131,9 @@
   "about.author": "Autor",
   "about.license": "Licencia",
   "about.license_text": "GPL v2 o posterior",
-  "about.mdbtools": "mdbtools {version} (incluido)",
-  "about.mdbtools_missing": "mdbtools no incluido",
-  "about.odbc_yes": "controlador ODBC de Access instalado",
-  "about.odbc_no": "controlador ODBC de Access no instalado",
-
+  "about.reader_mdbtools": "mdbtools integrado",
+  "about.reader_odbc": "Driver ODBC de Access (Windows); mdbtools integrado como respaldo",
+  "about.mdbtools_missing": "mdbtools no integrado (código fuente)",
   "error.reader_var": "MDB2SQL_ACCESS_READER={value}: use odbc o mdbtools",
   "error.no_reader": "Ningún lector de Access: falta el mdbtools incluido y no hay controlador ODBC de Access",
   "error.no_odbc": "El controlador ODBC de Access '{driver}' (64 bits) no está instalado",

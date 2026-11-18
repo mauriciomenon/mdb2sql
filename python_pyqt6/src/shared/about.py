@@ -4,7 +4,6 @@
 # !T: BUILD (both written by mdb2sql.spec); outside the exe the build is "dev"
 
 import platform
-import re
 import sqlite3
 import sys
 import tomllib
@@ -54,12 +53,10 @@ def build_info() -> str:
 
 
 def access_engine() -> str:
-    # mdbtools embutido (sempre presente no pacote) e o driver ODBC do Access, se esta maquina tiver
-    version_file = bundled("mdbtools") / "VERSION.txt"
-    found = re.search(r"\d+(\.\d+)+", version_file.read_text(encoding="utf-8")) if version_file.is_file() else None
-    mdbtools = tr("about.mdbtools", version=found.group()) if found else tr("about.mdbtools_missing")
-    odbc = tr("about.odbc_yes" if odbc_available() else "about.odbc_no")
-    return f"{mdbtools}; {odbc}"
+    # o leitor em uso: o driver ODBC e opcional (so aparece quando existe); o mdbtools vai dentro do pacote
+    if odbc_available():
+        return tr("about.reader_odbc")
+    return tr("about.reader_mdbtools") if (bundled("mdbtools") / "VERSION.txt").is_file() else tr("about.mdbtools_missing")
 
 
 def pyodbc_version() -> str:
