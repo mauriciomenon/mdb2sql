@@ -14,7 +14,7 @@ pub const SourceKind = enum { duckdb, sqlite, access };
 pub fn sourceKind(path: []const u8) PathError!SourceKind {
     const ext = std.fs.path.extension(path);
     const table = [_]struct { []const u8, SourceKind }{
-        .{ ".duckdb", .duckdb }, .{ ".db", .duckdb },     .{ ".sqlite", .sqlite },
+        .{ ".duckdb", .duckdb },  .{ ".db", .duckdb },  .{ ".sqlite", .sqlite },
         .{ ".sqlite3", .sqlite }, .{ ".mdb", .access }, .{ ".accdb", .access },
     };
     for (table) |e| if (std.ascii.eqlIgnoreCase(ext, e[0])) return e[1];

@@ -1,24 +1,28 @@
-// Leitura de .mdb/.accdb: converte o banco Access inteiro para um banco DuckDB em memoria ("src").
-// !T: Access reader, in this order: (a) the 64-bit "Microsoft Access Driver (*.mdb, *.accdb)" ODBC driver,
-// (b) the embedded static mdbtools (mdb-tables / mdb-schema / mdb-export), (c) a clear message.
-// MDB2SQL_ACCESS_READER=odbc|mdbtools forces one of them.
+// Leitura de .mdb/.accdb: converte o banco Access UMA vez para um arquivo SQLite temporario e le dali (como
+// qualquer .sqlite). Ao fechar, a UI pergunta se salva esse SQLite ou se apaga (main.zig).
+// !T: Access reader, in this order: (a) the 64-bit "Microsoft Access Driver (*.mdb, *.accdb)" ODBC driver
+// (Windows only, optional, faster), (b) the embedded mdbtools (mdb-tables / mdb-schema / mdb-export), (c) a clear
+// message. MDB2SQL_ACCESS_READER=odbc|mdbtools forces one of them. Either way the tables are written once into
+// a SQLite file in <TEMP>/mdb2sql-zig (through DuckDB's sqlite extension) and the program reads that file.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("duckdb_c");
 const dbm = @import("db.zig");
+const i18n = @import("i18n.zig");
 const query = dbm.query;
 const Progress = @import("exporter.zig").Progress;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Db = dbm.Db;
 
+const is_windows = builtin.os.tag == .windows;
+const exe_ext = if (is_windows) ".exe" else "";
+
 pub const driver_name = "Microsoft Access Driver (*.mdb, *.accdb)";
-pub const mdbtools_tools = [_][]const u8{ "mdb-tables.exe", "mdb-schema.exe", "mdb-export.exe" };
+pub const mdbtools_tools = [_][]const u8{ "mdb-tables" ++ exe_ext, "mdb-schema" ++ exe_ext, "mdb-export" ++ exe_ext };
 
 pub const Reader = enum { odbc, mdbtools };
-
-pub const missing_message = "Cannot open Access files on this computer: install the 64-bit \"Microsoft Access Database Engine " ++
-    "2016 Redistributable\" (ODBC driver \"" ++ driver_name ++ "\") or keep the mdbtools folder next to the program.";
 
 // !T: Reader choice. forced = value of MDB2SQL_ACCESS_READER ("" = automatic: ODBC first, then mdbtools)
 pub fn choose(forced: []const u8, odbc_ok: bool, mdbtools_ok: bool) error{ NoAccessReader, BadReaderName }!Reader {
@@ -32,81 +36,174 @@ pub fn choose(forced: []const u8, odbc_ok: bool, mdbtools_ok: bool) error{ NoAcc
 
 pub const Options = struct {
     forced: []const u8 = "", // MDB2SQL_ACCESS_READER
-    tools_dir: []const u8 = "", // pasta com mdb-*.exe; vazio = sem mdbtools
-    temp_dir: []const u8 = ".", // onde ficam os CSV temporarios do mdbtools
+    tools_dir: []const u8 = "", // pasta com os mdb-*; vazio = sem mdbtools
+    temp_dir: []const u8 = ".", // SQLite convertido e CSVs do mdbtools (o programa usa <TEMP>/mdb2sql-zig)
 };
 
-// Abre o arquivo Access e devolve o caminho usado. Erro error.Failed: texto em db.lastError().
-pub fn open(db: *Db, io: Io, path: []const u8, opts: Options, progress: *Progress) !dbm.Source {
+// Caminho do SQLite convertido: temporario ate a UI salvar ou apagar
+pub const TempPath = struct {
+    buf: [4096]u8 = undefined,
+    len: usize = 0,
+
+    pub fn slice(p: *const TempPath) []const u8 {
+        return p.buf[0..p.len];
+    }
+};
+
+fn isForced(forced: []const u8) bool {
+    return forced.len > 0 and !std.ascii.eqlIgnoreCase(forced, "auto");
+}
+
+// Converte o arquivo Access para `tmp` (SQLite) e abre esse SQLite como "src". Devolve por onde o Access foi lido.
+// Erro error.Failed: texto em db.lastError(). Em erro ou Cancelar o temporario e apagado e tmp.len fica 0.
+pub fn open(db: *Db, io: Io, path: []const u8, opts: Options, progress: *Progress, tmp: *TempPath) !dbm.Source {
+    tmp.len = 0;
     // o arquivo tem de existir (o driver ODBC daria uma mensagem confusa)
-    Io.Dir.cwd().access(io, path, .{}) catch {
-        db.setErrorText("File not found");
-        return error.Failed;
-    };
+    Io.Dir.cwd().access(io, path, .{}) catch return fail(db, i18n.tr("err_file_not_found"));
     const tools_ok = opts.tools_dir.len > 0 and mdbtoolsPresent(io, opts.tools_dir);
-    const reader = choose(opts.forced, odbcDriverInstalled(), tools_ok) catch |e| {
-        db.setErrorText(switch (e) {
-            error.BadReaderName => "MDB2SQL_ACCESS_READER must be odbc, mdbtools or auto",
-            error.NoAccessReader => if (opts.forced.len > 0 and !std.ascii.eqlIgnoreCase(opts.forced, "auto"))
-                "The Access reader forced by MDB2SQL_ACCESS_READER is not available on this computer"
-            else
-                missing_message,
-        });
-        return error.Failed;
-    };
-    try db.beginMemory();
-    errdefer db.closeSource();
+    const odbc_ok = is_windows and odbcDriverInstalled();
+    const reader = choose(opts.forced, odbc_ok, tools_ok) catch |e| return fail(db, switch (e) {
+        error.BadReaderName => i18n.tr("err_reader_name"),
+        error.NoAccessReader => if (isForced(opts.forced)) i18n.tr("err_reader_forced") else i18n.tr("err_no_reader"),
+    });
+
+    try db.start();
+    db.closeSource();
+    try db.loadSqlite();
+    Io.Dir.cwd().createDirPath(io, opts.temp_dir) catch |e| return failFmt(db, "err_temp_dir", .{ opts.temp_dir, e });
+    const name = std.fmt.bufPrint(&tmp.buf, "{s}{s}{d}-{x}.sqlite", .{ opts.temp_dir, std.fs.path.sep_str, pid(), randomU64(io) }) catch return error.NameTooLong;
+    tmp.len = name.len;
+    errdefer {
+        db.closeSource();
+        db.exec("DETACH DATABASE IF EXISTS conv") catch {};
+        deleteQuiet(io, tmp.slice());
+        tmp.len = 0;
+    }
+    try attachConv(db, tmp.slice());
+
     var used = reader;
     switch (reader) {
-        .odbc => odbcImport(db, path, progress) catch |e| {
-            // driver presente mas com falha (instalacao quebrada, arquivo que ele recusa): tenta o mdbtools,
+        .odbc => if (is_windows) odbcImport(db, path, progress) catch |e| {
+            // driver presente mas com falha (instalacao quebrada, arquivo que ele recusa): recomeca com o mdbtools,
             // a nao ser que o ODBC tenha sido forcado ou o usuario tenha cancelado
-            if (e == error.Canceled or progress.cancel.load(.monotonic) or opts.forced.len > 0 and
-                !std.ascii.eqlIgnoreCase(opts.forced, "auto") or !tools_ok) return e;
-            try db.beginMemory();
+            if (e == error.Canceled or progress.cancel.load(.monotonic) or isForced(opts.forced) or !tools_ok) return e;
+            try db.exec("DETACH DATABASE conv");
+            deleteQuiet(io, tmp.slice());
+            try attachConv(db, tmp.slice());
             used = .mdbtools;
             try mdbtoolsImport(db, io, path, opts, progress);
-        },
+        } else unreachable,
         .mdbtools => try mdbtoolsImport(db, io, path, opts, progress),
     }
-    const source: dbm.Source = if (used == .odbc) .access_odbc else .access_mdbtools;
-    try db.finishMemory(source);
-    return source;
+    try db.exec("DETACH DATABASE conv");
+    try db.openReadOnly(tmp.slice());
+    db.source = if (used == .odbc) .access_odbc else .access_mdbtools;
+    return db.source.?;
+}
+
+// SQLite novo e gravavel com o nome "conv" (a conversao escreve nele)
+fn attachConv(db: *Db, path: []const u8) !void {
+    var sql: std.ArrayList(u8) = .empty;
+    defer sql.deinit(db.gpa);
+    try sql.appendSlice(db.gpa, "ATTACH ");
+    try query.writeLiteral(&sql, db.gpa, path);
+    try sql.appendSlice(db.gpa, " AS conv (TYPE sqlite)");
+    try sql.append(db.gpa, 0);
+    try db.exec(sql.items[0 .. sql.items.len - 1 :0]);
 }
 
 pub fn mdbtoolsPresent(io: Io, dir: []const u8) bool {
     for (mdbtools_tools) |exe| {
         var buf: [4096]u8 = undefined;
-        const p = std.fmt.bufPrint(&buf, "{s}\\{s}", .{ dir, exe }) catch return false;
-        Io.Dir.cwd().access(io, p, .{}) catch return false;
+        Io.Dir.cwd().access(io, toolPath(&buf, dir, exe), .{}) catch return false;
     }
     return true;
 }
 
+// ------------------------------------------------------------------ temporarios
+
+// Id do processo: entra no nome dos temporarios para a limpeza saber se o dono ainda roda
+pub fn pid() u32 {
+    if (is_windows) return GetCurrentProcessId();
+    return @intCast(std.os.linux.getpid());
+}
+
+extern "kernel32" fn GetCurrentProcessId() callconv(.winapi) u32;
+extern "kernel32" fn OpenProcess(access: u32, inherit: c_int, id: u32) callconv(.winapi) ?*anyopaque;
+extern "kernel32" fn GetExitCodeProcess(h: *anyopaque, code: *u32) callconv(.winapi) c_int;
+extern "kernel32" fn CloseHandle(h: *anyopaque) callconv(.winapi) c_int;
+extern "kernel32" fn GetLastError() callconv(.winapi) u32;
+
+fn pidAlive(io: Io, id: u32) bool {
+    if (is_windows) {
+        const h = OpenProcess(0x1000, 0, id) orelse return GetLastError() == 5; // sem permissao = existe
+        defer _ = CloseHandle(h);
+        var code: u32 = 0;
+        return GetExitCodeProcess(h, &code) == 0 or code == 259; // STILL_ACTIVE
+    }
+    var buf: [32]u8 = undefined;
+    const p = std.fmt.bufPrint(&buf, "/proc/{d}", .{id}) catch return true;
+    Io.Dir.cwd().access(io, p, .{}) catch return false;
+    return true;
+}
+
+// !T: Crash cleanup: deletes the temporaries (<pid>-*.sqlite/.csv) left in `dir` by programs that no longer run.
+// Returns how many were deleted. Files of running programs (this one included) stay.
+pub fn cleanupStale(io: Io, dir_path: []const u8) usize {
+    var dir = Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch return 0;
+    defer dir.close(io);
+    var deleted: usize = 0;
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        const n = entry.name;
+        if (!std.mem.endsWith(u8, n, ".sqlite") and !std.mem.endsWith(u8, n, ".csv") and
+            !std.mem.endsWith(u8, n, ".sqlite-journal")) continue;
+        const dash = std.mem.indexOfScalar(u8, n, '-') orelse continue;
+        const owner = std.fmt.parseInt(u32, n[0..dash], 10) catch continue;
+        if (owner == pid() or pidAlive(io, owner)) continue;
+        dir.deleteFile(io, n) catch continue;
+        deleted += 1;
+    }
+    return deleted;
+}
+
+pub fn deleteQuiet(io: Io, path: []const u8) void {
+    Io.Dir.cwd().deleteFile(io, path) catch {};
+}
+
 // ------------------------------------------------------------------ tipos
 
-// Tipo DuckDB de uma coluna do Access pelo nome que o mdb-schema (backend "access") imprime
+// Tipo DuckDB de uma coluna do Access pelo nome que o mdb-schema (backend "access") imprime. No SQLite (escrito
+// pela extensao sqlite do DuckDB) os inteiros viram INTEGER, DOUBLE vira REAL, data vira texto ISO, booleano 0/1,
+// binario BLOB e DECIMAL texto exato. Numeric(p,0) com p <= 18 e inteiro; Numeric com p <= 15 cabe exato num DOUBLE.
 pub fn duckTypeFromAccess(buf: []u8, access_type: []const u8) []const u8 {
     const ty = std.mem.trim(u8, access_type, " \t,");
     const paren = std.mem.indexOfScalar(u8, ty, '(');
     const name = std.mem.trim(u8, if (paren) |p| ty[0..p] else ty, " ");
     const simple = [_]struct { []const u8, []const u8 }{
-        .{ "Boolean", "BOOLEAN" },   .{ "Byte", "UTINYINT" },        .{ "Integer", "SMALLINT" },
+        .{ "Boolean", "BOOLEAN" },      .{ "Byte", "UTINYINT" },          .{ "Integer", "SMALLINT" },
         .{ "Long Integer", "INTEGER" }, .{ "Currency", "DECIMAL(19,4)" }, .{ "Single", "FLOAT" },
-        .{ "Double", "DOUBLE" },     .{ "DateTime", "TIMESTAMP" },   .{ "OLE", "BLOB" },
+        .{ "Double", "DOUBLE" },        .{ "DateTime", "TIMESTAMP" },     .{ "OLE", "BLOB" },
         .{ "Binary", "BLOB" },
     };
     for (simple) |s| if (std.mem.eql(u8, name, s[0])) return s[1];
     if (std.mem.eql(u8, name, "Numeric")) {
-        // Numeric (p, s) -> DECIMAL(p,s); precisao acima do limite do DuckDB vira DOUBLE
         const args = if (paren) |p| std.mem.trim(u8, ty[p + 1 ..], " )") else "";
         var it = std.mem.splitScalar(u8, args, ',');
         const prec = std.fmt.parseInt(u8, std.mem.trim(u8, it.next() orelse "", " "), 10) catch return "DOUBLE";
         const scale = std.fmt.parseInt(u8, std.mem.trim(u8, it.next() orelse "0", " "), 10) catch return "DOUBLE";
-        if (prec == 0 or prec > 38 or scale > prec) return "DOUBLE";
-        return std.fmt.bufPrint(buf, "DECIMAL({d},{d})", .{ prec, scale }) catch "DOUBLE";
+        return numericType(buf, prec, scale);
     }
     return "VARCHAR"; // Text, Memo/Hyperlink, Replication ID e o que vier de desconhecido
+}
+
+// Numeric/Decimal(p, s) do Access (mdbtools ou ODBC)
+fn numericType(buf: []u8, prec: usize, scale: usize) []const u8 {
+    if (prec == 0 or prec > 38 or scale > prec) return "DOUBLE";
+    if (scale == 0 and prec <= 18) return "BIGINT";
+    if (prec <= 15) return "DOUBLE"; // ate 15 digitos o DOUBLE devolve o mesmo decimal
+    return std.fmt.bufPrint(buf, "DECIMAL({d},{d})", .{ prec, scale }) catch "DOUBLE";
 }
 
 pub const Column = struct { name: []const u8, ty: []const u8 };
@@ -141,7 +238,7 @@ pub fn parseSchema(a: Allocator, text: []const u8) Allocator.Error![]Table {
 // ------------------------------------------------------------------ mdbtools
 
 fn toolPath(buf: []u8, dir: []const u8, exe: []const u8) []const u8 {
-    return std.fmt.bufPrint(buf, "{s}\\{s}", .{ dir, exe }) catch unreachable;
+    return std.fmt.bufPrint(buf, "{s}{s}{s}", .{ dir, std.fs.path.sep_str, exe }) catch "";
 }
 
 fn mdbtoolsImport(db: *Db, io: Io, path: []const u8, opts: Options, progress: *Progress) !void {
@@ -153,21 +250,22 @@ fn mdbtoolsImport(db: *Db, io: Io, path: []const u8, opts: Options, progress: *P
     var pb: [4096]u8 = undefined;
     // um processo para o esquema de todas as tabelas (sem indices nem relacoes)
     const schema = std.process.run(arena, io, .{
-        .argv = &.{ toolPath(&pb, opts.tools_dir, "mdb-schema.exe"), "--no-relations", "--no-indexes", "--no-not-null", "--no-default-values", path, "access" },
-    }) catch |e| return failFmt(db, "mdb-schema could not run: {t}", .{e});
-    if (!schema.term.success()) return failFmt(db, "mdb-schema failed: {s}", .{std.mem.trim(u8, schema.stderr, " \r\n")});
+        .argv = &.{ toolPath(&pb, opts.tools_dir, mdbtools_tools[1]), "--no-relations", "--no-indexes", "--no-not-null", "--no-default-values", path, "access" },
+        .create_no_window = true,
+    }) catch |e| return failFmt(db, "err_tool_run", .{ "mdb-schema", e });
+    if (!schema.term.success()) return failFmt(db, "err_tool_failed", .{ "mdb-schema", std.mem.trim(u8, schema.stderr, " \r\n") });
     const tables = try parseSchema(arena, schema.stdout);
     progress.begin(tables.len);
 
     // Cada mdb-export le o catalogo do arquivo de novo (~0,5 s no DB4): roda varios ao mesmo tempo, um CSV
-    // temporario por processo, e carrega os CSVs no DuckDB um por um
+    // temporario por processo, e grava os CSVs no SQLite um por um
     const parallel = 8;
     const tag = randomU64(io);
     var csv_bufs: [parallel][4096]u8 = undefined;
     var csv_paths: [parallel][]const u8 = undefined;
     for (&csv_paths, &csv_bufs, 0..) |*p, *b, i|
-        p.* = std.fmt.bufPrint(b, "{s}\\mdb2sql-{x}-{d}.csv", .{ opts.temp_dir, tag, i }) catch return error.NameTooLong;
-    defer for (csv_paths) |p| Io.Dir.cwd().deleteFile(io, p) catch {};
+        p.* = std.fmt.bufPrint(b, "{s}{s}{d}-{x}-{d}.csv", .{ opts.temp_dir, std.fs.path.sep_str, pid(), tag, i }) catch return error.NameTooLong;
+    defer for (csv_paths) |p| deleteQuiet(io, p);
 
     var sql: std.ArrayList(u8) = .empty;
     defer sql.deinit(gpa);
@@ -182,17 +280,17 @@ fn mdbtoolsImport(db: *Db, io: Io, path: []const u8, opts: Options, progress: *P
             const out = try Io.Dir.cwd().createFile(io, csv_paths[i], .{});
             defer out.close(io); // o filho herdou o seu proprio handle
             children[i] = std.process.spawn(io, .{
-                .argv = &.{ toolPath(&pb, opts.tools_dir, "mdb-export.exe"), "-D", "%Y-%m-%d %H:%M:%S", "-T", "%Y-%m-%d %H:%M:%S", "-b", "hex", path, table.name },
+                .argv = &.{ toolPath(&pb, opts.tools_dir, mdbtools_tools[2]), "-D", "%Y-%m-%d %H:%M:%S", "-T", "%Y-%m-%d %H:%M:%S", "-b", "hex", path, table.name },
                 .stdin = .ignore,
                 .stdout = .{ .file = out },
                 .stderr = .ignore,
                 .create_no_window = true,
-            }) catch |e| return failFmt(db, "mdb-export could not run: {t}", .{e});
+            }) catch |e| return failFmt(db, "err_tool_run", .{ "mdb-export", e });
         }
         for (batch, 0..) |table, i| {
-            const term = children[i].?.wait(io) catch |e| return failFmt(db, "mdb-export failed: {t}", .{e});
+            const term = children[i].?.wait(io) catch |e| return failFmt(db, "err_tool_run", .{ "mdb-export", e });
             children[i] = null;
-            if (!term.success()) return failFmt(db, "mdb-export failed on table {s}", .{table.name});
+            if (!term.success()) return failFmt(db, "err_export_table", .{table.name});
         }
         for (batch, 0..) |table, i| {
             try loadCsv(db, table, csv_paths[i], &sql);
@@ -201,11 +299,11 @@ fn mdbtoolsImport(db: *Db, io: Io, path: []const u8, opts: Options, progress: *P
     }
 }
 
-// CSV do mdb-export -> tabela com os tipos do Access; NULL = campo vazio sem aspas, "" = texto vazio
+// CSV do mdb-export -> tabela do SQLite "conv" com os tipos do Access; NULL = campo vazio sem aspas, "" = texto vazio
 fn loadCsv(db: *Db, table: Table, csv_path: []const u8, sql: *std.ArrayList(u8)) !void {
     const gpa = db.gpa;
     sql.clearRetainingCapacity();
-    try sql.appendSlice(gpa, "CREATE TABLE ");
+    try sql.appendSlice(gpa, "CREATE TABLE conv.main.");
     try query.writeIdent(sql, gpa, table.name);
     if (table.columns.len == 0) {
         try sql.appendSlice(gpa, " (empty_table_without_columns VARCHAR)");
@@ -243,16 +341,20 @@ fn loadCsv(db: *Db, table: Table, csv_path: []const u8, sql: *std.ArrayList(u8))
     try db.exec(sql.items[0 .. sql.items.len - 1 :0]);
 }
 
-
 fn randomU64(io: Io) u64 {
     var b: [8]u8 = undefined;
     io.random(&b);
     return std.mem.readInt(u64, &b, .little);
 }
 
-fn failFmt(db: *Db, comptime fmt: []const u8, args: anytype) error{Failed} {
+fn fail(db: *Db, text: []const u8) error{Failed} {
+    db.setErrorText(text);
+    return error.Failed;
+}
+
+fn failFmt(db: *Db, comptime key: []const u8, args: anytype) error{Failed} {
     var buf: [1024]u8 = undefined;
-    db.setErrorText(std.fmt.bufPrint(&buf, fmt, args) catch fmt);
+    db.setErrorText(i18n.fmt(&buf, key, args));
     return error.Failed;
 }
 
@@ -350,9 +452,11 @@ fn mapOdbcType(buf: []u8, sql_type: i16, size: usize, digits: i16) struct { []co
         -7 => .{ "BOOLEAN", .bit }, // SQL_BIT
         7 => .{ "FLOAT", .double }, // SQL_REAL
         6, 8 => .{ "DOUBLE", .double }, // SQL_FLOAT, SQL_DOUBLE
-        2, 3 => blk: { // SQL_NUMERIC, SQL_DECIMAL (texto exato -> DECIMAL)
-            if (size == 0 or size > 38 or digits < 0 or digits > size) break :blk .{ "DOUBLE", .double };
-            break :blk .{ std.fmt.bufPrint(buf, "DECIMAL({d},{d})", .{ size, digits }) catch "DOUBLE", .text };
+        2, 3 => blk: { // SQL_NUMERIC, SQL_DECIMAL: a mesma regra do mdbtools (numericType)
+            const ty = numericType(buf, size, @intCast(@max(digits, 0)));
+            if (std.mem.eql(u8, ty, "BIGINT")) break :blk .{ ty, .int };
+            if (std.mem.eql(u8, ty, "DOUBLE")) break :blk .{ ty, .double };
+            break :blk .{ ty, .text }; // texto exato -> DECIMAL
         },
         9, 10, 11, 91, 92, 93 => .{ "TIMESTAMP", .text }, // datas: "aaaa-mm-dd hh:mm:ss"
         -2, -3, -4 => .{ "BLOB", .binary },
@@ -369,7 +473,7 @@ fn utf16z(a: Allocator, s: []const u8) ![:0]u16 {
 
 fn odbcImport(db: *Db, path: []const u8, progress: *Progress) !void {
     const gpa = db.gpa;
-    const env = newEnv() orelse return failFmt(db, "ODBC is not available", .{});
+    const env = newEnv() orelse return fail(db, "ODBC");
     defer _ = SQLFreeHandle(H_ENV, env);
     var dbc: SQLHANDLE = null;
     if (!ok(SQLAllocHandle(H_DBC, env, &dbc))) return odbcFail(db, H_ENV, env, "ODBC");
@@ -477,7 +581,7 @@ fn copyTable(db: *Db, stmt: SQLHANDLE, name: []const u8, sql: *std.ArrayList(u8)
 
     // CREATE TABLE com os tipos que o driver informa
     sql.clearRetainingCapacity();
-    try sql.appendSlice(gpa, "CREATE TABLE ");
+    try sql.appendSlice(gpa, "CREATE TABLE conv.main.");
     try query.writeIdent(sql, gpa, name);
     try sql.appendSlice(gpa, " (");
     for (fetch, 1..) |*f, col| {
@@ -500,7 +604,7 @@ fn copyTable(db: *Db, stmt: SQLHANDLE, name: []const u8, sql: *std.ArrayList(u8)
     try sql.appendSlice(gpa, ")");
     if (n_cols == 0) {
         sql.clearRetainingCapacity();
-        try sql.appendSlice(gpa, "CREATE TABLE ");
+        try sql.appendSlice(gpa, "CREATE TABLE conv.main.");
         try query.writeIdent(sql, gpa, name);
         try sql.appendSlice(gpa, " (empty_table_without_columns VARCHAR)");
     }
@@ -511,7 +615,7 @@ fn copyTable(db: *Db, stmt: SQLHANDLE, name: []const u8, sql: *std.ArrayList(u8)
     const name_z = try gpa.dupeSentinel(u8, name, 0);
     defer gpa.free(name_z);
     var app: c.duckdb_appender = null;
-    if (c.duckdb_appender_create_ext(db.conn, "src", "main", name_z, &app) != c.DuckDBSuccess) return appenderFail(db, app);
+    if (c.duckdb_appender_create_ext(db.conn, "conv", "main", name_z, &app) != c.DuckDBSuccess) return appenderFail(db, app);
     defer _ = c.duckdb_appender_destroy(&app);
 
     var rows: usize = 0;
@@ -555,7 +659,6 @@ fn copyTable(db: *Db, stmt: SQLHANDLE, name: []const u8, sql: *std.ArrayList(u8)
     }
     if (c.duckdb_appender_close(app) != c.DuckDBSuccess) return appenderFail(db, app);
 }
-
 // -------------------------------------------------------------------- tests
 
 const t = std.testing;
@@ -571,29 +674,51 @@ test "Access reader choice: ODBC first, mdbtools as fallback, forced by the vari
     try t.expectEqual(.odbc, try choose("odbc", true, true));
     try t.expectError(error.NoAccessReader, choose("odbc", false, true));
     try t.expectError(error.BadReaderName, choose("jet", true, true));
-    _ = odbcDriverInstalled(); // a deteccao real roda sem quebrar, com ou sem o driver
+    if (is_windows) _ = odbcDriverInstalled(); // a deteccao real roda sem quebrar, com ou sem o driver
 }
 
-test "a file that is not Access fails with a message, through every reader available" {
+// Variavel do teste ou o padrao (o build.zig poe o .mdb versionado e o mdbtools na pasta do teste)
+fn envOr(name: []const u8, default: []const u8) ![]u8 {
+    return t.environ.getAlloc(t.allocator, name) catch t.allocator.dupe(u8, default);
+}
+
+fn envOrEmpty(name: []const u8) ![]u8 {
+    return envOr(name, "");
+}
+
+test "a file that is not Access fails with a message, through every reader available, and leaves no temporary" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var b: [256]u8 = undefined;
     const path = dbm.tmpPath(&b, &tmp, "fake.accdb");
     try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = path, .data = "not an access file" });
-    var db = Db.init(t.allocator);
+    var db = dbm.testDb();
     defer db.close();
     var p: Progress = .{};
-    const tools = t.environ.getAlloc(t.allocator, "MDB2SQL_TEST_MDBTOOLS") catch try t.allocator.dupe(u8, "");
+    const tools = try envOr("MDB2SQL_TEST_MDBTOOLS", "mdbtools");
     defer t.allocator.free(tools);
-    try t.expectError(error.Failed, open(&db, t.io, path, .{ .tools_dir = tools, .temp_dir = ".zig-cache" }, &p));
-    try t.expect(db.lastError().len > 0 and !db.isOpen());
-    try t.expectError(error.Failed, open(&db, t.io, "nao/existe.accdb", .{ .tools_dir = tools }, &p));
+    var tb: [256]u8 = undefined;
+    const temp_dir = try std.fmt.bufPrint(&tb, ".zig-cache/tmp/{s}/conv", .{tmp.sub_path});
+    var out: TempPath = .{};
+    try t.expectError(error.Failed, open(&db, t.io, path, .{ .tools_dir = tools, .temp_dir = temp_dir }, &p, &out));
+    try t.expect(db.lastError().len > 0 and !db.isOpen() and out.len == 0);
+    // nenhum .sqlite nem .csv ficou para tras
+    if (Io.Dir.cwd().openDir(t.io, temp_dir, .{ .iterate = true })) |d| {
+        var dir = d;
+        defer dir.close(t.io);
+        var it = dir.iterate();
+        try t.expect(try it.next(t.io) == null);
+    } else |_| {}
+    try t.expectError(error.Failed, open(&db, t.io, "nao/existe.accdb", .{ .tools_dir = tools }, &p, &out));
     try t.expectEqualStrings("File not found", db.lastError());
 }
 
 test "Access types from mdb-schema" {
     var b: [32]u8 = undefined;
-    try t.expectEqualStrings("DECIMAL(10,0)", duckTypeFromAccess(&b, "Numeric (10, 0), "));
+    try t.expectEqualStrings("BIGINT", duckTypeFromAccess(&b, "Numeric (10, 0), "));
+    try t.expectEqualStrings("DOUBLE", duckTypeFromAccess(&b, "Numeric (10, 2), "));
+    try t.expectEqualStrings("DECIMAL(18,4)", duckTypeFromAccess(&b, "Numeric (18, 4)"));
+    try t.expectEqualStrings("DECIMAL(28,0)", duckTypeFromAccess(&b, "Numeric (28, 0)"));
     try t.expectEqualStrings("DOUBLE", duckTypeFromAccess(&b, "Numeric (60, 2)"));
     try t.expectEqualStrings("VARCHAR", duckTypeFromAccess(&b, "Text (48), "));
     try t.expectEqualStrings("VARCHAR", duckTypeFromAccess(&b, "Memo/Hyperlink (255)"));
@@ -603,10 +728,16 @@ test "Access types from mdb-schema" {
     try t.expectEqualStrings("DECIMAL(19,4)", duckTypeFromAccess(&b, "Currency"));
     try t.expectEqualStrings("BLOB", duckTypeFromAccess(&b, "OLE"));
     try t.expectEqualStrings("VARCHAR", duckTypeFromAccess(&b, "Replication ID"));
-    var o: [32]u8 = undefined;
-    try t.expectEqualStrings("DECIMAL(19,4)", mapOdbcType(&o, 2, 19, 4)[0]);
-    try t.expectEqual(.int, mapOdbcType(&o, 4, 10, 0)[1]);
-    try t.expectEqualStrings("TIMESTAMP", mapOdbcType(&o, 93, 19, 0)[0]);
+    if (is_windows) {
+        var o: [32]u8 = undefined;
+        try t.expectEqualStrings("DECIMAL(19,4)", mapOdbcType(&o, 2, 19, 4)[0]);
+        try t.expectEqual(.text, mapOdbcType(&o, 2, 19, 4)[1]);
+        try t.expectEqualStrings("BIGINT", mapOdbcType(&o, 2, 10, 0)[0]);
+        try t.expectEqual(.int, mapOdbcType(&o, 2, 10, 0)[1]);
+        try t.expectEqual(.double, mapOdbcType(&o, 3, 10, 2)[1]);
+        try t.expectEqual(.int, mapOdbcType(&o, 4, 10, 0)[1]);
+        try t.expectEqualStrings("TIMESTAMP", mapOdbcType(&o, 93, 19, 0)[0]);
+    }
 }
 
 test "mdb-schema output parser" {
@@ -620,11 +751,98 @@ test "mdb-schema output parser" {
     try t.expectEqual(2, tables.len);
     try t.expectEqualStrings("RANGER_SOSTAT", tables[0].name);
     try t.expectEqual(3, tables[0].columns.len);
-    try t.expectEqualStrings("DECIMAL(10,0)", tables[0].columns[0].ty);
+    try t.expectEqualStrings("BIGINT", tables[0].columns[0].ty);
     try t.expectEqualStrings("Data de criação", tables[0].columns[2].name);
     try t.expectEqualStrings("TIMESTAMP", tables[0].columns[2].ty);
     try t.expectEqualStrings("Outra tabela", tables[1].name);
     try t.expectEqualStrings("INTEGER", tables[1].columns[0].ty);
+}
+
+test "crash cleanup deletes temporaries of programs that no longer run, keeps the others" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var db: [256]u8 = undefined;
+    const dir = try std.fmt.bufPrint(&db, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    var nb: [64]u8 = undefined;
+    const mine = try std.fmt.bufPrint(&nb, "{d}-ab.sqlite", .{pid()});
+    // 4294967291: nenhum processo tem esse id
+    for ([_][]const u8{ "4294967291-ab.sqlite", "4294967291-ab-0.csv", mine, "notes.txt", "x-1.sqlite" }) |n|
+        try tmp.dir.writeFile(t.io, .{ .sub_path = n, .data = "x" });
+    try t.expectEqual(2, cleanupStale(t.io, dir));
+    try tmp.dir.access(t.io, mine, .{});
+    try tmp.dir.access(t.io, "notes.txt", .{});
+    try tmp.dir.access(t.io, "x-1.sqlite", .{});
+    try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "4294967291-ab.sqlite", .{}));
+    try t.expectEqual(0, cleanupStale(t.io, "nao/existe"));
+}
+
+fn cellOf(db: *Db, sql: [:0]const u8) ![]u8 {
+    var g = try db.run(sql, &.{});
+    defer g.deinit();
+    return t.allocator.dupe(u8, g.rows[0][0] orelse "NULL");
+}
+
+fn expectCell(db: *Db, want: []const u8, sql: [:0]const u8) !void {
+    const got = try cellOf(db, sql);
+    defer t.allocator.free(got);
+    try t.expectEqualStrings(want, got);
+}
+
+// O .mdb pequeno versionado (testdata/mdb2sql_test.mdb, gerado por scripts/make_test_mdb.ps1), lido pelo mdbtools
+// embutido: vira um arquivo SQLite com os tipos, os NULL e os acentos do Access. build.zig passa os caminhos.
+test "versioned .mdb through mdbtools becomes a SQLite file with types and NULLs" {
+    const mdb = try envOr("MDB2SQL_TEST_MDB", "mdb2sql_test.mdb");
+    defer t.allocator.free(mdb);
+    const tools = try envOr("MDB2SQL_TEST_MDBTOOLS", "mdbtools");
+    defer t.allocator.free(tools);
+    try t.expect(mdbtoolsPresent(t.io, tools)); // o build.zig sempre poe o mdbtools: faltar e erro, nao pulo
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var tb: [256]u8 = undefined;
+    const temp_dir = try std.fmt.bufPrint(&tb, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+
+    var db = dbm.testDb();
+    defer db.close();
+    var p: Progress = .{};
+    var out: TempPath = .{};
+    const src = open(&db, t.io, mdb, .{ .forced = "mdbtools", .tools_dir = tools, .temp_dir = temp_dir }, &p, &out) catch |e| {
+        std.debug.print("{s}\n", .{db.lastError()});
+        return e;
+    };
+    try t.expectEqual(dbm.Source.access_mdbtools, src);
+    try t.expectEqual(3, p.done.load(.monotonic));
+    // o temporario e um SQLite de verdade, na pasta dos temporarios, com o id do processo no nome
+    try t.expect(std.mem.endsWith(u8, out.slice(), ".sqlite") and std.mem.startsWith(u8, out.slice(), temp_dir));
+    var hb: [16]u8 = undefined;
+    try t.expectEqualStrings("SQLite format 3\x00", try Io.Dir.cwd().readFile(t.io, out.slice(), &hb));
+
+    try t.expectEqual(3, db.table_names.len);
+    var counts: [3]u64 = undefined;
+    try db.countMany(&.{ "Tipos", "Medições de campo", "Vazia" }, &counts);
+    try t.expectEqualSlices(u64, &.{ 3, 2, 0 }, &counts);
+
+    // tipos lidos de volta do SQLite
+    var sch = try db.schema("Tipos");
+    defer sch.deinit();
+    const want_types = [_][]const u8{ "BIGINT", "VARCHAR", "DOUBLE", "VARCHAR", "DOUBLE", "VARCHAR", "BIGINT", "BIGINT", "BIGINT", "VARCHAR", "BLOB" };
+    for (sch.rows, want_types) |row, ty| try t.expectEqualStrings(ty, row[1].?);
+    // valores: decimal exato, data ISO, booleano 0/1, binario, acentos e aspas
+    try expectCell(&db, "Ação|1234.56|19.9900|0.5|2026-07-14 10:30:00|1|255|-7|linha 1|\\x00\\xFF\\x10", "SELECT concat_ws('|', nome, valor, preco, razao, quando, ativo, pequeno, curto, nota, dados) FROM Tipos WHERE id = 1");
+    try expectCell(&db, "it's \"q\"|-0.01|0.0000|2316.0|1999-12-31 00:00:00|0|0|32000", "SELECT concat_ws('|', nome, valor, preco, razao, quando, ativo, pequeno, curto) FROM Tipos WHERE id = 2");
+    // NULL continua NULL (a linha 3 so tem id e o booleano, que no Access nunca e nulo)
+    try expectCell(&db, "9", "SELECT CAST(count(*) FILTER (WHERE nome IS NULL) + count(*) FILTER (WHERE valor IS NULL) + count(*) FILTER (WHERE preco IS NULL) + count(*) FILTER (WHERE razao IS NULL) + count(*) FILTER (WHERE quando IS NULL) + count(*) FILTER (WHERE pequeno IS NULL) + count(*) FILTER (WHERE curto IS NULL) + count(*) FILTER (WHERE nota IS NULL) + count(*) FILTER (WHERE dados IS NULL) AS VARCHAR) FROM Tipos WHERE id = 3");
+    try expectCell(&db, "TENSÃO DE CAMPO", "SELECT \"Descrição\" FROM \"Medições de campo\" WHERE \"Ponto nº\" = 10");
+    try expectCell(&db, "NULL", "SELECT \"Descrição\" FROM \"Medições de campo\" WHERE \"Ponto nº\" = 20");
+    // a pesquisa da aba Dados roda no banco tambem pelo SQLite: sem acentos nem caixa, palavras em qualquer ordem
+    const cols = [_][]const u8{ "Ponto nº", "Descrição" };
+    var spec: query.Spec = .{ .table = "Medições de campo", .tables = db.table_names, .columns = &cols, .search = "campo TENSAO" };
+    try t.expectEqual(1, try db.count(spec));
+    spec.search = "tensao de campo 20";
+    try t.expectEqual(0, try db.count(spec)); // palavras em celulas diferentes nao valem
+
+    // a UI solta o arquivo e apaga (ou salva) o temporario
+    db.closeSource();
+    try Io.Dir.cwd().deleteFile(t.io, out.slice());
 }
 
 // Com MDB2SQL_TEST_OUT (pasta): exporta o banco convertido para .duckdb, .sqlite e .xlsx e confere as
@@ -633,15 +851,12 @@ fn exportAndCompare(db: *Db, total: u64) !void {
     const exporter = @import("exporter.zig");
     const dir = t.environ.getAlloc(t.allocator, "MDB2SQL_TEST_OUT") catch return;
     defer t.allocator.free(dir);
-    const ext_path = t.environ.getAlloc(t.allocator, "MDB2SQL_TEST_SQLITE_EXT") catch return;
-    defer t.allocator.free(ext_path);
-    db.sqlite_ext = ext_path;
     var p: Progress = .{};
     var b: [3][1024]u8 = undefined;
     const outs = [_][]const u8{
-        try std.fmt.bufPrint(&b[0], "{s}\\DB4_export.duckdb", .{dir}),
-        try std.fmt.bufPrint(&b[1], "{s}\\DB4_export.sqlite", .{dir}),
-        try std.fmt.bufPrint(&b[2], "{s}\\DB4_export.xlsx", .{dir}),
+        try std.fmt.bufPrint(&b[0], "{s}/export.duckdb", .{dir}),
+        try std.fmt.bufPrint(&b[1], "{s}/export.sqlite", .{dir}),
+        try std.fmt.bufPrint(&b[2], "{s}/export.xlsx", .{dir}),
     };
     try exporter.database(db, t.io, .duckdb, outs[0], &p);
     try exporter.database(db, t.io, .sqlite, outs[1], &p);
@@ -651,9 +866,8 @@ fn exportAndCompare(db: *Db, total: u64) !void {
     defer t.allocator.free(want);
     try db.countMany(db.table_names, want);
     for (outs[0..2]) |out| {
-        var check = Db.init(t.allocator);
+        var check = dbm.testDb();
         defer check.close();
-        check.sqlite_ext = ext_path;
         try check.openReadOnly(out);
         try t.expectEqual(db.table_names.len, check.table_names.len);
         for (db.table_names, want) |name, n| {
@@ -663,29 +877,101 @@ fn exportAndCompare(db: *Db, total: u64) !void {
     }
 }
 
-// Conversao real quando MDB2SQL_TEST_ACCDB aponta para uma COPIA de um .accdb (opcional; o dono roda com o DB4)
-test "real Access file through both readers (optional)" {
+// Tabelas e linhas do Access convertido iguais as do conversor de referencia (MDB2SQL_TEST_REF: .sqlite ou .duckdb)
+fn compareWithReference(db: *Db, counts: []const u64) !void {
+    const ref_path = t.environ.getAlloc(t.allocator, "MDB2SQL_TEST_REF") catch return;
+    defer t.allocator.free(ref_path);
+    var ref = dbm.testDb();
+    defer ref.close();
+    try ref.openReadOnly(ref_path);
+    var diffs: usize = 0;
+    for (db.table_names, counts) |name, n| {
+        if (!query.contains(ref.table_names, name)) {
+            std.debug.print("  only in the Access file: {s}\n", .{name});
+            diffs += 1;
+            continue;
+        }
+        const m = try ref.count(.{ .table = name, .tables = ref.table_names, .columns = &.{} });
+        if (m != n) {
+            std.debug.print("  {s}: {d} here, {d} in the reference\n", .{ name, n, m });
+            diffs += 1;
+        }
+    }
+    for (ref.table_names) |name| if (!query.contains(db.table_names, name)) {
+        std.debug.print("  only in the reference: {s}\n", .{name});
+        diffs += 1;
+    };
+    std.debug.print("reference {s}: {d} tables here, {d} there, {d} differences\n", .{ std.fs.path.basename(ref_path), db.table_names.len, ref.table_names.len, diffs });
+    try t.expectEqual(0, diffs);
+}
+
+// NMR5 (DB4): a pesquisa da aba Dados roda na tabela inteira pelo SQLite convertido. "tension de campo" (sem acento)
+// acha a linha "EXCITACION TENSION DE CAMPO", que nao esta na primeira pagina; "tensao" (portugues) nao acha.
+fn searchBeyondFirstPage(db: *Db) !void {
+    const table = "RANGER_SOSTAT";
+    if (!query.contains(db.table_names, table)) return;
+    var sch = try db.schema(table);
+    defer sch.deinit();
+    const cols = try t.allocator.alloc([]const u8, sch.rows.len);
+    defer t.allocator.free(cols);
+    for (cols, sch.rows) |*cn, row| cn.* = row[0].?;
+    var spec: query.Spec = .{ .table = table, .tables = db.table_names, .columns = cols };
+    const all = try db.count(spec);
+    spec.search = "tension de campo";
+    const found = try db.count(spec);
+    spec.search = "tensao de campo";
+    const pt = try db.count(spec);
+    // a primeira pagina sem pesquisa nao tem o termo: achar prova que a pesquisa nao ficou na pagina
+    spec.search = "";
+    var first = try db.page(spec);
+    defer first.deinit();
+    var on_first = false;
+    var scratch: std.ArrayList(u8) = .empty;
+    defer scratch.deinit(t.allocator);
+    for (first.rows) |row| on_first = on_first or try @import("gridtools.zig").rowMatches(t.allocator, &scratch, row, "tension de campo");
+    std.debug.print("search in {s} ({d} rows): \"tension de campo\" {d}, \"tensao de campo\" {d}, on the first page: {}\n", .{ table, all, found, pt, on_first });
+    try t.expect(all > 1000 and found > 0 and !on_first);
+}
+
+// Conversao real quando MDB2SQL_TEST_ACCDB aponta para uma COPIA de um .accdb/.mdb (opcional; o dono roda com o DB4).
+// MDB2SQL_TEST_READERS=mdbtools limita aos leitores da lista (padrao: odbc e mdbtools no Windows, mdbtools fora).
+test "real Access file through the readers, compared with the reference converter (optional)" {
     const path = t.environ.getAlloc(t.allocator, "MDB2SQL_TEST_ACCDB") catch return error.SkipZigTest;
     defer t.allocator.free(path);
-    const tools = t.environ.getAlloc(t.allocator, "MDB2SQL_TEST_MDBTOOLS") catch try t.allocator.dupe(u8, "");
+    const tools = try envOr("MDB2SQL_TEST_MDBTOOLS", "mdbtools");
     defer t.allocator.free(tools);
-    var counts: [2]u64 = undefined;
-    for ([_][]const u8{ "odbc", "mdbtools" }, 0..) |reader, i| {
-        var db = Db.init(t.allocator);
+    const readers_env = try envOrEmpty("MDB2SQL_TEST_READERS");
+    defer t.allocator.free(readers_env);
+    const readers = if (readers_env.len > 0) readers_env else if (is_windows) "odbc,mdbtools" else "mdbtools";
+    var first_total: ?u64 = null;
+    var it = std.mem.splitScalar(u8, readers, ',');
+    var i: usize = 0;
+    while (it.next()) |reader| : (i += 1) {
+        var db = dbm.testDb();
         defer db.close();
         var p: Progress = .{};
+        var out: TempPath = .{};
         const t0 = std.Io.Timestamp.now(t.io, .awake);
-        const src = open(&db, t.io, path, .{ .forced = reader, .tools_dir = tools, .temp_dir = ".zig-cache" }, &p) catch |e| {
+        _ = open(&db, t.io, path, .{ .forced = reader, .tools_dir = tools, .temp_dir = ".zig-cache/tmp" }, &p, &out) catch |e| {
             std.debug.print("{s}: {s}\n", .{ reader, db.lastError() });
             return e;
         };
+        defer {
+            db.closeSource();
+            deleteQuiet(t.io, out.slice());
+        }
         const ms = t0.durationTo(std.Io.Timestamp.now(t.io, .awake)).toMilliseconds();
-        try t.expectEqual(if (i == 0) dbm.Source.access_odbc else dbm.Source.access_mdbtools, src);
+        const counts = try t.allocator.alloc(u64, db.table_names.len);
+        defer t.allocator.free(counts);
+        const t1 = std.Io.Timestamp.now(t.io, .awake);
+        try db.countMany(db.table_names, counts);
+        const count_ms = t1.durationTo(std.Io.Timestamp.now(t.io, .awake)).toMilliseconds();
         var total: u64 = 0;
-        for (db.table_names) |name| total += try db.count(.{ .table = name, .tables = db.table_names, .columns = &.{} });
-        counts[i] = total;
-        std.debug.print("{s}: {d} tables, {d} rows, converted in {d} ms\n", .{ reader, db.table_names.len, total, ms });
+        for (counts) |n| total += n;
+        std.debug.print("{s}: {d} tables, {d} rows, converted to SQLite in {d} ms, counted in {d} ms\n", .{ reader, db.table_names.len, total, ms, count_ms });
+        if (first_total) |ft| try t.expectEqual(ft, total) else first_total = total;
+        try compareWithReference(&db, counts);
+        try searchBeyondFirstPage(&db);
         if (i == 0) try exportAndCompare(&db, total);
     }
-    try t.expectEqual(counts[0], counts[1]);
 }

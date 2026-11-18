@@ -76,13 +76,14 @@ pub const Out = struct {
     page: u64 = 0,
     result: ?dbm.Grid = null, // sql
     exported: u64 = 0, // export: tabelas ou linhas gravadas
+    converted: access.TempPath = .{}, // open de Access: o SQLite temporario (len 0 = nenhum)
 
     pub fn deinit(out: *Out, gpa: Allocator) void {
         gpa.free(out.counts);
         if (out.schema) |*g| g.deinit();
         if (out.data) |*g| g.deinit();
         if (out.result) |*g| g.deinit();
-        out.* = .{ .kind = out.kind };
+        out.* = .{ .kind = out.kind, .converted = out.converted };
     }
 };
 
@@ -107,7 +108,7 @@ fn exec(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *expor
         .open => {
             const path = std.mem.sliceTo(&req.path, 0);
             if (try query.sourceKind(path) == .access) {
-                out.source = try access.open(db, env.io, path, env.access, progress);
+                out.source = try access.open(db, env.io, path, env.access, progress, &out.converted);
             } else {
                 try db.openReadOnly(path);
                 out.source = db.source;
