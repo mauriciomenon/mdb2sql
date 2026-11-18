@@ -149,7 +149,12 @@ and RTUNO 50 PNTNO 9 in RANGER_SOANLG by "tension de campo" ("tensao" finds only
 checks every Access type, NULLs, accents, CRLF and binary through both readers. With `MDB2SQL_TEST_NWIND` (a
 copy of nwind.mdb of mdbtestdata, Access 97) Currency stays numeric in the converted file and in Export > SQLite:
 Products.UnitPrice > 20 gives 37 rows, sum 1695.11, top 263.5, 123.79, 97. Debian 13 in WSL: the official
-build (tests included) and the `.deb`.
+build (tests included) and the `.deb`; on Wayland (no `DISPLAY`) the window shows the program and "Display mode".
+Speed on Debian 13 in WSL, DB4 copied to the Linux disk, mdbtools reader (`MDB2SQL_PERF=1 MDB2SQL_PERF_BASE="2026-07-14
+DB4" go test ./backend -run Perf`, median of 3 per session): 33.9-44.9 s with the embedded Debian mdbtools, 31.0-35.0 s
+with the static mdbtools 1.0.1 built from the official tarball (the build of the Rust and Zig stacks); both give the
+same CSV (RANGER_SOSTAT: 36,755 lines, same sha256), and the gap is inside the run-to-run noise of a shared
+machine, so the Debian package is kept.
 
 ## Known limits
 

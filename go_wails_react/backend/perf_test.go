@@ -8,31 +8,13 @@ import (
 	"sort"
 	"testing"
 	"time"
-	"unsafe"
-
-	"golang.org/x/sys/windows"
 )
 
 // Medicao de desempenho ao abrir Access (REGRA_DESEMPENHO): MDB2SQL_PERF=1 e MDB2SQL_TEST_DB_DIR com as copias.
 // 3 execucoes por caso, mediana; etapas: leitura do Access (export + carga), gravacao do SQLite, abertura com a
-// lista de tabelas e a 1a tabela (100 linhas). Memoria: pico do processo (working set) no fim.
+// lista de tabelas e a 1a tabela (100 linhas). Memoria: pico do processo no fim (peak_*_test.go).
+// MDB2SQL_PERF_BASE limita a um banco (ex.: "2026-07-14 DB4").
 // !T: go test ./backend -run Perf -v -timeout 120m
-
-var procGetProcessMemoryInfo = windows.NewLazySystemDLL("psapi.dll").NewProc("GetProcessMemoryInfo")
-
-type memCounters struct {
-	cb                                                         uint32
-	pageFaults                                                 uint32
-	peakWorkingSet, workingSet, quotaPeakPaged, quotaPaged     uintptr
-	quotaPeakNonPaged, quotaNonPaged, pagefileUsage, peakPagef uintptr
-}
-
-func peakMB() float64 {
-	var m memCounters
-	m.cb = uint32(unsafe.Sizeof(m))
-	procGetProcessMemoryInfo.Call(uintptr(windows.CurrentProcess()), uintptr(unsafe.Pointer(&m)), uintptr(m.cb))
-	return float64(m.peakWorkingSet) / (1 << 20)
-}
 
 func median(d []time.Duration) time.Duration {
 	s := append([]time.Duration(nil), d...)
@@ -53,6 +35,9 @@ func TestPerfAccessOpen(t *testing.T) {
 	}
 	noProgress := func(int, int, string) {}
 	for _, base := range realBases {
+		if only := os.Getenv("MDB2SQL_PERF_BASE"); only != "" && only != base {
+			continue
+		}
 		for _, r := range readers {
 			var read, write, open, total []time.Duration
 			saved := ""
@@ -138,5 +123,5 @@ func TestPerfAccessOpen(t *testing.T) {
 			t.Logf("PERF %s reference %s: open+list+1st table %s s", base, ext, secs(median(d)))
 		}
 	}
-	t.Logf("PERF peak working set of the test process: %.0f MB", peakMB())
+	t.Logf("PERF peak memory of the test process: %.0f MB", peakMB())
 }
