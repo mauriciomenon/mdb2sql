@@ -10,25 +10,24 @@ from pathlib import Path
 
 from PyQt6.QtCore import QCoreApplication, QLibraryInfo, QLocale, QSettings, Qt, QTranslator
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication
 
 from backend.database_tasks import database_path_from_env
 from shared import i18n
 from shared.bundle import resource
-from shared.display import HELP, linux_choice
+from shared.display import Notice, linux_choice
 from shared.i18n import tr
+from ui.dialogs import DisplayWarning
 from ui.main_window import MainWindow, apply_theme
 
 # !T: sys.argv permite passar argumentos via linha de comando
 # !T: QApplication gerencia event loop, temas, recursos do sistema
 
 
-def show_display_warning(window: MainWindow, text: str) -> QMessageBox:
-    box = QMessageBox(QMessageBox.Icon.Warning, tr("display.title"), text, QMessageBox.StandardButton.NoButton, window)
-    box.addButton(tr("button.ok"), QMessageBox.ButtonRole.AcceptRole)
-    box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)  # texto copiavel (comando, link)
+def show_display_warning(window: MainWindow, notice: Notice) -> DisplayWarning:
+    box = DisplayWarning(notice, window)
     box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-    window.log(text)
+    window.log(notice.text())
     box.open()
     return box
 
@@ -46,7 +45,7 @@ def main():
     if sys.platform.startswith("linux"):
         platform, display_warning = linux_choice(os.environ)
         if platform == "":
-            print(display_warning, file=sys.stderr)
+            print(display_warning.text(), file=sys.stderr)
             sys.exit(1)
         if platform:
             os.environ["QT_QPA_PLATFORM"], ours = platform, True
@@ -73,7 +72,7 @@ def main():
     window.show()
     if ours and app.platformName() != "xcb":
         # o Qt caiu no Wayland (reserva): aviso a cada abertura enquanto o X11 nao servir; texto copiavel e no Log
-        show_display_warning(window, display_warning or tr("display.body_other", missing="xcb", link=HELP))
+        show_display_warning(window, display_warning or Notice([tr("display.using_wayland")], "", None))
 
     # Abre o banco passado na linha de comando; sem argumento usa MDB2SQL_DB_PATH ou o default
     # !T: app.arguments() has the Qt-specific options already removed

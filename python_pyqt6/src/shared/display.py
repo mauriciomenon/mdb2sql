@@ -4,7 +4,7 @@
 
 import ctypes
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, NamedTuple
 
 from shared.i18n import tr
 
@@ -47,26 +47,39 @@ def missing_libs(names=SYSTEM_LIBS) -> list[str]:
     return missing
 
 
-def decide(env: Mapping[str, str], release: str, missing: list[str]) -> tuple[str | None, str | None]:
-    """(plataforma do Qt, mensagem): plataforma None = a do usuario (sem aviso); 'xcb;wayland' com aviso se o X11
-    nao serve; '' = sem X11 e sem Wayland (a mensagem vai para o stderr e o app sai)."""
+class Notice(NamedTuple):
+    """Aviso de tela: 'X11 indisponivel; usando Wayland.' + 'Falta: ...', a distribuicao e o comando (ou None)."""
+
+    lines: list[str]
+    distro: str
+    command: str | None
+
+    def text(self) -> str:
+        # texto inteiro (log, stderr); a terceira linha so com comando
+        return "\n".join(self.lines + ([f"{self.distro}: {self.command}"] if self.command else []))
+
+
+def decide(env: Mapping[str, str], release: str, missing: list[str]) -> tuple[str | None, Notice | None]:
+    """(plataforma do Qt, aviso): plataforma None = a do usuario (sem aviso); 'xcb;wayland' com aviso se o X11 nao
+    serve; '' = sem X11 e sem Wayland (o aviso vai para o stderr e o app sai)."""
     if env.get("QT_QPA_PLATFORM"):
         return None, None  # escolha do usuario: respeitar, sem aviso
     if env.get("DISPLAY") and not missing:
         return "xcb;wayland", None
     if not env.get("WAYLAND_DISPLAY"):
-        return "", tr("display.none")
+        return "", Notice([tr("display.none")], "", None)
     family, pretty = os_release(release)
     no_server = not env.get("DISPLAY")
-    lacking = ", ".join(missing + ([tr("display.no_server")] if no_server else []))
+    lines = [tr("display.using_wayland"),
+             tr("display.missing", missing=", ".join(missing + ([tr("display.no_server")] if no_server else [])))]
     if not family:
-        return "xcb;wayland", tr("display.body_other", missing=lacking, link=HELP)
+        return "xcb;wayland", Notice(lines, pretty, None)  # outra distribuicao: so o que falta, sem comando
     packages = [SYSTEM_LIBS[name][family] for name in missing] + ([XWAYLAND[family]] if no_server else [])
     command = f"{INSTALL[family]} {' '.join(dict.fromkeys(packages))}"  # sem repetir (libglvnd no Arch)
-    return "xcb;wayland", tr("display.body", missing=lacking, distro=pretty, command=command, link=HELP)
+    return "xcb;wayland", Notice(lines, pretty, command)
 
 
-def linux_choice(env: Mapping[str, str]) -> tuple[str | None, str | None]:
+def linux_choice(env: Mapping[str, str]) -> tuple[str | None, Notice | None]:
     """decide() com o os-release e as bibliotecas desta maquina."""
     release = Path("/etc/os-release")
     text = release.read_text(encoding="utf-8", errors="replace") if release.is_file() else ""

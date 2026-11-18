@@ -84,5 +84,5 @@ def about_fields() -> list[tuple[str, str]]:
     ]
 
 
-def link_html(url: str) -> str:
-    return f'<a href="{url}">{url}</a>'
+def link_html(url: str, text: str = "") -> str:
+    return f'<a href="{url}">{text or url}</a>'

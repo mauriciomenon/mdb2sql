@@ -146,8 +146,10 @@
   "error.export_self": "El archivo de salida es la base de datos abierta; elija otro nombre",
   "error.no_rows": "La consulta no devuelve filas",
   "display.title": "Modo de visualización",
-  "display.body": "X11 no disponible; el programa usa Wayland (respaldo). Falta: {missing}. Para usar X11 en {distro}: {command}. Ayuda: {link}",
-  "display.body_other": "X11 no disponible; el programa usa Wayland (respaldo). Falta: {missing}. Ayuda: {link}",
-  "display.no_server": "servidor X (DISPLAY no definido)",
+  "display.using_wayland": "X11 no disponible; usando Wayland.",
+  "display.missing": "Falta: {missing}",
+  "display.no_server": "servidor X",
+  "display.help": "Ayuda",
+  "display.copy": "Copiar",
   "display.none": "Sin pantalla: X11 (DISPLAY) y Wayland (WAYLAND_DISPLAY) no disponibles."
 }

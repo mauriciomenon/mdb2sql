@@ -2,7 +2,7 @@
 # !T: Both are opened with open() by the caller: no nested event loop, so tests and UI Automation do not block
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QGuiApplication, QPixmap
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 
 from shared.about import APP_NAME, LINKS, about_fields, app_version, link_html
 from shared.bundle import resource
+from shared.display import HELP, Notice
 from shared.i18n import tr
 
 
@@ -84,6 +85,54 @@ class AboutDialog(QDialog):
         layout.addLayout(self.form)
         layout.addWidget(buttons)
         self.setMinimumWidth(560)
+
+
+class DisplayWarning(QDialog):
+    """Linux sem X11: 'X11 indisponivel; usando Wayland.', 'Falta: ...', '<distro>: <comando>' (selecionavel, Copiar)
+    e o link Ajuda (abre o navegador)."""
+
+    def __init__(self, notice: Notice, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(tr("display.title"))
+        icon = QLabel()
+        size = self.style().pixelMetric(QStyle.PixelMetric.PM_MessageBoxIconSize)
+        icon.setPixmap(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning).pixmap(size, size))
+        text = QLabel("\n".join(notice.lines))
+        text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        lines = QVBoxLayout()
+        lines.addWidget(text)
+        self.command = QLineEdit(notice.command or "")
+        if notice.command:
+            self.command.setReadOnly(True)
+            self.command.setMinimumWidth(self.command.fontMetrics().horizontalAdvance(notice.command) + 24)
+            copy = QPushButton(tr("display.copy"))
+            copy.clicked.connect(lambda: QGuiApplication.clipboard().setText(notice.command))
+            row = QHBoxLayout()
+            row.addWidget(QLabel(f"{notice.distro}:"))
+            row.addWidget(self.command, 1)
+            row.addWidget(copy)
+            lines.addLayout(row)
+        top = QHBoxLayout()
+        top.setSpacing(16)
+        top.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+        top.addLayout(lines, 1)
+
+        self.help = QLabel(link_html(HELP, tr("display.help")))
+        self.help.setOpenExternalLinks(True)  # abre no navegador padrao
+        self.help.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        ok = QPushButton(tr("button.ok"))
+        ok.setDefault(True)
+        ok.clicked.connect(self.accept)
+        bottom = QHBoxLayout()
+        bottom.addWidget(self.help)
+        bottom.addStretch(1)
+        bottom.addWidget(ok)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 16)
+        layout.setSpacing(14)
+        layout.addLayout(top)
+        layout.addLayout(bottom)
 
 
 def grid_columns(available: int, cell: int) -> int:

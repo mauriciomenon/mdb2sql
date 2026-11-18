@@ -146,8 +146,10 @@
   "error.export_self": "O arquivo de saída é o próprio banco aberto; escolha outro nome",
   "error.no_rows": "A consulta não devolve linhas",
   "display.title": "Modo de exibição",
-  "display.body": "X11 indisponível; o programa está usando Wayland (reserva). Falta: {missing}. Para usar X11 em {distro}: {command}. Ajuda: {link}",
-  "display.body_other": "X11 indisponível; o programa está usando Wayland (reserva). Falta: {missing}. Ajuda: {link}",
-  "display.no_server": "servidor X (DISPLAY não definido)",
+  "display.using_wayland": "X11 indisponível; usando Wayland.",
+  "display.missing": "Falta: {missing}",
+  "display.no_server": "servidor X",
+  "display.help": "Ajuda",
+  "display.copy": "Copiar",
   "display.none": "Sem tela: X11 (DISPLAY) e Wayland (WAYLAND_DISPLAY) indisponíveis."
 }
