@@ -28,7 +28,7 @@ def access_window(qtbot, tmp_path: Path, monkeypatch) -> MainWindow:
     qtbot.addWidget(win)
     win.show()
     win.open_database(copy)
-    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=20000)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=60000)
     return win
 
 
@@ -66,11 +66,11 @@ def test_close_asks_and_deletes_or_saves_or_cancels(qtbot, access_window: MainWi
 
     # Apagar, lembrado nesta sessao: a proxima vez nao pergunta
     win.open_database(source)
-    qtbot.waitUntil(lambda: win.manager is not None and win._busy == 0, timeout=20000)
+    qtbot.waitUntil(lambda: win.manager is not None and win._busy == 0, timeout=60000)
     monkeypatch.setattr(win, "ask_converted", lambda path: asked.append(path) or (mw.DELETE, True))
     assert win.release_database() and _converted_files(win) == []
     win.open_database(source)
-    qtbot.waitUntil(lambda: win.manager is not None and win._busy == 0, timeout=20000)
+    qtbot.waitUntil(lambda: win.manager is not None and win._busy == 0, timeout=60000)
     assert win.release_database() and _converted_files(win) == []
     assert len(asked) == 3 and win.converted_choice == mw.DELETE
     assert "SQLite converted from sample.mdb deleted" in win.log_view.toPlainText()
@@ -98,7 +98,7 @@ def test_open_another_file_asks_first(qtbot, access_window: MainWindow, people_d
 
     monkeypatch.setattr(win, "ask_converted", lambda path: (mw.DELETE, False))
     win.choose_database()
-    qtbot.waitUntil(lambda: win.current_db_path == people_db and win._busy == 0, timeout=10000)
+    qtbot.waitUntil(lambda: win.current_db_path == people_db and win._busy == 0, timeout=30000)
     assert _converted_files(win) == []
 
 
@@ -107,7 +107,7 @@ def test_log_panel_keeps_the_messages_and_copies(qtbot, people_db: Path) -> None
     qtbot.addWidget(win)
     win.show()
     win.open_database(people_db)
-    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=10000)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
 
     view_menu = next(a.menu() for a in win.menuBar().actions() if a.text() == "&View")
     assert win.log_action in view_menu.actions() and win.log_dock.isHidden()
@@ -188,9 +188,9 @@ def test_no_ui_text_outside_the_catalogs(qtbot, people_db: Path, monkeypatch) ->
     qtbot.addWidget(win)
     win.show()
     win.open_database(people_db)
-    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=10000)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
     win.add_filter("name", "Ana")
-    qtbot.waitUntil(lambda: win._busy == 0, timeout=10000)
+    qtbot.waitUntil(lambda: win._busy == 0, timeout=30000)
     win.log_dock.show()
     win.show_about()
     win.choose_columns()

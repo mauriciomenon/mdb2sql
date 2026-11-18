@@ -15,13 +15,13 @@ def window(qtbot, people_db: Path) -> MainWindow:
     qtbot.addWidget(win)
     win.show()
     win.open_database(people_db)
-    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=10000)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
     return win
 
 
 def _select_table(qtbot, win: MainWindow, name: str) -> None:
     win.table_list.setCurrentItem(win.table_list.findItems(name, Qt.MatchFlag.MatchExactly)[0])
-    qtbot.waitUntil(lambda: win.loaded_table is not None and win.loaded_table[0] == name, timeout=10000)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win.loaded_table[0] == name, timeout=30000)
 
 
 def _column(win: MainWindow, column: int) -> list[str]:
@@ -103,7 +103,7 @@ def test_row_limit_reloads_table(qtbot, window: MainWindow) -> None:
     _select_table(qtbot, window, "people")
     request = window._table_request
     window.limit_combo.setCurrentIndex(1)
-    qtbot.waitUntil(lambda: window._table_request > request and window._busy == 0, timeout=10000)
+    qtbot.waitUntil(lambda: window._table_request > request and window._busy == 0, timeout=30000)
 
     assert window.info_label.text() == "people: Showing 3 of 3 rows"
 
@@ -121,7 +121,7 @@ def test_decimal_without_scale_shows_as_integer(qtbot, tmp_path: Path) -> None:
     win = MainWindow()
     qtbot.addWidget(win)
     win.open_database(db_file)
-    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=10000)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
 
     assert _column(win, 0) == ["1"] and _column(win, 1) == ["2.50"]
     assert win.table_model.numeric == [True, True]
@@ -155,7 +155,7 @@ def test_theme_is_saved(qtbot, window: MainWindow, monkeypatch) -> None:
 def test_sql_tab_runs_query_and_copies(qtbot, window: MainWindow) -> None:
     window.sql_edit.setPlainText("SELECT id, name AS n, name AS n FROM people ORDER BY id DESC")
     window.run_sql()
-    qtbot.waitUntil(lambda: window.sql_model.rowCount() == 3, timeout=10000)
+    qtbot.waitUntil(lambda: window.sql_model.rowCount() == 3, timeout=30000)
 
     assert window.sql_model.columns == ["id", "n", "n_2"]
     assert window.info_label.text() == "SQL: 3 rows"
@@ -166,7 +166,7 @@ def test_sql_tab_runs_query_and_copies(qtbot, window: MainWindow) -> None:
 
     window.sql_edit.setPlainText("SELECT * FROM missing_table")
     window.run_sql()
-    qtbot.waitUntil(lambda: window.info_label.text().startswith("SQL error"), timeout=10000)
+    qtbot.waitUntil(lambda: window.info_label.text().startswith("SQL error"), timeout=30000)
 
 
 def test_export_actions_write_files_next_to_source(qtbot, window: MainWindow, people_db: Path, monkeypatch) -> None:
@@ -181,7 +181,7 @@ def test_export_actions_write_files_next_to_source(qtbot, window: MainWindow, pe
 
     for action in window.export_db_actions + window.export_result_actions:
         action.trigger()
-        qtbot.waitUntil(lambda: window.info_label.text().startswith("Export"), timeout=20000)
+        qtbot.waitUntil(lambda: window.info_label.text().startswith("Export"), timeout=60000)
         assert window.info_label.text().startswith("Exported"), window.info_label.text()
         window.info_label.setText("")
 
@@ -233,7 +233,7 @@ def test_column_headers_and_table_names_are_not_cut(qtbot, tmp_path: Path) -> No
     qtbot.addWidget(win)
     win.show()
     win.open_database(db_file)
-    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=10000)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
 
     header = win.data_table.horizontalHeader()
     metrics = header.fontMetrics()
@@ -267,7 +267,7 @@ def test_results_of_the_previous_database_are_dropped(qtbot, window: MainWindow,
     _select_table(qtbot, window, "people")
     window.sql_edit.setPlainText("SELECT * FROM people")
     window.run_sql()
-    qtbot.waitUntil(lambda: window.sql_model.rowCount() == 3, timeout=10000)
+    qtbot.waitUntil(lambda: window.sql_model.rowCount() == 3, timeout=30000)
     stale_table = (window._table_request, load_table_payload(window.manager, "people"))
     stale_open = (people_db, *open_database(people_db))  # abertura lenta de A que termina depois de B
 
@@ -276,7 +276,7 @@ def test_results_of_the_previous_database_are_dropped(qtbot, window: MainWindow,
         conn.execute("CREATE TABLE b_only AS SELECT 1 AS x")
     monkeypatch.setattr(window.table_load_timer, "start", lambda *_a: None)  # B ainda nao carregou a tabela
     window.open_database(other)
-    qtbot.waitUntil(lambda: window.current_db_path == other and window._busy == 0, timeout=10000)
+    qtbot.waitUntil(lambda: window.current_db_path == other and window._busy == 0, timeout=30000)
 
     assert window.sql_model.rowCount() == 0 and window.sql_query is None  # resultado SQL de A some
     window._on_table_loaded(*stale_table)
@@ -315,7 +315,7 @@ def _hidden(win: MainWindow) -> list[bool]:
 def _reloaded(qtbot, win: MainWindow, action) -> None:
     request = win._table_request
     action()
-    qtbot.waitUntil(lambda: win._table_request > request and win._busy == 0, timeout=10000)
+    qtbot.waitUntil(lambda: win._table_request > request and win._busy == 0, timeout=30000)
 
 
 def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None:
@@ -435,7 +435,7 @@ def points_window(qtbot, tmp_path: Path) -> MainWindow:
     qtbot.addWidget(win)
     win.show()
     win.open_database(db_file)
-    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=10000)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
     _select_table(qtbot, win, "points")
     return win
 

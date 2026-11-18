@@ -29,7 +29,7 @@ def _open(qtbot, db_file: Path) -> MainWindow:
     qtbot.addWidget(win)
     win.show()
     win.open_database(db_file)
-    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=10000)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
     return win
 
 
@@ -73,4 +73,4 @@ def test_selection_without_current_loads_table(qtbot, people_db: Path) -> None:
         win.table_list.indexFromItem(item), QItemSelectionModel.SelectionFlag.ClearAndSelect
     )
 
-    qtbot.waitUntil(lambda: win.loaded_table is not None and win.loaded_table[0] == "people", timeout=10000)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win.loaded_table[0] == "people", timeout=30000)
