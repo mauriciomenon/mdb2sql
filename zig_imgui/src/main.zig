@@ -944,7 +944,11 @@ const App = struct {
         app.leave = null;
         app.closeFile();
         // a ultima linha de status diz o que aconteceu com o SQLite (o "Fechado" fica no log)
-        if (saved) |d| app.status.set(false, "converted_saved", .{d}) else app.status.set(false, "converted_deleted", .{});
+        // so o nome do arquivo na linha de status (o caminho inteiro quebraria a linha); a pasta vai para o log
+        if (saved) |d| {
+            logLine(d);
+            app.status.set(false, "converted_saved", .{std.fs.path.basename(d)});
+        } else app.status.set(false, "converted_deleted", .{});
         app.finishLeave(action);
     }
 
