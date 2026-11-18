@@ -83,3 +83,9 @@ export function hasAllWords(text, words) {
 export function importantEntry(entries) {
   return entries.findLast((e) => e.level === 'error') ?? entries.findLast((e) => e.level === 'warning') ?? null;
 }
+
+// NIVEL BASICO: Erro do motor (DuckDB/SQLite) na barra de status: uma linha so, com o prefixo traduzido e sem o tipo
+// do motor ("Parser Error: "); o texto inteiro (LINE 1, ^^^) fica no log
+export function statusLine(text) {
+  return text.split('\n')[0].replace(/^([^:]+: )[A-Z][A-Za-z ]* Error: /, '$1');
+}

@@ -12,6 +12,7 @@ import {
   rowToTsv,
   searchWords,
   setListed,
+  statusLine,
   toggleHidden,
   tsvField,
   visibleColumns,
@@ -112,4 +113,11 @@ test('collapsed log shows the last error, else the last warning, else nothing', 
   assert.equal(importantEntry([e('info', 1), e('warning', 2), e('warning', 3)]).n, 3);
   assert.equal(importantEntry([e('info', 1)]), null);
   assert.equal(importantEntry([]), null);
+});
+
+test('engine errors show one line in the status bar, with the translated prefix', () => {
+  const duck = 'SQL query error: Parser Error: syntax error at or near "selec"\n\nLINE 1: selec 1\n        ^';
+  assert.equal(statusLine(duck), 'SQL query error: syntax error at or near "selec"');
+  assert.equal(statusLine('Erro na consulta SQL: Catalog Error: Table with name x does not exist!'), 'Erro na consulta SQL: Table with name x does not exist!');
+  assert.equal(statusLine('Opened via mdbtools → SQLite'), 'Opened via mdbtools → SQLite');
 });

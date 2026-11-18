@@ -34,7 +34,7 @@ function buttonLabels(text) {
 
 const count = (text, needle) => text.split(needle).length - 1;
 // Close/Cancel fecham cada um o seu dialogo: o mesmo nome em dialogos diferentes nao e acao repetida
-const DIALOG_DISMISS = [en['common.close'], en['common.cancel']];
+const DIALOG_DISMISS = [en['common.close'], en['common.cancel'], '×'];
 const repeated = (labels) => labels.filter((label, i) => labels.indexOf(label) !== i && !DIALOG_DISMISS.includes(label));
 
 test('the main window has no repeated button or menu item', () => {
@@ -160,4 +160,17 @@ test('log panel collapses and expands in one click and remembers the choice', ()
   const css = app.match(/<style>([\s\S]*)<\/style>/)[1];
   assert.match(css, /\.log textarea \{[^}]*height: 10vh;[^}]*min-height: calc\(3 \* 1\.4em \+ 10px\);[^}]*max-height: 25vh;[^}]*font-size: 11px;/);
   for (const [key, text] of Object.entries(en)) if (key.startsWith('status.')) assert.doesNotMatch(text, /\.\.\./, key);
+});
+
+// pergunta do SQLite convertido nunca prende: Enter = Salvar..., Esc e X = Cancelar, dialogo de arquivo cancelado volta
+// para a pergunta, foco visivel no botao padrao
+test('converted SQLite question never traps the user', () => {
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  const dialog = app.match(/<dialog\s+bind:this=\{convertDialog\}[\s\S]*?<\/dialog>/)[0];
+  assert.match(dialog, /oncancel=\{\(e\) => \{\s*e\.preventDefault\(\);\s*reply\('cancel'\);/);
+  assert.match(dialog, /e\.key === 'Enter' && e\.target\.tagName !== 'BUTTON'[\s\S]*?reply\('save'\)/);
+  assert.match(dialog, /class="dialog-x"[^>]*onclick=\{\(\) => reply\('cancel'\)\}>×<\/button>/);
+  assert.match(app, /if \(!saved\) \{\s*choice = null;\s*continue;/);
+  assert.match(app, /convertDialog\.querySelector\('button\.save'\)\.focus\(\)/);
+  assert.match(app, /dialog\.convert button\.save:focus \{\s*outline: 2px solid/);
 });

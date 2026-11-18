@@ -17,6 +17,7 @@
     hasAllWords,
     searchWords,
     setListed,
+    statusLine,
     toggleHidden,
     visibleColumns,
     withFilter,
@@ -122,6 +123,7 @@
   let status = $state.raw(['status.noDatabase', {}]);
   let error = $state.raw(null);
   const errorLine = (err, context) => (context ? `${t(context)}: ` : '') + describe(t, err);
+  // barra de status: erro do motor em uma linha (statusLine); o texto inteiro fica no log
   let statusText = $derived(t(...status));
   let errorText = $derived(error ? errorLine(error.err, error.context) : '');
   let statusMenu = $state.raw(null); // { x, y } do menu Copiar da barra de status
@@ -136,8 +138,8 @@
   let unread = $derived(logOpen ? [] : log.slice(seen).filter((e) => e.level !== 'info'));
   let headline = $derived.by(() => {
     const pick = importantEntry(unread);
-    if (pick) return { text: entryText(pick), level: pick.level };
-    return errorText ? { text: errorText, level: 'error' } : { text: statusText, level: 'info' };
+    if (pick) return { text: statusLine(entryText(pick)), level: pick.level };
+    return errorText ? { text: statusLine(errorText), level: 'error' } : { text: statusText, level: 'info' };
   });
 
   let sql = $state('');
@@ -287,20 +289,28 @@
   async function settleConverted() {
     if (!converted) return true;
     if (answer) return false; // a pergunta ja esta aberta
-    const choice = remembered ?? (await ask());
-    if (choice === 'cancel') return false;
-    try {
-      if (choice === 'save') {
-        const saved = await saveConverted(remembered === 'save');
-        if (!saved) return false;
-        showStatus('status.sqliteSaved', { path: saved });
-      } else {
-        await invoke('discard_converted');
-        showStatus('status.sqliteDeleted');
+    // dialogo de arquivo cancelado: volta para a pergunta (Esc e o X dela fecham e cancelam tudo)
+    let choice = remembered; // a escolha lembrada vale so na primeira volta
+    for (let auto = remembered === 'save'; ; auto = false) {
+      if (!choice) choice = await ask();
+      if (choice === 'cancel') return false;
+      try {
+        if (choice === 'save') {
+          const saved = await saveConverted(auto);
+          if (!saved) {
+            choice = null;
+            continue;
+          }
+          showStatus('status.sqliteSaved', { path: saved });
+        } else {
+          await invoke('discard_converted');
+          showStatus('status.sqliteDeleted');
+        }
+        break;
+      } catch (err) {
+        showError(err);
+        return false;
       }
-    } catch (err) {
-      showError(err);
-      return false;
     }
     if (rememberChoice) remembered = choice;
     converted = false;
@@ -538,7 +548,7 @@
         showStatus('status.executed');
       }
     } catch (err) {
-      showError(err);
+      showError(err, 'err.sql'); // erro do motor com o prefixo traduzido
     } finally {
       busy = false;
     }
@@ -731,7 +741,15 @@
       e.preventDefault();
       reply('cancel');
     }}
+    onkeydown={(e) => {
+      // Enter em qualquer ponto (fora dos botoes, que ja respondem ao Enter) = acao padrao, Salvar...
+      if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') {
+        e.preventDefault();
+        reply('save');
+      }
+    }}
   >
+    <button type="button" class="dialog-x" aria-label={t('common.cancel')} title={t('common.cancel')} onclick={() => reply('cancel')}>×</button>
     <h2 id="convert-title">{t('convert.title')}</h2>
     <p class="file">{`${stem(openedPath)}.sqlite`}</p>
     <label class="remember"><input type="checkbox" bind:checked={rememberChoice} /> {t('convert.remember')}</label>
@@ -1513,6 +1531,35 @@
 
   dialog.convert .actions {
     margin-top: 16px;
+  }
+
+  dialog.convert {
+    position: relative;
+  }
+
+  /* X do dialogo: fecha e cancela, como o Esc */
+  dialog.convert .dialog-x {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    margin: 0;
+    padding: 0 8px;
+    border-color: transparent;
+    background: none;
+    color: var(--muted);
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 1.4;
+  }
+
+  dialog.convert .dialog-x:hover {
+    color: var(--text);
+  }
+
+  /* foco inicial sempre visivel no botao padrao (o showModal veio de clique, nao de teclado) */
+  dialog.convert button.save:focus {
+    outline: 2px solid var(--text);
+    outline-offset: 2px;
   }
 
 

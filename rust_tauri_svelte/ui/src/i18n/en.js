@@ -167,6 +167,7 @@ export default {
   'x11.help': 'Help',
   'common.ok': 'OK',
 
+  'err.sql': 'SQL query error',
   'err.noDatabase': 'No database open',
   'err.unsupported': 'Unsupported file type:',
   'err.badPath': 'File not found:',
