@@ -17,3 +17,5 @@ frontend/package.json.md5
 # filled from .tools by scripts/build_w11.ps1 (mdbtools, DuckDB sqlite extension)
 backend/embedded/*
 !backend/embedded/.gitkeep
+# the small generated Access file of the tests is versioned (the root .gitignore ignores *.mdb)
+!backend/testdata/types.mdb
