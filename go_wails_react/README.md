@@ -59,6 +59,7 @@ Changes in 1.3.0:
   last action, with a counter of unread errors and warnings; a click on it opens the log. The status bar text is
   selectable and right-click > Copy.
 - Numeric columns are right-aligned, their header too.
+- An error of the SQL tab shows one line in the status bar ("SQL query error: syntax error at or near ..."); the  engine's full message stays in the log.- The save/delete question never traps you: Esc, its x and Cancel close it (nothing is lost, the app stays  open), Enter is Save, and cancelling the file dialog of Save asks again.
 - Names are never cut with "...": long table names in the list and long column names in "Columns..." wrap
   to a second line; the status bar wraps too.
 - Debian 13 amd64 build (`.deb` and `.zip`) with mdbtools inside.
