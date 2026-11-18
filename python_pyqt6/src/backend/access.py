@@ -1,46 +1,46 @@
-# Leitura de .mdb/.accdb para um DuckDB em memoria: ODBC "Microsoft Access Driver" se instalado, senao o
-# mdbtools estatico que vai dentro do exe. MDB2SQL_ACCESS_READER=odbc|mdbtools forca um dos dois.
-# !T: Both paths create the DuckDB tables with types read from the Access schema, then fill them
+# Conversao de .mdb/.accdb para um arquivo SQLite, feita uma vez ao abrir: o app le dali. Leitor: ODBC "Microsoft
+# Access Driver" se instalado (mais rapido), senao o mdbtools que vai dentro do pacote (nada instalado na maquina).
+# MDB2SQL_ACCESS_READER=odbc|mdbtools forca um dos dois.
+# !T: Both readers create the SQLite tables with declared types read from the Access schema (INTEGER, DOUBLE,
+# !T: DECIMAL(p,s), BOOLEAN, DATETIME, TEXT, BLOB); the reader (db_manager) casts DECIMAL and BOOLEAN back
 
+import csv
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Callable
-
-import duckdb
-import pandas as pd
+from typing import Callable, Iterator
 
 from shared.bundle import FROZEN, bundled
+from shared.i18n import tr
 
 ODBC_DRIVER = "Microsoft Access Driver (*.mdb, *.accdb)"
-MDBTOOLS = ("mdb-tables.exe", "mdb-schema.exe", "mdb-export.exe")
+EXE = ".exe" if os.name == "nt" else ""
+MDBTOOLS = tuple(f"{name}{EXE}" for name in ("mdb-tables", "mdb-schema", "mdb-export"))
 READERS = {"odbc": "Access ODBC", "mdbtools": "mdbtools"}
-NO_READER = (
-    "Nenhum leitor de Access disponivel. Instale o Microsoft Access Database Engine 2016 Redistributable "
-    "(64 bits, https://www.microsoft.com/download/details.aspx?id=54920) ou use o exe de release, que traz "
-    "o mdbtools embutido."
-)
 NULL = "\x01NULL\x01"  # nao aparece em texto real: separa NULL da string vazia no CSV do mdb-export
 TIMESTAMP = "%Y-%m-%d %H:%M:%S"
 CHUNK = 10_000
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # so existe no Windows: exe GUI sem janela de console
 
 Progress = Callable[[int, int, str], None]
 
-# tipos do ODBC (TYPE_NAME de SQLColumns) e do mdb-schema (backend access) para DuckDB
+# tipos do ODBC (TYPE_NAME de SQLColumns) e do mdb-schema (backend access) -> tipo declarado no SQLite
 ODBC_TYPES = {
-    "BIT": "BOOLEAN", "BYTE": "UTINYINT", "SMALLINT": "SMALLINT", "INTEGER": "INTEGER", "COUNTER": "INTEGER",
-    "BIGINT": "BIGINT", "REAL": "FLOAT", "DOUBLE": "DOUBLE", "CURRENCY": "DECIMAL(19,4)",
-    "DATETIME": "TIMESTAMP", "GUID": "VARCHAR", "LONGBINARY": "BLOB", "VARBINARY": "BLOB", "BINARY": "BLOB",
+    "BIT": "BOOLEAN", "BYTE": "TINYINT", "SMALLINT": "SMALLINT", "INTEGER": "INTEGER", "COUNTER": "INTEGER",
+    "BIGINT": "BIGINT", "REAL": "REAL", "DOUBLE": "DOUBLE", "CURRENCY": "DECIMAL(19,4)",
+    "DATETIME": "DATETIME", "LONGBINARY": "BLOB", "VARBINARY": "BLOB", "BINARY": "BLOB",
 }
 MDB_TYPES = {
-    "Boolean": "BOOLEAN", "Byte": "UTINYINT", "Integer": "SMALLINT", "Long Integer": "INTEGER",
-    "Big Integer": "BIGINT", "Single": "FLOAT", "Double": "DOUBLE", "Currency": "DECIMAL(19,4)",
-    "DateTime": "TIMESTAMP", "Replication ID": "VARCHAR", "OLE": "BLOB", "Binary": "BLOB",
+    "Boolean": "BOOLEAN", "Byte": "TINYINT", "Integer": "SMALLINT", "Long Integer": "INTEGER",
+    "Big Integer": "BIGINT", "Single": "REAL", "Double": "DOUBLE", "Currency": "DECIMAL(19,4)",
+    "DateTime": "DATETIME", "OLE": "BLOB", "Binary": "BLOB",
 }
 
 
@@ -49,16 +49,17 @@ def quote(name: str) -> str:
 
 
 def decimal_type(precision: int | None, scale: int | None) -> str:
-    # DuckDB guarda ate 38 digitos
+    # DuckDB (que le o SQLite) guarda ate 38 digitos
     return f"DECIMAL({min(precision or 18, 38)},{min(scale or 0, 38)})"
 
 
 def mdbtools_dir() -> Path | None:
-    # no exe: copia unica por versao em %LOCALAPPDATA%\mdb2sql\python-pyqt6-<versao>\mdbtools (apaga versoes velhas)
+    # exe do Windows: copia unica por versao em %LOCALAPPDATA%\mdb2sql\python-pyqt6-<versao>\mdbtools (apaga
+    # versoes velhas); Linux e codigo-fonte usam a pasta do pacote
     source = bundled("mdbtools")
     if not all((source / exe).is_file() for exe in MDBTOOLS):
         return None
-    if not FROZEN:
+    if not FROZEN or os.name != "nt":
         return source
     from shared.about import app_version
 
@@ -75,12 +76,12 @@ def mdbtools_dir() -> Path | None:
 def access_reader() -> str:
     forced = os.environ.get("MDB2SQL_ACCESS_READER", "").strip().lower()
     if forced and forced not in READERS:
-        raise ValueError(f"MDB2SQL_ACCESS_READER={forced}: use odbc ou mdbtools")
+        raise ValueError(tr("error.reader_var", value=forced))
     if forced == "odbc" or (not forced and odbc_available()):
         return "odbc"
     if mdbtools_dir() is not None:
         return "mdbtools"
-    raise RuntimeError(NO_READER)
+    raise RuntimeError(tr("error.no_reader"))
 
 
 def odbc_available() -> bool:
@@ -91,22 +92,44 @@ def odbc_available() -> bool:
     return ODBC_DRIVER in pyodbc.drivers()
 
 
-def load_access(path: Path, conn: duckdb.DuckDBPyConnection, progress: Progress | None = None) -> str:
-    """Copia todas as tabelas do Access para conn; devolve o nome do caminho usado."""
+def convert_access(path: Path, out: Path, progress: Progress | None = None) -> str:
+    """Grava todas as tabelas do Access no SQLite out (arquivo novo); devolve o nome do leitor usado."""
     reader = access_reader()
-    (_load_odbc if reader == "odbc" else _load_mdbtools)(path, conn, progress or (lambda *_: None))
+    lite = sqlite3.connect(out)
+    try:
+        # arquivo de trabalho: sem diario (um erro descarta o arquivo inteiro); uma transacao so, commit no fim
+        lite.execute("PRAGMA journal_mode = OFF")
+        lite.execute("PRAGMA synchronous = OFF")
+        load = _load_odbc if reader == "odbc" else _load_mdbtools
+        load(path, lite, out.parent, progress or (lambda *_: None))
+        lite.commit()
+    finally:
+        lite.close()
     return READERS[reader]
 
 
-def _create(conn: duckdb.DuckDBPyConnection, table: str, columns: list[tuple[str, str]]) -> None:
-    conn.execute(f"CREATE TABLE {quote(table)} ({', '.join(f'{quote(n)} {t}' for n, t in columns)})")
+def _create(lite: sqlite3.Connection, table: str, columns: list[tuple[str, str]]) -> str:
+    """CREATE TABLE com os tipos declarados; devolve o INSERT com um ? por coluna."""
+    lite.execute(f"CREATE TABLE {quote(table)} ({', '.join(f'{quote(n)} {t}' for n, t in columns)})")
+    return f"INSERT INTO {quote(table)} VALUES ({', '.join('?' * len(columns))})"
 
 
-def _load_odbc(path: Path, conn: duckdb.DuckDBPyConnection, progress: Progress) -> None:
+def _odbc_value(value: object) -> object:
+    # Decimal como texto (o SQLite guarda INTEGER ou REAL pela coluna DECIMAL); data no mesmo formato do mdbtools
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.strftime(TIMESTAMP)
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
+
+
+def _load_odbc(path: Path, lite: sqlite3.Connection, _work: Path, progress: Progress) -> None:
     import pyodbc
 
     if not odbc_available():
-        raise RuntimeError(f"Driver ODBC '{ODBC_DRIVER}' nao instalado (64 bits). {NO_READER}")
+        raise RuntimeError(tr("error.no_odbc", driver=ODBC_DRIVER))
     acc = pyodbc.connect(f"Driver={{{ODBC_DRIVER}}};DBQ={path};ReadOnly=1;", readonly=True)
     try:
         tables = sorted(row.table_name for row in acc.cursor().tables(tableType="TABLE"))
@@ -116,16 +139,10 @@ def _load_odbc(path: Path, conn: duckdb.DuckDBPyConnection, progress: Progress) 
                 (c.column_name, _odbc_type(c.type_name, c.column_size, c.decimal_digits))
                 for c in acc.cursor().columns(table=table)
             ]
-            _create(conn, table, columns)
+            insert = _create(lite, table, columns)
             cursor = acc.cursor().execute(f"SELECT * FROM [{table}]")
-            names = [c[0] for c in cursor.description]
             while rows := cursor.fetchmany(CHUNK):
-                # Decimal como texto: o DuckDB deduziria a precisao de uma amostra do bloco e estouraria
-                rows = [tuple(str(v) if isinstance(v, Decimal) else v for v in r) for r in rows]
-                chunk = pd.DataFrame.from_records(rows, columns=names)
-                conn.register("chunk", chunk)
-                conn.execute(f"INSERT INTO {quote(table)} SELECT * FROM chunk")
-                conn.unregister("chunk")
+                lite.executemany(insert, [tuple(_odbc_value(v) for v in row) for row in rows])
         progress(len(tables), len(tables), "")
     finally:
         acc.close()
@@ -135,74 +152,92 @@ def _odbc_type(type_name: str, size: int | None, digits: int | None) -> str:
     name = type_name.upper()
     if name in ("DECIMAL", "NUMERIC"):
         return decimal_type(size, digits)
-    return ODBC_TYPES.get(name, "VARCHAR")
+    return ODBC_TYPES.get(name, "TEXT")
+
+
+def _tool_env(tools: Path) -> dict[str, str] | None:
+    # Linux: as bibliotecas do mdbtools (libmdb) vao na mesma pasta dos programas
+    if os.name == "nt":
+        return None
+    paths = [str(tools), os.environ.get("LD_LIBRARY_PATH", "")]
+    return {**os.environ, "LD_LIBRARY_PATH": os.pathsep.join(p for p in paths if p)}
 
 
 def _run(tools: Path, exe: str, *args: str) -> str:
-    # CREATE_NO_WINDOW: o exe e GUI; sem isso cada chamada abre uma janela de console
     done = subprocess.run(
-        [str(tools / exe), *args], capture_output=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW
+        [str(tools / exe), *args], capture_output=True, check=True, creationflags=NO_WINDOW, env=_tool_env(tools)
     )
     return done.stdout.decode("utf-8")
 
 
 def mdb_schema_tables(schema: str) -> dict[str, list[tuple[str, str]]]:
-    """Tabela -> colunas e tipos DuckDB, a partir do DDL do mdb-schema (backend access) do banco inteiro."""
+    """Tabela -> colunas e tipos SQLite, a partir do DDL do mdb-schema (backend access) do banco inteiro."""
     blocks = re.finditer(r"^CREATE TABLE \[([^\]]+)\]\s*\((.*?)^\);", schema, re.MULTILINE | re.DOTALL)
     return {match[1]: mdb_columns(match[2]) for match in blocks}
 
 
 def mdb_columns(schema: str) -> list[tuple[str, str]]:
-    """Colunas e tipos DuckDB a partir das linhas '[coluna] Tipo,' de uma tabela do mdb-schema."""
+    """Colunas e tipos SQLite a partir das linhas '[coluna] Tipo [NOT NULL],' de uma tabela do mdb-schema."""
     columns = []
     for match in re.finditer(r"^\s*\[([^\]]+)\]\s+(.+?)\s*,?\s*$", schema, re.MULTILINE):
         name, access_type = match.groups()
+        access_type = access_type.removesuffix(" NOT NULL")
         numeric = re.fullmatch(r"Numeric \((\d+), (\d+)\)", access_type)
         if numeric:
             columns.append((name, decimal_type(int(numeric[1]), int(numeric[2]))))
         else:
-            columns.append((name, MDB_TYPES.get(re.sub(r" \(\d+\)$", "", access_type), "VARCHAR")))
+            columns.append((name, MDB_TYPES.get(re.sub(r" \(\d+\)$", "", access_type), "TEXT")))
     return columns
 
 
-def _load_mdbtools(path: Path, conn: duckdb.DuckDBPyConnection, progress: Progress) -> None:
+def _csv_rows(csv_path: Path, blobs: list[int]) -> Iterator[list[object]]:
+    """Linhas do CSV do mdb-export (sem o cabecalho): NULL vira None, binario (hex) vira bytes."""
+    with open(csv_path, encoding="utf-8", newline="") as handle:
+        rows = csv.reader(handle)
+        next(rows, None)
+        for row in rows:
+            values: list[object] = [None if v == NULL else v for v in row]
+            for index in blobs:
+                if values[index] is not None:
+                    values[index] = bytes.fromhex(values[index])
+            yield values
+
+
+def _load_mdbtools(path: Path, lite: sqlite3.Connection, work: Path, progress: Progress) -> None:
     tools = mdbtools_dir()
     if tools is None:
-        raise RuntimeError(f"mdbtools nao encontrado. {NO_READER}")
-    tables = sorted(_run(tools, "mdb-tables.exe", "-1", str(path)).splitlines())
-    schema = mdb_schema_tables(_run(tools, "mdb-schema.exe", "--no-indexes", "--no-relations", str(path), "access"))
+        raise RuntimeError(tr("error.no_reader"))
+    tables = sorted(_run(tools, MDBTOOLS[0], "-1", str(path)).splitlines())
+    schema = mdb_schema_tables(_run(tools, MDBTOOLS[1], "--no-indexes", "--no-relations", str(path), "access"))
     missing = [table for table in tables if table not in schema]
     if missing:
-        raise RuntimeError(f"mdb-schema sem as tabelas: {', '.join(missing[:5])}")
+        raise RuntimeError(tr("error.schema_missing", tables=", ".join(missing[:5])))
+    csv.field_size_limit(2**31 - 1)  # Memo e OLE (hex) passam do limite padrao de 128 KiB por campo
 
-    with tempfile.TemporaryDirectory(prefix="mdb2sql-") as tmp:
+    # CSV de trabalho ao lado do SQLite (pasta da sessao): se o app cair, a limpeza da sessao leva junto
+    with tempfile.TemporaryDirectory(prefix="csv-", dir=work) as tmp:
 
         def export(index: int, table: str) -> Path:
             csv_path = Path(tmp) / f"{index}.csv"
             with open(csv_path, "wb") as out:
                 subprocess.run(
-                    [str(tools / "mdb-export.exe"), "-0", NULL, "-D", TIMESTAMP, "-T", TIMESTAMP, "-b", "hex",
+                    [str(tools / MDBTOOLS[2]), "-0", NULL, "-D", TIMESTAMP, "-T", TIMESTAMP, "-b", "hex",
                      str(path), table],
-                    stdout=out, stderr=subprocess.PIPE, check=True, creationflags=subprocess.CREATE_NO_WINDOW,
+                    stdout=out, stderr=subprocess.PIPE, check=True, creationflags=NO_WINDOW, env=_tool_env(tools),
                 )
             return csv_path
 
-        # o mdb-export leva ~20 s numa tabela grande: varios processos em paralelo, carga no DuckDB em ordem
+        # o mdb-export leva ~20 s numa tabela grande: varios processos em paralelo, carga no SQLite em ordem
         with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 1)) as pool:
             exports = [pool.submit(export, index, table) for index, table in enumerate(tables)]
             try:
                 for done, (table, future) in enumerate(zip(tables, exports)):
                     progress(done, len(tables), table)
                     columns = schema[table]
-                    _create(conn, table, columns)
+                    insert = _create(lite, table, columns)
                     csv_path = future.result()
-                    # tudo lido como texto e convertido pelo INSERT para os tipos do schema; binario vem em hex
-                    values = ", ".join(f"unhex({quote(n)})" if t == "BLOB" else quote(n) for n, t in columns)
-                    conn.execute(
-                        f"INSERT INTO {quote(table)} SELECT {values} FROM read_csv(?, header = true, "
-                        "all_varchar = true, nullstr = ?, quote = '\"', escape = '\"', delim = ',', names = ?)",
-                        [str(csv_path), NULL, [n for n, _ in columns]],
-                    )
+                    blobs = [index for index, (_, kind) in enumerate(columns) if kind == "BLOB"]
+                    lite.executemany(insert, _csv_rows(csv_path, blobs))
                     csv_path.unlink()
             except BaseException:
                 for future in exports:

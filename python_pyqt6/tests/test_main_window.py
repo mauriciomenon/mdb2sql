@@ -34,7 +34,7 @@ def test_starts_empty(qtbot) -> None:
     qtbot.addWidget(win)
 
     assert win.stack.currentWidget() is win.empty_label
-    assert win.windowTitle() == "mdb2sql 1.2.0 - Python"
+    assert win.windowTitle() == "mdb2sql 1.3.0 - Python"
     assert win.empty_label.text() == "No database loaded" and win.status_label.text() == ""
     assert win.progress.isHidden()
 
@@ -62,7 +62,7 @@ def test_open_lists_tables_and_loads_first(window: MainWindow) -> None:
 
     assert names == ["empty_table", "people"]
     assert window.status_label.text() == "Loaded: people.duckdb (2 tables) via DuckDB"
-    assert window.windowTitle() == "people.duckdb - mdb2sql 1.2.0 - Python"
+    assert window.windowTitle() == "people.duckdb - mdb2sql 1.3.0 - Python"
     assert window.stack.currentWidget() is window.tabs
     # tabela vazia ainda mostra as colunas do schema
     assert window.info_label.text() == "empty_table: 0 rows"
@@ -83,7 +83,7 @@ def test_select_sort_search_and_copy(qtbot, window: MainWindow) -> None:
     window.search_edit.setText("CARLA")
     qtbot.waitUntil(lambda: window.data_proxy.rowCount() == 1, timeout=5000)
     assert _column(window, 1) == ["carla"]
-    assert window.info_label.text() == "people: 1 of 3 loaded rows match (3 rows in table)"
+    assert window.info_label.text() == "people: Showing 1 of 1 matching rows (3 rows in table)"
 
     window.data_table.selectAll()
     window.copy_selection()
@@ -187,7 +187,7 @@ def test_export_actions_write_files_next_to_source(qtbot, window: MainWindow, pe
 
     # pasta sugerida = pasta do banco aberto; o proprio banco nunca e sugerido
     assert [Path(s).parent for s in asked] == [people_db.parent] * 5
-    assert Path(asked[0]).name == "people_export.duckdb"
+    assert Path(asked[1]).name == "people_export.duckdb"
     assert Path(asked[3]).name == "people.csv"
     assert sorted(p.name for p in people_db.parent.glob("out.*")) == ["out.csv", "out.duckdb", "out.sqlite", "out.xlsx"]
     assert QSettings().value("last_dir") == str(people_db.parent)
@@ -293,7 +293,7 @@ def test_nothing_duplicated(qtbot, points_window: MainWindow) -> None:
 
     buttons = _texts(b for b in win.findChildren(QAbstractButton) if b.isVisible())
     assert _repeated(buttons) == []
-    assert buttons.count("Export") == 1 and buttons.count("Colunas...") == 1 and buttons.count("Limpar filtros") == 1
+    assert buttons.count("Export") == 1 and buttons.count("Columns...") == 1 and buttons.count("Clear Filters") == 1
     assert _repeated(_menu_texts(win.menuBar())) == []
     assert _menu_texts(win.menuBar()).count("Export") == 1
     assert _repeated(_texts(win.data_table.actions())) == []
@@ -320,7 +320,7 @@ def _reloaded(qtbot, win: MainWindow, action) -> None:
 
 def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None:
     _select_table(qtbot, window, "people")
-    assert window.columns_button.toolTip() == "Exportar leva todas as colunas"
+    assert window.columns_button.toolTip() == "Exports always write every column"
 
     window.columns_button.click()
     dialog = window.findChild(ColumnsDialog)
@@ -332,11 +332,11 @@ def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None
 
     assert _hidden(window) == [True, False, True]
     assert window.hidden_columns == {"id", "score"}
-    assert window.info_label.text() == "people: Showing 3 of 3 rows - 2 colunas ocultas"
+    assert window.info_label.text() == "people: Showing 3 of 3 rows - 2 hidden columns"
     # a pesquisa continua olhando todas as colunas (7.25 esta na coluna oculta) e exportar leva todas
     window.search_edit.setText("7.25")
     qtbot.waitUntil(lambda: window.data_proxy.rowCount() == 1, timeout=5000)
-    assert window.info_label.text() == "people: 1 of 3 loaded rows match (3 rows in table) - 2 colunas ocultas"
+    assert window.info_label.text() == "people: Showing 1 of 1 matching rows (3 rows in table) - 2 hidden columns"
     assert window.current_result() == ('SELECT * FROM "people"', "people")
     window.search_edit.clear()
 
@@ -404,10 +404,10 @@ def test_columns_dialog_grid_is_proportional(qtbot) -> None:
 def test_header_menu_hides_one_column_and_table_switch_resets(qtbot, window: MainWindow) -> None:
     _select_table(qtbot, window, "people")
     menu = window.header_menu(2)
-    assert [a.text() for a in menu.actions()] == ["Ocultar esta coluna", "Colunas...", "Mostrar todas"]
+    assert [a.text() for a in menu.actions()] == ["Hide this column", "Columns...", "Show all"]
     menu.actions()[0].trigger()
     assert _hidden(window) == [False, False, True]
-    assert window.info_label.text() == "people: Showing 3 of 3 rows - 1 coluna oculta"
+    assert window.info_label.text() == "people: Showing 3 of 3 rows - 1 hidden column"
     assert not window.header_menu(-1).actions()[0].isEnabled()  # clique fora de uma coluna
 
     window.header_menu(0).actions()[2].trigger()  # Mostrar todas
@@ -448,33 +448,33 @@ def test_right_click_filter_runs_in_the_database(qtbot, points_window: MainWindo
     win = points_window
     assert win.info_label.text() == "points: Showing 100 of 300 rows"
     menu = [a.text() for a in win.data_table.actions() if not a.isSeparator()]
-    assert menu[-2:] == ["&Filtrar por este valor", "&Limpar filtros"] and "&Copy Value" in menu
+    assert menu[-2:] == ["&Filter by This Value", "C&lear Filters"] and "&Copy Value" in menu
     assert not win.clear_filters_action.isEnabled() and win.clear_filters_button.isHidden()
 
     # U18A nao esta nas 100 linhas carregadas: o filtro vai na consulta e acha as 50
     _reloaded(qtbot, win, lambda: win.add_filter("sigla", "U18A"))
-    assert win.info_label.text() == "points: Showing 50 of 50 filtered rows (300 rows in table)"
+    assert win.info_label.text() == "points: Showing 50 of 50 matching rows (300 rows in table)"
     assert set(_column(win, 1)) == {"U18A"}
-    assert _chips(win) == ["Filtro:", "sigla = 'U18A'  ×"]
+    assert _chips(win) == ["Filter:", "sigla = 'U18A'  ×"]
 
     # clique direito na celula: a celula atual (NULL) vira "obs IS NULL" e soma com o primeiro filtro
     win.data_table.setCurrentIndex(win.data_proxy.index(0, 2))
     _reloaded(qtbot, win, win.filter_value_action.trigger)
     assert win.filters == [("sigla", "U18A"), ("obs", None)]
-    assert win.info_label.text() == "points: Showing 25 of 25 filtered rows (300 rows in table)"
-    assert _chips(win) == ["Filtros:", "sigla = 'U18A'  ×", "obs IS NULL  ×"]
+    assert win.info_label.text() == "points: Showing 25 of 25 matching rows (300 rows in table)"
+    assert _chips(win) == ["Filters:", "sigla = 'U18A'  ×", "obs IS NULL  ×"]
     assert win.clear_filters_action.isEnabled() and not win.clear_filters_button.isHidden()
 
     # a pesquisa de palavras combina com o filtro, nas linhas carregadas
     win.search_edit.setText("298")
     qtbot.waitUntil(lambda: win.data_proxy.rowCount() == 1, timeout=5000)
-    assert win.info_label.text() == "points: 1 of 25 loaded rows match (25 filtered rows, 300 rows in table)"
+    assert win.info_label.text() == "points: Showing 1 of 1 matching rows (300 rows in table)"
     win.search_edit.clear()
 
     # remover um a um (botao do filtro) e limpar
     _reloaded(qtbot, win, win.filter_chips.itemAt(1).widget().click)
     assert win.filters == [("obs", None)]
-    assert win.info_label.text() == "points: Showing 100 of 150 filtered rows (300 rows in table)"  # limite Rows vale
+    assert win.info_label.text() == "points: Showing 100 of 150 matching rows (300 rows in table)"  # limite Rows vale
     _reloaded(qtbot, win, win.clear_filters_button.click)
     assert win.filters == [] and _chips(win) == []
     assert win.info_label.text() == "points: Showing 100 of 300 rows"

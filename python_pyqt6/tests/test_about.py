@@ -6,7 +6,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel
 
-from shared import about
+from shared import about, i18n
 from ui.dialogs import AboutDialog
 from ui.main_window import MainWindow
 
@@ -20,28 +20,30 @@ def test_license_is_gpl2_or_later() -> None:
     assert text.split()[:5] == ["GNU", "GENERAL", "PUBLIC", "LICENSE", "Version"] and text.split()[5] == "2,"
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     assert project["license"] == "GPL-2.0-or-later"
-    assert dict(about.about_fields())["Licenca"] == "GPL v2 ou posterior"
+    assert dict(about.about_fields())["License"] == "GPL v2 or later"
+    i18n.set_language("pt_BR")
+    assert dict(about.about_fields())["Licença"] == "GPL v2 ou posterior"
     # o pacote (zip e instalador) leva o LICENSE
     assert "'LICENSE'" in (ROOT / "scripts" / "package_w11.ps1").read_text(encoding="utf-8")
 
 
 def test_title_is_short_and_uses_the_single_version_source() -> None:
-    assert about.app_version() == "1.2.0"
-    assert about.app_title() == "mdb2sql 1.2.0 - Python"
+    assert about.app_version() == "1.3.0"
+    assert about.app_title() == "mdb2sql 1.3.0 - Python"
 
 
 def test_about_fields() -> None:
     fields = dict(about.about_fields())
 
-    assert list(fields) == ["Build", "Stack", "Bibliotecas", "Leitura do Access", "Autor", "Licenca"]
+    assert list(fields) == ["Build", "Stack", "Libraries", "Access", "Author", "License"]
     assert fields["Build"] == "dev"
     assert re.fullmatch(r"Python [\d.]+\S* \+ PyQt6 [\d.]+ \(Qt [\d.]+\)", fields["Stack"])
-    assert re.fullmatch(r"DuckDB [\d.]+\S*, XlsxWriter [\d.]+, pyodbc [\d.]+", fields["Bibliotecas"])
+    assert re.fullmatch(r"SQLite [\d.]+, DuckDB [\d.]+\S*, XlsxWriter [\d.]+, pyodbc [\d.]+", fields["Libraries"])
+    # mdbtools primeiro (vai no pacote); depois o driver ODBC, se a maquina tiver
     assert re.fullmatch(
-        r"ODBC Microsoft Access Driver \((nao )?instalado\) ou mdbtools( [\d.]+ embutido| \(so no exe de release\))",
-        fields["Leitura do Access"],
+        r"(mdbtools [\d.]+ \(bundled\)|mdbtools not bundled); Access ODBC driver (not )?installed", fields["Access"]
     )
-    assert fields["Autor"] == "Mauricio Menon"
+    assert fields["Author"] == "Mauricio Menon"
     assert about.LINKS == (("GitHub", GITHUB), ("GitLab", GITLAB))
     assert "@" not in "".join(fields.values())
 
@@ -64,10 +66,10 @@ def test_help_menu_opens_about_with_clickable_links(qtbot) -> None:
     win.show_about()
 
     box = win.findChild(AboutDialog)
-    assert box.windowTitle() == "Sobre"
-    assert box.title.text() == "mdb2sql 1.2.0"
+    assert box.windowTitle() == "About"
+    assert box.title.text() == "mdb2sql 1.3.0"
     texts = [label.text() for label in box.findChildren(QLabel)]
-    assert "Build:" in texts and "dev" in texts and "Licenca:" in texts
+    assert "Build:" in texts and "dev" in texts and "License:" in texts
     # os dois links abrem no navegador padrao (openExternalLinks) e aceitam teclado
     assert [link.text() for link in box.links] == [f'<a href="{url}">{url}</a>' for url in (GITHUB, GITLAB)]
     for link in box.links:

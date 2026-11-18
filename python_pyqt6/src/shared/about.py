@@ -5,6 +5,7 @@
 
 import platform
 import re
+import sqlite3
 import sys
 import tomllib
 from pathlib import Path
@@ -16,10 +17,10 @@ from PyQt6.QtCore import PYQT_VERSION_STR, qVersion
 
 from backend.access import odbc_available
 from shared.bundle import bundled
+from shared.i18n import tr
 
 APP_NAME = "mdb2sql"
 STACK = "Python"  # nome curto, usado no titulo da janela; a stack completa fica no Sobre
-SUMMARY = "Abre bancos Access (.mdb/.accdb), SQLite e DuckDB e exporta para DuckDB, SQLite, Excel e CSV."
 LINKS = (
     ("GitHub", "https://github.com/mauriciomenon/mdb2sql"),
     ("GitLab", "https://gitlab.com/mauricio.menon/mdb2sql"),
@@ -54,22 +55,27 @@ def build_info() -> str:
 
 
 def access_engine() -> str:
-    # os dois leitores de Access, na ordem em que sao tentados, e se estao disponiveis nesta maquina
+    # mdbtools embutido (sempre presente no pacote) e o driver ODBC do Access, se esta maquina tiver
     version_file = bundled("mdbtools") / "VERSION.txt"
     found = re.search(r"\d+(\.\d+)+", version_file.read_text(encoding="utf-8")) if version_file.is_file() else None
-    mdbtools = f"mdbtools {found.group()} embutido" if found else "mdbtools (so no exe de release)"
-    return f"ODBC Microsoft Access Driver ({'instalado' if odbc_available() else 'nao instalado'}) ou {mdbtools}"
+    mdbtools = tr("about.mdbtools", version=found.group()) if found else tr("about.mdbtools_missing")
+    odbc = tr("about.odbc_yes" if odbc_available() else "about.odbc_no")
+    return f"{mdbtools}; {odbc}"
 
 
 def about_fields() -> list[tuple[str, str]]:
     """Linhas (rotulo, valor) do Sobre, na ordem em que aparecem."""
+    libraries = (
+        f"SQLite {sqlite3.sqlite_version}, DuckDB {duckdb.__version__}, XlsxWriter {xlsxwriter.__version__},"
+        f" pyodbc {pyodbc.version}"
+    )
     return [
-        ("Build", build_info().removeprefix("build ")),
+        (tr("about.build"), build_info().removeprefix("build ")),
         ("Stack", f"Python {platform.python_version()} + PyQt6 {PYQT_VERSION_STR} (Qt {qVersion()})"),
-        ("Bibliotecas", f"DuckDB {duckdb.__version__}, XlsxWriter {xlsxwriter.__version__}, pyodbc {pyodbc.version}"),
-        ("Leitura do Access", access_engine()),
-        ("Autor", "Mauricio Menon"),
-        ("Licenca", "GPL v2 ou posterior"),
+        (tr("about.libraries"), libraries),
+        (tr("about.access"), access_engine()),
+        (tr("about.author"), "Mauricio Menon"),
+        (tr("about.license"), tr("about.license_text")),
     ]
 
 

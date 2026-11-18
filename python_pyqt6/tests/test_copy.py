@@ -48,8 +48,8 @@ def test_copy_value_and_row(qtbot, tmp_path: Path) -> None:
     assert [action.text() for action in win.data_table.actions()] == [
         *copy_texts,
         "",  # separador
-        "&Filtrar por este valor",
-        "&Limpar filtros",
+        "&Filter by This Value",
+        "C&lear Filters",
     ]
     assert [action.text() for action in win.sql_table.actions()] == copy_texts
 

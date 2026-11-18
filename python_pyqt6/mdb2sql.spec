@@ -28,7 +28,7 @@ a = Analysis(
     ["src/main.py"],
     pathex=["src"],
     datas=[("build/VERSION", "."), ("build/BUILD", "."), ("src/resources/mdb2sql.ico", "resources"),
-           ("src/resources/mdb2sql.png", "resources")] + [(path, Path(path).parent.name) for path in bundled],
+           ("src/resources/mdb2sql.png", "resources"), ("src/resources/i18n", "resources/i18n")] + [(path, Path(path).parent.name) for path in bundled],
     # pandas importa pytest so em pandas.testing; ferramenta de teste nao vai no exe
     excludes=["pytest", "_pytest", "pygments", "openpyxl"],
 )

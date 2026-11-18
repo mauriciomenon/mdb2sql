@@ -19,16 +19,16 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from shared.about import APP_NAME, LINKS, SUMMARY, about_fields, app_version, link_html
+from shared.about import APP_NAME, LINKS, about_fields, app_version, link_html
 from shared.bundle import resource
+from shared.i18n import tr
 
-EXPORT_NOTE = "Exportar leva todas as colunas"
 
 
 class AboutDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Sobre")
+        self.setWindowTitle(tr("about.title"))
 
         icon = QLabel()
         icon.setPixmap(
@@ -41,7 +41,7 @@ class AboutDialog(QDialog):
         font.setPointSizeF(font.pointSizeF() * 1.4)  # destaque discreto, mesma familia do app
         font.setBold(True)
         self.title.setFont(font)
-        summary = QLabel(SUMMARY)
+        summary = QLabel(tr("about.summary"))
         summary.setWordWrap(True)
         heading = QVBoxLayout()
         heading.addWidget(self.title)
@@ -62,7 +62,7 @@ class AboutDialog(QDialog):
         for label, value in about_fields():
             text = QLabel(value)
             text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            self.form.addRow(f"{label}:", text)
+            self.form.addRow(tr("about.label", label=label), text)
         self.links: list[QLabel] = []
         for label, url in LINKS:
             link = QLabel(link_html(url))
@@ -70,9 +70,10 @@ class AboutDialog(QDialog):
             link.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)  # tambem por Tab + Enter
             link.setAccessibleName(f"{label} {url}")
             self.links.append(link)
-            self.form.addRow(f"{label}:", link)
+            self.form.addRow(tr("about.label", label=label), link)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        buttons = QDialogButtonBox()
+        buttons.addButton(tr("button.ok"), QDialogButtonBox.ButtonRole.AcceptRole)
         buttons.accepted.connect(self.accept)
 
         layout = QVBoxLayout(self)
@@ -97,17 +98,17 @@ class ColumnsDialog(QDialog):
 
     def __init__(self, columns: list[str], hidden: set[str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Colunas")
+        self.setWindowTitle(tr("columns.title"))
 
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Buscar coluna")
+        self.search.setPlaceholderText(tr("columns.search"))
         self.search.setClearButtonEnabled(True)
-        self.search.setAccessibleName("Buscar coluna")
+        self.search.setAccessibleName(tr("columns.search"))
         self.search.textChanged.connect(self._filter)
 
         # !T: Wrapping LeftToRight list: a responsive grid with vertical scroll only; the font stays the base font
         self.list = QListWidget()
-        self.list.setAccessibleName("Colunas visiveis")
+        self.list.setAccessibleName(tr("columns.visible"))
         self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.list.setFlow(QListWidget.Flow.LeftToRight)
         self.list.setWrapping(True)
@@ -129,11 +130,11 @@ class ColumnsDialog(QDialog):
         self.cell = max(longest + indicator + 24, metrics.averageCharWidth() * 24)
         self.row_height = metrics.height() + 10
 
-        show_all = QPushButton("Mostrar todas")
+        show_all = QPushButton(tr("columns.show_all"))
         show_all.clicked.connect(lambda: self.set_all(True))
-        hide_all = QPushButton("Ocultar todas")
+        hide_all = QPushButton(tr("columns.hide_all"))
         hide_all.clicked.connect(lambda: self.set_all(False))
-        close = QPushButton("Fechar")
+        close = QPushButton(tr("button.close"))
         close.setDefault(True)
         close.clicked.connect(self.accept)
         buttons = QHBoxLayout()

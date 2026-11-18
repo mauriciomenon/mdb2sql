@@ -1,20 +1,31 @@
-# Gerenciador de conexoes DuckDB - abre .duckdb/.db, .sqlite/.sqlite3 e .mdb/.accdb, lista tabelas, executa queries
-# !T: Every format ends up in one DuckDB connection: DuckDB file read-only, SQLite attached read-only through the
-# !T: bundled sqlite extension, Access copied into an in-memory database. Each call uses its own cursor (threads)
+# Gerenciador de conexoes - abre .accdb/.mdb, .sqlite/.sqlite3/.db e .duckdb, lista tabelas, executa queries
+# !T: Every format ends up in one DuckDB connection: Access converted once into a SQLite file, SQLite attached
+# !T: read-only through the bundled sqlite extension (typed views on top), DuckDB file read-only. Each call uses
+# !T: its own cursor (threads); close() waits for the cursors still in use
 
+import re
+import shutil
+import sqlite3
+import tempfile
+import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Iterator, List, Optional, Sequence
 
 import duckdb
 
-from backend.access import Progress, load_access, quote
+from backend.access import Progress, convert_access, quote
 from shared.bundle import bundled
+from shared.i18n import tr
 
-DUCKDB_EXT = {".duckdb", ".db"}
-SQLITE_EXT = {".sqlite", ".sqlite3"}
-ACCESS_EXT = {".mdb", ".accdb"}
-SUPPORTED_EXT = DUCKDB_EXT | SQLITE_EXT | ACCESS_EXT
+ACCESS_EXT = {".accdb", ".mdb"}
+SQLITE_EXT = {".sqlite", ".sqlite3", ".db"}
+DUCKDB_EXT = {".duckdb"}
+SUPPORTED_EXT = ACCESS_EXT | SQLITE_EXT | DUCKDB_EXT
 SQLITE_EXTENSION = "duckdb_ext/sqlite_scanner.duckdb_extension"
+# tipo declarado no SQLite que o DuckDB le como DOUBLE/BIGINT e volta ao tipo certo pela view
+_DECIMAL = re.compile(r"\s*(?:DECIMAL|NUMERIC)\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*", re.IGNORECASE)
+_BOOLEAN = re.compile(r"\s*BOOL(?:EAN)?\s*", re.IGNORECASE)
 
 
 def sql_string(text: str) -> str:
@@ -37,10 +48,65 @@ def filter_where(filters: Filters) -> tuple[str, list[Any]]:
     return " WHERE " + " AND ".join(parts), [value for _, value in filters if value is not None]
 
 
+def search_where(columns: Sequence[str], query: str) -> tuple[str, list[Any]]:
+    """Condicao da pesquisa na tabela inteira: uma celula tem todas as palavras, qualquer ordem, sem caixa/acento.
+
+    !T: Runs in the database before LIMIT, so rows beyond the loaded ones are found. Each word is a bound
+    !T: parameter folded by the same lower(strip_accents()) as the cell; contains() has no LIKE wildcards
+    """
+    words = query.split()
+    if not words or not columns:
+        return "", []
+    word = "contains(lower(strip_accents(CAST({} AS VARCHAR))), lower(strip_accents(?)))"
+    cells = ["(" + " AND ".join(word.format(quote(column)) for _ in words) + ")" for column in columns]
+    return "(" + " OR ".join(cells) + ")", words * len(columns)
+
+
+def where_clause(filters: Filters, columns: Sequence[str], query: str) -> tuple[str, list[Any]]:
+    """Filtros coluna = valor (AND) e a pesquisa de palavras juntos num WHERE so."""
+    where, params = filter_where(filters)
+    search, words = search_where(columns, query)
+    if not search:
+        return where, params
+    return (f"{where} AND {search}" if where else f" WHERE {search}"), params + words
+
+
 def load_sqlite_extension(conn: duckdb.DuckDBPyConnection) -> None:
     # extensao embutida no exe (offline); fora dele, a de .tools\ ou a instalada no DuckDB do usuario
     path = bundled(SQLITE_EXTENSION)
     conn.execute(f"LOAD {sql_string(path.as_posix()) if path.is_file() else 'sqlite'}")
+
+
+def column_expr(name: str, declared: str) -> str:
+    """Coluna da view sobre o SQLite: DECIMAL(p,s) e BOOLEAN declarados voltam ao tipo (o DuckDB le DOUBLE/BIGINT)."""
+    decimal = _DECIMAL.fullmatch(declared or "")
+    if decimal:
+        kind = f"DECIMAL({min(int(decimal[1]), 38)},{min(int(decimal[2]), int(decimal[1]), 38)})"
+    elif _BOOLEAN.fullmatch(declared or ""):
+        kind = "BOOLEAN"
+    else:
+        return quote(name)
+    return f"CAST({quote(name)} AS {kind}) AS {quote(name)}"
+
+
+def sqlite_views(path: str) -> list[tuple[str, str]]:
+    """(nome, SELECT ...) de cada tabela e view do SQLite, lidas por source_db, com os tipos declarados."""
+    lite = sqlite3.connect(Path(path).as_uri() + "?mode=ro", uri=True)
+    try:
+        names = [
+            row[0]
+            for row in lite.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite~_%' ESCAPE '~'"
+            )
+        ]
+        views = []
+        for name in names:
+            columns = lite.execute(f"PRAGMA table_info({quote(name)})").fetchall()
+            select = ", ".join(column_expr(column[1], column[2]) for column in columns) or "*"
+            views.append((name, f"SELECT {select} FROM source_db.{quote(name)}"))
+        return views
+    finally:
+        lite.close()
 
 
 class DBManager:
@@ -58,23 +124,26 @@ class DBManager:
         # Inicializa manager sem conectar - db_path pode ser None
         self.conn: Optional[duckdb.DuckDBPyConnection] = None
         self.current_db: Optional[str] = None
-        self.reader = ""  # caminho usado para abrir: DuckDB, SQLite, Access ODBC ou mdbtools
-        self._catalog: Optional[str] = None  # banco anexado (SQLite) que cada cursor usa
+        self.reader = ""  # caminho usado para abrir: Access ODBC, mdbtools, SQLite ou DuckDB
+        self.converted: Optional[Path] = None  # SQLite convertido do Access (pasta propria, apagada em release())
         self._tables: Optional[List[str]] = None
+        self._users = 0  # cursores em uso (outras threads); close() espera chegar a zero
+        self._idle = threading.Condition()
 
         if db_path:
             self.connect(db_path)
 
-    def connect(self, db_path: str, progress: Optional[Progress] = None) -> None:
+    def connect(self, db_path: str, progress: Optional[Progress] = None, work_dir: Optional[Path] = None) -> None:
         """
         Abre o banco especificado - fecha conexao anterior se existir.
 
         Args:
-            db_path: Caminho para .duckdb/.db, .sqlite/.sqlite3 ou .mdb/.accdb
+            db_path: Caminho para .accdb/.mdb, .sqlite/.sqlite3/.db ou .duckdb
             progress: chamado (feitas, total, tabela) durante a conversao do Access
+            work_dir: onde criar a pasta do SQLite convertido do Access (padrao: pasta temporaria do sistema)
         """
         # !T: Close existing connection to avoid resource leak
-        self.close()
+        self.release()
 
         # Valida caminho do banco
         # !T: Prevent path traversal and validate file extension
@@ -83,28 +152,45 @@ class DBManager:
         if suffix == ".db":
             # .db e usado pelos dois formatos: decide pelo cabecalho do arquivo
             with open(validated_path, "rb") as handle:
-                if handle.read(16) == b"SQLite format 3\x00":
-                    suffix = ".sqlite"
+                suffix = ".sqlite" if handle.read(16) == b"SQLite format 3\x00" else ".duckdb"
 
         # read_only / READ_ONLY: o arquivo de origem nunca e modificado
         if suffix in DUCKDB_EXT:
-            conn = duckdb.connect(validated_path, read_only=True)
+            self.conn = duckdb.connect(validated_path, read_only=True)
             self.reader = "DuckDB"
         else:
-            conn = duckdb.connect(":memory:")
+            sqlite_path = validated_path
+            if suffix in ACCESS_EXT:
+                # uma conversao so, para um arquivo SQLite numa pasta propria (o nome e o do Access)
+                folder = Path(tempfile.mkdtemp(prefix="conv-", dir=work_dir))
+                self.converted = folder / f"{Path(validated_path).stem}.sqlite"
+                try:
+                    self.reader = convert_access(Path(validated_path), self.converted, progress)
+                except BaseException:
+                    self.release()
+                    raise
+                sqlite_path = str(self.converted)
+            else:
+                self.reader = "SQLite"
             try:
-                if suffix in SQLITE_EXT:
-                    load_sqlite_extension(conn)
-                    conn.execute(f"ATTACH {sql_string(validated_path)} AS source_db (TYPE sqlite, READ_ONLY)")
-                    self._catalog = "source_db"
-                    self.reader = "SQLite"
-                else:
-                    self.reader = load_access(Path(validated_path), conn, progress)
-            except Exception:
-                conn.close()
+                self.conn = self._open_sqlite(sqlite_path)
+            except BaseException:
+                self.release()
                 raise
-        self.conn = conn
         self.current_db = validated_path
+
+    @staticmethod
+    def _open_sqlite(path: str) -> duckdb.DuckDBPyConnection:
+        conn = duckdb.connect(":memory:")
+        try:
+            load_sqlite_extension(conn)
+            conn.execute(f"ATTACH {sql_string(path)} AS source_db (TYPE sqlite, READ_ONLY)")
+            for name, select in sqlite_views(path):
+                conn.execute(f"CREATE VIEW {quote(name)} AS {select}")
+        except BaseException:
+            conn.close()
+            raise
+        return conn
 
     def _validate_database_path(self, db_path: str) -> str:
         """
@@ -120,24 +206,30 @@ class DBManager:
 
         # Valida extensao do arquivo
         if abs_path.suffix.lower() not in SUPPORTED_EXT:
-            raise ValueError(
-                f"Only {', '.join(sorted(SUPPORTED_EXT))} files are supported, got: {abs_path.suffix}"
-            )
+            raise ValueError(tr("error.extension", suffix=abs_path.suffix or "-"))
 
         # Verifica se arquivo existe
         if not abs_path.exists():
-            raise FileNotFoundError(f"Database not found: {abs_path}")
+            raise FileNotFoundError(tr("error.not_found", name=abs_path.name))
 
         return str(abs_path)
 
-    def cursor(self) -> duckdb.DuckDBPyConnection:
-        # !T: A DuckDB connection must not be shared between threads; a cursor is a new connection to the same db
-        if not self.conn:
-            raise RuntimeError("No database open")
-        cursor = self.conn.cursor()
-        if self._catalog:
-            cursor.execute(f"USE {self._catalog}")
-        return cursor
+    @contextmanager
+    def cursor(self) -> Iterator[duckdb.DuckDBPyConnection]:
+        # !T: A DuckDB connection must not be shared between threads; a cursor is a new connection to the same db.
+        # !T: Counted so close() never pulls the connection from under a query running in another thread
+        with self._idle:
+            if not self.conn:
+                raise RuntimeError(tr("error.no_database"))
+            self._users += 1
+            cursor = self.conn.cursor()
+        try:
+            with cursor:
+                yield cursor
+        finally:
+            with self._idle:
+                self._users -= 1
+                self._idle.notify_all()
 
     def list_tables(self) -> List[str]:
         """
@@ -159,7 +251,7 @@ class DBManager:
         """
         tables = self.list_tables()
         if table_name not in tables:
-            raise ValueError(f"Table not found: {table_name}")
+            raise ValueError(tr("error.table_not_found", name=table_name))
 
     def get_table_schema(self, table_name: str) -> List[Dict[str, Any]]:
         """
@@ -185,9 +277,15 @@ class DBManager:
             for row in result
         ]
 
-    def query_table(self, table_name: str, limit: int = 100, filters: Filters = ()) -> List[Dict[str, Any]]:
+    def _where(self, table_name: str, filters: Filters, search: str) -> tuple[str, list[Any]]:
+        columns = [column["column_name"] for column in self.get_table_schema(table_name)] if search.split() else []
+        return where_clause(filters, columns, search)
+
+    def query_table(
+        self, table_name: str, limit: int = 100, filters: Filters = (), search: str = ""
+    ) -> List[Dict[str, Any]]:
         """
-        Executa SELECT na tabela e retorna ate limit linhas (so as que passam nos filtros coluna = valor).
+        Executa SELECT na tabela e retorna ate limit linhas (so as que passam nos filtros e na pesquisa).
         """
         if not self.conn:
             return []
@@ -196,7 +294,7 @@ class DBManager:
 
         # SELECT com LIMIT para nao carregar tabela inteira
         # !T: Plain Python values, not pandas: DECIMAL(10,0) stays 1 (pandas would show 1.0) and NULL stays None
-        where, params = filter_where(filters)
+        where, params = self._where(table_name, filters, search)
         with self.cursor() as cursor:
             cursor.execute(f"SELECT * FROM {quote(table_name)}{where} LIMIT {int(limit)}", params)
             columns = [column[0] for column in cursor.description]
@@ -223,16 +321,16 @@ class DBManager:
             rows = cursor.fetchmany(limit + 1)
         return columns, [dict(zip(columns, row)) for row in rows[:limit]], len(rows) > limit
 
-    def get_row_count(self, table_name: str, filters: Filters = ()) -> int:
+    def get_row_count(self, table_name: str, filters: Filters = (), search: str = "") -> int:
         """
-        Retorna numero total de linhas em uma tabela (com filtros: so as que passam neles).
+        Retorna numero total de linhas em uma tabela (com filtros/pesquisa: so as que passam neles).
         """
         if not self.conn:
             return 0
 
         self._validate_table_name(table_name)
 
-        where, params = filter_where(filters)
+        where, params = self._where(table_name, filters, search)
         with self.cursor() as cursor:
             result = cursor.execute(f"SELECT COUNT(*) FROM {quote(table_name)}{where}", params).fetchone()
         return result[0] if result else 0
@@ -241,20 +339,32 @@ class DBManager:
         """
         Fecha conexao com o banco - sempre chame ao finalizar uso.
         """
-        if self.conn:
-            # !T: Explicitly close connection to release file handle
-            self.conn.close()
-        self.conn = None
+        with self._idle:
+            # espera as consultas de outras threads terminarem (cada uma e curta: tabela, contagem, SQL)
+            self._idle.wait_for(lambda: self._users == 0)
+            if self.conn:
+                # !T: Explicitly close connection to release file handle
+                self.conn.close()
+            self.conn = None
         self.current_db = None
         self.reader = ""
-        self._catalog = None
         self._tables = None
+
+    def release(self, save_to: Optional[Path] = None) -> None:
+        """Fecha; o SQLite convertido do Access vai para save_to ou e apagado (com a pasta dele)."""
+        self.close()
+        converted, self.converted = self.converted, None
+        if converted is None:
+            return
+        if save_to is not None and converted.is_file():
+            shutil.move(converted, save_to)  # outro disco: copia e apaga; destino existente e substituido
+        shutil.rmtree(converted.parent, ignore_errors=True)
 
     def __enter__(self):
         # Suporte a context manager (with statement)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # Fecha conexao automaticamente ao sair do with
+        # Fecha conexao automaticamente ao sair do with (e apaga o SQLite convertido)
         # !T: Context manager is the reliable way to manage resources
-        self.close()
+        self.release()

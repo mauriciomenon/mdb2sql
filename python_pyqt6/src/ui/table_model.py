@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Any
 
 import pandas as pd
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PyQt6.QtGui import QFont, QFontDatabase
 
 # !T: Role read by QSortFilterProxyModel so numbers sort as numbers, not as text
@@ -15,8 +15,6 @@ SORT_ROLE = Qt.ItemDataRole.UserRole
 COPY_ROLE = Qt.ItemDataRole.UserRole + 1  # texto copiado: o valor real (2316.0), nao o da grade (2316)
 
 _INT64_MAX = 2**63 - 1
-# !T: str.split() treats \x1f as whitespace, so no search word holds it and none matches across two cells
-CELL_SEP = "\x1f"
 
 
 def is_missing(value: Any) -> bool:
@@ -77,7 +75,6 @@ class TableModel(QAbstractTableModel):
         self.columns: list[str] = []
         self.column_tips: list[str] = []
         self.numeric: list[bool] = []
-        self._search_rows: list[str] | None = None  # texto de busca de cada linha (fold), feito na 1a busca
         self._fixed_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
 
     def longest_texts(self, column: int, count: int = 3) -> list[str]:
@@ -146,41 +143,9 @@ class TableModel(QAbstractTableModel):
         self.columns = list(columns) if columns else (list(rows[0].keys()) if rows else [])
         self.column_tips = list(column_tips) if column_tips else []
         self.numeric = [self._is_numeric_column(name) for name in self.columns]
-        self._search_rows = None
         self.endResetModel()
-
-    def search_text(self, row: int) -> str:
-        # !T: Folded once per load, not per keystroke: the cells of a row joined by CELL_SEP
-        if self._search_rows is None:
-            self._search_rows = [
-                fold(CELL_SEP.join([display_text(r.get(c)) for c in self.columns])) for r in self.rows
-            ]
-        return self._search_rows[row]
 
     def _is_numeric_column(self, name: str) -> bool:
         values = [v for v in (row.get(name) for row in self.rows) if not is_missing(v)]
         return bool(values) and all(is_number(v) for v in values)
 
-
-class SearchProxyModel(QSortFilterProxyModel):
-    """Mostra a linha quando uma celula tem todas as palavras da busca, em qualquer ordem, sem caixa nem acento."""
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.words: list[str] = []
-
-    def set_query(self, query: str) -> None:
-        self.words = search_words(query)
-        self.invalidateRowsFilter()
-
-    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
-        if not self.words:
-            return True
-        text = self.sourceModel().search_text(source_row)
-        words = self.words
-        # rejeita rapido a linha sem todas as palavras; so depois confere celula por celula
-        if not all(word in text for word in words):
-            return False
-        if len(words) == 1:
-            return True  # uma palavra nunca atravessa CELL_SEP: ja esta numa celula so
-        return any(all(word in cell for word in words) for cell in text.split(CELL_SEP))

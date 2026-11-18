@@ -62,7 +62,8 @@ def test_export_database_keeps_tables_and_rows(manager: DBManager, tmp_path: Pat
             "score": 7.25,
         }
     # o ATTACH da exportacao nao fica preso ao banco aberto
-    assert "export_db" not in {row[0] for row in manager.cursor().execute("SHOW DATABASES").fetchall()}
+    with manager.cursor() as cursor:
+        assert "export_db" not in {row[0] for row in cursor.execute("SHOW DATABASES").fetchall()}
 
 
 def test_export_database_xlsx_one_sheet_per_table_and_split(
@@ -175,6 +176,6 @@ def test_cancel_during_last_table_or_chunk_is_a_cancel(manager: DBManager, tmp_p
 
 
 def test_export_refuses_to_overwrite_open_database(manager: DBManager) -> None:
-    with pytest.raises(ValueError, match="proprio banco"):
+    with pytest.raises(ValueError, match="is the open database"):
         export_database(manager, Path(manager.current_db), _noop)
     assert Path(manager.current_db).exists()

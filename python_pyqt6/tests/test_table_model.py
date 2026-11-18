@@ -6,7 +6,6 @@ from PyQt6.QtCore import Qt
 from ui.table_model import (
     COPY_ROLE,
     SORT_ROLE,
-    SearchProxyModel,
     TableModel,
     display_text,
     fold,
@@ -79,29 +78,3 @@ def test_fold_drops_case_and_accents() -> None:
     assert fold("EXCITAÇÃO TENSÃO") == "excitacao tensao"
     assert fold("Ñandú çÇ") == "nandu cc"
 
-
-def test_search_needs_every_word_in_one_cell_any_order(qtbot) -> None:
-    model = TableModel()
-    model.set_rows(
-        [
-            {"desc": "EXCITAÇÃO TENSÃO DE CAMPO", "unit": "kV"},
-            {"desc": "Excitação", "unit": "Tensão nominal"},
-            {"desc": "CORRENTE DE CAMPO", "unit": "A"},
-        ]
-    )
-    proxy = SearchProxyModel()
-    proxy.setSourceModel(model)
-
-    def found(query: str) -> list[str]:
-        proxy.set_query(query)
-        return [proxy.index(row, 1).data() for row in range(proxy.rowCount())]
-
-    assert found("tensao de campo") == ["kV"]
-    assert found("campo tensao") == ["kV"]
-    assert found("EXCITAÇÃO TENSÃO DE CAMPO") == ["kV"]  # a frase exata continua achando
-    assert found("excitacao nominal") == []  # palavras so em celulas diferentes nao acham
-    assert found("campo kv") == []
-    assert found("tensao nominal") == ["Tensão nominal"]
-    assert found("tensao campo xyz") == []  # uma palavra que falta exclui a linha
-    assert found("EXCITACAO") == ["kV", "Tensão nominal"]
-    assert found("") == found("   ") == ["kV", "Tensão nominal", "A"]
