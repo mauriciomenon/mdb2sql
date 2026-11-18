@@ -1,5 +1,44 @@
 # Changelog - MDB2SQL (Python + PyQt6)
 
+## 1.3.0 (2026-11-18)
+
+- Access first: `.accdb` and `.mdb` open with nothing installed, through the mdbtools inside the program (Windows:
+  static mdbtools 1.0.1; Debian: the Debian mdbtools 1.0.1 programs and libmdb inside the package). The Access ODBC
+  driver is still used when present (faster); `MDB2SQL_ACCESS_READER=mdbtools` forces mdbtools.
+- Access is converted once into a SQLite file (before: an in-memory DuckDB) and read from there. The SQLite keeps
+  the declared types: INTEGER, DOUBLE/REAL, DECIMAL(p,s), BOOLEAN, DATETIME, TEXT, BLOB; NULL stays NULL.
+- Closing the file (File > Close Database, new), opening another one or quitting asks once: "Save SQLite..."
+  (default: next to the source, `<source>.sqlite`), "Delete" or "Cancel"; "Remember for this session" skips the
+  question. The temporary folder of a crashed run is removed at the next start.
+- Export > Database to SQLite on an Access file copies the converted SQLite (types kept). From DuckDB or SQLite,
+  DECIMAL columns are written as REAL (before: TEXT, so `> 20`, ORDER BY and SUM compared text).
+- mdbtools 1.0.1 limits now documented: empty text reads as NULL; dates before 1900 or after ~9998 become NULL.
+- SQLite: DECIMAL(p,s) and BOOLEAN columns show as decimal and true/false (DuckDB reads them as DOUBLE/BIGINT).
+  `.db` is opened as SQLite unless the file is a DuckDB database.
+- Search (Data tab) runs in the database over the whole table, before the "Rows" limit: a row beyond the loaded
+  ones is found. Same rule as before: all words, any order, in one cell, no case or accents. The status bar says
+  `Showing 25 of 25 matching rows (36,754 rows in table)`.
+- Order everywhere: Access, SQLite, DuckDB (Open dialog filters, Export menu, About, README).
+- Help > About shows the Access reader in use: "Embedded mdbtools", or "Access ODBC driver (Windows); embedded
+  mdbtools as fallback" when the driver exists (the optional driver is no longer listed as "not installed").
+- Languages: English (default), Português (Brasil), Español, in Settings > Language (saved; applies when the
+  program is reopened). Every text of the windows, dialogs, messages, About and tooltips comes from
+  `src/resources/i18n/<language>.json`.
+- Log panel at the bottom (View > Log, Ctrl+L; Go to Table List moved to Ctrl+T): messages of the session with the
+  time, smaller fixed font, selectable, Ctrl+C and "Copy all"; collapsed by default and remembered; arrows in its
+  header and in the status bar; collapsed, the status bar keeps the last error (red) > warning > action and counts
+  the unseen ones. Status lines without "...". Numeric column headers right-aligned like their cells.
+  Right-click on the status bar: Copy, Log.
+- Debian amd64: `build_debian_amd64.sh` (and `build_debian_amd64_wsl.ps1` from Windows) build a `.deb` and a `.zip`.
+- Linux: X11 first, Wayland only as fallback, with a "Display mode" warning naming what is missing and the
+  install command for the distribution (README "Linux: X11 e Wayland").
+- Faster Access open by mdbtools: the widest tables start first, cores-1 export processes (max 6), each table
+  loaded as soon as its export ends (DB4 median 51 s → 34 s on a busy machine; the single 22 s export of the
+  largest table is the floor).
+- Dependencies: no open Dependabot alert for this folder before or after; `pip-audit` (OSV) finds no known
+  vulnerability in `uv.lock`.
+- Licenca: GPL v2 ou posterior (sem mudanca desde 1.2.0).
+
 ## 1.2.0 (2026-11-17)
 
 - Short window title: `mdb2sql 1.2.0 - Python` (`<file> - mdb2sql 1.2.0 - Python` with a file open). The full

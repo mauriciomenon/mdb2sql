@@ -6,7 +6,6 @@ from PyQt6.QtCore import Qt
 from ui.table_model import (
     COPY_ROLE,
     SORT_ROLE,
-    SearchProxyModel,
     TableModel,
     display_text,
     fold,
@@ -61,6 +60,10 @@ def test_model_roles(qtbot) -> None:
     assert model.data(model.index(0, 0), Qt.ItemDataRole.FontRole) is not None
     assert model.data(model.index(0, 1), Qt.ItemDataRole.FontRole) is None
     assert model.headerData(1, Qt.Orientation.Horizontal) == "name"
+    # cabecalho alinhado como a coluna: numeros a direita, texto a esquerda
+    align = Qt.ItemDataRole.TextAlignmentRole
+    assert model.headerData(0, Qt.Orientation.Horizontal, align) & Qt.AlignmentFlag.AlignRight
+    assert model.headerData(1, Qt.Orientation.Horizontal, align) & Qt.AlignmentFlag.AlignLeft
     model.set_rows([{"note": "x" * 50}, {"note": "short"}])
     assert model.data(model.index(0, 0), Qt.ItemDataRole.ToolTipRole) == "x" * 50
     assert model.data(model.index(1, 0), Qt.ItemDataRole.ToolTipRole) is None
@@ -79,29 +82,3 @@ def test_fold_drops_case_and_accents() -> None:
     assert fold("EXCITAÇÃO TENSÃO") == "excitacao tensao"
     assert fold("Ñandú çÇ") == "nandu cc"
 
-
-def test_search_needs_every_word_in_one_cell_any_order(qtbot) -> None:
-    model = TableModel()
-    model.set_rows(
-        [
-            {"desc": "EXCITAÇÃO TENSÃO DE CAMPO", "unit": "kV"},
-            {"desc": "Excitação", "unit": "Tensão nominal"},
-            {"desc": "CORRENTE DE CAMPO", "unit": "A"},
-        ]
-    )
-    proxy = SearchProxyModel()
-    proxy.setSourceModel(model)
-
-    def found(query: str) -> list[str]:
-        proxy.set_query(query)
-        return [proxy.index(row, 1).data() for row in range(proxy.rowCount())]
-
-    assert found("tensao de campo") == ["kV"]
-    assert found("campo tensao") == ["kV"]
-    assert found("EXCITAÇÃO TENSÃO DE CAMPO") == ["kV"]  # a frase exata continua achando
-    assert found("excitacao nominal") == []  # palavras so em celulas diferentes nao acham
-    assert found("campo kv") == []
-    assert found("tensao nominal") == ["Tensão nominal"]
-    assert found("tensao campo xyz") == []  # uma palavra que falta exclui a linha
-    assert found("EXCITACAO") == ["kV", "Tensão nominal"]
-    assert found("") == found("   ") == ["kV", "Tensão nominal", "A"]

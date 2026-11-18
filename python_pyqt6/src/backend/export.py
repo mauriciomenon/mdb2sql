@@ -5,6 +5,7 @@
 import csv
 import os
 import re
+import shutil
 import threading
 import uuid
 from contextlib import contextmanager
@@ -17,6 +18,7 @@ import xlsxwriter
 
 from backend.access import quote
 from backend.db_manager import DBManager, load_sqlite_extension, sql_string
+from shared.i18n import num, tr
 
 Progress = Callable[[int, int, str], None]
 MAX_SHEET_ROWS = 1_048_575  # linhas de dados por aba: 1.048.576 do Excel menos o cabecalho
@@ -88,13 +90,15 @@ def export_database(
     """Grava todas as tabelas em out (.duckdb, .sqlite ou .xlsx); devolve o numero de tabelas."""
     suffix = out.suffix.lower()
     if suffix not in DATABASE_FORMATS:
-        raise ValueError(f"Formato de exportacao nao suportado: {suffix}")
+        raise ValueError(tr("error.export_format", suffix=suffix))
     if manager.current_db and out.resolve() == Path(manager.current_db).resolve():
-        raise ValueError("O arquivo de saida e o proprio banco aberto; escolha outro nome")
+        raise ValueError(tr("error.export_self"))
     tables = manager.list_tables()
     with _staged(out, cancel) as temp:
         if suffix == ".xlsx":
             _database_to_xlsx(manager, tables, temp, progress, cancel)
+        elif suffix == ".sqlite" and manager.converted is not None:
+            shutil.copyfile(manager.converted, temp)  # Access: o SQLite ja convertido, com os tipos declarados
         else:
             _database_to_db(manager, tables, temp, progress, cancel)
     progress(len(tables), len(tables), "")
@@ -104,8 +108,9 @@ def export_database(
 def _database_to_db(
     manager: DBManager, tables: list[str], out: Path, progress: Progress, cancel: threading.Event | None
 ) -> None:
+    sqlite = out.suffix.lower() == ".sqlite"
     with manager.cursor() as cursor:
-        if out.suffix.lower() == ".sqlite":
+        if sqlite:
             load_sqlite_extension(cursor)
             cursor.execute(f"ATTACH {sql_string(str(out))} AS export_db (TYPE sqlite, READ_WRITE)")
         else:
@@ -114,7 +119,16 @@ def _database_to_db(
             for done, table in enumerate(tables):
                 _check(cancel)
                 progress(done, len(tables), table)
-                cursor.execute(f"CREATE TABLE export_db.{quote(table)} AS SELECT * FROM {quote(table)}")
+                select = "*"
+                if sqlite:
+                    # o DuckDB grava DECIMAL no SQLite como VARCHAR (texto: > 20, ORDER BY e SUM comparariam texto);
+                    # DOUBLE vira REAL, com afinidade numerica
+                    columns = cursor.execute(f"DESCRIBE {quote(table)}").fetchall()
+                    select = ", ".join(
+                        f"CAST({quote(name)} AS DOUBLE) AS {quote(name)}" if kind.startswith("DECIMAL") else quote(name)
+                        for name, kind, *_ in columns
+                    )
+                cursor.execute(f"CREATE TABLE export_db.{quote(table)} AS SELECT {select} FROM {quote(table)}")
         finally:
             # o ATTACH vale para todos os cursores do banco: soltar o arquivo mesmo em erro/cancelamento
             cursor.execute("DETACH export_db")
@@ -202,12 +216,12 @@ def export_result(
     """Grava o resultado de query (tabela atual ou SQL) em out (.csv UTF-8 com BOM ou .xlsx); devolve as linhas."""
     suffix = out.suffix.lower()
     if suffix not in RESULT_FORMATS:
-        raise ValueError(f"Formato de exportacao nao suportado: {suffix}")
+        raise ValueError(tr("error.export_format", suffix=suffix))
     written = 0
     with _staged(out, cancel) as temp, manager.cursor() as cursor:
         cursor.execute(query)
         if cursor.description is None:
-            raise ValueError("A consulta nao devolve linhas")
+            raise ValueError(tr("error.no_rows"))
         header = [c[0] for c in cursor.description]
 
         def counted() -> Iterable[list[tuple]]:
@@ -215,7 +229,7 @@ def export_result(
             for rows in _chunks(cursor):
                 yield rows
                 written += len(rows)
-                progress(written, 0, f"{written:,} linhas")
+                progress(written, 0, tr("export.rows", count=num(written)))
 
         if suffix == ".csv":
             # utf-8-sig: BOM para o Excel reconhecer UTF-8

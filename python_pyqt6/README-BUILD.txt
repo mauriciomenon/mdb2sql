@@ -20,14 +20,36 @@ onde fica cada coisa. Versao: "version" em pyproject.toml (fonte unica).
 
 2. "MAKE" - BUILD COMPLETO
 --------------------------
-  Windows 11 amd64   pwsh -NoProfile -File build_w11_amd64.ps1   -> dist\w11\amd64\
-  Debian / outros    sem comando de pacote; rodar do codigo (README.md). O leitor mdbtools embutido e
-                     a extensao sqlite baixada sao de Windows amd64.
+  Windows 11 amd64   pwsh -NoProfile -File build_w11_amd64.ps1          -> dist\w11\amd64\
+  Debian amd64       ./build_debian_amd64.sh  (clone no disco Linux)    -> dist/debian/amd64/
+                     do Windows pelo WSL: pwsh -NoProfile -File build_debian_amd64_wsl.ps1
+                     (clone em ~/src/mdb2sql-python-pyqt6 no WSL, mesmo commit; produtos copiados para
+                     dist\debian\amd64\ com sha256 conferido; nunca roda em /mnt/c nem em ~/git)
+  macOS, Arch, BSD   sem script nesta versao (proxima rodada).
 
 Requisitos (Windows):
   uv no PATH (https://docs.astral.sh/uv/). E o unico pre-requisito: ele baixa o resto.
   gh autenticado (gh auth login) enquanto o repositorio mdbtools_custom for privado: o download anonimo da
   release falha e o setup_tools.ps1 tenta o "gh release download".
+Requisitos (Debian 13 amd64, ou o Debian do WSL):
+  curl, tar e dpkg-deb no PATH (sudo apt install curl dpkg). Para rodar os testes e
+  o app: as bibliotecas do "Depends" do .deb (Qt xcb/egl, glib, fontconfig), presentes numa instalacao desktop.
+  scripts/setup_tools_linux.sh baixa para .tools/ (sha256 conferido):
+  .tools/uv/           uv 0.13.7 (o mesmo do build Windows), uv-x86_64-unknown-linux-gnu.tar.gz,
+                       sha256 c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83
+  .tools/python/       Python 3.12.16, via uv
+  .tools/mdbtools/     mdb-tables, mdb-schema, mdb-export e libmdb.so.3 dos pacotes Debian 13
+                       mdbtools_1.0.1-0.1_amd64.deb   sha256 77b2d317b9429f22de27e903586228836c013c81c8b6ed3a990ea8bf94b3bc52
+                       libmdb3t64_1.0.1-0.1_amd64.deb sha256 705eaf16f423be3eebb4c794fca817130dbcabbafd10c408f4fdb5f3e1c1d172
+                       (o app chama os programas com LD_LIBRARY_PATH na pasta deles; glib e libatomic do sistema)
+  .tools/duckdb_ext/   extensao sqlite do DuckDB 2.0.0 linux_amd64,
+                       sha256 59b8a0ba6d7599d4aa584bd24e8b4cc3247076bb174157f43e110e56e6c72e86
+  O build roda os testes, gera a pasta do app (PyInstaller), confere que ela abre tests/data/sample.mdb pelo
+  mdbtools do pacote (mdb-tables e o app em modo offscreen), varre a pasta e o .deb extraido (scripts/scan_exe.py)
+  e so entao troca dist/debian/amd64/:
+    mdb2sql-<versao>-debian-amd64-python-pyqt6.deb   /opt/mdb2sql-python-pyqt6/, /usr/bin/mdb2sql-python-pyqt6,
+                                                     menu, icone, /usr/share/doc/<pacote>/copyright
+    mdb2sql-<versao>-debian-amd64-python-pyqt6.zip   a pasta do app (executavel mdb2sql)
 
 Ferramentas fixas (scripts\setup_tools.ps1 baixa para .tools\, sha256 conferido; versoes com >= 2 semanas):
   .tools\python\       Python 3.12.16 (.python-version), via "uv python install" (o uv confere o sha256)
@@ -70,7 +92,11 @@ Fora de dist\, em tempo de uso:
   %LOCALAPPDATA%\mdb2sql\python-pyqt6-<versao>\mdbtools\   copia do mdbtools, feita ao abrir .mdb/.accdb sem
                                                           ODBC; versoes velhas sao apagadas; o desinstalador
                                                           apaga a da versao dele.
-  HKCU\Software\MDB2SQL\MDB2SQL                           tema e ultima pasta usada (QSettings).
+  HKCU\Software\MDB2SQL\MDB2SQL                           tema, idioma e ultima pasta usada (QSettings);
+                                                          Linux: ~/.config/MDB2SQL/MDB2SQL.conf
+  %TEMP%\mdb2sql-python-pyqt6\<sessao>\ e <sessao>.lock    SQLite convertido do Access (Linux: /tmp/...);
+                                                          apagada ao sair; a de uma sessao que caiu (trava sem
+                                                          processo vivo) e apagada na proxima abertura.
 
 
 5. PASTAS DE TRABALHO (podem ser apagadas; o build recria)
@@ -102,6 +128,13 @@ Fora de dist\, em tempo de uso:
   pwsh -NoProfile -File scripts\setup_tools.ps1      uma vez: extensao sqlite e mdbtools em .tools\
   uv run --python 3.12 python src/main.py [banco]
   QT_QPA_PLATFORM=offscreen uv run --python 3.12 pytest -q
-  Teste com um .accdb real (copia; compara ODBC x mdbtools):
-    $env:MDB2SQL_TEST_ACCDB='<copia.accdb>'; uv run pytest -q tests/test_access.py -k real
+  Teste com um .accdb real (copia; contagens = referencia e ODBC x mdbtools celula a celula):
+    $env:MDB2SQL_TEST_ACCDB='<copia.accdb>'; $env:MDB2SQL_TEST_REFERENCE='<referencia.sqlite>'
+    uv run pytest -q tests/test_access.py -k real
   Forcar o leitor de Access: MDB2SQL_ACCESS_READER=odbc | mdbtools
+  tests/data/sample.mdb e gerado (dado inventado) por tests/data/make_sample_mdb.py com o driver ODBC do Access;
+  rodar de novo so se o conteudo mudar.
+  Textos da tela: src/resources/i18n/en.json, pt_BR.json, es.json (mesmas chaves; tests/test_session.py confere).
+
+  Debian: build_debian_amd64.sh -> clean.sh, scripts/setup_tools_linux.sh, uv sync, pytest, pyinstaller,
+  teste do .mdb pelo mdbtools do pacote, .deb e .zip em dist/.stage, scan_exe.py, troca dist/debian/amd64/.

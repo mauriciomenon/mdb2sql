@@ -5,6 +5,9 @@ import duckdb
 import pytest
 from PyQt6.QtCore import QSettings
 
+from backend import temp_store
+from shared import i18n
+
 # !T: Qt tests need no display (CI); set before any QApplication exists
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -15,6 +18,13 @@ def isolated_settings(tmp_path_factory, monkeypatch):
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path_factory.mktemp("settings")))
     monkeypatch.delenv("MDB2SQL_ACCESS_READER", raising=False)
+    # pasta temporaria das sessoes (SQLite convertidos) dentro do tmp do teste; textos em ingles (padrao)
+    monkeypatch.setattr(temp_store, "BASE", tmp_path_factory.mktemp("sessions"))
+    i18n.set_language("en")
+    # a pergunta do SQLite convertido e modal (exec): nos testes responde "Apagar", salvo quando o teste troca
+    from ui.main_window import DELETE, MainWindow
+
+    monkeypatch.setattr(MainWindow, "ask_converted", lambda _self, _source: (DELETE, False))
 
 
 @pytest.fixture

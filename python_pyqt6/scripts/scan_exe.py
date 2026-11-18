@@ -33,7 +33,8 @@ def scan(exe: Path) -> dict[re.Pattern[bytes], list[str]]:
         # pasta do app (onedir): cada arquivo; o exe dela tem o PYZ embutido, varrido abaixo
         for path in sorted(p for p in exe.rglob("*") if p.is_file()):
             check(str(path.relative_to(exe)), path.read_bytes())
-            if path.suffix.lower() == ".exe" and path.parent == exe and path.name != "uninstall.exe":
+            # mdb2sql.exe no Windows, mdb2sql (ELF, sem extensao) no Linux
+            if path.parent == exe and path.stem == "mdb2sql" and path.suffix.lower() in ("", ".exe"):
                 for pattern, found in scan(path).items():
                     hits[pattern].update(found)
         return {pattern: sorted(found) for pattern, found in hits.items()}
