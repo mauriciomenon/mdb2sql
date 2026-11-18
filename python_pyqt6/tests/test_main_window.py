@@ -387,7 +387,8 @@ def test_columns_dialog_grid_is_proportional(qtbot) -> None:
         qtbot.waitExposed(dialog)
         assert 420 <= dialog.width() <= 900 and dialog.width() == min(900, round(size.width() * 0.65))
         assert dialog.height() <= round(size.height() * 0.7)
-        assert dialog.columns_shown == grid_columns(dialog.list.viewport().width() - 4, dialog.cell)
+        assert dialog.columns_shown == grid_columns(dialog.available_width(), dialog.cell)
+        assert dialog.available_width() <= dialog.list.viewport().width() - 4  # cabe com ou sem barra vertical
         shown.append(dialog.columns_shown)
         assert dialog.list.font().pointSizeF() == QApplication.font().pointSizeF()  # fonte base, nao encolhe
         assert dialog.list.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff

@@ -163,9 +163,14 @@ class ColumnsDialog(QDialog):
         super().resizeEvent(event)
         self._layout_grid()
 
+    def available_width(self) -> int:
+        # largura da lista menos a barra vertical, apareca ela ou nao: a grade nao muda quando a barra surge depois
+        scrollbar = self.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+        return self.list.width() - 2 * self.list.frameWidth() - scrollbar - 4
+
     def _layout_grid(self) -> None:
         # redimensionar recalcula a grade: as colunas dividem a largura por igual
-        available = self.list.viewport().width() - 4
+        available = self.available_width()
         self.columns_shown = grid_columns(available, self.cell)
         self.list.setGridSize(QSize(available // self.columns_shown, self.row_height))
 
