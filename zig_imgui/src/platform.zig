@@ -57,6 +57,19 @@ pub fn openUrl(io: std.Io, url: [:0]const u8) void {
     _ = child.wait(io) catch {};
 }
 
+extern "c" fn dlopen(path: [*:0]const u8, mode: c_int) ?*anyopaque;
+extern "c" fn dlclose(handle: *anyopaque) c_int;
+
+// Linux: a biblioteca do sistema carrega (o GLFW a abre do mesmo jeito); so para dizer o que falta
+pub fn libLoads(name: []const u8) bool {
+    if (is_windows) return true;
+    var buf: [128]u8 = undefined;
+    const z = std.fmt.bufPrintSentinel(&buf, "{s}", .{name}, 0) catch return false;
+    const h = dlopen(z, 1) orelse return false; // RTLD_LAZY
+    _ = dlclose(h);
+    return true;
+}
+
 // Barra de titulo escura no Windows 11 (no Linux quem decide e o tema do sistema)
 pub fn darkTitleBar(hwnd: ?*anyopaque, dark: bool) void {
     if (!is_windows) return;

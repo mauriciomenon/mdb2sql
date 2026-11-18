@@ -128,4 +128,8 @@ Debian - dist/debian/amd64/
   1920x1129), janela estreita 720x800, RANGER_SOANLG, Log, Settings > Language, About, dialogo do SQLite convertido,
   os mesmos em portugues e espanhol, e por fim Delete (a captura confere que o temporario sumiu). Com
   $env:MDB2SQL_CAPTURE_SAVE = '1' o ultimo passo responde Save (resposta lembrada, grava <pasta>\<origem>.sqlite sem
-  dialogo) e confere que o arquivo salvo e um SQLite e que o temporario sumiu.
+  dialogo) e confere que o arquivo salvo e um SQLite e que o temporario sumiu. Linux: o 1o passo (0_display_warning)
+  grava o aviso "Display mode" quando o programa abriu no Wayland por reserva (ex.: env -u DISPLAY no WSLg); com X11
+  ele e pulado (capture_skipped.txt).
+  Linux, escolha do sistema de janelas: src/display.zig (decisao, com teste) e initLinuxDisplay em src/main.zig;
+  MDB2SQL_DISPLAY=x11|wayland escolhe sem aviso.

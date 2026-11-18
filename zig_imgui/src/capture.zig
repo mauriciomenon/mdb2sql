@@ -34,7 +34,8 @@ pub fn parse(args: []const []const u8) error{Usage}!?Options {
 // Roteiro das capturas: cada passo leva a interface a um estado e grava <nome>.png no tamanho dado
 // prompt: pergunta do SQLite convertido (fechar o arquivo); prompt_delete: responde Apagar e confere que o
 // temporario sumiu. Os passos de idioma trocam o idioma da tela (a captura comeca em ingles).
-pub const Action = enum { show, filter, columns, close_columns, other_table, about, log, settings_menu, lang_en, lang_pt_br, lang_es, prompt, prompt_delete };
+// display_warning: aviso do Linux sem X11 na abertura (pulado quando nao ha aviso).
+pub const Action = enum { display_warning, show, filter, columns, close_columns, other_table, about, log, settings_menu, lang_en, lang_pt_br, lang_es, prompt, prompt_delete };
 pub const Step = struct { name: []const u8, action: Action, w: u32, h: u32 };
 pub const default_size = [2]u32{ 1280, 800 }; // tamanho em que o programa abre
 pub const max_size = [2]u32{ 1920, 1129 }; // area de trabalho de 1920x1200 menos a barra de tarefas e o titulo
@@ -45,6 +46,7 @@ pub const first_table = "RANGER_SOSTAT";
 pub const second_table = "RANGER_SOANLG";
 
 pub const plan = [_]Step{
+    .{ .name = "0_display_warning", .action = .display_warning, .w = default_size[0], .h = default_size[1] },
     .{ .name = "a_table", .action = .show, .w = default_size[0], .h = default_size[1] },
     .{ .name = "d_filter", .action = .filter, .w = default_size[0], .h = default_size[1] },
     .{ .name = "c_columns_default", .action = .columns, .w = default_size[0], .h = default_size[1] },

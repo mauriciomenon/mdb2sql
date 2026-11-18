@@ -170,7 +170,12 @@ const Capture = struct {
         if (action != .about) app.about_open = false;
         app.show_log = action == .log;
         if (action != .prompt and action != .prompt_delete) app.leave = null;
+        if (action != .display_warning) app.display_dismiss = true;
         switch (action) {
+            .display_warning => if (app.display_warning == null) {
+                c.skip(app.gpa, "no display warning (X11 in use)");
+                return false;
+            },
             .show => {},
             .filter => {
                 const col = indexOf(app.col_names, cap.filter_column) orelse {
@@ -566,6 +571,10 @@ const App = struct {
     save_dir: [1024:0]u8 = @splat(0), // pasta escolhida no primeiro "Salvar" da sessao
     quit: bool = false,
     capture_mode: bool = false, // --capture (auxiliar de teste)
+    // Linux sem X11: aviso da abertura (texto copiavel, terminado em 0); null = sem aviso
+    display_warning: ?[:0]u8 = null,
+    display_shown: bool = false,
+    display_dismiss: bool = false, // --capture: fecha o aviso no passo seguinte
 
     selected: ?usize = null,
     schema: ?dbm.Grid = null,
@@ -1125,6 +1134,7 @@ const App = struct {
         defer ig.igEnd();
         app.drawAbout();
         app.drawConverted();
+        app.drawDisplayWarning();
 
         // Barra superior: caminho + Procurar + Abrir + Exportar + status (tambem aceita arrastar o arquivo para a janela)
         ig.igSetNextItemWidth(ig.igGetContentRegionAvail().x * 0.40);
@@ -1316,6 +1326,37 @@ const App = struct {
         const bw = dialogButtonWidth(&.{close_l});
         ig.igSetCursorPosX(ig.igGetCursorPosX() + ig.igGetContentRegionAvail().x - bw);
         if (ig.igButton(close_l, .{ .x = bw, .y = 0 })) ig.igCloseCurrentPopup();
+    }
+
+    // Linux sem X11: aviso da abertura (Wayland por reserva), com texto selecionavel, Copiar e OK
+    fn drawDisplayWarning(app: *App) void {
+        const msg = app.display_warning orelse return;
+        var tb: [96]u8 = undefined;
+        const title = idLabel(&tb, "display_title", "display");
+        if (!app.display_shown) {
+            _ = ig.igOpenPopup_Str(title, 0);
+            app.display_shown = true;
+        }
+        centerNext();
+        if (!ig.igBeginPopupModal(title, null, ig.ImGuiWindowFlags_AlwaysAutoResize | ig.ImGuiWindowFlags_NoSavedSettings)) return;
+        defer ig.igEndPopup();
+        if (app.display_dismiss) {
+            app.display_warning = null;
+            return ig.igCloseCurrentPopup();
+        }
+        // caixa somente leitura com quebra de linha: o texto (comando, link) pode ser selecionado e copiado
+        const fs = ig.igGetFontSize();
+        _ = ig.igInputTextMultiline("##displaytext", msg.ptr, msg.len + 1, .{ .x = fs * 34, .y = ig.igGetTextLineHeight() * 5 + 2 * ig.igGetStyle().*.FramePadding.y }, ig.ImGuiInputTextFlags_ReadOnly | ig.ImGuiInputTextFlags_WordWrap, null, null);
+        const copy_l = tr("copy");
+        const ok_l = tr("ok");
+        const bw = dialogButtonWidth(&.{ copy_l, ok_l });
+        ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - 2 * bw - ig.igGetStyle().*.ItemSpacing.x));
+        if (ig.igButton(copy_l, .{ .x = bw, .y = 0 })) setClipboard(msg);
+        ig.igSameLine(0, -1);
+        if (ig.igButton(ok_l, .{ .x = bw, .y = 0 }) or ig.igIsKeyPressed_Bool(ig.ImGuiKey_Escape, false)) {
+            app.display_warning = null;
+            ig.igCloseCurrentPopup();
+        }
     }
 
     // Pergunta sobre o SQLite convertido do Access: Salvar... / Apagar / Cancelar
@@ -1879,6 +1920,42 @@ fn prefsPath(a: std.mem.Allocator, env: anytype) !?[]const u8 {
     return try std.fs.path.join(a, &.{ home, ".config", "mdb2sql", "zig-imgui.ini" });
 }
 
+// Abre o GLFW no sistema de janelas decidido por display.decide. Devolve o texto do aviso quando ficou no Wayland
+// por reserva; sem X11 e sem Wayland, mensagem no stderr e saida 3.
+fn initLinuxDisplay(a: std.mem.Allocator, io: std.Io, env: anytype) !?[:0]u8 {
+    const display = dbm.display;
+    var missing: std.ArrayList([]const u8) = .empty;
+    const x_display = env.get("DISPLAY");
+    const has_display = if (x_display) |d| d.len > 0 else false;
+    if (has_display) for (display.x11_libs) |lib| if (!platform.libLoads(lib)) try missing.append(a, lib);
+    const d = display.decide(.{ .user = env.get("MDB2SQL_DISPLAY"), .display = x_display, .wayland_display = env.get("WAYLAND_DISPLAY") }, missing.items);
+    var warn = d.warn;
+    openBackend(d.backend) catch |e| {
+        const fb = d.fallback orelse return noWindow(e);
+        openBackend(fb) catch |e2| return noWindow(e2);
+        // DISPLAY definido mas o X11 nao abriu (servidor fora do ar): Wayland por reserva, com aviso
+        warn = true;
+        try missing.append(a, try std.fmt.allocPrint(a, "X11 (DISPLAY={s}: {t})", .{ x_display.?, e }));
+    };
+    if (!warn) return null;
+    var os_buf: [4096]u8 = undefined;
+    const os_release = std.Io.Dir.cwd().readFile(io, "/etc/os-release", &os_buf) catch
+        std.Io.Dir.cwd().readFile(io, "/usr/lib/os-release", &os_buf) catch "";
+    var buf: [1024]u8 = undefined;
+    return try a.dupeSentinel(u8, display.warning(&buf, os_release, !has_display, missing.items), 0);
+}
+
+fn openBackend(b: dbm.display.Backend) !void {
+    try glfw.initHint(.platform, if (b == .x11) glfw.Platform.x11 else glfw.Platform.wayland);
+    try glfw.init();
+}
+
+fn noWindow(e: anyerror) noreturn {
+    var buf: [600]u8 = undefined;
+    std.debug.print("{s}", .{i18n.fmt(&buf, "display_none", .{ e, dbm.display.help_url })});
+    std.process.exit(3);
+}
+
 fn run(init: std.process.Init) !void {
     var app: App = .{ .gpa = init.gpa, .io = init.io, .db = .init(init.gpa), .slot = undefined };
     const arena = init.arena.allocator();
@@ -1960,15 +2037,12 @@ fn run(init: std.process.Init) !void {
     if (capture_opts != null and app.start_table.len == 0) app.start_table = dbm.capture.first_table;
     app.capture_mode = capture_opts != null;
 
-    // Linux: X11 (XWayland, se houver) antes do Wayland nativo. No Wayland o GLFW decora a janela pelo libdecor, que
-    // carrega o GTK; no WSLg recem-reiniciado o programa caiu 2 vezes dentro dele (Gdk-CRITICAL
-    // gdk_seat_get_keyboard e em seguida segfault em 0x40). Sem X11 o Wayland continua valendo.
-    if (!platform.is_windows and glfw.platformSupported(.x11)) try glfw.initHint(.platform, glfw.Platform.x11);
-    glfw.init() catch |e| {
-        if (platform.is_windows) return e;
-        try glfw.initHint(.platform, @as(c_int, 0x00060000)); // GLFW_ANY_PLATFORM
-        try glfw.init();
-    };
+    // Linux: X11 (XWayland, se houver) antes do Wayland nativo (REGRA_X11, src/display.zig). No Wayland o GLFW decora a
+    // janela pelo libdecor, que carrega o GTK; no WSLg recem-reiniciado o programa caiu 2 vezes dentro dele.
+    if (platform.is_windows) try glfw.init() else if (try initLinuxDisplay(arena, init.io, init.environ_map)) |w| {
+        app.display_warning = w;
+        logLine(w);
+    }
     defer glfw.terminate();
     glfw.windowHint(.context_version_major, 3);
     glfw.windowHint(.context_version_minor, 3);

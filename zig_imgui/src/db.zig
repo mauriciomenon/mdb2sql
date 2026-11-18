@@ -19,6 +19,7 @@ pub const access = @import("access.zig");
 pub const settings = @import("settings.zig");
 pub const i18n = @import("i18n.zig");
 pub const log = @import("log.zig");
+pub const display = @import("display.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Error = error{ DuckDb, Canceled } || query.BuildError || query.PathError;
@@ -503,6 +504,7 @@ test {
     _ = settings;
     _ = i18n;
     _ = log;
+    _ = display;
 }
 
 // Cria um banco de teste gravavel e fecha

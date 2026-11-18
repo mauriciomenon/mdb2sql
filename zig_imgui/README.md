@@ -48,6 +48,29 @@ files). Nothing else is needed to open Access files.
   `MDB2SQL_ACCESS_READER=mdbtools` forces mdbtools (also on a computer with the ODBC driver), `=odbc` forces ODBC,
   `auto` or unset: the order above. The status line says which way was used.
 
+## Linux: X11 and Wayland
+
+The program opens its window with X11 (on a Wayland desktop, through XWayland). Native Wayland is only the fallback:
+when X11 is not available (no `DISPLAY`, or one of the X11 libraries below is missing), the program opens on Wayland
+and shows a **Display mode** warning at every start (also in **View > Log**) naming what is missing and the command
+to install it. With neither X11 nor Wayland it prints the reason on the terminal and exits with code 3.
+
+To choose yourself (no warning): `MDB2SQL_DISPLAY=x11` or `MDB2SQL_DISPLAY=wayland`; an empty `WAYLAND_DISPLAY=`
+also means X11 only.
+
+| What X11 needs | Debian / Ubuntu (`apt install`) | Fedora / RHEL (`dnf install`) | Arch (`pacman -S`) | openSUSE (`zypper install`) |
+|---|---|---|---|---|
+| X server on a Wayland desktop | `xwayland` | `xorg-x11-server-Xwayland` | `xorg-xwayland` | `xwayland` |
+| `libX11.so.6` | `libx11-6` | `libX11` | `libx11` | `libX11-6` |
+| `libXrandr.so.2` | `libxrandr2` | `libXrandr` | `libxrandr` | `libXrandr2` |
+| `libXinerama.so.1` | `libxinerama1` | `libXinerama` | `libxinerama` | `libXinerama1` |
+| `libXcursor.so.1` | `libxcursor1` | `libXcursor` | `libxcursor` | `libXcursor1` |
+| `libXi.so.6` | `libxi6` | `libXi` | `libxi` | `libXi6` |
+
+The `.deb` already depends on these libraries; on Debian the warning normally means the desktop runs without
+XWayland (`sudo apt install xwayland`). Why X11 first: under native Wayland GLFW draws the window frame through
+libdecor, which loads GTK; two early starts on WSLg crashed inside it (README-BUILD.txt, section 7).
+
 ## Access files: one conversion to SQLite
 
 Opening an `.accdb`/`.mdb` converts every table once into a temporary SQLite file in `<TEMP>/mdb2sql-zig/` and the
@@ -178,6 +201,8 @@ the public mdbtools test data, and the small `testdata/mdb2sql_test.mdb` kept in
 - Table list: the whole table name is shown (panel as wide as the longest name, sideways scrolling beyond 40% of the
   window).
 - **File > Close** closes the open file.
+- Linux: X11 first, Wayland only as a fallback with a **Display mode** warning at start (section "Linux: X11 and
+  Wayland"); `MDB2SQL_DISPLAY=x11|wayland` chooses without warning.
 - Debian 13 amd64 build: `.deb` and `.zip`, mdbtools 1.0.1 compiled from its pinned source, GLFW/OpenGL, `zenity`
   dialogs; `build_debian_amd64_wsl.ps1` builds it through WSL.
 - Unit tests now read the small versioned `testdata/mdb2sql_test.mdb` with the embedded mdbtools on every run.
@@ -220,9 +245,8 @@ the public mdbtools test data, and the small `testdata/mdb2sql_test.mdb` kept in
 - The single executable (Windows) needs `%LOCALAPPDATA%` to be writable.
 - The open and save dialogs block the window while open (running work continues). On Linux without `zenity` there
   is no dialog: type the path in the box.
-- On Linux the window uses X11 (XWayland on a Wayland desktop); native Wayland only when there is no X11. Under
-  native Wayland GLFW decorates the window through libdecor/GTK, where two early WSLg starts crashed
-  (README-BUILD.txt, section 7).
+- On Linux without X11 the window opens on native Wayland, where GLFW decorates it through libdecor/GTK; two early
+  WSLg starts crashed there (README-BUILD.txt, section 7).
 - The SQL result search and the table filter ignore case and accents of ASCII and Latin-1 letters only; the Data
   search, done by the database, covers all of Unicode.
 - Excel keeps at most 32,767 characters per cell and 16,384 columns per sheet (the status line says how many were

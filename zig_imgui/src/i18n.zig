@@ -71,7 +71,7 @@ test "translations differ from English where words are involved" {
 // sem espaco). Excecoes: SQL, nomes de produto, atalhos, variaveis de ambiente e mensagens do --capture.
 fn uiTextOutsideCatalog(src: []const u8) ?[]const u8 {
     const allowed_lines = [_][]const u8{ "c.failed", "c.skip(", "sql.appendSlice(", "@import(", "extern ", "\\x00*.", "--file-filter=", "segoeui", "SQLite format 3" };
-    const allowed = [_][]const u8{ "GLFW {d}.{d}.{d} + OpenGL 3.3", "DuckDB {s}", "#version 330", "Ctrl+O", "Ctrl+L", "Ctrl+C" };
+    const allowed = [_][]const u8{ "GLFW {d}.{d}.{d} + OpenGL 3.3", "DuckDB {s}", "#version 330", "X11 (DISPLAY={s}: {t})", "Ctrl+O", "Ctrl+L", "Ctrl+C" };
     var lines = std.mem.splitScalar(u8, src, '\n');
     while (lines.next()) |full| {
         // sem o comentario do fim da linha (// fora de string)

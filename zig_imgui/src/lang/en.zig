@@ -152,6 +152,14 @@ pub const err_internal = "Internal error, the program will close:\n{s}";
 pub const err_start = "MDB2SQL could not start: {t}{s}";
 pub const err_opengl = "\nThe graphics driver must support OpenGL 3.3 (a remote desktop or a virtual machine without 3D may not).";
 
+// Linux display mode (X11 first, Wayland as fallback)
+pub const display_title = "Display mode";
+pub const display_warning = "X11 unavailable; the program is using Wayland (fallback). Missing: {s}. To use X11 on {s}: {s}. Help: {s}";
+pub const display_warning_other = "X11 unavailable; the program is using Wayland (fallback). Missing: {s}. Help: {s}";
+pub const display_no_server = "X server (DISPLAY not set)";
+pub const display_none = "mdb2sql: cannot open a window: neither X11 nor Wayland is available ({t}). Help: {s}\n";
+pub const ok = "OK";
+
 // open and save dialogs
 pub const dlg_databases = "Databases";
 pub const dlg_all_files = "All files";

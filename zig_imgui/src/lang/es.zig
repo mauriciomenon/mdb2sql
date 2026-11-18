@@ -152,6 +152,14 @@ pub const err_internal = "Error interno, el programa se cerrará:\n{s}";
 pub const err_start = "MDB2SQL no pudo iniciar: {t}{s}";
 pub const err_opengl = "\nEl controlador de video debe admitir OpenGL 3.3 (un escritorio remoto o una máquina virtual sin 3D puede no admitirlo).";
 
+// modo de visualizacion en Linux (X11 primero, Wayland como reserva)
+pub const display_title = "Modo de visualización";
+pub const display_warning = "X11 no disponible; el programa usa Wayland (reserva). Falta: {s}. Para usar X11 en {s}: {s}. Ayuda: {s}";
+pub const display_warning_other = "X11 no disponible; el programa usa Wayland (reserva). Falta: {s}. Ayuda: {s}";
+pub const display_no_server = "servidor X (DISPLAY no definido)";
+pub const display_none = "mdb2sql: no se pudo abrir la ventana: ni X11 ni Wayland están disponibles ({t}). Ayuda: {s}\n";
+pub const ok = "Aceptar";
+
 // dialogos de abrir y guardar
 pub const dlg_databases = "Bases de datos";
 pub const dlg_all_files = "Todos los archivos";
