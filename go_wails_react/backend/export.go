@@ -7,6 +7,7 @@ package backend
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -20,6 +21,8 @@ import (
 
 	"github.com/duckdb/duckdb-go/v2"
 	"github.com/xuri/excelize/v2"
+
+	"mdb2sql/i18n"
 )
 
 // MaxExcelDataRows: an Excel sheet has 1,048,576 rows and the first is the header (a var so tests can split small tables)
@@ -72,9 +75,9 @@ func truncUTF16(s string, max int) string {
 
 type exportItem struct{ name, query string }
 
-func (m *DBManager) items() []exportItem {
-	items := make([]exportItem, len(m.tableList))
-	for i, t := range m.tableList {
+func tableItems(tables []string) []exportItem {
+	items := make([]exportItem, len(tables))
+	for i, t := range tables {
 		items[i] = exportItem{t, "SELECT * FROM " + quoteIdent(t)}
 	}
 	return items
@@ -85,11 +88,11 @@ func (m *DBManager) ExportDatabase(ctx context.Context, format, out string, prog
 	if m.conn == nil {
 		return fmt.Errorf("no database connected")
 	}
-	items := m.items()
+	items := tableItems(m.tableList)
 	return m.writeAtomically(out, func(tmp string) error {
 		switch format {
 		case "duckdb", "sqlite":
-			return m.copyDatabase(ctx, format, tmp, items, progress)
+			return copyDatabase(ctx, m.conn, format, tmp, items, progress)
 		case "xlsx":
 			return m.writeXLSX(ctx, tmp, items, progress, 0)
 		}
@@ -105,7 +108,7 @@ func (m *DBManager) ExportTable(ctx context.Context, table, format, out string, 
 	if _, err := m.validateTableName(table); err != nil {
 		return err
 	}
-	total, err := m.GetRowCount(table)
+	total, err := m.GetRowCount(table, "")
 	if err != nil {
 		return err
 	}
@@ -134,7 +137,7 @@ func (m *DBManager) exportOne(ctx context.Context, it exportItem, format, out st
 
 func (m *DBManager) writeAtomically(out string, write func(tmp string) error) error {
 	if same, _ := filepath.Abs(out); m.currentDB != "" && strings.EqualFold(same, m.currentDB) {
-		return fmt.Errorf("cannot export over the open database file")
+		return errors.New(i18n.T("err.exportOverOpen"))
 	}
 	// a folder of our own (unique name, same disk as the target): a user file named "x.partial.csv" is never
 	// overwritten or deleted, and the .wal/-journal side files of the engines stay inside it
@@ -146,7 +149,7 @@ func (m *DBManager) writeAtomically(out string, write func(tmp string) error) er
 	tmp := filepath.Join(dir, filepath.Base(out))
 	if err := write(tmp); err != nil {
 		if errors.Is(err, context.Canceled) {
-			return fmt.Errorf("export cancelled")
+			return errors.New(i18n.T("err.exportCancelled"))
 		}
 		return err
 	}
@@ -154,9 +157,64 @@ func (m *DBManager) writeAtomically(out string, write func(tmp string) error) er
 	return os.Rename(tmp, out)
 }
 
-// copyDatabase attaches the target file and copies each table with CREATE TABLE AS (DuckDB maps the types)
-func (m *DBManager) copyDatabase(ctx context.Context, format, path string, items []exportItem, progress Progress) error {
-	conn, err := m.conn.Conn(ctx)
+// sqliteColumn gives the declared SQLite type of a DuckDB column and the expression that writes it. SQLite has no
+// boolean, decimal or date types: the declared name keeps the type for readers (DuckDB reads DATETIME as TIMESTAMP),
+// booleans are stored 0/1, dates as ISO text, decimals as REAL (exact up to 15 significant digits).
+func sqliteColumn(name, duckType string) (decl, expr string) {
+	col := quoteIdent(name)
+	t := strings.ToUpper(duckType)
+	switch t {
+	case "BOOLEAN", "DOUBLE", "DATE", "BLOB":
+		return t, col
+	case "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "UTINYINT", "USMALLINT", "UINTEGER":
+		return "INTEGER", col
+	case "FLOAT", "REAL":
+		// through text: Access Single 0.1 must stay 0.1, not 0.10000000149011612
+		return "REAL", "CAST(CAST(" + col + " AS VARCHAR) AS DOUBLE)"
+	case "TIMESTAMP", "TIMESTAMP_S", "TIMESTAMP_MS", "TIMESTAMP_NS":
+		return "DATETIME", col
+	}
+	if strings.HasPrefix(t, "DECIMAL(") {
+		return t, col
+	}
+	// VARCHAR, UUID, TIME, HUGEINT, UBIGINT, lists...: text keeps every digit and character
+	return "TEXT", "CAST(" + col + " AS VARCHAR)"
+}
+
+// copySQLiteTable creates the table in the attached SQLite file with typed columns (raw DDL through sqlite_query,
+// because DuckDB's own CREATE TABLE would declare only BIGINT/DOUBLE/VARCHAR/BLOB) and inserts the rows
+func copySQLiteTable(ctx context.Context, conn *sql.Conn, it exportItem) error {
+	rows, err := conn.QueryContext(ctx, "SELECT column_name, column_type FROM (DESCRIBE "+it.query+")")
+	if err != nil {
+		return err
+	}
+	var defs, exprs []string
+	for rows.Next() {
+		var name, typ string
+		if err := rows.Scan(&name, &typ); err != nil {
+			rows.Close()
+			return err
+		}
+		decl, expr := sqliteColumn(name, typ)
+		defs = append(defs, quoteIdent(name)+" "+decl)
+		exprs = append(exprs, expr)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	ddl := fmt.Sprintf("CREATE TABLE %s (%s)", quoteIdent(it.name), strings.Join(defs, ", "))
+	if _, err := conn.ExecContext(ctx, "CALL sqlite_query('mdb2sql_out', "+quoteLiteral(ddl)+")"); err != nil {
+		return err
+	}
+	_, err = conn.ExecContext(ctx, fmt.Sprintf("INSERT INTO mdb2sql_out.%s SELECT %s FROM (%s)",
+		quoteIdent(it.name), strings.Join(exprs, ", "), it.query))
+	return err
+}
+
+// copyDatabase attaches the target file and copies each item: DuckDB with CREATE TABLE AS, SQLite typed
+func copyDatabase(ctx context.Context, db *sql.DB, format, path string, items []exportItem, progress Progress) error {
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err
 	}
@@ -179,8 +237,12 @@ func (m *DBManager) copyDatabase(ctx context.Context, format, path string, items
 	defer conn.ExecContext(context.Background(), "DETACH DATABASE IF EXISTS mdb2sql_out")
 	for i, it := range items {
 		progress(i, len(items), it.name)
-		q := fmt.Sprintf("CREATE TABLE mdb2sql_out.%s AS %s", quoteIdent(it.name), it.query)
-		if _, err := conn.ExecContext(ctx, q); err != nil {
+		if format == "sqlite" {
+			err = copySQLiteTable(ctx, conn, it)
+		} else {
+			_, err = conn.ExecContext(ctx, fmt.Sprintf("CREATE TABLE mdb2sql_out.%s AS %s", quoteIdent(it.name), it.query))
+		}
+		if err != nil {
 			return fmt.Errorf("%s: %w", it.name, err)
 		}
 	}

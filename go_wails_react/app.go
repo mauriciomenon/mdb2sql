@@ -4,14 +4,17 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mdb2sql/backend"
+	"mdb2sql/i18n"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -36,6 +39,11 @@ type App struct {
 	dbName    string
 	dbPath    string // resolved path of the open file; default folder of the save dialogs
 	settings  Settings
+
+	// Access file converted to SQLite: the file (temporary until saved or deleted) and the Access file it came from
+	converted, convertedFrom string
+	convChoice              string // "save" or "delete" remembered for this session ("" = ask)
+	convDir                 string // folder of the last "save", used when "save" is remembered
 
 	jobMu       sync.Mutex
 	cancel      context.CancelFunc // of the running load or export
@@ -120,6 +128,125 @@ func NewApp() *App {
 // !T: Wails lifecycle hook called on app startup, stores context for runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	if n := backend.CleanStaleConverted(); n > 0 {
+		a.log("log.staleRemoved", n)
+	}
+}
+
+// log sends one line to the Log panel (View > Log) in the current language
+func (a *App) log(key string, args ...any) {
+	if a.ctx != nil { // nil in tests: the Wails runtime only works inside the app
+		runtime.EventsEmit(a.ctx, "log", i18n.T(key, args...))
+	}
+}
+
+// beforeClose (window close button, Exit): a converted SQLite file still pending makes the UI ask first
+func (a *App) beforeClose(ctx context.Context) bool {
+	if a.converted == "" {
+		return false
+	}
+	if a.convChoice != "" {
+		if _, err := a.resolveConversion(a.convChoice); err == nil {
+			return false
+		}
+	}
+	runtime.EventsEmit(ctx, "conversion-pending", "exit")
+	return true
+}
+
+// shutdown: never leave the temporary SQLite behind (normally beforeClose already resolved it)
+func (a *App) shutdown(context.Context) {
+	a.dbManager.Close()
+	backend.RemoveConverted(a.converted)
+}
+
+// ConversionResult: Done = the converted file was saved or deleted (and the database closed); Saved = its new path
+type ConversionResult struct {
+	Done  bool   `json:"done"`
+	Saved string `json:"saved"`
+}
+
+// PendingConversion is the name of the converted SQLite file still waiting for "save or delete" ("" = none);
+// RememberedChoice tells whether the user already chose for the session (then the UI does not ask)
+func (a *App) PendingConversion() string {
+	if a.converted == "" {
+		return ""
+	}
+	return backend.ConvertedName(a.convertedFrom)
+}
+
+func (a *App) RememberedChoice() string { return a.convChoice }
+
+// ResolveConversion applies the user's answer: "save" (save dialog, next to the Access file by default), "delete"
+// or "cancel"; remember keeps "save"/"delete" for the rest of the session (not written to the settings)
+func (a *App) ResolveConversion(choice string, remember bool) (ConversionResult, error) {
+	if choice != "save" && choice != "delete" {
+		return ConversionResult{}, nil
+	}
+	res, err := a.resolveConversion(choice)
+	if err == nil && res.Done && remember {
+		a.convChoice = choice
+	}
+	return res, err
+}
+
+func (a *App) resolveConversion(choice string) (ConversionResult, error) {
+	if a.converted == "" {
+		return ConversionResult{Done: true}, nil
+	}
+	dest := ""
+	if choice == "save" {
+		name := backend.ConvertedName(a.convertedFrom)
+		if a.convChoice == "save" && existingDir(a.convDir) != "" {
+			dest = backend.UniquePath(a.convDir, name) // remembered: same folder, never over an existing file
+		} else {
+			var err error
+			dest, err = runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+				Title:            i18n.T("dlg.saveConverted"),
+				DefaultDirectory: existingDir(filepath.Dir(a.convertedFrom)),
+				DefaultFilename:  name,
+				Filters:          []runtime.FileFilter{{DisplayName: i18n.T("filter.sqliteOut"), Pattern: "*.sqlite"}},
+			})
+			if err != nil || dest == "" {
+				return ConversionResult{}, err
+			}
+			if !strings.EqualFold(filepath.Ext(dest), ".sqlite") {
+				dest += ".sqlite"
+			}
+		}
+	}
+	a.closeDatabase()
+	file := a.converted
+	a.converted, a.convertedFrom = "", ""
+	if dest == "" {
+		if err := backend.RemoveConverted(file); err != nil {
+			return ConversionResult{Done: true}, err
+		}
+		a.log("log.convertedDeleted", filepath.Base(file))
+		return ConversionResult{Done: true}, nil
+	}
+	if err := backend.SaveConverted(file, dest); err != nil {
+		backend.RemoveConverted(file)
+		return ConversionResult{Done: true}, fmt.Errorf("%s: %w", dest, err)
+	}
+	a.convDir = filepath.Dir(dest)
+	a.log("log.convertedSaved", dest)
+	return ConversionResult{Done: true, Saved: dest}, nil
+}
+
+func (a *App) closeDatabase() {
+	a.cancelQuery()
+	a.dbManager.Close()
+	a.dbName, a.dbPath = "", ""
+}
+
+// CloseDatabase fecha o arquivo aberto (Arquivo > Fechar); a UI resolve antes um SQLite convertido pendente
+func (a *App) CloseDatabase() error {
+	if a.converted != "" {
+		return errors.New(i18n.T("err.pendingConversion"))
+	}
+	a.closeDatabase()
+	return nil
 }
 
 // StartupPath: arquivo da linha de comando ou, sem ele, MDB2SQL_DB_PATH; "" = nada para abrir ao iniciar
@@ -136,19 +263,24 @@ func (a *App) StartupPath() string {
 // !T: Only returns a path; LoadDatabase still validates it
 func (a *App) SelectDatabase() (string, error) {
 	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title:            "Open database",
+		Title:            i18n.T("dlg.open"),
 		DefaultDirectory: existingDir(a.settings.LastDir),
-		Filters: []runtime.FileFilter{
-			{DisplayName: "Databases (*.duckdb;*.db;*.sqlite;*.sqlite3;*.mdb;*.accdb)", Pattern: "*.duckdb;*.db;*.sqlite;*.sqlite3;*.mdb;*.accdb"},
-			{DisplayName: "DuckDB (*.duckdb;*.db)", Pattern: "*.duckdb;*.db"},
-			{DisplayName: "SQLite (*.sqlite;*.sqlite3;*.db)", Pattern: "*.sqlite;*.sqlite3;*.db"},
-			{DisplayName: "Microsoft Access (*.mdb;*.accdb)", Pattern: "*.mdb;*.accdb"},
-		},
+		Filters:          openFilters(),
 	})
 }
 
+// openFilters: Access first, SQLite second, DuckDB last (owner's order); "All databases" is the default filter
+func openFilters() []runtime.FileFilter {
+	return []runtime.FileFilter{
+		{DisplayName: i18n.T("filter.all") + " (*.accdb;*.mdb;*.sqlite;*.sqlite3;*.db;*.duckdb)", Pattern: "*.accdb;*.mdb;*.sqlite;*.sqlite3;*.db;*.duckdb"},
+		{DisplayName: "Microsoft Access (*.accdb;*.mdb)", Pattern: "*.accdb;*.mdb"},
+		{DisplayName: "SQLite (*.sqlite;*.sqlite3;*.db)", Pattern: "*.sqlite;*.sqlite3;*.db"},
+		{DisplayName: "DuckDB (*.duckdb)", Pattern: "*.duckdb"},
+	}
+}
+
 var allowedExts = map[string]struct{}{
-	".duckdb": {}, ".db": {}, ".sqlite": {}, ".sqlite3": {}, ".mdb": {}, ".accdb": {},
+	".accdb": {}, ".mdb": {}, ".sqlite": {}, ".sqlite3": {}, ".db": {}, ".duckdb": {},
 }
 
 // Valida caminho do banco de dados com protecao contra path traversal
@@ -157,29 +289,29 @@ func (a *App) validateDatabasePath(dbPath string) (string, error) {
 	// Converte para caminho absoluto
 	absPath, err := filepath.Abs(dbPath)
 	if err != nil {
-		return "", fmt.Errorf("invalid database path: %w", err)
+		return "", fmt.Errorf("%s: %w", i18n.T("err.badPath"), err)
 	}
 
 	// Resolve symlinks para prevenir path traversal
 	// !T: EvalSymlinks prevents attacks via malicious.db -> /etc/passwd
 	resolvedPath, err := filepath.EvalSymlinks(absPath)
 	if err != nil {
-		return "", fmt.Errorf("database file not found or path is invalid: %w", err)
+		return "", fmt.Errorf("%s: %w", i18n.T("err.notFound"), err)
 	}
 
 	// Valida extensao do arquivo no caminho final
 	ext := strings.ToLower(filepath.Ext(resolvedPath))
 	if _, ok := allowedExts[ext]; !ok {
-		return "", fmt.Errorf("unsupported database format: %s", ext)
+		return "", errors.New(i18n.T("err.unsupported", ext))
 	}
 
 	// Garante que o caminho e um arquivo, nao diretorio
 	info, err := os.Stat(resolvedPath)
 	if err != nil {
-		return "", fmt.Errorf("could not access file info: %w", err)
+		return "", fmt.Errorf("%s: %w", i18n.T("err.notFound"), err)
 	}
 	if info.IsDir() {
-		return "", fmt.Errorf("database path points to a directory, not a file: %s", resolvedPath)
+		return "", errors.New(i18n.T("err.isDir", resolvedPath))
 	}
 
 	return resolvedPath, nil
@@ -259,18 +391,32 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 		return nil, err
 	}
 
+	// the converted SQLite of the previous Access file is saved or deleted first (the UI asks, ResolveConversion)
+	if a.converted != "" {
+		if a.convChoice == "" {
+			return nil, errors.New(i18n.T("err.pendingConversion"))
+		}
+		if _, err := a.resolveConversion(a.convChoice); err != nil {
+			return nil, err
+		}
+	}
 	a.cancelQuery() // a query on the previous file must not outlive it
 	ctx, done := a.startJob()
 	defer done()
 	a.dbName, a.dbPath = "", "" // Open closes the previous database first
+	start := time.Now()
 	if err := a.dbManager.Open(ctx, validatedPath, a.progress); err != nil {
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("loading cancelled")
+			return nil, errors.New(i18n.T("err.loadCancelled"))
 		}
-		return nil, fmt.Errorf("failed to connect: %w", err)
+		return nil, fmt.Errorf("%s: %w", i18n.T("err.openFailed"), err)
 	}
 	a.dbName = filepath.Base(validatedPath)
 	a.dbPath = validatedPath
+	if conv := a.dbManager.Converted(); conv != "" {
+		a.converted, a.convertedFrom = conv, validatedPath
+		a.log("log.converted", a.dbName, a.dbManager.Source(), time.Since(start).Round(100*time.Millisecond), conv)
+	}
 
 	// Lista tabelas disponiveis
 	tables, err := a.dbManager.ListTables()
@@ -281,20 +427,21 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 	return tables, nil
 }
 
-// GetTableData retorna linhas de uma tabela com limite configuravel; filters = coluna = valor (clique direito), no banco
+// GetTableData retorna linhas de uma tabela com limite configuravel; filters = coluna = valor (clique direito) e
+// search = pesquisa da aba Data, as duas no banco sobre a tabela inteira
 // !T: Returns slice of maps with column names as keys, limit defaults to 100 rows
-func (a *App) GetTableData(tableName string, limit int, filters []backend.Filter) ([]map[string]interface{}, error) {
+func (a *App) GetTableData(tableName string, limit int, filters []backend.Filter, search string) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 
-	return a.dbManager.QueryTable(tableName, limit, filters...)
+	return a.dbManager.QueryTable(tableName, limit, search, filters...)
 }
 
-// GetRowCount retorna total de linhas em tabela (das que casam com os filtros, se houver)
+// GetRowCount retorna total de linhas em tabela (das que casam com os filtros e a pesquisa, se houver)
 // !T: Executes COUNT(*) query and returns integer result
-func (a *App) GetRowCount(tableName string, filters []backend.Filter) (int, error) {
-	return a.dbManager.GetRowCount(tableName, filters...)
+func (a *App) GetRowCount(tableName string, filters []backend.Filter, search string) (int, error) {
+	return a.dbManager.GetRowCount(tableName, search, filters...)
 }
 
 // GetTableSchema retorna schema da tabela com tipos de colunas
@@ -328,16 +475,17 @@ func (a *App) RunQuery(query string, limit int) (backend.QueryResult, error) {
 	}()
 	res, err := a.dbManager.RunQuery(ctx, query, limit)
 	if ctx.Err() != nil {
-		return backend.QueryResult{}, fmt.Errorf("query cancelled")
+		return backend.QueryResult{}, errors.New(i18n.T("err.queryCancelled"))
 	}
 	return res, err
 }
 
-var exportFilters = map[string]runtime.FileFilter{
-	"duckdb": {DisplayName: "DuckDB database (*.duckdb)", Pattern: "*.duckdb"},
-	"sqlite": {DisplayName: "SQLite database (*.sqlite)", Pattern: "*.sqlite"},
-	"xlsx":   {DisplayName: "Excel workbook (*.xlsx)", Pattern: "*.xlsx"},
-	"csv":    {DisplayName: "CSV UTF-8 (*.csv)", Pattern: "*.csv"},
+// export file types: catalog key of the name and the pattern
+var exportFilters = map[string][2]string{
+	"duckdb": {"filter.duckdbOut", "*.duckdb"},
+	"sqlite": {"filter.sqliteOut", "*.sqlite"},
+	"xlsx":   {"filter.xlsxOut", "*.xlsx"},
+	"csv":    {"filter.csvOut", "*.csv"},
 }
 
 // defaultSaveDir: pasta do arquivo aberto; sem arquivo aberto, a ultima pasta usada (se ainda existir)
@@ -364,10 +512,10 @@ func (a *App) saveDialog(name, format string) (string, error) {
 		return "", fmt.Errorf("unknown export format %q", format)
 	}
 	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:            "Export to " + strings.ToUpper(format),
+		Title:            i18n.T("dlg.export", strings.ToUpper(format)),
 		DefaultDirectory: defaultSaveDir(a.dbPath, a.settings.LastDir),
 		DefaultFilename:  name + "." + format,
-		Filters:          []runtime.FileFilter{filter},
+		Filters:          []runtime.FileFilter{{DisplayName: i18n.T(filter[0]), Pattern: filter[1]}},
 	})
 	if err != nil || path == "" {
 		return "", err

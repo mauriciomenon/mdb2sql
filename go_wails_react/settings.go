@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"mdb2sql/i18n"
 )
 
-// Settings sao gravadas em %APPDATA%\mdb2sql\go-wails-react.json (tema e ultima pasta usada)
+// Settings sao gravadas em %APPDATA%\mdb2sql\go-wails-react.json (tema, idioma e ultima pasta usada)
 // !T: In Go, not in WebView localStorage: the WebView store depends on the exe name (single exe vs installed)
 type Settings struct {
-	Theme   string `json:"theme"` // system, light or dark
-	LastDir string `json:"lastDir"`
+	Theme    string `json:"theme"`    // system, light or dark
+	Language string `json:"language"` // en (default), pt-BR or es
+	LastDir  string `json:"lastDir"`
 }
 
 var themes = map[string]bool{"system": true, "light": true, "dark": true}
@@ -25,13 +28,17 @@ func settingsPath() string {
 }
 
 func loadSettings() Settings {
-	s := Settings{Theme: "system"}
+	s := Settings{Theme: "system", Language: i18n.Langs[0]}
 	if data, err := os.ReadFile(settingsPath()); err == nil {
 		_ = json.Unmarshal(data, &s) // a broken file just falls back to the defaults
 	}
 	if !themes[s.Theme] {
 		s.Theme = "system"
 	}
+	if !i18n.Valid(s.Language) {
+		s.Language = i18n.Langs[0]
+	}
+	i18n.SetLang(s.Language)
 	return s
 }
 
@@ -56,5 +63,18 @@ func (a *App) SetTheme(theme string) error {
 		return fmt.Errorf("unknown theme %q", theme)
 	}
 	a.settings.Theme = theme
+	return a.saveSettings()
+}
+
+// GetLanguage devolve o idioma gravado (en, pt-BR, es)
+func (a *App) GetLanguage() string { return a.settings.Language }
+
+// SetLanguage grava o idioma (Settings > Language) e passa a usa-lo nas mensagens e dialogos do Go
+func (a *App) SetLanguage(lang string) error {
+	if !i18n.Valid(lang) {
+		return fmt.Errorf("unknown language %q", lang)
+	}
+	a.settings.Language = lang
+	i18n.SetLang(lang)
 	return a.saveSettings()
 }

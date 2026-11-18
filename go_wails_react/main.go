@@ -22,7 +22,7 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-// Barra de titulo curta com a versao de wails.json: "mdb2sql 1.2.0 - Go" (a stack completa fica em Ajuda > Sobre)
+// Barra de titulo curta com a versao de wails.json: "mdb2sql 1.3.0 - Go" (a stack completa fica em Ajuda > Sobre)
 func windowTitle() string {
 	return "mdb2sql " + productVersion() + " - Go"
 }
@@ -56,6 +56,8 @@ func main() {
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		OnStartup:        app.startup,
+		OnBeforeClose:    app.beforeClose,
+		OnShutdown:       app.shutdown,
 		Windows:          winOpts,
 		Bind: []interface{}{
 			app,
