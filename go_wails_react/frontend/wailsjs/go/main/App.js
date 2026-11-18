@@ -14,6 +14,10 @@ export function DatabaseName() {
   return window['go']['main']['App']['DatabaseName']();
 }
 
+export function DisplayWarning() {
+  return window['go']['main']['App']['DisplayWarning']();
+}
+
 export function ExportDatabase(arg1) {
   return window['go']['main']['App']['ExportDatabase'](arg1);
 }
