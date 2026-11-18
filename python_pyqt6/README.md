@@ -45,7 +45,8 @@ what to do with the converted SQLite:
 - **Save SQLite...**: choose where; the default is next to the Access file, with the same name and `.sqlite`. The
   saved file is a normal SQLite database (any SQLite tool opens it; this program opens it as SQLite).
 - **Delete**: the temporary file is removed.
-- **Cancel**: nothing is closed.
+- **Cancel** (also Esc or the window X): nothing is closed. Enter chooses Save SQLite...; cancelling the save
+  dialog returns to the question.
 
 "Remember for this session" skips the question until the program is closed. Temporary files are never left behind:
 the folder of the session is removed on exit, and the folder of a session that crashed is removed at the next start

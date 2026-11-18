@@ -5,7 +5,8 @@ import shutil
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtCore import QSettings, Qt, QTimer
+from PyQt6.QtTest import QTest
 from PyQt6.QtGui import QAction, QFontDatabase
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QDockWidget, QLabel, QLineEdit, QMenu, QTabWidget
 
@@ -17,6 +18,43 @@ from ui.main_window import MainWindow
 SAMPLE = Path(__file__).with_name("data") / "sample.mdb"
 SRC = Path(__file__).resolve().parents[1] / "src"
 needs_mdbtools = pytest.mark.skipif(access.mdbtools_dir() is None, reason="sem .tools/mdbtools")
+REAL_ASK = MainWindow.ask_converted  # a pergunta de verdade (o conftest troca por "Apagar" em cada teste)
+
+
+@pytest.mark.parametrize(("key", "expected"), [("esc", mw.CANCEL), ("x", mw.CANCEL), ("enter", mw.SAVE)])
+def test_converted_prompt_esc_and_x_cancel_enter_saves(qtbot, monkeypatch, key, expected) -> None:
+    monkeypatch.setattr(MainWindow, "ask_converted", REAL_ASK)
+    win = MainWindow()
+    qtbot.addWidget(win)
+    seen = []
+
+    def answer() -> None:
+        box = QApplication.activeModalWidget()
+        seen.append(box.defaultButton().text())  # botao padrao (Enter) com o foco inicial
+        if key == "esc":
+            QTest.keyClick(box, Qt.Key.Key_Escape)
+        elif key == "x":
+            box.close()  # o X da janela
+        else:
+            QTest.keyClick(box, Qt.Key.Key_Return)
+
+    QTimer.singleShot(0, answer)
+    assert win.ask_converted(Path("db.accdb")) == (expected, False)
+    assert seen == ["Save SQLite..."]
+
+
+def test_cancelling_the_save_dialog_returns_to_the_prompt(qtbot, monkeypatch) -> None:
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.manager = type("Converted", (), {"converted": Path("x.sqlite")})()  # banco Access aberto (so o necessario)
+    win.current_db_path = Path("db.accdb")
+    answers = [(mw.SAVE, False), (mw.CANCEL, False)]
+    monkeypatch.setattr(win, "ask_converted", lambda _path: answers.pop(0))
+    monkeypatch.setattr(win, "ask_converted_target", lambda _path: None)  # Cancelar no dialogo de salvar
+
+    assert win.release_database() is False  # voltou para a pergunta; Esc/Cancelar nela nao fecha nada
+    assert answers == [] and win.current_db_path == Path("db.accdb")
+    win.manager = None
 
 
 @pytest.fixture

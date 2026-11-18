@@ -99,7 +99,7 @@
   "status.sql_rows": "SQL: {count} rows",
   "status.sql_first": "SQL: first {count} rows shown",
   "status.sql_done": "SQL: done (no result rows)",
-  "status.sql_error": "SQL error: {message}",
+  "status.sql_error": "SQL query error: {message}",
   "status.language_restart": "Language changes when mdb2sql is reopened",
   "status.converted_saved": "SQLite saved: {path}",
   "filters.one": "Filter:",

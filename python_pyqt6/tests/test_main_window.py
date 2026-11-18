@@ -166,7 +166,14 @@ def test_sql_tab_runs_query_and_copies(qtbot, window: MainWindow) -> None:
 
     window.sql_edit.setPlainText("SELECT * FROM missing_table")
     window.run_sql()
-    qtbot.waitUntil(lambda: window.info_label.text().startswith("SQL error"), timeout=30000)
+    qtbot.waitUntil(lambda: window.info_label.text().startswith("SQL query error"), timeout=30000)
+
+    # erro do motor: uma linha na barra (sem "Parser Error:"), o texto inteiro (LINE 1, ^) no log e na dica
+    window.sql_edit.setPlainText("selec 1")
+    window.run_sql()
+    qtbot.waitUntil(lambda: 'near "selec"' in window.info_label.text(), timeout=30000)
+    assert window.info_label.text() == 'SQL query error: syntax error at or near "selec"'
+    assert "LINE 1: selec 1" in window.info_label.toolTip() and "LINE 1: selec 1" in window.log_view.toPlainText()
 
 
 def test_export_actions_write_files_next_to_source(qtbot, window: MainWindow, people_db: Path, monkeypatch) -> None:

@@ -2,6 +2,7 @@
 # !T: QMainWindow with toolbar + table sidebar + data/schema/SQL views; database work runs on QThreadPool.
 # !T: Every visible text comes from the language catalog (shared.i18n.tr)
 
+import re
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -102,6 +103,16 @@ def filter_text(column: str, value: Any) -> str:
     if value is None:
         return f"{column} IS NULL"
     return f"{column} = {sql_string(value) if isinstance(value, str) else value}"
+
+
+def status_line(text: str) -> str:
+    """Uma linha para a barra de status: a primeira do texto, sem o tipo do erro do motor ('Parser Error: ').
+
+    !T: 'SQL query error: Parser Error: syntax error at or near "selec"\\n\\nLINE 1: ...' becomes
+    !T: 'SQL query error: syntax error at or near "selec"'; the full text stays in the log and the tooltip
+    """
+    first = text.splitlines()[0] if text else ""
+    return re.sub(r": (?:[A-Z][a-z]+ )+Error: ", ": ", first, count=1)
 
 
 def hidden_text(count: int) -> str:
@@ -482,7 +493,7 @@ class MainWindow(QMainWindow):
         for level in ("error", "warning"):
             if self._unread[level]:
                 text = self._latest[level]
-                self.status_label.setText(text)
+                self.status_label.setText(status_line(text))
                 self.status_label.setToolTip(text)
                 self.status_label.setStyleSheet(f"color: {self._alert_color(level)};")
                 return
@@ -648,8 +659,8 @@ class MainWindow(QMainWindow):
         self, label: QLabel, text: str, error: bool = False, log: bool = True, warning: bool = False
     ) -> None:
         level = "error" if error else "warning" if warning else "info"
-        label.setText(text)
-        label.setToolTip(text)  # texto inteiro se a barra de status estreitar o rotulo
+        label.setText(status_line(text))
+        label.setToolTip(text)  # texto inteiro (erro do motor com LINE 1 e ^^^) na dica e no Log
         label.setStyleSheet("" if level == "info" else f"color: {self._alert_color(level)};")
         if log and text:
             self.log(text, level)  # depois do texto: com o Log recolhido, um erro nao lido continua na barra
@@ -873,16 +884,19 @@ class MainWindow(QMainWindow):
         target = None
         if manager.converted is not None and self.current_db_path is not None:
             choice = self.converted_choice
-            if choice is None:
-                choice, remember = self.ask_converted(self.current_db_path)
-                if remember:
-                    self.converted_choice = choice
-            if choice == CANCEL:
-                return False
-            if choice == SAVE:
-                target = self.ask_converted_target(self.current_db_path)
-                if target is None:
+            while True:
+                if choice is None:
+                    choice, remember = self.ask_converted(self.current_db_path)  # Esc e o X da janela: Cancelar
+                    if remember:
+                        self.converted_choice = choice
+                if choice == CANCEL:
                     return False
+                if choice == DELETE:
+                    break
+                target = self.ask_converted_target(self.current_db_path)
+                if target is not None:
+                    break
+                choice = None  # cancelou o dialogo de salvar: volta para a pergunta
         source = self.current_db_path
         self._clear_database()
         try:

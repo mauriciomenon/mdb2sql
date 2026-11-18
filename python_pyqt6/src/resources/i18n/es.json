@@ -99,7 +99,7 @@
   "status.sql_rows": "SQL: {count} filas",
   "status.sql_first": "SQL: primeras {count} filas",
   "status.sql_done": "SQL: terminado (sin filas de resultado)",
-  "status.sql_error": "Error de SQL: {message}",
+  "status.sql_error": "Error en la consulta SQL: {message}",
   "status.language_restart": "El idioma cambia al volver a abrir mdb2sql",
   "status.converted_saved": "SQLite guardado: {path}",
   "filters.one": "Filtro:",
