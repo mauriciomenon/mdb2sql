@@ -37,7 +37,8 @@ Open a file with File > Open Database (Ctrl+O), by passing the path on the comma
 **Access files** are converted once, when opened, into a SQLite file in a temporary folder, and the program reads
 from there (status bar: "Converting ... table N of M", then `... via mdbtools, converted to SQLite`). The SQLite
 keeps the column types (integer, decimal, double, text, date, true/false, binary) and NULLs. A 115 MB `.accdb`
-with 287 tables takes about 20 s by mdbtools (up to 2 min on a busy machine) and 8 s by ODBC. The source file is
+with 287 tables takes 20-35 s by mdbtools and 8-18 s by ODBC (Intel Core Ultra 7 258V, 8 cores; the time is mostly
+one big table, 36,754 rows x 123 columns, in mdb-export). The source file is
 never changed.
 When the file is closed (File > Close Database, Ctrl+W), another file is opened or the program is closed, it asks
 what to do with the converted SQLite:

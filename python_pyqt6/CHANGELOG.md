@@ -32,6 +32,9 @@
 - Debian amd64: `build_debian_amd64.sh` (and `build_debian_amd64_wsl.ps1` from Windows) build a `.deb` and a `.zip`.
 - Linux: X11 first, Wayland only as fallback, with a "Display mode" warning naming what is missing and the
   install command for the distribution (README "Linux: X11 e Wayland").
+- Faster Access open by mdbtools: the widest tables start first, cores-1 export processes (max 6), each table
+  loaded as soon as its export ends (DB4 median 51 s → 34 s on a busy machine; the single 22 s export of the
+  largest table is the floor).
 - Dependencies: no open Dependabot alert for this folder before or after; `pip-audit` (OSV) finds no known
   vulnerability in `uv.lock`.
 - Licenca: GPL v2 ou posterior (sem mudanca desde 1.2.0).
