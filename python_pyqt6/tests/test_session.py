@@ -186,6 +186,7 @@ def test_log_panel_collapsed_shows_the_most_important_line(qtbot) -> None:
         win.log(f"line {n}")
     win._set_message(win.status_label, "Loaded: a.duckdb (1 tables) via DuckDB")
     assert win.status_label.text() == "SQL error: boom" and "color" in win.status_label.styleSheet()
+    assert "SQL error" not in win.info_label.text() and "Export cancelled" not in win.info_label.text()  # uma vez so
     assert win.log_unread.text() == "(2)" and not win.log_unread.isHidden()
 
     # clique na mensagem reexibe o log e zera os nao lidos; a seta do cabecalho recolhe; estado lembrado

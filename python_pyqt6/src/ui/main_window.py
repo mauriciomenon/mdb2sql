@@ -392,6 +392,11 @@ class MainWindow(QMainWindow):
         self.table_list = QListWidget()
         self.table_list.setAccessibleName(tr("tables.title"))
         self.table_list.setUniformItemSizes(True)
+        # selecao como faixa de destaque comum (o estilo windows11 desenha so uma barrinha antes do nome, que parece
+        # um cursor de texto); cores da paleta: vale para claro e escuro
+        self.table_list.setStyleSheet(
+            "QListWidget::item:selected { background: palette(highlight); color: palette(highlighted-text); }"
+        )
         # nome de tabela nunca vira "...": o painel cresce ate o nome mais longo (limite: rolagem horizontal)
         self.table_list.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.table_list.setHorizontalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
@@ -662,6 +667,14 @@ class MainWindow(QMainWindow):
         self, label: QLabel, text: str, error: bool = False, log: bool = True, warning: bool = False
     ) -> None:
         level = "error" if error else "warning" if warning else "info"
+        if level != "info" and label is self.info_label:
+            # erro/aviso so a esquerda (seta, contador, linha mais importante): a mesma mensagem nunca aparece duas
+            # vezes; a direita volta para o estado da tabela (linhas, colunas ocultas)
+            label = self.status_label
+            if self.loaded_table is not None:
+                self._apply_search()
+            else:
+                self.info_label.clear()
         label.setText(status_line(text))
         label.setToolTip(text)  # texto inteiro (erro do motor com LINE 1 e ^^^) na dica e no Log
         label.setStyleSheet("" if level == "info" else f"color: {self._alert_color(level)};")

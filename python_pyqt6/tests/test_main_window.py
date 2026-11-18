@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from PyQt6.QtCore import QSettings, QSize, Qt
 from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtWidgets import QAbstractButton, QApplication, QFileDialog, QProgressDialog, QWidget
+from PyQt6.QtWidgets import QAbstractButton, QApplication, QFileDialog, QLabel, QProgressDialog, QWidget
 
 from ui.dialogs import ColumnsDialog, grid_columns
 from ui.main_window import MainWindow
@@ -166,14 +166,18 @@ def test_sql_tab_runs_query_and_copies(qtbot, window: MainWindow) -> None:
 
     window.sql_edit.setPlainText("SELECT * FROM missing_table")
     window.run_sql()
-    qtbot.waitUntil(lambda: window.info_label.text().startswith("SQL query error"), timeout=30000)
+    qtbot.waitUntil(lambda: window.status_label.text().startswith("SQL query error"), timeout=30000)
+    # a mesma mensagem nunca aparece duas vezes na barra de status: so a esquerda; a direita, o estado da tabela
+    shown = [w.text() for w in window.statusBar().findChildren(QLabel) if "SQL query error" in w.text()]
+    assert len(shown) == 1 and not window.info_label.text().startswith("SQL")
 
     # erro do motor: uma linha na barra (sem "Parser Error:"), o texto inteiro (LINE 1, ^) no log e na dica
     window.sql_edit.setPlainText("selec 1")
     window.run_sql()
-    qtbot.waitUntil(lambda: 'near "selec"' in window.info_label.text(), timeout=30000)
-    assert window.info_label.text() == 'SQL query error: syntax error at or near "selec"'
-    assert "LINE 1: selec 1" in window.info_label.toolTip() and "LINE 1: selec 1" in window.log_view.toPlainText()
+    qtbot.waitUntil(lambda: 'near "selec"' in window.status_label.text(), timeout=30000)
+    assert window.status_label.text() == 'SQL query error: syntax error at or near "selec"'
+    assert "LINE 1: selec 1" in window.status_label.toolTip() and "LINE 1: selec 1" in window.log_view.toPlainText()
+    assert [w.text() for w in window.statusBar().findChildren(QLabel)].count(window.status_label.text()) == 1
 
 
 def test_export_actions_write_files_next_to_source(qtbot, window: MainWindow, people_db: Path, monkeypatch) -> None:
