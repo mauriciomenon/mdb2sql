@@ -189,6 +189,59 @@ func checkRealSearch(t *testing.T, m *DBManager) {
 	t.Logf("'tensao de campo' finds %d rows, all with TENSAO in the name (not RTUNO 50 PNTNO 9)", len(pt))
 }
 
+// Currency must stay a number in the converted SQLite and in Export > SQLite: compared, sorted and summed as numbers
+// (TEXT would make "263.5" < "97"). nwind.mdb of mdbtestdata has no license to be versioned: MDB2SQL_TEST_NWIND points
+// to a copy. Expected (Products.UnitPrice > 20): 37 rows, sum 1695.11, top 263.5, 123.79, 97.
+func TestRealDB_NwindCurrencyIsNumeric(t *testing.T) {
+	path := os.Getenv("MDB2SQL_TEST_NWIND")
+	if path == "" {
+		t.Skip("MDB2SQL_TEST_NWIND not set")
+	}
+	// NUMERIC affinity stores 97.0 as integer 97 and 263.5 as real: both numbers; no value may be TEXT
+	const want = "0|37|1695.11|263.5,123.79,97"
+	readers := []string{"mdbtools", ""} // "": automatic order (the Access driver refuses this Access 97 file)
+	check := func(t *testing.T, m *DBManager, what string) {
+		t.Helper()
+		// in SQLite itself (sqlite_query runs on the file) and in DuckDB SQL, as the SQL tab runs it
+		lite := queryText(t, m, `SELECT * FROM sqlite_query('src', 'SELECT (SELECT count(*) FROM Products WHERE typeof(UnitPrice) = ''text''),
+			count(*), round(sum(UnitPrice), 2), (SELECT group_concat(UnitPrice + 0) FROM (SELECT UnitPrice FROM Products ORDER BY UnitPrice DESC LIMIT 3))
+			FROM Products WHERE UnitPrice > 20')`)
+		got := strings.Join(lite[0], "|")
+		if got != want && got != strings.Replace(want, ",97", ",97.0", 1) {
+			t.Errorf("%s, sqlite: %s, want %s", what, got, want)
+		}
+		duck := queryText(t, m, `SELECT count(*), round(sum(UnitPrice), 2), (SELECT string_agg(CAST(UnitPrice AS VARCHAR), ',')
+			FROM (SELECT UnitPrice FROM Products ORDER BY UnitPrice DESC LIMIT 3)) FROM Products WHERE UnitPrice > 20`)
+		if g := strings.Join(duck[0], "|"); g != "37|1695.11|263.5,123.79,97.0" {
+			t.Errorf("%s, SQL tab: %s", what, g)
+		}
+		t.Logf("%s: sqlite %s; SQL tab %s", what, got, strings.Join(duck[0], "|"))
+	}
+	for _, r := range readers {
+		t.Run(r, func(t *testing.T) {
+			t.Setenv("MDB2SQL_ACCESS_READER", r)
+			m := NewDBManager()
+			if err := m.Connect(path); err != nil {
+				t.Fatal(err)
+			}
+			defer RemoveConverted(m.Converted())
+			defer m.Close()
+			t.Logf("reader %s", m.Source())
+			check(t, m, "converted")
+			out := filepath.Join(t.TempDir(), "export.sqlite")
+			if err := m.ExportDatabase(context.Background(), "sqlite", out, func(int, int, string) {}); err != nil {
+				t.Fatal(err)
+			}
+			e := NewDBManager()
+			defer e.Close()
+			if err := e.Connect(out); err != nil {
+				t.Fatal(err)
+			}
+			check(t, e, "Export > SQLite")
+		})
+	}
+}
+
 func TestRealDB_ExportRoundTrip(t *testing.T) {
 	dir := realDBDir(t)
 	m := NewDBManager()

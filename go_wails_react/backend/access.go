@@ -56,22 +56,25 @@ func chooseAccessReader(force string, odbcOK, mdbtoolsOK bool) (string, error) {
 // openAccess converts the Access file ONCE into a SQLite file (temporary, see convert.go) and returns its path.
 // The reader fills an in-memory DuckDB, which copyDatabase then writes to SQLite with typed columns.
 func openAccess(ctx context.Context, path string, progress Progress) (sqlitePath, reader string, err error) {
-	if reader, err = chooseAccessReader(os.Getenv("MDB2SQL_ACCESS_READER"), odbcInstalled(), mdbtoolsAvailable()); err != nil {
+	force := os.Getenv("MDB2SQL_ACCESS_READER")
+	if reader, err = chooseAccessReader(force, odbcInstalled(), mdbtoolsAvailable()); err != nil {
 		return "", "", err
 	}
-	db, err := openMemory()
+	db, err := importAccess(ctx, reader, path, progress)
+	// the Access driver refuses some files the embedded mdbtools reads (Access 97 .mdb: "created with an older
+	// version"); without a forced reader, try mdbtools before giving up
+	if err != nil && reader == SourceODBC && strings.TrimSpace(force) == "" && ctx.Err() == nil && mdbtoolsAvailable() {
+		var err2 error
+		if db, err2 = importAccess(ctx, SourceMdbtools, path, progress); err2 == nil {
+			reader, err = SourceMdbtools, nil
+		} else {
+			err = fmt.Errorf("%w; %s: %w", err, SourceMdbtools, err2)
+		}
+	}
 	if err != nil {
 		return "", "", err
 	}
 	defer db.Close()
-	if reader == SourceODBC {
-		err = importODBC(ctx, db, path, progress)
-	} else {
-		err = importMdbtools(ctx, db, path, progress)
-	}
-	if err != nil {
-		return "", "", fmt.Errorf("%s: %w", reader, err)
-	}
 	tables, err := listTables(db)
 	if err != nil {
 		return "", "", err
@@ -84,6 +87,24 @@ func openAccess(ctx context.Context, path string, progress Progress) (sqlitePath
 		return "", "", err
 	}
 	return sqlitePath, reader, nil
+}
+
+// importAccess reads the Access file with one reader into a new in-memory DuckDB (closed on error)
+func importAccess(ctx context.Context, reader, path string, progress Progress) (*sql.DB, error) {
+	db, err := openMemory()
+	if err != nil {
+		return nil, err
+	}
+	if reader == SourceODBC {
+		err = importODBC(ctx, db, path, progress)
+	} else {
+		err = importMdbtools(ctx, db, path, progress)
+	}
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("%s: %w", reader, err)
+	}
+	return db, nil
 }
 
 type accessColumn struct{ name, typ string }
