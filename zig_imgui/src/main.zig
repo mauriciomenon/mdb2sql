@@ -579,6 +579,22 @@ fn rightAlign(width: f32, reserve: f32) void {
     if (avail > width) ig.igSetCursorPosX(ig.igGetCursorPosX() + avail - width);
 }
 
+// Cabecalho de coluna numerica: o nome encostado a direita, deixando `reserve` px (seta de ordenacao). O rotulo do
+// TableHeader fica invisivel e so conta para a largura automatica da coluna. Devolve se o cabecalho esta sob o mouse.
+fn rightHeader(label: [:0]const u8, reserve: f32) bool {
+    const y0 = ig.igGetCursorScreenPos().y;
+    ig.igPushStyleColor_U32(ig.ImGuiCol_Text, 0);
+    ig.igTableHeader(label.ptr);
+    ig.igPopStyleColor(1);
+    const hovered = ig.igIsItemHovered(0);
+    const min_x = ig.igGetItemRectMin().x;
+    const max_x = ig.igGetItemRectMax().x - reserve;
+    ig.igSameLine(0, 0);
+    ig.igSetCursorScreenPos(.{ .x = @max(min_x, max_x - textWidth(label)), .y = y0 });
+    textSlice(label);
+    return hovered;
+}
+
 // Janela/dialogo sempre no centro da janela principal (mesmo redimensionada)
 fn centerNext() void {
     const vp = ig.igGetMainViewport();
@@ -1657,14 +1673,7 @@ const App = struct {
         ig.igTableNextRow(ig.ImGuiTableRowFlags_Headers, ig.igTableGetHeaderRowHeight());
         if (ig.igTableSetColumnIndex(0)) ig.igTableHeader(tr("col_table"));
         if (ig.igTableSetColumnIndex(1)) {
-            const x0 = ig.igGetCursorPosX();
-            ig.igPushStyleColor_U32(ig.ImGuiCol_Text, 0); // nome invisivel: a largura automatica ainda conta com ele
-            ig.igTableHeader(tr("col_rows"));
-            ig.igPopStyleColor(1);
-            ig.igSameLine(0, 0);
-            ig.igSetCursorPosX(x0);
-            rightAlign(textWidth(tr("col_rows")), 0);
-            textSlice(tr("col_rows"));
+            _ = rightHeader(tr("col_rows"), 0);
         }
         var fbuf: [app.table_filter.len]u8 = undefined;
         const words = dbm.gridtools.fold(&fbuf, zstr(&app.table_filter));
@@ -1932,15 +1941,7 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
             if (c < g.num_cols.len and g.num_cols[c]) {
                 // coluna numerica: o nome a direita, deixando lugar para a seta de ordenacao
                 // o cabecalho com o nome invisivel mantem o ajuste automatico da largura pelo nome
-                const x0 = ig.igGetCursorPosX();
-                ig.igPushStyleColor_U32(ig.ImGuiCol_Text, 0);
-                ig.igTableHeader(name.ptr);
-                ig.igPopStyleColor(1);
-                hovered = ig.igIsItemHovered(0);
-                ig.igSameLine(0, 0);
-                ig.igSetCursorPosX(x0);
-                rightAlign(textWidth(name), if (sort != null) ig.igGetFontSize() * 0.8 else 0);
-                textSlice(name);
+                hovered = rightHeader(name, if (sort != null and sort.?.col == c) ig.igGetFontSize() * 0.8 else 0); // seta so na ordenada
             } else {
                 ig.igTableHeader(name.ptr);
                 hovered = ig.igIsItemHovered(0);
