@@ -38,7 +38,7 @@ def test_about_fields() -> None:
     assert list(fields) == ["Build", "Stack", "Libraries", "Access", "Author", "License"]
     assert fields["Build"] == "dev"
     assert re.fullmatch(r"Python [\d.]+\S* \+ PyQt6 [\d.]+ \(Qt [\d.]+\)", fields["Stack"])
-    assert re.fullmatch(r"SQLite [\d.]+, DuckDB [\d.]+\S*, XlsxWriter [\d.]+, pyodbc [\d.]+", fields["Libraries"])
+    assert re.fullmatch(r"SQLite [\d.]+, DuckDB [\d.]+\S*, XlsxWriter [\d.]+, pyodbc ([\d.]+|-)", fields["Libraries"])
     # mdbtools primeiro (vai no pacote); depois o driver ODBC, se a maquina tiver
     assert re.fullmatch(
         r"(mdbtools [\d.]+ \(bundled\)|mdbtools not bundled); Access ODBC driver (not )?installed", fields["Access"]

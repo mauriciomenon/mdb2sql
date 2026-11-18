@@ -87,6 +87,7 @@ def test_access_reader_none_available(monkeypatch) -> None:
         access.access_reader()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="copia por versao so no exe do Windows; o Linux usa a pasta do pacote")
 def test_frozen_mdbtools_copied_to_one_cache_per_version(monkeypatch, tmp_path) -> None:
     bundle = tmp_path / "bundle"
     bundle.mkdir()

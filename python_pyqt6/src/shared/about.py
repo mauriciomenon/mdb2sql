@@ -11,7 +11,6 @@ import tomllib
 from pathlib import Path
 
 import duckdb
-import pyodbc
 import xlsxwriter
 from PyQt6.QtCore import PYQT_VERSION_STR, qVersion
 
@@ -63,11 +62,20 @@ def access_engine() -> str:
     return f"{mdbtools}; {odbc}"
 
 
+def pyodbc_version() -> str:
+    # Linux sem unixODBC (libodbc) nao carrega o pyodbc; o Access vai pelo mdbtools
+    try:
+        import pyodbc
+    except ImportError:
+        return "-"
+    return pyodbc.version
+
+
 def about_fields() -> list[tuple[str, str]]:
     """Linhas (rotulo, valor) do Sobre, na ordem em que aparecem."""
     libraries = (
         f"SQLite {sqlite3.sqlite_version}, DuckDB {duckdb.__version__}, XlsxWriter {xlsxwriter.__version__},"
-        f" pyodbc {pyodbc.version}"
+        f" pyodbc {pyodbc_version()}"
     )
     return [
         (tr("about.build"), build_info().removeprefix("build ")),

@@ -3,6 +3,7 @@
 #   build/dist/mdb2sql-pyqt.exe   exe unico (onefile)
 #   build/dist/mdb2sql/           pasta do app (mdb2sql.exe + _internal), base do .zip e do instalador
 import subprocess
+import sys
 import tomllib
 from datetime import date
 from pathlib import Path
@@ -15,14 +16,17 @@ commits = subprocess.run(["git", "rev-list", "--count", "HEAD"], capture_output=
 (root / "build" / "VERSION").write_text(version, encoding="utf-8")
 (root / "build" / "BUILD").write_text(f"{commits} {date.today().isoformat()}", encoding="utf-8")
 
-# extensao sqlite do DuckDB e mdbtools baixados por scripts/setup_tools.ps1 (sha256 conferido)
-bundled = [".tools/duckdb_ext/sqlite_scanner.duckdb_extension"] + [
-    f".tools/mdbtools/{name}"
-    for name in ("mdb-tables.exe", "mdb-schema.exe", "mdb-export.exe", "COPYING", "COPYING.LIB", "VERSION.txt")
+# extensao sqlite do DuckDB e mdbtools (programas, bibliotecas no Linux, licencas e versao) baixados com sha256
+# conferido: scripts/setup_tools.ps1 (Windows) ou scripts/setup_tools_linux.sh (Debian)
+exe = ".exe" if sys.platform == "win32" else ""
+required = [".tools/duckdb_ext/sqlite_scanner.duckdb_extension"] + [
+    f".tools/mdbtools/{name}" for name in (f"mdb-tables{exe}", f"mdb-schema{exe}", f"mdb-export{exe}", "VERSION.txt")
 ]
-missing = [path for path in bundled if not (root / path).is_file()]
+missing = [path for path in required if not (root / path).is_file()]
 if missing:
-    raise SystemExit(f"faltam {missing}: rode scripts/setup_tools.ps1")
+    raise SystemExit(f"faltam {missing}: rode scripts/setup_tools.ps1 (Windows) ou scripts/setup_tools_linux.sh")
+tools = sorted(p for p in (root / ".tools" / "mdbtools").iterdir() if p.is_file() and p.name != ".sha256")
+bundled = required[:1] + [str(p.relative_to(root)) for p in tools]
 
 a = Analysis(
     ["src/main.py"],
