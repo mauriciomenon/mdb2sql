@@ -9,6 +9,19 @@ void shim_io_setup(void) {
     io->ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 }
 
+// --capture: sem mouse nenhum (nem o real) e tela do tamanho do quadro que vai para o PNG
+void shim_capture_setup(void) {
+    igGetIO_Nil()->ConfigFlags |= ImGuiConfigFlags_NoMouse;
+}
+
+void shim_capture_frame(float w, float h) {
+    ImGuiIO *io = igGetIO_Nil();
+    io->DisplaySize.x = w;
+    io->DisplaySize.y = h;
+    io->DisplayFramebufferScale.x = 1;
+    io->DisplayFramebufferScale.y = 1;
+}
+
 void shim_add_font(const char *path, float size_pixels) {
     ImFontAtlas_AddFontFromFileTTF(igGetIO_Nil()->Fonts, path, size_pixels, NULL, NULL);
 }

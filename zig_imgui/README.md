@@ -154,7 +154,7 @@ NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 
   `SUPERVISÃO DE FREIOS UG 12 - ...` (1.1.0 found none: it looked for the whole text as one piece). Time on that
   table: about 0.15 s for one word, 0.2 to 0.4 s for two to six words. The SQL result search over 10,000 real
   rows x 123 columns takes about 10 ms per keystroke.
-- Unit tests (`zig build test`, 53 plus 1 of the single-exe packer; the real-Access one runs only when `MDB2SQL_TEST_ACCDB` is set): SQL building and whitelists, paging, streaming results, sheet names and
+- Unit tests (`zig build test`, 56 plus 1 of the single-exe packer; the real-Access one runs only when `MDB2SQL_TEST_ACCDB` is set): SQL building and whitelists, paging, streaming results, sheet names and
   splitting, the xlsx zip read back by Zig's zip reader (CRC and headers checked), CSV, Access reader choice,
   Access type mapping and `mdb-schema` parsing, settings file and default dialog folder, worker thread jobs,
   cancel, and a long session (25 rounds of reopen, SQL errors, a 10-billion-row result, exports and cancels)
@@ -189,7 +189,11 @@ NMR5 databases "2026-07-14 DB4" (287 tables, 113,962 rows; RANGER_SOSTAT 36,754 
 - Tested: unit tests for the exact filter SQL (quoted column, bound value, quotes and an injection attempt in the
   value, NULL, empty text, AND with the search, row limit) on DuckDB, SQLite and the in-memory Access copy, the
   filter list and its button label, the short title, the two allowed links and the license. Screenshots of the release
-  program on a copy of DB4.duckdb: title and table, About, Columns with several hidden, an active filter.
+  program on copies of DB4.duckdb and DB4.accdb (read by mdbtools), taken by its hidden test aid `--capture`
+  (README-BUILD.txt): table, active filter, Columns with several hidden at the default and a maximized size, a
+  narrow window, RANGER_SOANLG and About.
+- On a narrow window the Data toolbar buttons move to the next line, and the About and Columns dialogs stay
+  centered when the window is resized.
 
 ### Changes in 1.1.1
 

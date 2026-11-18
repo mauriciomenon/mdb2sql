@@ -11,6 +11,7 @@ pub const query = @import("query.zig");
 pub const worker = @import("worker.zig");
 pub const csv = @import("csv.zig");
 pub const about = @import("about.zig");
+pub const capture = @import("capture.zig");
 pub const gridtools = @import("gridtools.zig");
 pub const xlsx = @import("xlsx.zig");
 pub const exporter = @import("exporter.zig");
@@ -481,6 +482,7 @@ test {
     _ = worker;
     _ = csv;
     _ = about;
+    _ = capture;
     _ = gridtools;
     _ = xlsx;
     _ = exporter;
