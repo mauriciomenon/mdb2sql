@@ -51,8 +51,14 @@ Changes in 1.3.0:
 - Languages: Settings > Language: English (default), Português (Brasil), Español; saved; changes at once,
   without restarting. Every text (menus, dialogs, messages, About, tooltips, native dialogs) comes from
   `i18n/en.json`, `i18n/pt-BR.json`, `i18n/es.json` (same keys, shared by Go and React).
-- View > Log: the session messages with the time (open, convert, save/delete, export, copy, errors), read-only
-  and selectable (Ctrl+A, Ctrl+C), "Copy all". The status bar text is selectable and right-click > Copy.
+- Log panel at the bottom: the session messages with the time (open, convert, save/delete, export, copy,
+  errors), read-only and selectable (Ctrl+A, Ctrl+C), "Copy all"; monospace one step smaller than the rest; about
+  15% of the window, resized by its top border (4 lines to 30%). Collapsed by default; the arrow in its header,
+  the arrow in the status bar, View > Log and Ctrl+L collapse or expand it, and the state is kept for the next
+  start. Collapsed, the status bar shows the last unread error (highlighted), else the last warning, else the
+  last action, with a counter of unread errors and warnings; a click on it opens the log. The status bar text is
+  selectable and right-click > Copy.
+- Numeric columns are right-aligned, their header too.
 - Names are never cut with "...": long table names in the list and long column names in "Columns..." wrap
   to a second line; the status bar wraps too.
 - Debian 13 amd64 build (`.deb` and `.zip`) with mdbtools inside.
@@ -97,7 +103,8 @@ Open a file with File > Open database (the dialog lists Access, SQLite and DuckD
   several columns add up (AND) and show as removable chips. Exports ignore filters and search.
 - Columns...: one checkbox per column, a field to filter the list; "Show all" and "Hide all" act on the
   listed columns only. Right-click a column header: Hide this column, Columns..., Show all.
-- Status bar: the last message (selectable; right-click > Copy) and the reader used ("Opened via mdbtools,
+- Status bar: the last message, or the last unread error or warning while the log is collapsed (click: opens
+  the log; right-click > Copy), and the reader used ("Opened via mdbtools,
   converted to SQLite", "Opened via SQLite"...).
 
 Menus: File (Open database..., Open sample data, Close database, Exit), Export (Database as SQLite / DuckDB /

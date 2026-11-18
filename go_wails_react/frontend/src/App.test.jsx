@@ -2,7 +2,7 @@ import React from 'react';
 import { readFileSync } from 'node:fs';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, beforeEach } from 'vitest';
-import App, { aboutRows, columnCellWidth, filterLabel, logLine, progressText, rowToTsv, searchRows, tsvField, withFilter } from './App.tsx';
+import App, { aboutRows, clampLogHeight, columnCellWidth, filterLabel, LOG_MIN, logLine, progressText, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
 import { CATALOGS, LANGS, translate } from './i18n';
 
 const tables = ['RANGER_SOACCU', 'RANGER_SOGEN'];
@@ -401,9 +401,72 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Copy' }));
     await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith(screen.getByRole('status').textContent));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse the log' }));
     expect(screen.queryByRole('textbox', { name: 'Log' })).not.toBeInTheDocument();
     expect(logLine('x', new Date(2026, 0, 2, 3, 4, 5))).toBe('03:04:05  x');
+  });
+
+  // owner's "Painel de Log": collapsed by default and remembered; arrow, View > Log and Ctrl+L; collapsed, the status
+  // bar shows the last unread error (then warning) with a counter, and a click on it expands the log
+  it('collapses and expands the log, remembers it, and shows the last unread error in the status bar', async () => {
+    const SetLogOpen = vi.fn(async () => {});
+    const RunQuery = vi.fn(async () => {
+      throw new Error('Parser Error: syntax error at or near "selec"');
+    });
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SetLogOpen, RunQuery, GetLogOpen: vi.fn(async () => false) } } } });
+    render(<App />);
+    expect(screen.queryByRole('textbox', { name: 'Log' })).not.toBeInTheDocument(); // collapsed by default
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+    fireEvent.click(screen.getByRole('tab', { name: 'SQL' }));
+    fireEvent.change(screen.getByLabelText('SQL'), { target: { value: 'selec 1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    await waitFor(() => expect(screen.getByRole('status').className).toContain('error'));
+    expect(screen.getByRole('status').textContent).toMatch(/syntax error/);
+    expect(screen.getByTitle('1 unread errors or warnings').textContent).toBe('1');
+
+    // a later action does not hide the unread error while the log is collapsed
+    fireEvent.click(screen.getByRole('tab', { name: 'Data' }));
+    expect(screen.getByRole('status').textContent).toMatch(/syntax error/);
+
+    fireEvent.click(screen.getByRole('status')); // click: expands, the error counts as read
+    expect(screen.getByRole('textbox', { name: 'Log' }).value).toMatch(/syntax error/);
+    expect(SetLogOpen).toHaveBeenLastCalledWith(true);
+    expect(screen.queryByTitle(/unread/)).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Log' }).style.height).toMatch(/px$/);
+
+    fireEvent.keyDown(window, { key: 'l', ctrlKey: true }); // Ctrl+L collapses
+    expect(screen.queryByRole('textbox', { name: 'Log' })).not.toBeInTheDocument();
+    expect(SetLogOpen).toHaveBeenLastCalledWith(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Show the log' })); // the status bar arrow expands
+    expect(screen.getByRole('textbox', { name: 'Log' })).toBeInTheDocument();
+
+    expect(clampLogHeight(10, 800)).toBe(LOG_MIN); // at least 4 lines
+    expect(clampLogHeight(500, 800)).toBe(240); // at most 30% of the window
+    expect(clampLogHeight(120, 800)).toBe(120);
+    const entries = [
+      { line: '', text: 'w', level: 'warn' },
+      { line: '', text: 'e', level: 'error' },
+      { line: '', text: 'ok', level: 'info' },
+    ];
+    expect(statusLine(entries, 0, 'ok', '')).toEqual({ text: 'e', level: 'error', unread: 2 });
+    expect(statusLine(entries, 2, 'ok', '')).toEqual({ text: 'ok', level: 'info', unread: 0 });
+    expect(statusLine(entries.slice(0, 1), 0, 'ok', '')).toEqual({ text: 'w', level: 'warn', unread: 1 });
+  });
+
+  it('opens with the log expanded when it was left expanded', async () => {
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetLogOpen: vi.fn(async () => true) } } } });
+    render(<App />);
+    expect(await screen.findByRole('textbox', { name: 'Log' })).toBeInTheDocument();
+  });
+
+  it('right-aligns numeric columns, header included', async () => {
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+    expect(screen.getByRole('columnheader', { name: 'ID' }).className).toBe('num');
+    expect(screen.getByRole('columnheader', { name: 'NAME' }).className).toBe('');
+    expect(screen.getByRole('cell', { name: '2' }).className).toBe('num');
   });
 
   it('exports from the Export menu and runs SQL', async () => {
@@ -552,7 +615,7 @@ describe('App IPC flow', () => {
   });
 
   it('describes progress by table or by row', () => {
-    expect(progressText('Loading', null, en)).toBe('Loading...');
+    expect(progressText('Loading', null, en)).toBe('Loading'); // no "..." (owner's rule)
     expect(progressText('Loading', { done: 12, total: 287, label: 'RANGER_SOSTAT' }, en)).toBe('Loading RANGER_SOSTAT - 12 of 287');
     expect(progressText('Exporting', { done: 5000, total: 0, label: 'Result' }, en)).toBe('Exporting Result - 5000');
   });

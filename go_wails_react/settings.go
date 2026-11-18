@@ -15,6 +15,15 @@ type Settings struct {
 	Theme    string `json:"theme"`    // system, light or dark
 	Language string `json:"language"` // en (default), pt-BR or es
 	LastDir  string `json:"lastDir"`
+	LogOpen  bool   `json:"logOpen"` // Log panel expanded (default: collapsed)
+}
+
+// GetLogOpen / SetLogOpen: the Log panel state, remembered between sessions
+func (a *App) GetLogOpen() bool { return a.settings.LogOpen }
+
+func (a *App) SetLogOpen(open bool) error {
+	a.settings.LogOpen = open
+	return a.saveSettings()
 }
 
 var themes = map[string]bool{"system": true, "light": true, "dark": true}

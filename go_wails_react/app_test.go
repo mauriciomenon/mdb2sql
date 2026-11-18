@@ -297,4 +297,11 @@ func TestSettingsPersist(t *testing.T) {
 	if got := NewApp().GetLanguage(); got != "es" || i18n.T("menu.file") != "Archivo" {
 		t.Fatalf("language after restart %q", got)
 	}
+	// the Log panel starts collapsed and keeps the last state
+	if app.GetLogOpen() {
+		t.Fatal("log expanded by default")
+	}
+	if err := app.SetLogOpen(true); err != nil || !NewApp().GetLogOpen() {
+		t.Fatalf("log state after restart: %v", err)
+	}
 }

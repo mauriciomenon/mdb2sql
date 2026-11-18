@@ -38,6 +38,10 @@ export function GetLanguage() {
   return window['go']['main']['App']['GetLanguage']();
 }
 
+export function GetLogOpen() {
+  return window['go']['main']['App']['GetLogOpen']();
+}
+
 export function GetRowCount(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetRowCount'](arg1, arg2, arg3);
 }
@@ -80,6 +84,10 @@ export function SelectDatabase() {
 
 export function SetLanguage(arg1) {
   return window['go']['main']['App']['SetLanguage'](arg1);
+}
+
+export function SetLogOpen(arg1) {
+  return window['go']['main']['App']['SetLogOpen'](arg1);
 }
 
 export function SetTheme(arg1) {

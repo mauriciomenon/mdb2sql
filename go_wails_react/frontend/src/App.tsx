@@ -39,6 +39,8 @@ declare global {
           ExportQuery?: (query: string, format: string) => Promise<string>;
           CancelJob?: () => Promise<void>;
           GetTheme?: () => Promise<Theme>;
+          GetLogOpen?: () => Promise<boolean>;
+          SetLogOpen?: (open: boolean) => Promise<void>;
           SetTheme?: (theme: Theme) => Promise<void>;
           GetLanguage?: () => Promise<Lang>;
           SetLanguage?: (lang: Lang) => Promise<void>;
@@ -125,12 +127,25 @@ export function searchRows(rows: Row[], columns: string[], query: string, index?
 
 // Go counts tables when it loads or exports a database and rows when it exports one table or result
 export function progressText(verb: string, p: Progress | null, t: T): string {
-  if (!p?.label) return `${verb}...`;
+  if (!p?.label) return verb;
   return p.total > 0 ? t('progress.of', verb, p.label, p.done, p.total) : t('progress.count', verb, p.label, p.done);
 }
 
 // Linha do painel Log: hora local HH:MM:SS + texto
 export const logLine = (text: string, at = new Date()) => `${at.toTimeString().slice(0, 8)}  ${text}`;
+type LogLevel = 'info' | 'warn' | 'error';
+type LogEntry = { line: string; text: string; level: LogLevel };
+
+// Log panel height: about 15% of the window, at least 4 lines of the 13 px log font, at most 30% of the window
+export const LOG_MIN = 86;
+export const clampLogHeight = (h: number, windowHeight: number) => Math.round(Math.max(LOG_MIN, Math.min(h, windowHeight * 0.3)));
+
+// Status bar with the log collapsed: the last unread error, else the last unread warning, else the status
+export function statusLine(entries: LogEntry[], readMark: number, status: string, error: string) {
+  const unread = entries.slice(readMark).filter((e) => e.level !== 'info');
+  const pick = unread.findLast((e) => e.level === 'error') ?? unread.findLast((e) => e.level === 'warn');
+  return { text: pick?.text ?? (error || status), level: pick?.level ?? (error ? 'error' : 'info'), unread: unread.length };
+}
 
 function getWailsBridge() {
   const bridge = window.go?.main?.App;
@@ -174,8 +189,10 @@ function App() {
   const [sql, setSql] = useState('');
   const [result, setResult] = useState<QueryResult | null>(null);
   const [resultSql, setResultSql] = useState(''); // SQL of the result shown (what "Export SQL result" writes)
-  const [logLines, setLogLines] = useState<string[]>([]);
-  const [logOpen, setLogOpen] = useState(false);
+  const [logLines, setLogLines] = useState<LogEntry[]>([]);
+  const [logOpen, setLogOpen] = useState(false); // collapsed by default
+  const [readMark, setReadMark] = useState(0); // log lines before this one were seen
+  const [logHeight, setLogHeight] = useState(() => clampLogHeight(Math.round(window.innerHeight * 0.15), window.innerHeight));
   const [displayWarn, setDisplayWarn] = useState<DisplayWarning | null>(null); // Linux: X11 missing, on Wayland
   // "save or delete the converted SQLite" question; resolve gets the answer (null = cancel)
   const [ask, setAsk] = useState<{ name: string; resolve: (a: { choice: string; remember: boolean } | null) => void } | null>(null);
@@ -187,7 +204,7 @@ function App() {
   const [shownFind, setShownFind] = useState(''); // search of the rows shown in the Data tab
   const [querying, setQuerying] = useState(false);
 
-  const addLog = (text: string) => setLogLines((old) => [...old, logLine(text)]);
+  const addLog = (text: string, level: LogLevel = 'info') => setLogLines((old) => [...old, { line: logLine(text), text, level }]);
   // every status and error also goes to the Log panel
   const setStatus = (text: string) => {
     setStatusText(text);
@@ -195,8 +212,19 @@ function App() {
   };
   const setError = (text: string) => {
     setErrorText(text);
-    if (text) addLog(text);
+    if (text) addLog(text, 'error');
   };
+  // collapse/expand (log header arrow, status bar, View > Log, Ctrl+L); remembered by Go between sessions. What
+  // was in the log when it is opened or closed counts as read.
+  const logCount = useRef(0);
+  logCount.current = logLines.length;
+  const toggleLog = (open?: boolean) =>
+    setLogOpen((old) => {
+      const next = open ?? !old;
+      setReadMark(logCount.current);
+      if (next !== old) window.go?.main?.App?.SetLogOpen?.(next)?.catch(() => {});
+      return next;
+    });
 
   useEffect(() => {
     if (!menu && !openMenu) return;
@@ -224,11 +252,38 @@ function App() {
   useEffect(() => window.runtime?.EventsOn?.('progress', setProgress), []);
   useEffect(() => window.runtime?.EventsOn?.('log', (text: string) => addLog(text)), []);
 
+  // Ctrl+L collapses or expands the Log panel
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'l') {
+        e.preventDefault();
+        toggleLog();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // dragging the top border of the Log panel resizes it (15% of the window by default, 4 lines to 30%)
+  function startLogResize(e: React.MouseEvent) {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = logHeight;
+    const move = (ev: MouseEvent) => setLogHeight(clampLogHeight(startH + startY - ev.clientY, window.innerHeight));
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }
+
   // startup: saved theme and language, then the file from the command line or MDB2SQL_DB_PATH
   useEffect(() => {
     if (started.current) return; // StrictMode runs effects twice in development
     started.current = true;
     const bridge = window.go?.main?.App;
+    bridge?.GetLogOpen?.().then((open) => open && setLogOpen(true)).catch(() => {});
     bridge?.GetTheme?.().then((th) => th && setThemeState(th)).catch(() => {});
     bridge?.GetLanguage?.()
       .then((l) => {
@@ -243,7 +298,7 @@ function App() {
       .then((w) => {
         if (w?.text) {
           setDisplayWarn(w);
-          addLog([w.text, w.missing, w.command ? `${w.distro}: ${w.command}` : ''].filter(Boolean).join(' '));
+          addLog([w.text, w.missing, w.command ? `${w.distro}: ${w.command}` : ''].filter(Boolean).join(' '), 'warn');
         }
       })
       .catch(() => {});
@@ -544,6 +599,8 @@ function App() {
   );
   // hidden columns only leave the Data grid: search, copy row and exports still use every column
   const shownColumns = useMemo(() => (view === 'data' ? gridColumns.filter((c) => !hidden.has(c)) : gridColumns), [view, gridColumns, hidden]);
+  // numeric columns are right-aligned, header included (cells: by their value type)
+  const numericCols = useMemo(() => new Set(gridColumns.filter((c) => gridRows.some((r) => typeof r[c] === 'number'))), [gridColumns, gridRows]);
   const hiddenCount = gridColumns.length - shownColumns.length;
   // the search of the rows on screen, not of the one being typed: the counts below belong to those rows
   const narrowed = filters.length > 0 || shownFind !== '';
@@ -551,6 +608,8 @@ function App() {
   const copyRow = (withHeader: boolean) =>
     sel && copyText(rowToTsv(gridColumns, sel.row, withHeader), t(withHeader ? 'copied.rowHeader' : 'copied.row'));
   const busy = job !== '';
+  // log collapsed: the most important unread line (error, then warning) takes the status bar
+  const shownStatus = logOpen ? { text: error || status, level: error ? 'error' : 'info', unread: 0 } : statusLine(logLines, readMark, status, error);
   const viewName = (v: View) => (v === 'data' ? t('tab.data') : v === 'schema' ? t('tab.schema', schema.length) : t('tab.sql'));
 
   const toggleMenu = (name: MenuName) => (e: React.MouseEvent) => {
@@ -573,6 +632,7 @@ function App() {
             <th
               key={col}
               scope="col"
+              className={numericCols.has(col) ? 'num' : undefined}
               title={col}
               onContextMenu={
                 view === 'data'
@@ -662,7 +722,7 @@ function App() {
             {menuButton('view', t('menu.view'))}
             {openMenu === 'view' && (
               <div className="dropdown" role="menu" aria-label={t('menu.view')}>
-                <button role="menuitemcheckbox" aria-checked={logOpen} onClick={() => setLogOpen(!logOpen)}>
+                <button role="menuitemcheckbox" aria-checked={logOpen} onClick={() => toggleLog()}>
                   <span className="check">{logOpen ? '✓' : ''}</span>
                   {t('menu.log')}
                 </button>
@@ -864,15 +924,24 @@ function App() {
 
       {logOpen && (
         <section className="log" aria-label={t('log.title')}>
+          <div className="log-resize" role="separator" aria-orientation="horizontal" title={t('log.resize')} onMouseDown={startLogResize} />
           <div className="log-bar">
+            <button className="log-toggle" aria-label={t('log.collapse')} title={`${t('log.collapse')} (Ctrl+L)`} onClick={() => toggleLog(false)}>
+              ▾
+            </button>
             <h2>{t('log.title')}</h2>
-            <button onClick={() => copyText(logLines.join('\r\n'), t('copied.log'))} disabled={logLines.length === 0}>
+            <button onClick={() => copyText(logLines.map((e) => e.line).join('\r\n'), t('copied.log'))} disabled={logLines.length === 0}>
               {t('log.copyAll')}
             </button>
-            <button onClick={() => setLogOpen(false)}>{t('log.close')}</button>
           </div>
           {/* read-only text: select with the mouse or Ctrl+A, copy with Ctrl+C */}
-          <textarea readOnly spellCheck={false} aria-label={t('log.title')} value={logLines.join('\n')} />
+          <textarea
+            readOnly
+            spellCheck={false}
+            aria-label={t('log.title')}
+            style={{ height: logHeight }}
+            value={logLines.map((e) => e.line).join('\n')}
+          />
         </section>
       )}
 
@@ -884,9 +953,24 @@ function App() {
           setMenu({ x: e.clientX, y: e.clientY, status: true });
         }}
       >
-        <p className={error ? 'status error' : 'status'} role="status" aria-live="polite">
-          {error || status}
+        {!logOpen && (
+          <button className="log-toggle" aria-label={t('log.expand')} title={`${t('log.expand')} (Ctrl+L)`} onClick={() => toggleLog(true)}>
+            ▴
+          </button>
+        )}
+        <p
+          className={shownStatus.level === 'error' ? 'status error' : shownStatus.level === 'warn' ? 'status warn' : 'status'}
+          role="status"
+          aria-live="polite"
+          onClick={() => !logOpen && !window.getSelection()?.toString() && toggleLog(true)}
+        >
+          {shownStatus.text}
         </p>
+        {shownStatus.unread > 0 && (
+          <span className="badge" title={t('log.unread', shownStatus.unread)}>
+            {shownStatus.unread}
+          </span>
+        )}
         {hiddenCount > 0 && <span className="source">{hiddenCount === 1 ? t('hidden.one') : t('hidden.many', hiddenCount)}</span>}
         {source && (
           <span className="source" title={t('status.sourceTip')}>
@@ -897,7 +981,7 @@ function App() {
 
       {menu?.status && (
         <div className="menu" role="menu" aria-label={t('status.copy')} style={{ left: Math.min(menu.x, window.innerWidth - 220), top: Math.min(menu.y, window.innerHeight - 50) }}>
-          <button role="menuitem" autoFocus onClick={() => copyText(error || status, t('copied.status'))}>
+          <button role="menuitem" autoFocus onClick={() => copyText(shownStatus.text, t('copied.status'))}>
             {t('status.copy')}
           </button>
         </div>

@@ -12,6 +12,7 @@
   --row-alt: #f3f5f8;
   --row-hover: #e6effb;
   --error: #b3261e;
+  --warn: #8a5300;
 }
 
 :root[data-theme='dark'] {
@@ -26,6 +27,7 @@
   --row-alt: #242c38;
   --row-hover: #2c3a4d;
   --error: #ff8a80;
+  --warn: #ffcc66;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -41,6 +43,7 @@
     --row-alt: #242c38;
     --row-hover: #2c3a4d;
     --error: #ff8a80;
+    --warn: #ffcc66;
   }
 }
 
@@ -242,6 +245,21 @@ button.primary {
   font-weight: 600;
 }
 
+.status.warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* unread errors/warnings while the log is collapsed */
+.badge {
+  min-width: 20px;
+  padding: 0 6px;
+  text-align: center;
+  color: var(--accent-text);
+  background: var(--error);
+  border-radius: 999px;
+}
+
 .field {
   display: flex;
   align-items: center;
@@ -383,7 +401,9 @@ th {
   border-bottom: 2px solid var(--border);
 }
 
-td.num {
+/* numbers to the right, the header of a numeric column too */
+td.num,
+th.num {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -627,10 +647,35 @@ td[aria-selected='true'] {
   margin-right: auto;
 }
 
+/* the top border drags the height (15% of the window, 4 lines to 30%) */
+.log-resize {
+  height: 6px;
+  margin: -8px -16px 0;
+  cursor: ns-resize;
+}
+
+.log-resize:hover {
+  background: var(--row-hover);
+}
+
+/* discreet arrow that collapses (log header) or expands (status bar) the log */
+.log-toggle {
+  padding: 0 6px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.log-toggle:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--row-hover);
+}
+
+/* monospace one step smaller than the 14 px base */
 .log textarea {
-  height: 140px;
-  resize: vertical;
-  font: inherit;
+  resize: none;
+  font: 13px/1.4 Consolas, 'Cascadia Mono', 'DejaVu Sans Mono', monospace;
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--border);
