@@ -1960,7 +1960,15 @@ fn run(init: std.process.Init) !void {
     if (capture_opts != null and app.start_table.len == 0) app.start_table = dbm.capture.first_table;
     app.capture_mode = capture_opts != null;
 
-    try glfw.init();
+    // Linux: X11 (XWayland, se houver) antes do Wayland nativo. No Wayland o GLFW decora a janela pelo libdecor, que
+    // carrega o GTK; no WSLg recem-reiniciado o programa caiu 2 vezes dentro dele (Gdk-CRITICAL
+    // gdk_seat_get_keyboard e em seguida segfault em 0x40). Sem X11 o Wayland continua valendo.
+    if (!platform.is_windows and glfw.platformSupported(.x11)) try glfw.initHint(.platform, glfw.Platform.x11);
+    glfw.init() catch |e| {
+        if (platform.is_windows) return e;
+        try glfw.initHint(.platform, @as(c_int, 0x00060000)); // GLFW_ANY_PLATFORM
+        try glfw.init();
+    };
     defer glfw.terminate();
     glfw.windowHint(.context_version_major, 3);
     glfw.windowHint(.context_version_minor, 3);
