@@ -583,6 +583,29 @@ td[aria-selected='true'] {
   margin: 0;
 }
 
+/* "Display mode" warning (Linux without X11): the command is selectable and has its own Copy button */
+.display-cmd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.display-cmd code {
+  padding: 2px 6px;
+  font: 14px/1.4 Consolas, 'Cascadia Mono', monospace;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
+.help-link {
+  align-self: center;
+  color: var(--accent);
+}
+
 /* Log panel (View > Log): read-only text, selectable, same font as the app */
 .log {
   grid-column: 1 / -1;

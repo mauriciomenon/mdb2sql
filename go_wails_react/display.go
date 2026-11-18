@@ -19,7 +19,7 @@ const displayHelp = "https://github.com/mauriciomenon/mdb2sql/blob/master/go_wai
 // displayPlan: backend = value for GDK_BACKEND ("" = leave it), warn = startup warning, fatal = no display at all
 type displayPlan struct {
 	backend string
-	warn    string
+	warn    *DisplayWarning
 	fatal   string
 }
 
@@ -66,15 +66,35 @@ func planDisplay(getenv func(string) string, osRelease string) displayPlan {
 		return displayPlan{fatal: i18n.T("display.none")}
 	}
 	cmd, name := x11Install(osRelease)
-	install := ""
-	if cmd != "" {
-		install = i18n.T("display.install", name, cmd)
-	}
-	return displayPlan{backend: "x11,wayland", warn: i18n.T("display.wayland", i18n.T("display.missingServer"), install, displayHelp)}
+	return displayPlan{backend: "x11,wayland", warn: &DisplayWarning{
+		Text:    i18n.T("display.wayland"),
+		Missing: i18n.T("display.missing", i18n.T("display.missingServer")),
+		Distro:  name,
+		Command: cmd,
+		Help:    displayHelp,
+	}}
 }
 
-// DisplayWarning is the startup warning about the display mode ("" = none); the UI shows it and logs it
-func (a *App) DisplayWarning() string { return a.displayWarn }
+// DisplayWarning is the startup warning (3 short lines, a Help link and a command to copy); the UI shows it
+type DisplayWarning struct {
+	Text    string `json:"text"`    // "X11 unavailable; using Wayland."
+	Missing string `json:"missing"` // "Missing: X server"
+	Distro  string `json:"distro"`  // PRETTY_NAME of os-release
+	Command string `json:"command"` // "" when the distribution family is unknown
+	Help    string `json:"help"`    // README section, opened in the browser
+}
+
+// Lines is the warning as plain text (terminal and log)
+func (w *DisplayWarning) Lines() string {
+	s := w.Text + "\n" + w.Missing
+	if w.Command != "" {
+		s += "\n" + w.Distro + ": " + w.Command
+	}
+	return s
+}
+
+// DisplayWarning is the startup warning about the display mode (nil = none); the UI shows it and logs it
+func (a *App) DisplayWarning() *DisplayWarning { return a.displayWarn }
 
 // applyDisplay runs on Linux before GTK starts: sets GDK_BACKEND, keeps the warning for the UI (and stderr), and
 // leaves with an error when there is no display at all
@@ -91,7 +111,7 @@ func applyDisplay(a *App) {
 	if p.backend != "" {
 		os.Setenv("GDK_BACKEND", p.backend)
 	}
-	if a.displayWarn = p.warn; p.warn != "" {
-		fmt.Fprintln(os.Stderr, "mdb2sql: "+p.warn)
+	if a.displayWarn = p.warn; p.warn != nil {
+		fmt.Fprintln(os.Stderr, "mdb2sql: "+strings.ReplaceAll(p.warn.Lines(), "\n", "\nmdb2sql: ")+"\nmdb2sql: "+p.warn.Help)
 	}
 }

@@ -89,6 +89,26 @@ export namespace main {
 	        this.saved = source["saved"];
 	    }
 	}
+	export class DisplayWarning {
+	    text: string;
+	    missing: string;
+	    distro: string;
+	    command: string;
+	    help: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DisplayWarning(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.text = source["text"];
+	        this.missing = source["missing"];
+	        this.distro = source["distro"];
+	        this.command = source["command"];
+	        this.help = source["help"];
+	    }
+	}
 
 }
 

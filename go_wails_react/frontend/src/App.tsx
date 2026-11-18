@@ -14,6 +14,8 @@ type MenuName = 'file' | 'export' | 'view' | 'settings' | 'help';
 type QueryResult = { columns: string[]; rows: Row[]; more: boolean };
 type Progress = { done: number; total: number; label: string };
 type Conversion = { done: boolean; saved: string };
+// Linux without X11 (display.go): three short lines, the install command and the README help link
+type DisplayWarning = { text: string; missing: string; distro: string; command: string; help: string };
 export type AppInfo = { version: string; build?: string; buildDate?: string; go: string; wails: string; duckdb: string; access?: string };
 export type Filter = { column: string; value: unknown }; // column = exact value, applied in the database query
 
@@ -44,7 +46,7 @@ declare global {
           RememberedChoice?: () => Promise<string>;
           ResolveConversion?: (choice: string, remember: boolean) => Promise<Conversion>;
           CloseDatabase?: () => Promise<void>;
-          DisplayWarning?: () => Promise<string>;
+          DisplayWarning?: () => Promise<DisplayWarning | null>;
         };
       };
     };
@@ -174,7 +176,7 @@ function App() {
   const [resultSql, setResultSql] = useState(''); // SQL of the result shown (what "Export SQL result" writes)
   const [logLines, setLogLines] = useState<string[]>([]);
   const [logOpen, setLogOpen] = useState(false);
-  const [displayWarn, setDisplayWarn] = useState(''); // Linux: X11 missing, running on Wayland
+  const [displayWarn, setDisplayWarn] = useState<DisplayWarning | null>(null); // Linux: X11 missing, on Wayland
   // "save or delete the converted SQLite" question; resolve gets the answer (null = cancel)
   const [ask, setAsk] = useState<{ name: string; resolve: (a: { choice: string; remember: boolean } | null) => void } | null>(null);
   const started = useRef(false);
@@ -239,9 +241,9 @@ function App() {
     // Linux without X11: the warning of display.go, shown once per start and kept in the log
     bridge?.DisplayWarning?.()
       .then((w) => {
-        if (w) {
+        if (w?.text) {
           setDisplayWarn(w);
-          addLog(w);
+          addLog([w.text, w.missing, w.command ? `${w.distro}: ${w.command}` : ''].filter(Boolean).join(' '));
         }
       })
       .catch(() => {});
@@ -968,9 +970,30 @@ function App() {
         <div className="backdrop">
           <div className="about conversion" role="alertdialog" aria-modal="true" aria-labelledby="display-title">
             <h2 id="display-title">{t('display.title')}</h2>
-            <p>{displayWarn}</p>
+            <p>
+              {displayWarn.text}
+              <br />
+              {displayWarn.missing}
+            </p>
+            {displayWarn.command && (
+              <p className="display-cmd">
+                <span>{displayWarn.distro}: </span>
+                <code>{displayWarn.command}</code>
+                <button onClick={() => copyText(displayWarn.command, t('copied.value'))}>{t('display.copy')}</button>
+              </p>
+            )}
             <div className="col-actions">
-              <button className="primary end" autoFocus onClick={() => setDisplayWarn('')}>
+              <a
+                className="help-link"
+                href={displayWarn.help}
+                onClick={(e) => {
+                  e.preventDefault(); // the default browser, never the app's own webview
+                  window.runtime?.BrowserOpenURL?.(displayWarn.help);
+                }}
+              >
+                {t('display.help')}
+              </a>
+              <button className="primary end" autoFocus onClick={() => setDisplayWarn(null)}>
                 {t('display.ok')}
               </button>
             </div>

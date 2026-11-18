@@ -9,7 +9,7 @@ export function CloseDatabase():Promise<void>;
 
 export function DatabaseName():Promise<string>;
 
-export function DisplayWarning():Promise<string>;
+export function DisplayWarning():Promise<main.DisplayWarning>;
 
 export function ExportDatabase(arg1:string):Promise<string>;
 

@@ -636,18 +636,27 @@ describe('App IPC flow', () => {
     expect(screen.getByText(/1 match "alp"/)).toBeInTheDocument();
   });
 
-  it('shows the Linux display warning at start (selectable text, OK) and keeps it in the log', async () => {
-    const text = 'X11 unavailable; the program is using Wayland (fallback). Missing: X server (DISPLAY not set).';
-    const DisplayWarning = vi.fn(async () => text);
-    global.window = Object.assign(window, { go: { main: { App: { ...bridge, DisplayWarning } } } });
+  it('shows the Linux display warning at start: 3 short lines, Copy for the command, Help link, and the log', async () => {
+    const help = 'https://github.com/mauriciomenon/mdb2sql/blob/master/go_wails_react/README.md#linux-x11-e-wayland';
+    const w = { text: 'X11 unavailable; using Wayland.', missing: 'Missing: X server', distro: 'Debian GNU/Linux 13 (trixie)', command: 'sudo apt install xwayland', help };
+    const DisplayWarning = vi.fn(async () => w);
+    const ClipboardSetText = vi.fn(async () => true);
+    const BrowserOpenURL = vi.fn();
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, DisplayWarning } } }, runtime: { ClipboardSetText, BrowserOpenURL } });
     render(<App />);
     const dialog = await screen.findByRole('alertdialog', { name: 'Display mode' });
-    expect(dialog.textContent).toContain(text);
+    expect(dialog.textContent).toContain('X11 unavailable; using Wayland.');
+    expect(dialog.textContent).toContain('Debian GNU/Linux 13 (trixie): sudo apt install xwayland');
+    expect(dialog.textContent).not.toContain('http'); // the link is a word, not a raw URL
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+    await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('sudo apt install xwayland'));
+    expect(fireEvent.click(screen.getByRole('link', { name: 'Help' }))).toBe(false);
+    expect(BrowserOpenURL).toHaveBeenCalledWith(help);
     fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'View' }));
     fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /Log/ }));
-    expect(screen.getByRole('textbox', { name: 'Log' }).value).toContain(text);
+    expect(screen.getByRole('textbox', { name: 'Log' }).value).toContain('X11 unavailable; using Wayland. Missing: X server');
   });
 
   it('handles IPC unavailable gracefully', async () => {
