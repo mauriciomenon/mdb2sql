@@ -22,9 +22,11 @@ Copy-Item build\bin\mdb2sql.exe, LICENSE $appDir
 @(
     "MDB2SQL (Go + Wails + React) $version"
     ''
-    'Abra mdb2sql.exe (nao precisa instalar). Abre .duckdb, .db, .sqlite, .sqlite3, .mdb e .accdb e exporta para'
-    '.duckdb, .sqlite, .xlsx e .csv. Precisa do Microsoft Edge WebView2 Runtime (parte do Windows 11).'
-    'Arquivos Access: usa o driver ODBC do Access (64 bits) se instalado; senao, o mdbtools embutido.'
+    'Abra mdb2sql.exe (nao precisa instalar). Abre Access (.accdb, .mdb), SQLite (.sqlite, .sqlite3, .db) e'
+    'DuckDB (.duckdb) e exporta para .sqlite, .duckdb, .xlsx e .csv. Precisa do Microsoft Edge WebView2 Runtime'
+    '(parte do Windows 11). Idiomas: ingles, portugues (Brasil), espanhol (Configuracoes > Idioma).'
+    'Access sem nada instalado: mdbtools embutido (ou o driver ODBC do Access 64 bits, se existir). O Access e'
+    'convertido uma vez para SQLite; ao fechar, o programa pergunta se salva ou apaga o SQLite convertido.'
     'Cache das ferramentas embutidas: %LOCALAPPDATA%\mdb2sql\go-wails-react-<versao>-<build>.'
     'Codigo: https://github.com/mauriciomenon/mdb2sql  e  https://gitlab.com/mauricio.menon/mdb2sql'
     'Licenca: GPL v2 ou posterior (arquivo LICENSE)'

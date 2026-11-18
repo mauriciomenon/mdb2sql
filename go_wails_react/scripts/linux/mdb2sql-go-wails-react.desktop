@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=mdb2sql (Go)
+Comment=Microsoft Access, SQLite and DuckDB viewer and converter
+Comment[pt_BR]=Visualizador e conversor de bancos Microsoft Access, SQLite e DuckDB
+Comment[es]=Visor y conversor de bases de datos Microsoft Access, SQLite y DuckDB
+Exec=mdb2sql-go-wails-react %f
+Icon=mdb2sql-go-wails-react
+Terminal=false
+Categories=Utility;Database;
+MimeType=application/vnd.ms-access;application/x-msaccess;application/vnd.sqlite3;application/x-sqlite3;
+StartupWMClass=mdb2sql
