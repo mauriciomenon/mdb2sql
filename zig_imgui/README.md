@@ -52,10 +52,11 @@ files). Nothing else is needed to open Access files.
 
 Opening an `.accdb`/`.mdb` converts every table once into a temporary SQLite file in `<TEMP>/mdb2sql-zig/` and the
 program reads that file (the status line says `read with mdbtools, converted to SQLite`). Types are kept as SQLite
-stores them: integers (`Byte`, `Integer`, `Long Integer`, `Numeric (p, 0)` up to 18 digits) as INTEGER, `Single`,
-`Double` and `Numeric` up to 15 digits as REAL (exact for that many digits), `Currency` and longer `Numeric` as exact
-decimal text (`19.9900`), dates as ISO text (`2026-07-14 10:30:00`), Yes/No as 0/1, OLE/binary as BLOB, text as TEXT;
-NULL stays NULL.
+stores them: integers (`Byte`, `Integer`, `Long Integer`, `Numeric (p, 0)` up to 18 digits) as INTEGER (declared
+BIGINT), `Single`, `Double`, `Currency` and the other `Numeric` as REAL (declared DOUBLE; exact up to 15 significant
+digits), dates as ISO text (`2026-07-14 10:30:00`, declared VARCHAR: ISO text sorts and compares in date order),
+Yes/No as 0/1, OLE/binary as BLOB, text as TEXT; NULL stays NULL. Every number has numeric affinity, so a filter
+(`WHERE SCALE > 100`), `ORDER BY` and `SUM` compare numbers, in the program and in any tool that opens the saved file.
 
 When the file is closed (**File > Close**), another file is opened, or the program exits, a short dialog asks what to
 do with that SQLite file:
@@ -140,9 +141,15 @@ the public mdbtools test data, and the small `testdata/mdb2sql_test.mdb` kept in
   (`2026-06-25 DB3 1.sqlite`): 0 differences; conversion about 105 s.
 - Whole-table search on the converted DB4 (RANGER_SOSTAT, 36,754 rows): `tension de campo` finds the one row
   `EXCITACION TENSION DE CAMPO`, which is not on the first page; `tensao de campo` finds nothing.
+- Types of the converted DB4 and DB3 1: 1,681 INTEGER, 5,816 REAL and 2,867 text columns; the text ones are the
+  2,861 Access text/memo columns and the 6 DateTime columns (ISO text); no number is stored as text. Six queries with
+  a numeric filter, `ORDER BY ... LIMIT` and `SUM` on RTUNO, PNTNO, SCALE and BIAS (and the max of a date) give the
+  same result through the program's SQL and directly in SQLite, on the converted file and on the reference: 0
+  differences in 6 x 4 results, on both databases.
 - Unit tests (`zig build test`) on Windows and on Debian, among them: the versioned `.mdb` read by the embedded
   mdbtools into a SQLite file (the file is a real SQLite file in the temporary folder, 3 tables with 3/2/0 rows,
-  types read back, exact decimal `19.9900`, ISO date, 0/1, binary, accents, quotes, NULLs, the whole-table search
+  types read back, `typeof` in SQLite integer/real for every number, numeric filter, `SUM` and `ORDER BY` on the
+  Currency column, ISO date, 0/1, binary, accents, quotes, NULLs, the whole-table search
   without accents through the SQLite path); a file that is not Access fails with a message and leaves no
   temporary; crash cleanup of old temporaries; the three language catalogs have the same keys and arguments; no
   screen text outside the catalogs (`main.zig`, `dialog.zig`, `platform.zig` are scanned); **Show all / Hide all**
@@ -158,7 +165,8 @@ the public mdbtools test data, and the small `testdata/mdb2sql_test.mdb` kept in
   DuckDB; the export menu lists SQLite, Excel, CSV and DuckDB last.
 - Access files are converted once into a SQLite file (before: into DuckDB memory) and read from there, with the
   **Save... / Delete / Cancel** dialog on close, open or exit, the answer remembered for the session, and crash
-  cleanup on the next start. `Numeric (p, 0)` columns are now integers (sorting `RTUNO` is numeric, no `.0`).
+  cleanup on the next start. `Numeric (p, 0)` columns are now integers (sorting `RTUNO` is numeric, no `.0`), and
+  `Currency` and decimal `Numeric` are REAL: no number is stored as text in the SQLite file.
 - Row counts of SQLite files and of converted Access files are computed by SQLite itself: opening DB4.sqlite no
   longer spends about 8 s counting.
 - Languages: English (default), Portuguese (Brazil), Spanish, in **Settings > Language**, saved, applied at once.
@@ -205,8 +213,9 @@ the public mdbtools test data, and the small `testdata/mdb2sql_test.mdb` kept in
 - x86_64 only (Windows and Debian). Other systems are not built in this version.
 - mdbtools reads Access 97 `.mdb` text as Latin-1: characters 0x80-0x9F of Windows-1252 may come out wrong. Access
   2000 and later files are fine. mdbtools cannot tell an empty text from NULL: both come out as NULL.
-- In the converted SQLite file, `Currency` and `Numeric` columns longer than 15 digits are exact decimal text:
-  sorting and `SUM` on them compare text unless cast in the SQL tab (`CAST(x AS DECIMAL(19,4))`).
+- In the converted SQLite file, `Currency` and `Numeric` values with decimals are REAL: exact up to 15 significant
+  digits (any value below 100 billion with 4 decimals); longer values are rounded to the nearest double. `Numeric`
+  integers longer than 18 digits are REAL too. (DB4 and DB3 1 have no Currency and no Numeric with decimals.)
 - The ODBC driver may create a `.laccdb` lock file next to the `.accdb` while it reads it (normal Access behavior).
 - The single executable (Windows) needs `%LOCALAPPDATA%` to be writable.
 - The open and save dialogs block the window while open (running work continues). On Linux without `zenity` there

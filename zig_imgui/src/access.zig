@@ -175,16 +175,18 @@ pub fn deleteQuiet(io: Io, path: []const u8) void {
 // ------------------------------------------------------------------ tipos
 
 // Tipo DuckDB de uma coluna do Access pelo nome que o mdb-schema (backend "access") imprime. No SQLite (escrito
-// pela extensao sqlite do DuckDB) os inteiros viram INTEGER, DOUBLE vira REAL, data vira texto ISO, booleano 0/1,
-// binario BLOB e DECIMAL texto exato. Numeric(p,0) com p <= 18 e inteiro; Numeric com p <= 15 cabe exato num DOUBLE.
+// pela extensao sqlite do DuckDB) os inteiros viram INTEGER, o resto dos numeros REAL, data vira texto ISO, booleano 0/1,
+// binario BLOB. Todo numero tem afinidade numerica no SQLite (filtro, ORDER BY e SUM comparam numeros): um DECIMAL
+// do DuckDB seria gravado como texto declarado VARCHAR. Numeric(p,0) com p <= 18 e inteiro; Currency e Numeric com
+// casas decimais viram REAL (exato ate 15 digitos significativos; alem disso arredondado, ver README).
 pub fn duckTypeFromAccess(buf: []u8, access_type: []const u8) []const u8 {
     const ty = std.mem.trim(u8, access_type, " \t,");
     const paren = std.mem.indexOfScalar(u8, ty, '(');
     const name = std.mem.trim(u8, if (paren) |p| ty[0..p] else ty, " ");
     const simple = [_]struct { []const u8, []const u8 }{
-        .{ "Boolean", "BOOLEAN" },      .{ "Byte", "UTINYINT" },          .{ "Integer", "SMALLINT" },
-        .{ "Long Integer", "INTEGER" }, .{ "Currency", "DECIMAL(19,4)" }, .{ "Single", "FLOAT" },
-        .{ "Double", "DOUBLE" },        .{ "DateTime", "TIMESTAMP" },     .{ "OLE", "BLOB" },
+        .{ "Boolean", "BOOLEAN" },      .{ "Byte", "UTINYINT" },      .{ "Integer", "SMALLINT" },
+        .{ "Long Integer", "INTEGER" }, .{ "Currency", "DOUBLE" },    .{ "Single", "FLOAT" },
+        .{ "Double", "DOUBLE" },        .{ "DateTime", "TIMESTAMP" }, .{ "OLE", "BLOB" },
         .{ "Binary", "BLOB" },
     };
     for (simple) |s| if (std.mem.eql(u8, name, s[0])) return s[1];
@@ -200,10 +202,9 @@ pub fn duckTypeFromAccess(buf: []u8, access_type: []const u8) []const u8 {
 
 // Numeric/Decimal(p, s) do Access (mdbtools ou ODBC)
 fn numericType(buf: []u8, prec: usize, scale: usize) []const u8 {
-    if (prec == 0 or prec > 38 or scale > prec) return "DOUBLE";
-    if (scale == 0 and prec <= 18) return "BIGINT";
-    if (prec <= 15) return "DOUBLE"; // ate 15 digitos o DOUBLE devolve o mesmo decimal
-    return std.fmt.bufPrint(buf, "DECIMAL({d},{d})", .{ prec, scale }) catch "DOUBLE";
+    _ = buf;
+    if (scale == 0 and prec > 0 and prec <= 18) return "BIGINT";
+    return "DOUBLE";
 }
 
 pub const Column = struct { name: []const u8, ty: []const u8 };
@@ -454,9 +455,7 @@ fn mapOdbcType(buf: []u8, sql_type: i16, size: usize, digits: i16) struct { []co
         6, 8 => .{ "DOUBLE", .double }, // SQL_FLOAT, SQL_DOUBLE
         2, 3 => blk: { // SQL_NUMERIC, SQL_DECIMAL: a mesma regra do mdbtools (numericType)
             const ty = numericType(buf, size, @intCast(@max(digits, 0)));
-            if (std.mem.eql(u8, ty, "BIGINT")) break :blk .{ ty, .int };
-            if (std.mem.eql(u8, ty, "DOUBLE")) break :blk .{ ty, .double };
-            break :blk .{ ty, .text }; // texto exato -> DECIMAL
+            break :blk if (std.mem.eql(u8, ty, "BIGINT")) .{ ty, .int } else .{ ty, .double };
         },
         9, 10, 11, 91, 92, 93 => .{ "TIMESTAMP", .text }, // datas: "aaaa-mm-dd hh:mm:ss"
         -2, -3, -4 => .{ "BLOB", .binary },
@@ -717,21 +716,21 @@ test "Access types from mdb-schema" {
     var b: [32]u8 = undefined;
     try t.expectEqualStrings("BIGINT", duckTypeFromAccess(&b, "Numeric (10, 0), "));
     try t.expectEqualStrings("DOUBLE", duckTypeFromAccess(&b, "Numeric (10, 2), "));
-    try t.expectEqualStrings("DECIMAL(18,4)", duckTypeFromAccess(&b, "Numeric (18, 4)"));
-    try t.expectEqualStrings("DECIMAL(28,0)", duckTypeFromAccess(&b, "Numeric (28, 0)"));
+    try t.expectEqualStrings("DOUBLE", duckTypeFromAccess(&b, "Numeric (18, 4)"));
+    try t.expectEqualStrings("DOUBLE", duckTypeFromAccess(&b, "Numeric (28, 0)"));
     try t.expectEqualStrings("DOUBLE", duckTypeFromAccess(&b, "Numeric (60, 2)"));
     try t.expectEqualStrings("VARCHAR", duckTypeFromAccess(&b, "Text (48), "));
     try t.expectEqualStrings("VARCHAR", duckTypeFromAccess(&b, "Memo/Hyperlink (255)"));
     try t.expectEqualStrings("INTEGER", duckTypeFromAccess(&b, "Long Integer, "));
     try t.expectEqualStrings("SMALLINT", duckTypeFromAccess(&b, "Integer"));
     try t.expectEqualStrings("TIMESTAMP", duckTypeFromAccess(&b, "DateTime, "));
-    try t.expectEqualStrings("DECIMAL(19,4)", duckTypeFromAccess(&b, "Currency"));
+    try t.expectEqualStrings("DOUBLE", duckTypeFromAccess(&b, "Currency"));
     try t.expectEqualStrings("BLOB", duckTypeFromAccess(&b, "OLE"));
     try t.expectEqualStrings("VARCHAR", duckTypeFromAccess(&b, "Replication ID"));
     if (is_windows) {
         var o: [32]u8 = undefined;
-        try t.expectEqualStrings("DECIMAL(19,4)", mapOdbcType(&o, 2, 19, 4)[0]);
-        try t.expectEqual(.text, mapOdbcType(&o, 2, 19, 4)[1]);
+        try t.expectEqualStrings("DOUBLE", mapOdbcType(&o, 2, 19, 4)[0]); // Currency
+        try t.expectEqual(.double, mapOdbcType(&o, 2, 19, 4)[1]);
         try t.expectEqualStrings("BIGINT", mapOdbcType(&o, 2, 10, 0)[0]);
         try t.expectEqual(.int, mapOdbcType(&o, 2, 10, 0)[1]);
         try t.expectEqual(.double, mapOdbcType(&o, 3, 10, 2)[1]);
@@ -824,11 +823,15 @@ test "versioned .mdb through mdbtools becomes a SQLite file with types and NULLs
     // tipos lidos de volta do SQLite
     var sch = try db.schema("Tipos");
     defer sch.deinit();
-    const want_types = [_][]const u8{ "BIGINT", "VARCHAR", "DOUBLE", "VARCHAR", "DOUBLE", "VARCHAR", "BIGINT", "BIGINT", "BIGINT", "VARCHAR", "BLOB" };
+    const want_types = [_][]const u8{ "BIGINT", "VARCHAR", "DOUBLE", "DOUBLE", "DOUBLE", "VARCHAR", "BIGINT", "BIGINT", "BIGINT", "VARCHAR", "BLOB" };
     for (sch.rows, want_types) |row, ty| try t.expectEqualStrings(ty, row[1].?);
-    // valores: decimal exato, data ISO, booleano 0/1, binario, acentos e aspas
-    try expectCell(&db, "Ação|1234.56|19.9900|0.5|2026-07-14 10:30:00|1|255|-7|linha 1|\\x00\\xFF\\x10", "SELECT concat_ws('|', nome, valor, preco, razao, quando, ativo, pequeno, curto, nota, dados) FROM Tipos WHERE id = 1");
-    try expectCell(&db, "it's \"q\"|-0.01|0.0000|2316.0|1999-12-31 00:00:00|0|0|32000", "SELECT concat_ws('|', nome, valor, preco, razao, quando, ativo, pequeno, curto) FROM Tipos WHERE id = 2");
+    // no proprio SQLite todo numero tem afinidade numerica (filtro, ORDER BY e SUM comparam numeros)
+    try expectCell(&db, "integer|real|real|real|text|integer|integer", "SELECT concat_ws('|', a, b, c, d, e, f, g) FROM sqlite_query('src', 'SELECT typeof(id) a, typeof(valor) b, typeof(preco) c, typeof(razao) d, typeof(quando) e, typeof(ativo) f, typeof(curto) g FROM Tipos WHERE id = 1')");
+    try expectCell(&db, "2|19.99|1", "SELECT concat_ws('|', n, s, m) FROM sqlite_query('src', 'SELECT count(*) n, sum(preco) s, min(id) m FROM Tipos WHERE preco >= 0')");
+    try expectCell(&db, "1|2|3", "SELECT g FROM sqlite_query('src', 'SELECT group_concat(id, ''|'') g FROM (SELECT id FROM Tipos ORDER BY preco DESC NULLS LAST, id)')");
+    // valores: decimais, data ISO, booleano 0/1, binario, acentos e aspas
+    try expectCell(&db, "Ação|1234.56|19.99|0.5|2026-07-14 10:30:00|1|255|-7|linha 1|\\x00\\xFF\\x10", "SELECT concat_ws('|', nome, valor, preco, razao, quando, ativo, pequeno, curto, nota, dados) FROM Tipos WHERE id = 1");
+    try expectCell(&db, "it's \"q\"|-0.01|0.0|2316.0|1999-12-31 00:00:00|0|0|32000", "SELECT concat_ws('|', nome, valor, preco, razao, quando, ativo, pequeno, curto) FROM Tipos WHERE id = 2");
     // NULL continua NULL (a linha 3 so tem id e o booleano, que no Access nunca e nulo)
     try expectCell(&db, "9", "SELECT CAST(count(*) FILTER (WHERE nome IS NULL) + count(*) FILTER (WHERE valor IS NULL) + count(*) FILTER (WHERE preco IS NULL) + count(*) FILTER (WHERE razao IS NULL) + count(*) FILTER (WHERE quando IS NULL) + count(*) FILTER (WHERE pequeno IS NULL) + count(*) FILTER (WHERE curto IS NULL) + count(*) FILTER (WHERE nota IS NULL) + count(*) FILTER (WHERE dados IS NULL) AS VARCHAR) FROM Tipos WHERE id = 3");
     try expectCell(&db, "TENSÃO DE CAMPO", "SELECT \"Descrição\" FROM \"Medições de campo\" WHERE \"Ponto nº\" = 10");
@@ -933,6 +936,72 @@ fn searchBeyondFirstPage(db: *Db) !void {
     try t.expect(all > 1000 and found > 0 and !on_first);
 }
 
+// Filtro numerico, ORDER BY e SUM em colunas numericas do NMR5, pelo SQL do programa (DuckDB) e direto no SQLite
+// (sqlite_query), no convertido e na referencia (MDB2SQL_TEST_REF): os quatro resultados tem de ser iguais. Coluna
+// numerica gravada como texto ordenaria '999' depois de '1000' e somaria errado.
+const numeric_checks = [_][]const u8{
+    "SELECT count(*), sum(SCALE), sum(BIAS) FROM RANGER_SOANLG WHERE SCALE > 100",
+    "SELECT count(*), sum(PNTNO) FROM RANGER_SOSTAT WHERE RTUNO = 50 AND PNTNO > 100",
+    "SELECT sum(PNTNO), count(*) FROM (SELECT PNTNO FROM RANGER_SOSTAT WHERE RTUNO = 2 ORDER BY PNTNO DESC LIMIT 5) t",
+    "SELECT sum(SCALE) FROM (SELECT SCALE FROM RANGER_SOANLG ORDER BY SCALE DESC LIMIT 3) t",
+    "SELECT max(RTUNO), min(RTUNO), count(DISTINCT RTUNO) FROM RANGER_SOSTAT",
+    "SELECT count(*), max(DATEF) FROM RANGER_SOM_AIN_DAY",
+};
+
+fn numericResult(db: *Db, sql: []const u8, native: bool, out: *std.ArrayList(u8)) !void {
+    var q: std.ArrayList(u8) = .empty;
+    defer q.deinit(t.allocator);
+    if (native) {
+        try q.appendSlice(t.allocator, "SELECT * FROM sqlite_query('src', ");
+        try query.writeLiteral(&q, t.allocator, sql);
+        try q.append(t.allocator, ')');
+    } else try q.appendSlice(t.allocator, sql);
+    try q.append(t.allocator, 0);
+    var g = try db.run(q.items[0 .. q.items.len - 1 :0], &.{});
+    defer g.deinit();
+    out.clearRetainingCapacity();
+    for (g.rows[0], 0..) |cell, i| {
+        if (i > 0) try out.append(t.allocator, '|');
+        const s = cell orelse "NULL";
+        // numero: 6 casas (DuckDB e SQLite formatam o mesmo DOUBLE de jeitos diferentes); data: so ate os segundos
+        if (std.fmt.parseFloat(f64, s)) |v| try out.print(t.allocator, "{d:.6}", .{v}) else |_| try out.appendSlice(t.allocator, s[0..@min(s.len, 19)]);
+    }
+}
+
+fn compareNumericQueries(db: *Db) !void {
+    if (!query.contains(db.table_names, "RANGER_SOANLG")) return;
+    const ref_path = t.environ.getAlloc(t.allocator, "MDB2SQL_TEST_REF") catch return;
+    defer t.allocator.free(ref_path);
+    var ref = dbm.testDb();
+    defer ref.close();
+    try ref.openReadOnly(ref_path);
+    var want: std.ArrayList(u8) = .empty;
+    defer want.deinit(t.allocator);
+    var got: std.ArrayList(u8) = .empty;
+    defer got.deinit(t.allocator);
+    // tipos declarados no SQLite convertido (afinidade de cada coluna)
+    var hist = try db.run("SELECT t || ' ' || count(*) FROM sqlite_query('src', 'SELECT p.type t FROM sqlite_master m, pragma_table_info(m.name) p WHERE m.type = ''table''') GROUP BY t ORDER BY t", &.{});
+    defer hist.deinit();
+    std.debug.print("declared types in the converted SQLite:", .{});
+    for (hist.rows) |r| std.debug.print(" {s};", .{r[0].?});
+    std.debug.print("\n", .{});
+    var diffs: usize = 0;
+    for (numeric_checks) |sql| {
+        try numericResult(db, sql, false, &want); // a aba SQL do programa
+        std.debug.print("  {s}\n    app SQL tab: {s}\n", .{ sql, want.items });
+        const others = [_]struct { *Db, bool, []const u8 }{ .{ db, true, "converted, sqlite" }, .{ &ref, false, "reference, app" }, .{ &ref, true, "reference, sqlite" } };
+        for (others) |o| {
+            try numericResult(o[0], sql, o[1], &got);
+            if (!std.mem.eql(u8, want.items, got.items)) {
+                diffs += 1;
+                std.debug.print("    DIFFERENT in {s}: {s}\n", .{ o[2], got.items });
+            }
+        }
+    }
+    std.debug.print("numeric filter/ORDER BY/SUM: {d} queries x 4 ways, {d} differences\n", .{ numeric_checks.len, diffs });
+    try t.expectEqual(0, diffs);
+}
+
 // Conversao real quando MDB2SQL_TEST_ACCDB aponta para uma COPIA de um .accdb/.mdb (opcional; o dono roda com o DB4).
 // MDB2SQL_TEST_READERS=mdbtools limita aos leitores da lista (padrao: odbc e mdbtools no Windows, mdbtools fora).
 test "real Access file through the readers, compared with the reference converter (optional)" {
@@ -972,6 +1041,7 @@ test "real Access file through the readers, compared with the reference converte
         if (first_total) |ft| try t.expectEqual(ft, total) else first_total = total;
         try compareWithReference(&db, counts);
         try searchBeyondFirstPage(&db);
+        try compareNumericQueries(&db);
         if (i == 0) try exportAndCompare(&db, total);
     }
 }
