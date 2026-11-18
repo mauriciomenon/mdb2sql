@@ -155,12 +155,14 @@ export default {
   'status.sqliteDeleted': 'Converted SQLite deleted',
   'status.logCopied': 'Log copied',
 
-  'common.ok': 'OK',
   'x11.title': 'Display mode',
-  'x11.body': 'X11 unavailable; the program is using Wayland (fallback). Missing: {missing}. To use X11 on {distro}: {command}. Help: {link}',
-  'x11.bodyNoCommand': 'X11 unavailable; the program is using Wayland (fallback). Missing: {missing}. Help: {link}',
+  'x11.wayland': 'X11 unavailable; using Wayland.',
+  'x11.missing': 'Missing: {missing}',
   'x11.noDisplay': 'X server (DISPLAY not set)',
   'x11.noServer': 'X server (no answer on DISPLAY={display})',
+  'x11.copy': 'Copy command',
+  'x11.help': 'Help',
+  'common.ok': 'OK',
 
   'err.noDatabase': 'No database open',
   'err.unsupported': 'Unsupported file type:',

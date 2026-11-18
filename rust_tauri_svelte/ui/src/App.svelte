@@ -148,16 +148,13 @@
   let schemaColumns = $derived(
     ['schema.number', 'schema.column', 'schema.type', 'schema.null'].map((key) => ({ name: t(key), type: '' }))
   );
-  // texto do aviso de X11 no idioma escolhido (copiavel no dialogo e no log)
+  // aviso de X11 em 3 linhas curtas (dialogo e log): situacao, o que falta, comando da distro (sem comando em
+  // distro desconhecida)
+  let x11Missing = $derived(
+    x11 ? t('x11.missing', { missing: t(x11.missing === 'no_display' ? 'x11.noDisplay' : 'x11.noServer', { display: x11.display }) }) : ''
+  );
   let x11Text = $derived(
-    x11
-      ? t(x11.command ? 'x11.body' : 'x11.bodyNoCommand', {
-          missing: t(x11.missing === 'no_display' ? 'x11.noDisplay' : 'x11.noServer', { display: x11.display }),
-          distro: x11.distro,
-          command: x11.command,
-          link: x11.link,
-        })
-      : ''
+    x11 ? [t('x11.wayland'), x11Missing, x11.command ? `${x11.distro}: ${x11.command}` : ''].filter(Boolean).join(' ') : ''
   );
   let aboutRows = $derived.by(() => {
     if (!aboutInfo) return [];
@@ -691,8 +688,21 @@
   <!-- Linux: X11 indisponivel, janela no Wayland (reserva); texto selecionavel -->
   <dialog bind:this={x11Dialog} class="x11" aria-labelledby="x11-title">
     <h2 id="x11-title">{t('x11.title')}</h2>
-    <p class="note">{x11Text}</p>
-    <button type="button" onclick={() => x11Dialog.close()}>{t('common.ok')}</button>
+    {#if x11}
+      <p>{t('x11.wayland')}</p>
+      <p>{x11Missing}</p>
+      {#if x11.command}
+        <p class="command">
+          <span>{x11.distro}:</span>
+          <code>{x11.command}</code>
+          <button type="button" class="secondary" onclick={() => copyText(x11.command)}>{t('x11.copy')}</button>
+        </p>
+      {/if}
+    {/if}
+    <div class="actions">
+      <a href={x11?.link} onclick={(e) => openLink(e, x11.link)} onauxclick={(e) => e.preventDefault()}>{t('x11.help')}</a>
+      <button type="button" class="close" onclick={() => x11Dialog.close()}>{t('common.ok')}</button>
+    </div>
   </dialog>
 
   <!-- SQLite convertido do Access: salvar, apagar ou cancelar (Esc = cancelar) -->
@@ -1376,8 +1386,39 @@
     width: 520px;
   }
 
-  dialog.x11 .note {
-    user-select: text;
+  dialog.x11 p {
+    margin: 4px 0;
+  }
+
+  /* comando selecionavel, em fonte de codigo, com o botao Copiar ao lado */
+  dialog.x11 .command {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  dialog.x11 code {
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: Consolas, 'Cascadia Mono', monospace;
+    user-select: all;
+  }
+
+  dialog.x11 .command button {
+    margin: 0;
+    padding: 2px 10px;
+    font-weight: 400;
+  }
+
+  dialog.x11 .actions {
+    margin-top: 16px;
+  }
+
+  dialog.x11 .actions a {
+    color: var(--accent);
   }
 
   /* pergunta do SQLite convertido: titulo, nome do arquivo, lembrar, botoes alinhados */

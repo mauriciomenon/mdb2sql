@@ -132,3 +132,16 @@ test('log panel and status bar text can be copied', () => {
   assert.match(app, /<footer class="statusbar"[^>]*oncontextmenu=\{openStatusMenu\}/);
   assert.match(app, /onclick=\{copyStatus\}>\{t\('status.copy'\)\}/);
 });
+
+// REGRA_X11: aviso curto (3 linhas), link Ajuda clicavel (abre o navegador), comando com botao Copiar, sem URL crua
+test('X11 warning is short, with a clickable Help link and a Copy command button', () => {
+  const app = markup('./App.svelte');
+  const dialog = app.match(/<dialog bind:this=\{x11Dialog\}[\s\S]*?<\/dialog>/)[0];
+  assert.match(dialog, /<a href=\{x11\?\.link\} onclick=\{\(e\) => openLink\(e, x11\.link\)\}[\s\S]*?>\{t\('x11\.help'\)\}<\/a>/);
+  assert.match(dialog, /<code>\{x11\.command\}<\/code>/);
+  assert.match(dialog, /onclick=\{\(\) => copyText\(x11\.command\)\}>\{t\('x11\.copy'\)\}/);
+  for (const key of ['x11.wayland', 'x11.missing', 'x11.noDisplay', 'x11.noServer']) {
+    assert.doesNotMatch(en[key], /https?:|\.\.\./, key);
+    assert.ok(en[key].length <= 45, key);
+  }
+});

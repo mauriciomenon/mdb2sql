@@ -386,7 +386,7 @@ mod tests {
         }
     }
 
-    // o plugin opener so pode abrir os dois links do Sobre: nada de abrir URL ou arquivo qualquer
+    // o plugin opener so pode abrir os links do Sobre e a ajuda de X11: nada de abrir URL ou arquivo qualquer
     #[test]
     fn opener_is_allowed_only_for_the_about_links() {
         let text = std::fs::read_to_string("capabilities/default.json").unwrap();
@@ -397,7 +397,9 @@ mod tests {
             .iter()
             .filter(|p| p.to_string().contains("opener") || p.to_string().contains("shell"))
             .collect();
-        let urls: Vec<&str> = LINKS.iter().map(|(_, url)| *url).collect();
+        // os dois links do Sobre e a ajuda do aviso de X11 (Linux)
+        let mut urls: Vec<&str> = LINKS.iter().map(|(_, url)| *url).collect();
+        urls.push(backend::display::HELP_LINK);
         let expected = serde_json::json!({
             "identifier": "opener:allow-open-url",
             "allow": urls.iter().map(|url| serde_json::json!({ "url": url })).collect::<Vec<_>>(),
