@@ -41,14 +41,14 @@ func TestDBManager_QuerySampleDatabase(t *testing.T) {
 			if _, err := mgr.GetTableSchema(name); err != nil {
 				t.Fatalf("schema for %s failed: %v", name, err)
 			}
-			rows, err := mgr.QueryTable(name, 5)
+			rows, err := mgr.QueryTable(name, 5, "")
 			if err != nil {
 				t.Fatalf("query %s failed: %v", name, err)
 			}
 			if len(rows) == 0 {
 				t.Fatalf("expected rows for %s", name)
 			}
-			count, err := mgr.GetRowCount(name)
+			count, err := mgr.GetRowCount(name, "")
 			if err != nil {
 				t.Fatalf("count %s failed: %v", name, err)
 			}

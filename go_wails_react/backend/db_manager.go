@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ type DBManager struct {
 	conn      *sql.DB // !T: Standard sql.DB interface from database/sql
 	currentDB string
 	source    string // reader used: DuckDB, SQLite, Access ODBC or mdbtools
+	converted string // Access only: the SQLite file it was converted to, which is what conn reads
 	tableSet  map[string]struct{}
 	tableList []string
 }
@@ -60,11 +62,13 @@ func (m *DBManager) Open(ctx context.Context, dbPath string, progress Progress) 
 		progress = func(int, int, string) {}
 	}
 	var conn *sql.DB
-	var source string
+	var source, converted string
 	var err error
 	switch fileKind(dbPath) {
 	case "access":
-		conn, source, err = openAccess(ctx, dbPath, progress)
+		if converted, source, err = openAccess(ctx, dbPath, progress); err == nil {
+			conn, err = openAttached(converted, true)
+		}
 	case "sqlite":
 		conn, err = openAttached(dbPath, true)
 		source = SourceSQLite
@@ -72,19 +76,23 @@ func (m *DBManager) Open(ctx context.Context, dbPath string, progress Progress) 
 		conn, err = openAttached(dbPath, false)
 		source = SourceDuckDB
 	}
+	if err == nil {
+		// attached files are only opened here, by the connection setup
+		if err = conn.PingContext(ctx); err != nil {
+			conn.Close()
+			err = fmt.Errorf("failed to open database: %w", err)
+		}
+	}
 	if err != nil {
+		RemoveConverted(converted)
 		return err
 	}
-	// attached files are only opened here, by the connection setup
-	if err := conn.PingContext(ctx); err != nil {
-		conn.Close()
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-	m.conn, m.currentDB, m.source = conn, dbPath, source
+	m.conn, m.currentDB, m.source, m.converted = conn, dbPath, source, converted
 
 	// Pre-carrega cache de tabelas para validar nomes sem overhead por chamada
 	if err := m.refreshTableCache(); err != nil {
 		m.Close()
+		RemoveConverted(converted)
 		return fmt.Errorf("failed to load table cache: %w", err)
 	}
 	return nil
@@ -92,6 +100,10 @@ func (m *DBManager) Open(ctx context.Context, dbPath string, progress Progress) 
 
 // Source returns the reader used for the open file ("" when nothing is open)
 func (m *DBManager) Source() string { return m.source }
+
+// Converted is the SQLite file an Access file was converted to ("" for other files); the caller owns it: Close
+// does not delete it (the user chooses to save or delete it, see app.go)
+func (m *DBManager) Converted() string { return m.converted }
 
 // fileKind: Access by extension; SQLite by its file header (a .db may be either); otherwise DuckDB
 func fileKind(path string) string {
@@ -198,7 +210,8 @@ func cellString(v any) string {
 		}
 		return x.Format("2006-01-02 15:04:05.999999")
 	case []byte:
-		if utf8.Valid(x) {
+		// readable text stays text; anything with control characters (binary data) is shown as hex
+		if utf8.Valid(x) && !bytes.ContainsFunc(x, func(r rune) bool { return r < 32 && r != '\t' && r != '\n' && r != '\r' }) {
 			return string(x)
 		}
 		return fmt.Sprintf("%X", x)
@@ -417,9 +430,28 @@ type Filter struct {
 // !T: Column names must exist in types and are quoted; values are always bound. The value is cast to the column
 // type (text read from the catalog, never user input) so the comparison happens in that type: REAL 0.1 equals the
 // shown 0.1, a timestamp equals its shown text.
-func filterWhere(filters []Filter, types map[string]string) (string, []any, error) {
+// search (Data tab): EVERY word inside ONE cell of any column, ignoring case and accents, over the whole table.
+func filterWhere(filters []Filter, types map[string]string, search string) (string, []any, error) {
 	var conds []string
 	var args []any
+	if words := strings.Fields(search); len(words) > 0 {
+		cols := make([]string, 0, len(types))
+		for c := range types {
+			cols = append(cols, c)
+		}
+		sort.Strings(cols) // a stable query text
+		var cells []string
+		for _, c := range cols {
+			cell := "lower(strip_accents(CAST(" + quoteIdent(c) + " AS VARCHAR)))"
+			parts := make([]string, len(words))
+			for i, w := range words {
+				parts[i] = "contains(" + cell + ", lower(strip_accents(?)))"
+				args = append(args, w)
+			}
+			cells = append(cells, "("+strings.Join(parts, " AND ")+")")
+		}
+		conds = append(conds, "("+strings.Join(cells, " OR ")+")")
+	}
 	for _, f := range filters {
 		typ, ok := types[f.Column]
 		if !ok {
@@ -442,9 +474,9 @@ func filterWhere(filters []Filter, types map[string]string) (string, []any, erro
 	return " WHERE " + strings.Join(conds, " AND "), args, nil
 }
 
-// tableWhere reads the column types of the (already validated) table only when there are filters
-func (m *DBManager) tableWhere(tableName string, filters []Filter) (string, []any, error) {
-	if len(filters) == 0 {
+// tableWhere reads the column types of the (already validated) table only when there are filters or a search
+func (m *DBManager) tableWhere(tableName string, filters []Filter, search string) (string, []any, error) {
+	if len(filters) == 0 && strings.TrimSpace(search) == "" {
 		return "", nil, nil
 	}
 	schema, err := m.GetTableSchema(tableName)
@@ -455,7 +487,7 @@ func (m *DBManager) tableWhere(tableName string, filters []Filter) (string, []an
 	for _, c := range schema {
 		types[c.Name] = c.Type
 	}
-	return filterWhere(filters, types)
+	return filterWhere(filters, types, search)
 }
 
 // AccessReader diz qual leitor abriria um .mdb/.accdb agora (para o Sobre): "Access ODBC", "mdbtools" ou ""
@@ -466,7 +498,7 @@ func AccessReader() string {
 
 // Executa SELECT na tabela e retorna resultados como slice de maps
 // !T: Returns []map[string]interface{} for dynamic column handling in frontend
-func (m *DBManager) QueryTable(tableName string, limit int, filters ...Filter) ([]map[string]interface{}, error) {
+func (m *DBManager) QueryTable(tableName string, limit int, search string, filters ...Filter) ([]map[string]interface{}, error) {
 	if m.conn == nil {
 		return nil, fmt.Errorf("no database connected")
 	}
@@ -481,7 +513,7 @@ func (m *DBManager) QueryTable(tableName string, limit int, filters ...Filter) (
 
 	// SELECT com LIMIT parametrizado
 	// !T: Only limit is parameterized, table name is validated
-	where, args, err := m.tableWhere(tableName, filters)
+	where, args, err := m.tableWhere(tableName, filters, search)
 	if err != nil {
 		return nil, err
 	}
@@ -527,7 +559,7 @@ func (m *DBManager) QueryTable(tableName string, limit int, filters ...Filter) (
 
 // Retorna numero total de linhas em uma tabela
 // !T: Executes COUNT(*) query with validated table name
-func (m *DBManager) GetRowCount(tableName string, filters ...Filter) (int, error) {
+func (m *DBManager) GetRowCount(tableName string, search string, filters ...Filter) (int, error) {
 	if m.conn == nil {
 		return 0, fmt.Errorf("no database connected")
 	}
@@ -542,7 +574,7 @@ func (m *DBManager) GetRowCount(tableName string, filters ...Filter) (int, error
 
 	// COUNT(*) retorna total de linhas
 	// !T: Table name validated, safe to use in query
-	where, args, err := m.tableWhere(tableName, filters)
+	where, args, err := m.tableWhere(tableName, filters, search)
 	if err != nil {
 		return 0, err
 	}
@@ -576,6 +608,7 @@ func (m *DBManager) Close() error {
 		m.conn = nil
 		m.currentDB = ""
 		m.source = ""
+		m.converted = ""
 		m.tableSet = nil
 		m.tableList = nil
 		return err
@@ -583,32 +616,37 @@ func (m *DBManager) Close() error {
 	return nil
 }
 
+// listTables returns the tables of the current database of db, sorted by name
+func listTables(db *sql.DB) ([]string, error) {
+	rows, err := db.Query("SHOW TABLES")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list tables: %w", err)
+	}
+	defer rows.Close()
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("failed to scan table name: %w", err)
+		}
+		tables = append(tables, name)
+	}
+	return tables, rows.Err()
+}
+
 // Atualiza cache de tabelas existentes no banco atual
 func (m *DBManager) refreshTableCache() error {
 	if m.conn == nil {
 		return fmt.Errorf("no database connected")
 	}
-
-	rows, err := m.conn.Query("SHOW TABLES")
+	tableList, err := listTables(m.conn)
 	if err != nil {
-		return fmt.Errorf("failed to list tables: %w", err)
-	}
-	defer rows.Close()
-
-	tableSet := make(map[string]struct{})
-	var tableList []string
-	for rows.Next() {
-		var tableName string
-		if err := rows.Scan(&tableName); err != nil {
-			return fmt.Errorf("failed to scan table name: %w", err)
-		}
-		tableSet[tableName] = struct{}{}
-		tableList = append(tableList, tableName)
-	}
-	if err := rows.Err(); err != nil {
 		return err
 	}
-
+	tableSet := make(map[string]struct{}, len(tableList))
+	for _, t := range tableList {
+		tableSet[t] = struct{}{}
+	}
 	m.tableSet = tableSet
 	m.tableList = tableList
 	return nil

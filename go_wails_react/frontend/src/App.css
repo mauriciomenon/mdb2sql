@@ -12,6 +12,7 @@
   --row-alt: #f3f5f8;
   --row-hover: #e6effb;
   --error: #b3261e;
+  --warn: #8a5300;
 }
 
 :root[data-theme='dark'] {
@@ -26,6 +27,7 @@
   --row-alt: #242c38;
   --row-hover: #2c3a4d;
   --error: #ff8a80;
+  --warn: #ffcc66;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -41,6 +43,7 @@
     --row-alt: #242c38;
     --row-hover: #2c3a4d;
     --error: #ff8a80;
+    --warn: #ffcc66;
   }
 }
 
@@ -63,7 +66,8 @@ body {
 
 .app {
   display: grid;
-  grid-template: auto minmax(0, 1fr) auto / 260px minmax(0, 1fr);
+  /* menu, sidebar + content, Log panel (when open), status bar */
+  grid-template: auto minmax(0, 1fr) auto auto / 260px minmax(0, 1fr);
   height: 100%;
 }
 
@@ -186,9 +190,7 @@ h2 {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 button,
@@ -233,17 +235,29 @@ button.primary {
   min-width: 0;
   margin: 0;
   color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* readable in full: a long message wraps instead of being cut with "..." (it is also in View > Log) */
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 
 .status.error {
   color: var(--error);
   font-weight: 600;
-  /* an error must be readable in full: wrap instead of cutting with "..." */
-  white-space: normal;
-  overflow-wrap: anywhere;
+}
+
+.status.warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* unread errors/warnings while the log is collapsed */
+.badge {
+  min-width: 20px;
+  padding: 0 6px;
+  text-align: center;
+  color: var(--accent-text);
+  background: var(--error);
+  border-radius: 999px;
 }
 
 .field {
@@ -285,9 +299,8 @@ button.primary {
   border: 0;
   background: none;
   text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* the whole name is shown: a long one wraps to a second line, never "..." */
+  overflow-wrap: anywhere;
 }
 
 .table-item:hover {
@@ -388,7 +401,9 @@ th {
   border-bottom: 2px solid var(--border);
 }
 
-td.num {
+/* numbers to the right, the header of a numeric column too */
+td.num,
+th.num {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -469,7 +484,7 @@ td[aria-selected='true'] {
 
 .about h2 {
   white-space: normal;
-  font-size: 18px;
+  font-size: inherit;
 }
 
 .about .version {
@@ -560,21 +575,153 @@ td[aria-selected='true'] {
   white-space: nowrap;
 }
 
-/* buttons in one row, Fechar on the right */
+/* buttons in one row; the closing one (.end) on the right */
 .col-actions {
   display: flex;
   gap: 8px;
   margin-top: 14px;
 }
 
-.col-actions .primary {
+.col-actions .end {
   margin-left: auto;
 }
 
-/* --col-w (set in App.tsx from the longest name) is the minimum cell; never more than 6 per row */
+/* "Converted SQLite file" dialog */
+.conversion {
+  width: min(480px, 100%);
+}
+
+/* dialog title with its x (closes like Esc and Cancel) */
+.dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dialog-head h2 {
+  margin-right: auto;
+}
+
+.dialog-x {
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  font-size: inherit;
+  line-height: 1.2;
+  color: var(--muted);
+}
+
+/* the default button (Enter) shows its focus from the start */
+.conversion .primary:focus {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.remember {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  color: var(--muted);
+}
+
+.remember input {
+  margin: 0;
+}
+
+/* "Display mode" warning (Linux without X11): the command is selectable and has its own Copy button */
+.display-cmd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.display-cmd code {
+  padding: 2px 6px;
+  font: 14px/1.4 Consolas, 'Cascadia Mono', monospace;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
+.help-link {
+  align-self: center;
+  color: var(--accent);
+}
+
+/* Log panel (View > Log): read-only text, selectable, same font as the app */
+.log {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 16px 6px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+.log-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* a compact header: the panel stays small */
+.log-bar h2 {
+  font-size: 14px;
+}
+
+.log-bar button:not(.log-toggle) {
+  padding: 2px 10px;
+}
+
+.log-bar h2 {
+  margin-right: auto;
+}
+
+/* the top border drags the height (10% of the window, 3 lines to 25%) */
+.log-resize {
+  height: 6px;
+  margin: -4px -16px 0;
+  cursor: ns-resize;
+}
+
+.log-resize:hover {
+  background: var(--row-hover);
+}
+
+/* discreet arrow that collapses (log header) or expands (status bar) the log */
+.log-toggle {
+  padding: 0 6px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.log-toggle:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--row-hover);
+}
+
+/* monospace one step smaller than the 14 px base */
+.log textarea {
+  resize: none;
+  font: 13px/1.4 Consolas, 'Cascadia Mono', 'DejaVu Sans Mono', monospace;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+/* --col-w (set in App.tsx from the longest name) is the minimum cell, never wider than the list; at most 6 per row */
 .col-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(max(var(--col-w, 150px), calc((100% - 5 * 12px) / 6)), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, max(var(--col-w, 150px), calc((100% - 5 * 12px) / 6))), 1fr));
   align-content: start;
   flex: 1 1 auto;
   gap: 2px 12px;
@@ -592,12 +739,12 @@ td[aria-selected='true'] {
   gap: 6px;
   min-width: 0;
   padding: 2px 0;
-  white-space: nowrap;
 }
 
+/* the whole name, never "...": a name longer than the cell wraps */
 .col-list label span {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .col-list label input {
@@ -631,12 +778,10 @@ td[aria-selected='true'] {
   min-width: 0;
 }
 
-/* a long value is cut with "..." (full text in the tooltip), never widening the window */
+/* a long value wraps inside the chip, never widening the window and never cut */
 .chip span {
-  max-width: 420px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .chip button {

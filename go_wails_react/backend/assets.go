@@ -1,19 +1,24 @@
 // Ferramentas embutidas no exe (mdbtools e extensao sqlite do DuckDB), extraidas sob demanda para um cache por versao
-// !T: One exe, no installer needed: embedded/ is filled by scripts/build_w11.ps1; in git it only holds .gitkeep
+// !T: One exe, no installer needed: embedded/ is filled by scripts/build_w11.ps1 (Windows) or scripts/build_debian.sh
+// (Linux); in git it only holds .gitkeep
 
 package backend
 
 import (
 	"compress/gzip"
 	"embed"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+
+	"mdb2sql/i18n"
 )
 
 //go:embed all:embedded
@@ -68,7 +73,7 @@ func assetPath(name string) (string, error) {
 		r = gz
 	}
 	tmp := dest + ".tmp"
-	f, err := os.Create(tmp)
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) // executable: the Linux mdbtools
 	if err != nil {
 		return "", err
 	}
@@ -98,22 +103,28 @@ func removeOldCaches(root string) {
 
 var mdbtoolsNames = []string{"mdb-tables", "mdb-schema", "mdb-export"}
 
-// mdbtool returns the embedded mdbtools program (Windows build) or the one on PATH (other systems)
+// exeSuffix of the embedded programs: Windows build mdb-export.exe, Linux build mdb-export
+var exeSuffix = map[bool]string{true: ".exe", false: ""}[runtime.GOOS == "windows"]
+
+// mdbtool returns the embedded mdbtools program (Windows and Linux release builds) or the one on PATH
 func mdbtool(name string) (string, error) {
-	if hasAsset(name + ".exe") {
-		for _, lic := range []string{"COPYING", "COPYING.LIB", "VERSION.txt"} {
-			if hasAsset(lic) {
-				_, _ = assetPath(lic) // the GPL texts travel with the programs
+	if hasAsset(name + exeSuffix) {
+		// the license texts travel with the programs; the Linux programs load libmdb.so.3 from the same folder
+		for _, f := range []string{"COPYING", "COPYING.LIB", "VERSION.txt", "copyright", "libmdb.so.3"} {
+			if hasAsset(f) {
+				if _, err := assetPath(f); err != nil {
+					return "", err
+				}
 			}
 		}
-		return assetPath(name + ".exe")
+		return assetPath(name + exeSuffix)
 	}
 	return exec.LookPath(name)
 }
 
 func mdbtoolsAvailable() bool {
 	for _, n := range mdbtoolsNames {
-		if !hasAsset(n+".exe") && !onPath(n) {
+		if !hasAsset(n+exeSuffix) && !onPath(n) {
 			return false
 		}
 	}
@@ -127,7 +138,7 @@ func onPath(name string) bool {
 
 func sqliteExtension() (string, error) {
 	if !hasAsset(sqliteExtensionAsset) {
-		return "", fmt.Errorf("this build has no embedded DuckDB sqlite extension (run scripts\\setup_tools.ps1 and build again)")
+		return "", errors.New(i18n.T("err.noSqliteExtension"))
 	}
 	return assetPath(sqliteExtensionAsset)
 }

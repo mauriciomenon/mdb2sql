@@ -1,16 +1,21 @@
-// Visualizador de bancos (DuckDB, SQLite, Access): abre um arquivo, lista tabelas, mostra dados, schema e SQL, exporta
-// !T: Single-screen viewer talking to Go through the Wails IPC bridge (window.go.main.App)
+// Visualizador de bancos (Access, SQLite, DuckDB): abre um arquivo, lista tabelas, mostra dados, schema e SQL, exporta
+// !T: Single-screen viewer talking to Go through the Wails IPC bridge (window.go.main.App). Every visible text comes
+// from the catalogs in ../../i18n (see i18n.ts)
 
 import { Fragment, useEffect, useMemo, useRef, useState, version as reactVersion } from 'react';
 import './App.css';
+import { LANGS, translate, type Lang, type T } from './i18n';
 
 type Row = Record<string, unknown>;
 type Column = { name: string; type: string; null: string };
 export type Theme = 'system' | 'light' | 'dark';
 type View = 'data' | 'schema' | 'sql';
-type MenuName = 'file' | 'settings' | 'help' | 'export';
+type MenuName = 'file' | 'export' | 'view' | 'settings' | 'help';
 type QueryResult = { columns: string[]; rows: Row[]; more: boolean };
 type Progress = { done: number; total: number; label: string };
+type Conversion = { done: boolean; saved: string };
+// Linux without X11 (display.go): three short lines, the install command and the README help link
+type DisplayWarning = { text: string; missing: string; distro: string; command: string; help: string };
 export type AppInfo = { version: string; build?: string; buildDate?: string; go: string; wails: string; duckdb: string; access?: string };
 export type Filter = { column: string; value: unknown }; // column = exact value, applied in the database query
 
@@ -20,8 +25,8 @@ declare global {
       main: {
         App: {
           LoadDatabase: (dbPath: string) => Promise<string[]>;
-          GetTableData: (tableName: string, limit: number, filters: Filter[]) => Promise<Row[]>;
-          GetRowCount: (tableName: string, filters: Filter[]) => Promise<number>;
+          GetTableData: (tableName: string, limit: number, filters: Filter[], search: string) => Promise<Row[]>;
+          GetRowCount: (tableName: string, filters: Filter[], search: string) => Promise<number>;
           GetTableSchema?: (tableName: string) => Promise<Column[]>;
           SelectDatabase?: () => Promise<string>;
           DatabaseName?: () => Promise<string>;
@@ -34,50 +39,49 @@ declare global {
           ExportQuery?: (query: string, format: string) => Promise<string>;
           CancelJob?: () => Promise<void>;
           GetTheme?: () => Promise<Theme>;
+          GetLogOpen?: () => Promise<boolean>;
+          SetLogOpen?: (open: boolean) => Promise<void>;
           SetTheme?: (theme: Theme) => Promise<void>;
+          GetLanguage?: () => Promise<Lang>;
+          SetLanguage?: (lang: Lang) => Promise<void>;
+          PendingConversion?: () => Promise<string>;
+          RememberedChoice?: () => Promise<string>;
+          ResolveConversion?: (choice: string, remember: boolean) => Promise<Conversion>;
+          CloseDatabase?: () => Promise<void>;
+          DisplayWarning?: () => Promise<DisplayWarning | null>;
         };
       };
     };
     runtime?: {
       BrowserOpenURL?: (url: string) => void;
       ClipboardSetText?: (text: string) => Promise<boolean>;
-      EventsOn?: (name: string, cb: (data: Progress) => void) => () => void;
+      EventsOn?: (name: string, cb: (data: any) => void) => () => void;
       Quit?: () => void;
     };
   }
 }
 
 const ROW_LIMITS = [100, 500, 1000]; // more would render too many cells (130-column tables)
-const THEMES: { value: Theme; label: string }[] = [
-  { value: 'system', label: 'System' },
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
-];
-
-const ABOUT_TAGLINE = 'Visualiza e exporta bancos DuckDB, SQLite e Microsoft Access: tabelas, esquema, dados e SQL.';
-const ACCESS_READERS: Record<string, string> = {
-  'Access ODBC': 'ODBC do Microsoft Access (driver instalado); reserva: mdbtools embutido',
-  mdbtools: 'mdbtools embutido (driver ODBC do Access nao instalado)',
-};
+const THEMES: Theme[] = ['system', 'light', 'dark'];
 
 // Linhas (rotulo, valor) do dialogo Sobre; versao de wails.json, numero/data do build gravados pelo build, runtimes
 // lidos em execucao. Valor que comeca com https:// vira link aberto no navegador padrao.
-// !T: Text is Portuguese on purpose (owner's spec)
-export function aboutRows(info: AppInfo): [string, string][] {
+export function aboutRows(info: AppInfo, t: T): [string, string][] {
   const v = (s: string) => s.replace(/^v/, '');
+  const reader = info.access === 'Access ODBC' ? 'about.reader.odbc' : info.access === 'mdbtools' ? 'about.reader.mdbtools' : 'about.reader.none';
   return [
-    ['Build', info.build ? `${info.build} (${info.buildDate})` : 'dev'],
-    ['Stack', `Go ${info.go} + Wails ${v(info.wails)} + React ${reactVersion}`],
-    ['Banco', `DuckDB ${v(info.duckdb)}`],
-    ['Leitor Access', ACCESS_READERS[info.access ?? ''] ?? 'indisponivel neste computador'],
-    ['Autor', 'Mauricio Menon'],
-    ['Licenca', 'GPL v2 ou posterior'],
+    [t('about.build'), info.build ? `${info.build} (${info.buildDate})` : 'dev'],
+    [t('about.stack'), `Go ${info.go} + Wails ${v(info.wails)} + React ${reactVersion}`],
+    [t('about.database'), `DuckDB ${v(info.duckdb)}`],
+    [t('about.accessReader'), t(reader)],
+    [t('about.author'), 'Mauricio Menon'],
+    [t('about.license'), t('about.licenseText')],
     ['GitHub', 'https://github.com/mauriciomenon/mdb2sql'],
     ['GitLab', 'https://gitlab.com/mauricio.menon/mdb2sql'],
   ];
 }
 
-// Texto do filtro ativo: Filtro: SIGLA = 'U9A' | ID = 7 | NOTE IS NULL
+// Texto do filtro ativo: SIGLA = 'U9A' | ID = 7 | NOTE IS NULL
 export function filterLabel(f: Filter): string {
   if (f.value === null || f.value === undefined) return `${f.column} IS NULL`;
   return `${f.column} = ${typeof f.value === 'string' ? `'${f.value}'` : String(f.value)}`;
@@ -113,7 +117,7 @@ export const hasAllWords = (text: string, words: string[]) => words.every((w) =>
 export const rowSearchText = (rows: Row[], columns: string[]) =>
   rows.map((r) => columns.map((c) => normalizeText(cellText(r[c]))));
 
-// Linha casa quando UMA celula contem todas as palavras (palavras so em celulas diferentes nao casam)
+// Linha casa quando UMA celula contem todas as palavras (aba SQL; a aba Data pesquisa no banco, em Go)
 export function searchRows(rows: Row[], columns: string[], query: string, index?: string[][]): Row[] {
   const words = searchWords(query);
   if (words.length === 0) return rows;
@@ -122,9 +126,32 @@ export function searchRows(rows: Row[], columns: string[], query: string, index?
 }
 
 // Go counts tables when it loads or exports a database and rows when it exports one table or result
-export function progressText(verb: string, p: Progress | null): string {
-  if (!p?.label) return `${verb}...`;
-  return p.total > 0 ? `${verb} ${p.label} - ${p.done} of ${p.total}` : `${verb} ${p.label} - ${p.done}`;
+export function progressText(verb: string, p: Progress | null, t: T): string {
+  if (!p?.label) return verb;
+  return p.total > 0 ? t('progress.of', verb, p.label, p.done, p.total) : t('progress.count', verb, p.label, p.done);
+}
+
+// Linha do painel Log: hora local HH:MM:SS + texto
+export const logLine = (text: string, at = new Date()) => `${at.toTimeString().slice(0, 8)}  ${text}`;
+type LogLevel = 'info' | 'warn' | 'error';
+type LogEntry = { line: string; text: string; level: LogLevel };
+
+// First line of a message (the status bar shows one line; the log keeps the whole text)
+export const firstLine = (s: string) => s.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? '';
+
+// Engine error of the SQL tab in one line: 'Parser Error: syntax error at or near "selec"\n\nLINE 1...' becomes
+// 'syntax error at or near "selec"'
+export const sqlErrorSummary = (s: string) => firstLine(s).replace(/^[A-Za-z ]*Error:\s*/, '');
+
+// Log panel height: about 10% of the window, at least 3 lines of the 13 px log font, at most 25% of the window
+export const LOG_MIN = 68;
+export const clampLogHeight = (h: number, windowHeight: number) => Math.round(Math.max(LOG_MIN, Math.min(h, windowHeight * 0.25)));
+
+// Status bar with the log collapsed: the last unread error, else the last unread warning, else the status
+export function statusLine(entries: LogEntry[], readMark: number, status: string, error: string) {
+  const unread = entries.slice(readMark).filter((e) => e.level !== 'info');
+  const pick = unread.findLast((e) => e.level === 'error') ?? unread.findLast((e) => e.level === 'warn');
+  return { text: pick?.text ?? (error || status), level: pick?.level ?? (error ? 'error' : 'info'), unread: unread.length };
 }
 
 function getWailsBridge() {
@@ -136,9 +163,12 @@ function getWailsBridge() {
 }
 
 function App() {
+  const [lang, setLang] = useState<Lang>('en');
+  const t: T = (key, ...args) => translate(lang, key, ...args);
   const [tables, setTables] = useState<string[]>([]);
   const [dbName, setDbName] = useState('');
   const [source, setSource] = useState('');
+  const [converted, setConverted] = useState(false);
   const [filter, setFilter] = useState('');
   const [selectedTable, setSelectedTable] = useState('');
   const [rows, setRows] = useState<Row[]>([]);
@@ -146,30 +176,65 @@ function App() {
   const [schema, setSchema] = useState<Column[]>([]);
   const [view, setView] = useState<View>('data');
   const [limit, setLimit] = useState(ROW_LIMITS[0]);
-  const [status, setStatus] = useState('No database loaded');
-  const [error, setError] = useState('');
+  const [status, setStatusText] = useState(() => translate('en', 'status.none'));
+  const [error, setErrorText] = useState('');
   const [job, setJob] = useState(''); // verb of the running load/export ("" = none)
   const [progress, setProgress] = useState<Progress | null>(null);
   const [theme, setThemeState] = useState<Theme>('system');
   const [openMenu, setOpenMenu] = useState<MenuName | null>(null);
   const [about, setAbout] = useState<AppInfo | null>(null);
   const [search, setSearch] = useState('');
+  const [tableSearch, setTableSearch] = useState(''); // search applied in the database (Data tab), after a pause
   const [sel, setSel] = useState<{ row: Row; col: string } | null>(null); // selected cell
-  // open context menu: of the selected cell, or of a column header (header = column name)
-  const [menu, setMenu] = useState<{ x: number; y: number; header?: string } | null>(null);
+  // open context menu: of the selected cell, of a column header (header = column name) or of the status bar
+  const [menu, setMenu] = useState<{ x: number; y: number; header?: string; status?: boolean } | null>(null);
   const [filters, setFilters] = useState<Filter[]>([]); // of the current table, applied by Go in the query
-  const [totalCount, setTotalCount] = useState(0); // rows of the table without filters
+  const [totalCount, setTotalCount] = useState(0); // rows of the table without filters and search
   const [hidden, setHidden] = useState<Set<string>>(new Set()); // hidden columns of the current table
-  const [colsOpen, setColsOpen] = useState(false); // "Colunas..." dialog
+  const [colsOpen, setColsOpen] = useState(false); // "Columns..." dialog
   const [copied, setCopied] = useState('');
   const [sql, setSql] = useState('');
   const [result, setResult] = useState<QueryResult | null>(null);
   const [resultSql, setResultSql] = useState(''); // SQL of the result shown (what "Export SQL result" writes)
+  const [logLines, setLogLines] = useState<LogEntry[]>([]);
+  const [logOpen, setLogOpen] = useState(false); // collapsed by default
+  const [readMark, setReadMark] = useState(0); // log lines before this one were seen
+  const [logHeight, setLogHeight] = useState(() => clampLogHeight(Math.round(window.innerHeight * 0.1), window.innerHeight));
+  const [displayWarn, setDisplayWarn] = useState<DisplayWarning | null>(null); // Linux: X11 missing, on Wayland
+  // "save or delete the converted SQLite" question; resolve gets the answer (null = cancel)
+  const [ask, setAsk] = useState<{ name: string; resolve: (a: { choice: string; remember: boolean } | null) => void } | null>(null);
   const started = useRef(false);
   // request numbers: an answer that is not the latest one (another table, query or file since) is dropped
   const tableReq = useRef(0);
   const sqlReq = useRef(0);
+  const loadedFind = useRef(''); // search of the last table request
+  const [shownFind, setShownFind] = useState(''); // search of the rows shown in the Data tab
+  const [shownTable, setShownTable] = useState(''); // table of the rows shown (the counts below belong to it)
   const [querying, setQuerying] = useState(false);
+
+  // the log keeps the full text; short = the one line the status bar shows for it
+  const addLog = (text: string, level: LogLevel = 'info', short = firstLine(text)) =>
+    setLogLines((old) => [...old, { line: logLine(text), text: short, level }]);
+  // every status and error also goes to the Log panel
+  const setStatus = (text: string) => {
+    setStatusText(text);
+    addLog(text);
+  };
+  const setError = (text: string, short = firstLine(text)) => {
+    setErrorText(short);
+    if (text) addLog(text, 'error', short);
+  };
+  // collapse/expand (log header arrow, status bar, View > Log, Ctrl+L); remembered by Go between sessions. What
+  // was in the log when it is opened or closed counts as read.
+  const logCount = useRef(0);
+  logCount.current = logLines.length;
+  const toggleLog = (open?: boolean) =>
+    setLogOpen((old) => {
+      const next = open ?? !old;
+      setReadMark(logCount.current);
+      if (next !== old) window.go?.main?.App?.SetLogOpen?.(next)?.catch(() => {});
+      return next;
+    });
 
   useEffect(() => {
     if (!menu && !openMenu) return;
@@ -190,48 +255,117 @@ function App() {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 
-  useEffect(() => window.runtime?.EventsOn?.('progress', setProgress), []);
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
 
-  // startup: saved theme and the file from the command line or MDB2SQL_DB_PATH
+  useEffect(() => window.runtime?.EventsOn?.('progress', setProgress), []);
+  useEffect(() => window.runtime?.EventsOn?.('log', (text: string) => addLog(text)), []);
+
+  // Ctrl+L collapses or expands the Log panel
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'l') {
+        e.preventDefault();
+        toggleLog();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // dragging the top border of the Log panel resizes it (10% of the window by default, 3 lines to 25%)
+  function startLogResize(e: React.MouseEvent) {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = logHeight;
+    const move = (ev: MouseEvent) => setLogHeight(clampLogHeight(startH + startY - ev.clientY, window.innerHeight));
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }
+
+  // startup: saved theme and language, then the file from the command line or MDB2SQL_DB_PATH
   useEffect(() => {
     if (started.current) return; // StrictMode runs effects twice in development
     started.current = true;
     const bridge = window.go?.main?.App;
-    bridge?.GetTheme?.().then((t) => t && setThemeState(t)).catch(() => {});
+    bridge?.GetLogOpen?.().then((open) => open && setLogOpen(true)).catch(() => {});
+    bridge?.GetTheme?.().then((th) => th && setThemeState(th)).catch(() => {});
+    bridge?.GetLanguage?.()
+      .then((l) => {
+        if (l && LANGS.includes(l)) {
+          setLang(l);
+          setStatusText(translate(l, 'status.none'));
+        }
+      })
+      .catch(() => {});
+    // Linux without X11: the warning of display.go, shown once per start and kept in the log
+    bridge?.DisplayWarning?.()
+      .then((w) => {
+        if (w?.text) {
+          setDisplayWarn(w);
+          addLog([w.text, w.missing, w.command ? `${w.distro}: ${w.command}` : ''].filter(Boolean).join(' '), 'warn');
+        }
+      })
+      .catch(() => {});
     bridge?.StartupPath?.().then((p) => p && openPath(p)).catch(fail);
   }, []);
 
   useEffect(() => {
-    if (!about && !colsOpen) return;
+    if (!about && !colsOpen && !displayWarn && !job) return;
+    // Esc closes every dialog (the progress window: Cancel); each one also has its own OK/Close/Cancel button
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       setAbout(null);
       setColsOpen(false);
+      setDisplayWarn(null);
+      if (job) window.go?.main?.App?.CancelJob?.();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [about, colsOpen]);
+  }, [about, colsOpen, displayWarn, job]);
 
-  async function copyText(text: string, what: string) {
+  // the Data tab searches the whole table in the database: wait for a pause in typing, then query
+  useEffect(() => {
+    const id = setTimeout(() => setTableSearch(search.trim()), 300);
+    return () => clearTimeout(id);
+  }, [search]);
+
+  // (a search typed in the SQL tab reaches the table when the Data or Schema tab comes back)
+  useEffect(() => {
+    if (selectedTable && view !== 'sql' && loadedFind.current !== tableSearch) loadTable(selectedTable, limit, filters, tableSearch);
+  }, [tableSearch, view]);
+
+  async function copyText(text: string, done: string) {
     try {
       // the Wails clipboard goes through Go/Win32, so it does not depend on webview clipboard permissions
       if (window.runtime?.ClipboardSetText) await window.runtime.ClipboardSetText(text);
       else await navigator.clipboard.writeText(text);
-      setCopied(`Copied ${what}`);
+      setCopied(done);
+      addLog(done);
     } catch (err) {
       fail(err);
     }
   }
 
-  function chooseTheme(t: Theme) {
-    setThemeState(t);
-    window.go?.main?.App?.SetTheme?.(t)?.catch(fail);
+  function chooseTheme(th: Theme) {
+    setThemeState(th);
+    window.go?.main?.App?.SetTheme?.(th)?.catch(fail);
+  }
+
+  function chooseLang(l: Lang) {
+    setLang(l);
+    window.go?.main?.App?.SetLanguage?.(l)?.catch(fail);
   }
 
   async function openAbout() {
     try {
       const bridge = getWailsBridge();
-      if (!bridge.GetAppInfo) throw new Error('IPC bridge not available');
+      if (!bridge.GetAppInfo) throw new Error(t('err.bridge'));
       setAbout(await bridge.GetAppInfo());
     } catch (err) {
       fail(err);
@@ -240,7 +374,82 @@ function App() {
 
   function fail(err: unknown, newStatus?: string) {
     setError(err instanceof Error ? err.message : String(err));
-    if (newStatus) setStatus(newStatus);
+    if (newStatus) setStatusText(newStatus);
+  }
+
+  // nothing of the previous file may survive: pending answers, rows, SQL result and what Export would write
+  function clearDatabase() {
+    tableReq.current++;
+    sqlReq.current++;
+    setQuerying(false);
+    setTables([]);
+    setSelectedTable('');
+    setRows([]);
+    setSchema([]);
+    setFilters([]);
+    setSel(null);
+    setResult(null);
+    setResultSql('');
+    setDbName('');
+    setSource('');
+    setConverted(false);
+  }
+
+  // Before closing the file, opening another or quitting: the SQLite converted from an Access file is saved or
+  // deleted (asked once; "remember" keeps the answer for the session). false = cancelled, keep everything open.
+  async function settleConversion(): Promise<boolean> {
+    const bridge = window.go?.main?.App;
+    const name = (await bridge?.PendingConversion?.()) ?? '';
+    if (!name || !bridge?.ResolveConversion) return true;
+    const remembered = (await bridge.RememberedChoice?.()) ?? '';
+    // Esc, the dialog's x and Cancel give null: nothing happens (the app does not quit). A Save whose file
+    // dialog was cancelled asks again, with Esc still working.
+    for (;;) {
+      const answer: { choice: string; remember: boolean } | null = remembered
+        ? { choice: remembered, remember: false }
+        : await new Promise((resolve) => setAsk({ name, resolve }));
+      setAsk(null);
+      if (!answer) return false;
+      try {
+        const res = await bridge.ResolveConversion(answer.choice, answer.remember);
+        if (res.done) {
+          clearDatabase();
+          return true;
+        }
+        if (remembered) return false;
+      } catch (err) {
+        clearDatabase(); // Go closed the database before the error (a failed move or delete)
+        fail(err);
+        return true;
+      }
+    }
+  }
+
+  // window close button: Go stops the close and asks the UI; then quit for real
+  useEffect(
+    () =>
+      window.runtime?.EventsOn?.('conversion-pending', async () => {
+        if (await settleConversion()) window.runtime?.Quit?.();
+      }),
+    [],
+  );
+
+  async function quit() {
+    setOpenMenu(null);
+    if (await settleConversion()) window.runtime?.Quit?.();
+  }
+
+  async function closeDatabase() {
+    setOpenMenu(null);
+    const name = dbName;
+    if (!(await settleConversion())) return;
+    try {
+      await window.go?.main?.App?.CloseDatabase?.();
+      clearDatabase();
+      setStatus(t('status.closed', name));
+    } catch (err) {
+      fail(err);
+    }
   }
 
   // pick=true abre o seletor de arquivo; pick=false usa o banco padrao (MDB2SQL_DB_PATH ou data/sample.duckdb)
@@ -255,54 +464,47 @@ function App() {
       }
       await openPath(path);
     } catch (err) {
-      fail(err, 'Error loading database');
+      fail(err, t('status.loadError'));
     }
   }
 
   async function openPath(path: string) {
     setError('');
-    setJob('Loading');
+    if (!(await settleConversion())) return;
+    setJob(t('job.loading'));
     setProgress(null);
-    setStatus('Loading...');
+    setStatusText(t('status.loading'));
     try {
       const bridge = getWailsBridge();
-      // nothing of the previous file may survive: pending answers, rows, SQL result and what Export would write
-      tableReq.current++;
-      sqlReq.current++;
-      setQuerying(false);
-      setTables([]);
-      setSelectedTable('');
-      setRows([]);
-      setSchema([]);
-      setFilters([]);
-      setSel(null);
-      setResult(null);
-      setResultSql('');
+      clearDatabase();
       const tableList = (await bridge.LoadDatabase(path)) ?? [];
       // Go knows which file an empty path resolved to (MDB2SQL_DB_PATH or the bundled sample)
       const name = (await bridge.DatabaseName?.()) || path.split(/[\\/]/).pop() || 'sample.duckdb';
       setSource((await bridge.SourceKind?.()) || '');
+      setConverted(!!(await bridge.PendingConversion?.()));
       setDbName(name);
       setTables(tableList);
       setFilter('');
-      setStatus(`Loaded: ${name} (${tableList.length} tables)`);
+      setStatus(t('status.loaded', name, tableList.length));
       if (tableList.length > 0) {
-        await loadTable(tableList[0], limit);
+        await loadTable(tableList[0], limit, undefined, tableSearch);
         setSql(`SELECT * FROM "${tableList[0].replace(/"/g, '""')}" LIMIT 100`);
       }
     } catch (err) {
       setDbName('');
       setSource('');
-      fail(err, 'Error loading database');
+      fail(err, t('status.loadError'));
     } finally {
       setJob('');
     }
   }
 
-  // keep = filtros a manter (mesma tabela: novo limite ou filtro); sem keep e outra tabela: filtros e colunas ocultas zeram
-  async function loadTable(tableName: string, rowLimit: number, keep?: Filter[]) {
+  // keep = filtros a manter (mesma tabela: novo limite ou filtro); sem keep e outra tabela: filtros e colunas ocultas
+  // zeram. find = pesquisa da aba Data, feita no banco sobre a tabela inteira
+  async function loadTable(tableName: string, rowLimit: number, keep?: Filter[], find = tableSearch) {
     const tableFilters = keep ?? [];
     const req = ++tableReq.current;
+    loadedFind.current = find;
     try {
       setError('');
       setSelectedTable(tableName);
@@ -312,17 +514,20 @@ function App() {
       if (!keep) setHidden(new Set());
       if (view === 'sql') setView('data');
       const bridge = getWailsBridge();
+      const narrowed = tableFilters.length > 0 || find !== '';
       const [data, count, cols, total] = await Promise.all([
-        bridge.GetTableData(tableName, rowLimit, tableFilters),
-        bridge.GetRowCount(tableName, tableFilters),
+        bridge.GetTableData(tableName, rowLimit, tableFilters, find),
+        bridge.GetRowCount(tableName, tableFilters, find),
         bridge.GetTableSchema ? bridge.GetTableSchema(tableName) : Promise.resolve([]),
-        tableFilters.length > 0 ? bridge.GetRowCount(tableName, []) : null,
+        narrowed ? bridge.GetRowCount(tableName, [], '') : null,
       ]);
       if (req !== tableReq.current) return;
       setRows(data ?? []); // Go sends null for an empty table
       setRowCount(count);
       setTotalCount(total ?? count);
       setSchema(cols ?? []);
+      setShownFind(find);
+      setShownTable(tableName);
     } catch (err) {
       if (req === tableReq.current) fail(err);
     }
@@ -353,7 +558,7 @@ function App() {
     setQuerying(true);
     try {
       const bridge = getWailsBridge();
-      if (!bridge.RunQuery) throw new Error('IPC bridge not available');
+      if (!bridge.RunQuery) throw new Error(t('err.bridge'));
       const res = await bridge.RunQuery(sql, rowLimit);
       if (req !== sqlReq.current) return;
       setResult({ columns: res.columns ?? [], rows: res.rows ?? [], more: res.more });
@@ -362,7 +567,9 @@ function App() {
       if (req !== sqlReq.current) return;
       setResult(null);
       setResultSql('');
-      fail(err);
+      // status bar: one translated line; the engine's full text (LINE 1, carets) goes to the log
+      const full = err instanceof Error ? err.message : String(err);
+      setError(full, t('sql.error', sqlErrorSummary(full)));
     } finally {
       if (req === sqlReq.current) setQuerying(false);
     }
@@ -372,11 +579,11 @@ function App() {
   async function runExport(what: string, call: () => Promise<string> | undefined) {
     setOpenMenu(null);
     setError('');
-    setJob('Exporting');
+    setJob(t('job.exporting'));
     setProgress(null);
     try {
       const saved = await call();
-      if (saved) setStatus(`Exported ${what} to ${saved}`);
+      if (saved) setStatus(t('status.exported', what, saved));
     } catch (err) {
       fail(err);
     } finally {
@@ -385,19 +592,20 @@ function App() {
   }
 
   const bridge = window.go?.main?.App;
+  const sqlResultName = t('sql.result');
   const exportItems = [
-    { group: 'db', label: 'Database as DuckDB (.duckdb)', on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('duckdb')) },
-    { group: 'db', label: 'Database as SQLite (.sqlite)', on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('sqlite')) },
-    { group: 'db', label: 'Database as Excel (.xlsx, one sheet per table)', on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('xlsx')) },
-    { group: 'table', label: 'Current table as CSV', on: !!selectedTable, run: () => runExport(selectedTable, () => bridge?.ExportTable?.(selectedTable, 'csv')) },
-    { group: 'table', label: 'Current table as Excel (.xlsx)', on: !!selectedTable, run: () => runExport(selectedTable, () => bridge?.ExportTable?.(selectedTable, 'xlsx')) },
-    { group: 'sql', label: 'SQL result as CSV', on: !!resultSql, run: () => runExport('SQL result', () => bridge?.ExportQuery?.(resultSql, 'csv')) },
-    { group: 'sql', label: 'SQL result as Excel (.xlsx)', on: !!resultSql, run: () => runExport('SQL result', () => bridge?.ExportQuery?.(resultSql, 'xlsx')) },
+    { group: 'db', label: t('export.dbSqlite'), on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('sqlite')) },
+    { group: 'db', label: t('export.dbDuckdb'), on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('duckdb')) },
+    { group: 'db', label: t('export.dbXlsx'), on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('xlsx')) },
+    { group: 'table', label: t('export.tableCsv'), on: !!selectedTable, run: () => runExport(selectedTable, () => bridge?.ExportTable?.(selectedTable, 'csv')) },
+    { group: 'table', label: t('export.tableXlsx'), on: !!selectedTable, run: () => runExport(selectedTable, () => bridge?.ExportTable?.(selectedTable, 'xlsx')) },
+    { group: 'sql', label: t('export.sqlCsv'), on: !!resultSql, run: () => runExport(sqlResultName, () => bridge?.ExportQuery?.(resultSql, 'csv')) },
+    { group: 'sql', label: t('export.sqlXlsx'), on: !!resultSql, run: () => runExport(sqlResultName, () => bridge?.ExportQuery?.(resultSql, 'xlsx')) },
   ];
 
   const visibleTables = useMemo(() => {
     const words = searchWords(filter);
-    return words.length ? tables.filter((t) => hasAllWords(normalizeText(t), words)) : tables;
+    return words.length ? tables.filter((tb) => hasAllWords(normalizeText(tb), words)) : tables;
   }, [tables, filter]);
 
   // schema order = database column order (Go maps reach JS sorted by key); also gives empty tables a header
@@ -405,22 +613,39 @@ function App() {
   const tableColumns = useMemo(() => (schema.length > 0 ? schema.map((c) => c.name) : Object.keys(rows[0] ?? {})), [schema, rows]);
   const gridColumns = useMemo(() => (view === 'sql' ? (result?.columns ?? []) : tableColumns), [view, result, tableColumns]);
   const gridRows = useMemo(() => (view === 'sql' ? (result?.rows ?? []) : rows), [view, result, rows]);
-  const searching = search.trim() !== '';
-  const searchIndex = useMemo(() => (searching ? rowSearchText(gridRows, gridColumns) : undefined), [searching, gridRows, gridColumns]);
-  const visibleRows = useMemo(() => searchRows(gridRows, gridColumns, search, searchIndex), [gridRows, gridColumns, search, searchIndex]);
+  // SQL tab: the search filters the loaded result here; Data tab: Go already returned only the matching rows
+  const sqlSearching = view === 'sql' && search.trim() !== '';
+  const searchIndex = useMemo(() => (sqlSearching ? rowSearchText(gridRows, gridColumns) : undefined), [sqlSearching, gridRows, gridColumns]);
+  const visibleRows = useMemo(
+    () => (sqlSearching ? searchRows(gridRows, gridColumns, search, searchIndex) : gridRows),
+    [sqlSearching, gridRows, gridColumns, search, searchIndex],
+  );
   // hidden columns only leave the Data grid: search, copy row and exports still use every column
   const shownColumns = useMemo(() => (view === 'data' ? gridColumns.filter((c) => !hidden.has(c)) : gridColumns), [view, gridColumns, hidden]);
+  // numeric columns are right-aligned, header included (cells: by their value type)
+  const numericCols = useMemo(() => new Set(gridColumns.filter((c) => gridRows.some((r) => typeof r[c] === 'number'))), [gridColumns, gridRows]);
   const hiddenCount = gridColumns.length - shownColumns.length;
-  const copyCell = () => sel && copyText(cellText(sel.row[sel.col]), 'value');
+  // the search of the rows on screen, not of the one being typed: the counts below belong to those rows
+  const narrowed = filters.length > 0 || shownFind !== '';
+  const copyCell = () => sel && copyText(cellText(sel.row[sel.col]), t('copied.value'));
   const copyRow = (withHeader: boolean) =>
-    sel && copyText(rowToTsv(gridColumns, sel.row, withHeader), withHeader ? 'row with header' : 'row');
+    sel && copyText(rowToTsv(gridColumns, sel.row, withHeader), t(withHeader ? 'copied.rowHeader' : 'copied.row'));
   const busy = job !== '';
+  // log collapsed: the most important unread line (error, then warning) takes the status bar
+  const shownStatus = logOpen ? { text: error || status, level: error ? 'error' : 'info', unread: 0 } : statusLine(logLines, readMark, status, error);
+  const viewName = (v: View) => (v === 'data' ? t('tab.data') : v === 'schema' ? t('tab.schema', schema.length) : t('tab.sql'));
 
   const toggleMenu = (name: MenuName) => (e: React.MouseEvent) => {
     e.stopPropagation(); // the window click handler would close it again
     setMenu(null);
     setOpenMenu(openMenu === name ? null : name);
   };
+
+  const menuButton = (name: MenuName, label: string) => (
+    <button aria-haspopup="menu" aria-expanded={openMenu === name} onClick={toggleMenu(name)}>
+      {label}
+    </button>
+  );
 
   const grid = (
     <table>
@@ -430,6 +655,7 @@ function App() {
             <th
               key={col}
               scope="col"
+              className={numericCols.has(col) ? 'num' : undefined}
               title={col}
               onContextMenu={
                 view === 'data'
@@ -478,33 +704,32 @@ function App() {
   return (
     <div className="app">
       <header className="top">
-        <nav className="menubar" aria-label="Main menu">
+        <nav className="menubar" aria-label={t('menu.main')}>
           <div className="menu-root">
-            <button aria-haspopup="menu" aria-expanded={openMenu === 'file'} onClick={toggleMenu('file')}>
-              File
-            </button>
+            {menuButton('file', t('menu.file'))}
             {openMenu === 'file' && (
-              <div className="dropdown" role="menu" aria-label="File">
+              <div className="dropdown" role="menu" aria-label={t('menu.file')}>
                 <button role="menuitem" disabled={busy} onClick={() => loadDatabase(true)}>
-                  Open database...
+                  {t('menu.open')}
                 </button>
-                <button role="menuitem" disabled={busy} onClick={() => loadDatabase(false)} title="MDB2SQL_DB_PATH or data/sample.duckdb">
-                  Open sample data
+                <button role="menuitem" disabled={busy} onClick={() => loadDatabase(false)} title={t('menu.openSampleTip')}>
+                  {t('menu.openSample')}
+                </button>
+                <button role="menuitem" disabled={busy || !dbName} onClick={closeDatabase}>
+                  {t('menu.close')}
                 </button>
                 <hr />
-                <button role="menuitem" onClick={() => window.runtime?.Quit?.()}>
-                  Exit
+                <button role="menuitem" onClick={quit}>
+                  {t('menu.exit')}
                 </button>
               </div>
             )}
           </div>
           {/* every action lives in one place only: no toolbar copies of the menu items */}
           <div className="menu-root">
-            <button aria-haspopup="menu" aria-expanded={openMenu === 'export'} onClick={toggleMenu('export')}>
-              Export
-            </button>
+            {menuButton('export', t('menu.export'))}
             {openMenu === 'export' && (
-              <div className="dropdown" role="menu" aria-label="Export">
+              <div className="dropdown" role="menu" aria-label={t('menu.export')}>
                 {exportItems.map((it, i) => (
                   <Fragment key={it.label}>
                     {i > 0 && exportItems[i - 1].group !== it.group && <hr />}
@@ -517,29 +742,44 @@ function App() {
             )}
           </div>
           <div className="menu-root">
-            <button aria-haspopup="menu" aria-expanded={openMenu === 'settings'} onClick={toggleMenu('settings')}>
-              Settings
-            </button>
+            {menuButton('view', t('menu.view'))}
+            {openMenu === 'view' && (
+              <div className="dropdown" role="menu" aria-label={t('menu.view')}>
+                <button role="menuitemcheckbox" aria-checked={logOpen} onClick={() => toggleLog()}>
+                  <span className="check">{logOpen ? '✓' : ''}</span>
+                  {t('menu.log')}
+                </button>
+              </div>
+            )}
+          </div>
+          <div className="menu-root">
+            {menuButton('settings', t('menu.settings'))}
             {openMenu === 'settings' && (
-              <div className="dropdown" role="menu" aria-label="Settings">
-                <p className="menu-title">Theme</p>
-                {THEMES.map((t) => (
-                  <button key={t.value} role="menuitemradio" aria-checked={theme === t.value} onClick={() => chooseTheme(t.value)}>
-                    <span className="check">{theme === t.value ? '✓' : ''}</span>
-                    {t.label}
+              <div className="dropdown" role="menu" aria-label={t('menu.settings')}>
+                <p className="menu-title">{t('menu.theme')}</p>
+                {THEMES.map((th) => (
+                  <button key={th} role="menuitemradio" aria-checked={theme === th} onClick={() => chooseTheme(th)}>
+                    <span className="check">{theme === th ? '✓' : ''}</span>
+                    {t(`theme.${th}`)}
+                  </button>
+                ))}
+                <hr />
+                <p className="menu-title">{t('menu.language')}</p>
+                {LANGS.map((l) => (
+                  <button key={l} role="menuitemradio" aria-checked={lang === l} lang={l} onClick={() => chooseLang(l)}>
+                    <span className="check">{lang === l ? '✓' : ''}</span>
+                    {t(`lang.${l}`)}
                   </button>
                 ))}
               </div>
             )}
           </div>
           <div className="menu-root">
-            <button aria-haspopup="menu" aria-expanded={openMenu === 'help'} onClick={toggleMenu('help')}>
-              Help
-            </button>
+            {menuButton('help', t('menu.help'))}
             {openMenu === 'help' && (
-              <div className="dropdown" role="menu" aria-label="Help">
+              <div className="dropdown" role="menu" aria-label={t('menu.help')}>
                 <button role="menuitem" onClick={openAbout}>
-                  About
+                  {t('menu.about')}
                 </button>
               </div>
             )}
@@ -547,12 +787,12 @@ function App() {
         </nav>
       </header>
 
-      <nav className="sidebar" aria-label="Tables">
+      <nav className="sidebar" aria-label={t('sidebar.label')}>
         <input
           type="search"
-          placeholder={`Filter ${tables.length} tables`}
-          aria-label="Filter tables"
-          title="All words, any order, ignores case and accents"
+          placeholder={t('sidebar.filter', tables.length)}
+          aria-label={t('sidebar.filter', tables.length)}
+          title={t('search.tip')}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           disabled={tables.length === 0}
@@ -571,34 +811,34 @@ function App() {
             </li>
           ))}
         </ul>
-        {tables.length > 0 && visibleTables.length === 0 && <p className="empty">No table matches.</p>}
+        {tables.length > 0 && visibleTables.length === 0 && <p className="empty">{t('sidebar.noMatch')}</p>}
       </nav>
 
       <main className="content">
         {tables.length === 0 ? (
-          <p className="empty">DuckDB, SQLite, Access (.mdb, .accdb)</p>
+          <p className="empty">{t('empty.formats')}</p>
         ) : (
           <>
             <div className="content-bar">
-              <h2>{view === 'sql' ? 'SQL' : selectedTable}</h2>
-              <div className="tabs" role="tablist" aria-label="Table view">
+              <h2>{view === 'sql' ? t('tab.sql') : selectedTable}</h2>
+              <div className="tabs" role="tablist" aria-label={t('tab.label')}>
                 {(['data', 'schema', 'sql'] as View[]).map((v) => (
                   <button key={v} role="tab" aria-selected={view === v} onClick={() => setView(v)}>
-                    {v === 'data' ? 'Data' : v === 'schema' ? `Schema (${schema.length})` : 'SQL'}
+                    {viewName(v)}
                   </button>
                 ))}
               </div>
               <input
                 type="search"
                 className="search"
-                placeholder="Search loaded rows"
-                aria-label="Search rows"
-                title="All words, any order, ignores case and accents"
+                placeholder={view === 'sql' ? t('sql.searchPlaceholder') : t('search.placeholder')}
+                aria-label={view === 'sql' ? t('sql.searchLabel') : t('search.label')}
+                title={t('search.tip')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
               <label className="field">
-                Rows
+                {t('rows.label')}
                 <select value={limit} onChange={(e) => changeLimit(Number(e.target.value))}>
                   {ROW_LIMITS.map((n) => (
                     <option key={n} value={n}>
@@ -607,37 +847,33 @@ function App() {
                   ))}
                 </select>
               </label>
-              <button
-                onClick={() => setColsOpen(true)}
-                disabled={view !== 'data' || gridColumns.length === 0}
-                title="Pesquisa e Export usam todas as colunas"
-              >
-                Colunas...
+              <button onClick={() => setColsOpen(true)} disabled={view !== 'data' || gridColumns.length === 0} title={t('cols.tip')}>
+                {t('cols.button')}
               </button>
             </div>
 
             {view === 'data' && filters.length > 0 && (
-              <div className="filters" role="group" aria-label="Filtros ativos">
+              <div className="filters" role="group" aria-label={t('filters.group')}>
                 {filters.map((f) => (
                   <span key={f.column} className="chip">
-                    <span title={`Filtro: ${filterLabel(f)}`}>Filtro: {filterLabel(f)}</span>
+                    <span>{t('filters.chip', filterLabel(f))}</span>
                     <button
-                      aria-label={`Remover filtro ${f.column}`}
-                      title="Remover este filtro"
+                      aria-label={t('filters.remove', f.column)}
+                      title={t('filters.removeTip')}
                       onClick={() => applyFilters(filters.filter((x) => x !== f))}
                     >
                       ×
                     </button>
                   </span>
                 ))}
-                <button onClick={() => applyFilters([])}>Limpar filtros</button>
+                <button onClick={() => applyFilters([])}>{t('filters.clear')}</button>
               </div>
             )}
 
             {view === 'sql' && (
               <div className="sql-bar">
                 <textarea
-                  aria-label="SQL"
+                  aria-label={t('sql.label')}
                   spellCheck={false}
                   value={sql}
                   onChange={(e) => setSql(e.target.value)}
@@ -649,10 +885,10 @@ function App() {
                   }}
                 />
                 {querying ? (
-                  <button onClick={() => bridge?.CancelJob?.()}>Cancel</button>
+                  <button onClick={() => bridge?.CancelJob?.()}>{t('sql.cancel')}</button>
                 ) : (
                   <button className="primary" onClick={() => runSql()} title="Ctrl+Enter">
-                    Run
+                    {t('sql.run')}
                   </button>
                 )}
               </div>
@@ -663,7 +899,7 @@ function App() {
               className="table-container"
               tabIndex={0}
               role="region"
-              aria-label={`${view === 'sql' ? 'SQL result' : selectedTable} ${view}`}
+              aria-label={t('grid.region', view === 'sql' ? t('sql.result') : selectedTable, viewName(view))}
               onKeyDown={(e) => {
                 // Ctrl+C copies the selected cell, unless the user marked text with the mouse (native copy)
                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && sel && !window.getSelection()?.toString()) {
@@ -676,9 +912,9 @@ function App() {
                 <table>
                   <thead>
                     <tr>
-                      <th scope="col">Column</th>
-                      <th scope="col">Type</th>
-                      <th scope="col">Nullable</th>
+                      <th scope="col">{t('schema.column')}</th>
+                      <th scope="col">{t('schema.type')}</th>
+                      <th scope="col">{t('schema.nullable')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -694,86 +930,131 @@ function App() {
               ) : (
                 grid
               )}
-              {view === 'data' && visibleRows.length === 0 && (
-                <p className="empty">
-                  {rows.length > 0 ? 'No loaded row matches the search.' : filters.length > 0 ? 'No row matches the filters.' : 'This table has no rows.'}
-                </p>
-              )}
-              {view === 'data' && visibleRows.length > 0 && shownColumns.length === 0 && (
-                <p className="empty">Nenhuma coluna visivel</p>
-              )}
-
+              {view === 'data' && visibleRows.length === 0 && <p className="empty">{narrowed ? t('empty.noFilterMatch') : t('empty.noRows')}</p>}
+              {view === 'data' && visibleRows.length > 0 && shownColumns.length === 0 && <p className="empty">{t('empty.noColumns')}</p>}
             </div>
 
             <footer className="info">
               {view === 'sql'
-                ? result && `SQL result: ${result.rows.length} rows${result.more ? ` (limit ${limit})` : ''}`
-                : `${selectedTable}: Showing ${rows.length} of ${rowCount} rows` +
-                  (filters.length > 0 ? ` matching the filters (${totalCount} in the table)` : '')}
-              {search.trim() && view !== 'schema' && ` - ${visibleRows.length} match "${search.trim()}"`}
+                ? result && t('info.sql', result.rows.length) + (result.more ? t('info.sqlLimit', limit) : '')
+                : t('info.showing', shownTable, rows.length, rowCount) + (narrowed ? t('info.filtered', totalCount) : '')}
+              {sqlSearching && t('info.searchSql', visibleRows.length, search.trim())}
               {copied && ` - ${copied}`}
             </footer>
           </>
         )}
       </main>
 
-      <footer className="statusbar">
-        <p className={error ? 'status error' : 'status'} role="status" aria-live="polite" title={error || status}>
-          {error || status}
+      {logOpen && (
+        <section className="log" aria-label={t('log.title')}>
+          <div className="log-resize" role="separator" aria-orientation="horizontal" title={t('log.resize')} onMouseDown={startLogResize} />
+          <div className="log-bar">
+            <button className="log-toggle" aria-label={t('log.collapse')} title={`${t('log.collapse')} (Ctrl+L)`} onClick={() => toggleLog(false)}>
+              ▾
+            </button>
+            <h2>{t('log.title')}</h2>
+            <button onClick={() => copyText(logLines.map((e) => e.line).join('\r\n'), t('copied.log'))} disabled={logLines.length === 0}>
+              {t('log.copyAll')}
+            </button>
+          </div>
+          {/* read-only text: select with the mouse or Ctrl+A, copy with Ctrl+C */}
+          <textarea
+            readOnly
+            spellCheck={false}
+            aria-label={t('log.title')}
+            style={{ height: logHeight }}
+            value={logLines.map((e) => e.line).join('\n')}
+          />
+        </section>
+      )}
+
+      <footer
+        className="statusbar"
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setOpenMenu(null);
+          setMenu({ x: e.clientX, y: e.clientY, status: true });
+        }}
+      >
+        {!logOpen && (
+          <button className="log-toggle" aria-label={t('log.expand')} title={`${t('log.expand')} (Ctrl+L)`} onClick={() => toggleLog(true)}>
+            ▴
+          </button>
+        )}
+        <p
+          className={shownStatus.level === 'error' ? 'status error' : shownStatus.level === 'warn' ? 'status warn' : 'status'}
+          role="status"
+          aria-live="polite"
+          onClick={() => !logOpen && !window.getSelection()?.toString() && toggleLog(true)}
+        >
+          {shownStatus.text}
         </p>
-        {hiddenCount > 0 && (
-          <span className="source">
-            {hiddenCount} {hiddenCount === 1 ? 'coluna oculta' : 'colunas ocultas'}
+        {shownStatus.unread > 0 && (
+          <span className="badge" title={t('log.unread', shownStatus.unread)}>
+            {shownStatus.unread}
           </span>
         )}
-        {source && <span className="source" title="Reader used to open the file">Opened via {source}</span>}
+        {hiddenCount > 0 && <span className="source">{hiddenCount === 1 ? t('hidden.one') : t('hidden.many', hiddenCount)}</span>}
+        {source && (
+          <span className="source" title={t('status.sourceTip')}>
+            {converted ? t('status.sourceConverted', source) : t('status.source', source)}
+          </span>
+        )}
       </footer>
+
+      {menu?.status && (
+        <div className="menu" role="menu" aria-label={t('status.copy')} style={{ left: Math.min(menu.x, window.innerWidth - 220), top: Math.min(menu.y, window.innerHeight - 50) }}>
+          <button role="menuitem" autoFocus onClick={() => copyText(shownStatus.text, t('copied.status'))}>
+            {t('status.copy')}
+          </button>
+        </div>
+      )}
 
       {menu?.header !== undefined && (
         <div
           className="menu"
           role="menu"
-          aria-label="Coluna"
+          aria-label={t('colmenu.label')}
           style={{ left: Math.min(menu.x, window.innerWidth - 220), top: Math.min(menu.y, window.innerHeight - 120) }}
         >
           <button role="menuitem" autoFocus onClick={() => setColumnHidden(menu.header!, true)}>
-            Ocultar esta coluna
+            {t('colmenu.hide')}
           </button>
           <button role="menuitem" onClick={() => setColsOpen(true)}>
-            Colunas...
+            {t('colmenu.columns')}
           </button>
           <button role="menuitem" disabled={hiddenCount === 0} onClick={() => setHidden(new Set())}>
-            Mostrar todas
+            {t('colmenu.showAll')}
           </button>
         </div>
       )}
 
-      {menu && menu.header === undefined && (
+      {menu && menu.header === undefined && !menu.status && (
         <div
           className="menu"
           role="menu"
-          aria-label="Cell"
+          aria-label={t('cellmenu.label')}
           style={{ left: Math.min(menu.x, window.innerWidth - 220), top: Math.min(menu.y, window.innerHeight - 190) }}
         >
           {view === 'data' && (
             <>
               <button role="menuitem" onClick={() => sel && applyFilters(withFilter(filters, { column: sel.col, value: sel.row[sel.col] ?? null }))}>
-                Filtrar por este valor
+                {t('cellmenu.filter')}
               </button>
               <button role="menuitem" disabled={filters.length === 0} onClick={() => applyFilters([])}>
-                Limpar filtros
+                {t('cellmenu.clear')}
               </button>
               <hr />
             </>
           )}
           <button role="menuitem" autoFocus onClick={copyCell}>
-            Copy value <kbd>Ctrl+C</kbd>
+            {t('cellmenu.copy')} <kbd>Ctrl+C</kbd>
           </button>
           <button role="menuitem" onClick={() => copyRow(false)}>
-            Copy row
+            {t('cellmenu.copyRow')}
           </button>
           <button role="menuitem" onClick={() => copyRow(true)}>
-            Copy row with header
+            {t('cellmenu.copyRowHeader')}
           </button>
         </div>
       )}
@@ -781,11 +1062,48 @@ function App() {
       {busy && (
         <div className="backdrop">
           <div className="about progress" role="dialog" aria-modal="true" aria-label={job}>
-            <p>{progressText(job, progress)}</p>
+            <p>{progressText(job, progress, t)}</p>
             <progress max={progress?.total || undefined} value={progress?.total ? progress.done : undefined} />
             <button autoFocus onClick={() => bridge?.CancelJob?.()}>
-              Cancel
+              {t('job.cancel')}
             </button>
+          </div>
+        </div>
+      )}
+
+      {ask && <ConversionDialog name={ask.name} t={t} onAnswer={ask.resolve} />}
+
+      {displayWarn && (
+        <div className="backdrop">
+          <div className="about conversion" role="alertdialog" aria-modal="true" aria-labelledby="display-title">
+            <h2 id="display-title">{t('display.title')}</h2>
+            <p>
+              {displayWarn.text}
+              <br />
+              {displayWarn.missing}
+            </p>
+            {displayWarn.command && (
+              <p className="display-cmd">
+                <span>{displayWarn.distro}: </span>
+                <code>{displayWarn.command}</code>
+                <button onClick={() => copyText(displayWarn.command, t('copied.value'))}>{t('display.copy')}</button>
+              </p>
+            )}
+            <div className="col-actions">
+              <a
+                className="help-link"
+                href={displayWarn.help}
+                onClick={(e) => {
+                  e.preventDefault(); // the default browser, never the app's own webview
+                  window.runtime?.BrowserOpenURL?.(displayWarn.help);
+                }}
+              >
+                {t('display.help')}
+              </a>
+              <button className="primary end" autoFocus onClick={() => setDisplayWarn(null)}>
+                {t('display.ok')}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -796,16 +1114,16 @@ function App() {
             <h2 id="about-title">
               mdb2sql <span className="version">{about.version}</span>
             </h2>
-            <p className="tagline">{ABOUT_TAGLINE}</p>
+            <p className="tagline">{t('about.tagline')}</p>
             <dl>
-              {aboutRows(about).map(([label, value]) => (
+              {aboutRows(about, t).map(([label, value]) => (
                 <div key={label}>
                   <dt>{label}</dt>
                   <dd>
                     {value.startsWith('https://') ? (
                       <a
                         href={value}
-                        title="Abrir no navegador padrao"
+                        title={t('about.openLink')}
                         onClick={(e) => {
                           e.preventDefault(); // never navigate the app's own webview away
                           window.runtime?.BrowserOpenURL?.(value);
@@ -821,20 +1139,56 @@ function App() {
               ))}
             </dl>
             <button className="primary" autoFocus onClick={() => setAbout(null)}>
-              Fechar
+              {t('about.close')}
             </button>
           </div>
         </div>
       )}
 
       {colsOpen && (
-        <ColumnsDialog table={selectedTable} columns={gridColumns} hidden={hidden} setHidden={setHidden} onClose={() => setColsOpen(false)} />
+        <ColumnsDialog table={selectedTable} columns={gridColumns} hidden={hidden} setHidden={setHidden} onClose={() => setColsOpen(false)} t={t} />
       )}
     </div>
   );
 }
 
-// Minimum width of one checkbox cell of "Colunas...": longest name (~8 px per character at the 14 px base font)
+// "Save or delete the converted SQLite?": Save... (dialog in Go), Delete, Cancel; remember = for this session only
+function ConversionDialog({ name, t, onAnswer }: { name: string; t: T; onAnswer: (a: { choice: string; remember: boolean } | null) => void }) {
+  const [remember, setRemember] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onAnswer(null);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  return (
+    <div className="backdrop">
+      <div className="about conversion" role="dialog" aria-modal="true" aria-labelledby="conv-title">
+        <div className="dialog-head">
+          <h2 id="conv-title">{t('conv.title')}</h2>
+          <button className="dialog-x" aria-label={t('about.close')} title={t('about.close')} onClick={() => onAnswer(null)}>
+            ×
+          </button>
+        </div>
+        <p>{t('conv.text', name)}</p>
+        <label className="remember">
+          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+          {t('conv.remember')}
+        </label>
+        <div className="col-actions">
+          <button className="primary" autoFocus onClick={() => onAnswer({ choice: 'save', remember })}>
+            {t('conv.save')}
+          </button>
+          <button onClick={() => onAnswer({ choice: 'delete', remember })}>{t('conv.delete')}</button>
+          <button className="end" onClick={() => onAnswer(null)}>
+            {t('conv.cancel')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Minimum width of one checkbox cell of "Columns...": longest name (~8 px per character at the 14 px base font)
 // plus box and gaps, at least 150 px; the CSS grid fits as many as the dialog allows, 1 to 6 (about 4 at 1280x800)
 export const columnCellWidth = (columns: string[]) => Math.max(150, Math.max(0, ...columns.map((c) => c.length)) * 8 + 44);
 
@@ -844,17 +1198,18 @@ type ColumnsDialogProps = {
   hidden: Set<string>;
   setHidden: (update: (old: Set<string>) => Set<string>) => void;
   onClose: () => void;
+  t: T;
 };
 
-// "Colunas...": search on top, responsive checkbox grid (vertical scroll only), buttons in one row
-function ColumnsDialog({ table, columns, hidden, setHidden, onClose }: ColumnsDialogProps) {
+// "Columns...": search on top, responsive checkbox grid (vertical scroll only), buttons in one row
+function ColumnsDialog({ table, columns, hidden, setHidden, onClose, t }: ColumnsDialogProps) {
   const [query, setQuery] = useState('');
   const listed = useMemo(() => {
     const words = searchWords(query);
     return words.length ? columns.filter((c) => hasAllWords(normalizeText(c), words)) : columns;
   }, [columns, query]);
   const visible = columns.filter((c) => !hidden.has(c)).length;
-  // Mostrar/Ocultar todas act on the listed columns (all of them when the search is empty)
+  // Show/Hide all act on the listed columns only (all of them when the search is empty)
   const showListed = (show: boolean) =>
     setHidden((old) => (show ? new Set([...old].filter((c) => !listed.includes(c))) : new Set([...old, ...listed])));
   const toggle = (col: string, show: boolean) =>
@@ -867,19 +1222,18 @@ function ColumnsDialog({ table, columns, hidden, setHidden, onClose }: ColumnsDi
   return (
     <div className="backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="about columns" role="dialog" aria-modal="true" aria-labelledby="cols-title">
-        <h2 id="cols-title">Colunas de {table}</h2>
+        <h2 id="cols-title">{t('cols.title', table)}</h2>
         <div className="col-top">
           <input
             type="search"
-            placeholder="Filtrar colunas"
-            aria-label="Filtrar colunas"
+            placeholder={t('cols.filter')}
+            aria-label={t('cols.filter')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && onClose()} // Enter = the default button (Close)
             autoFocus
           />
-          <span className="col-count">
-            {visible} de {columns.length} visiveis
-          </span>
+          <span className="col-count">{t('cols.count', visible, columns.length)}</span>
         </div>
         <div className="col-list" style={{ '--col-w': `${columnCellWidth(columns)}px` } as React.CSSProperties}>
           {listed.map((col) => (
@@ -888,13 +1242,13 @@ function ColumnsDialog({ table, columns, hidden, setHidden, onClose }: ColumnsDi
               <span>{col}</span>
             </label>
           ))}
-          {listed.length === 0 && <p className="empty">Nenhuma coluna.</p>}
+          {listed.length === 0 && <p className="empty">{t('cols.none')}</p>}
         </div>
         <div className="col-actions">
-          <button onClick={() => showListed(true)}>Mostrar todas</button>
-          <button onClick={() => showListed(false)}>Ocultar todas</button>
-          <button className="primary" onClick={onClose}>
-            Fechar
+          <button onClick={() => showListed(true)}>{t('cols.showAll')}</button>
+          <button onClick={() => showListed(false)}>{t('cols.hideAll')}</button>
+          <button className="primary end" onClick={onClose}>
+            {t('cols.close')}
           </button>
         </div>
       </div>

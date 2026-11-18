@@ -5,7 +5,11 @@ import {backend} from '../models';
 
 export function CancelJob():Promise<void>;
 
+export function CloseDatabase():Promise<void>;
+
 export function DatabaseName():Promise<string>;
+
+export function DisplayWarning():Promise<main.DisplayWarning>;
 
 export function ExportDatabase(arg1:string):Promise<string>;
 
@@ -15,9 +19,13 @@ export function ExportTable(arg1:string,arg2:string):Promise<string>;
 
 export function GetAppInfo():Promise<main.AppInfo>;
 
-export function GetRowCount(arg1:string,arg2:Array<backend.Filter>):Promise<number>;
+export function GetLanguage():Promise<string>;
 
-export function GetTableData(arg1:string,arg2:number,arg3:Array<backend.Filter>):Promise<Array<Record<string, any>>>;
+export function GetLogOpen():Promise<boolean>;
+
+export function GetRowCount(arg1:string,arg2:Array<backend.Filter>,arg3:string):Promise<number>;
+
+export function GetTableData(arg1:string,arg2:number,arg3:Array<backend.Filter>,arg4:string):Promise<Array<Record<string, any>>>;
 
 export function GetTableSchema(arg1:string):Promise<Array<backend.ColumnSchema>>;
 
@@ -25,9 +33,19 @@ export function GetTheme():Promise<string>;
 
 export function LoadDatabase(arg1:string):Promise<Array<string>>;
 
+export function PendingConversion():Promise<string>;
+
+export function RememberedChoice():Promise<string>;
+
+export function ResolveConversion(arg1:string,arg2:boolean):Promise<main.ConversionResult>;
+
 export function RunQuery(arg1:string,arg2:number):Promise<backend.QueryResult>;
 
 export function SelectDatabase():Promise<string>;
+
+export function SetLanguage(arg1:string):Promise<void>;
+
+export function SetLogOpen(arg1:boolean):Promise<void>;
 
 export function SetTheme(arg1:string):Promise<void>;
 

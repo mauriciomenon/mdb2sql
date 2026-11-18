@@ -12,7 +12,7 @@ import (
 func TestFilterWhere(t *testing.T) {
 	types := map[string]string{`a"b`: "VARCHAR", "n": "INTEGER"}
 	evil := `x' OR '1'='1`
-	where, args, err := filterWhere([]Filter{{`a"b`, evil}, {"n", nil}, {"n", 5.0}}, types)
+	where, args, err := filterWhere([]Filter{{`a"b`, evil}, {"n", nil}, {"n", 5.0}}, types, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,13 +22,13 @@ func TestFilterWhere(t *testing.T) {
 	if len(args) != 2 || args[0] != evil || args[1] != 5.0 {
 		t.Errorf("args: %v", args)
 	}
-	if where, args, err := filterWhere(nil, types); where != "" || args != nil || err != nil {
+	if where, args, err := filterWhere(nil, types, ""); where != "" || args != nil || err != nil {
 		t.Errorf("no filters: %q %v %v", where, args, err)
 	}
-	if _, _, err := filterWhere([]Filter{{`n" = 1 OR "n`, 1.0}}, types); err == nil {
+	if _, _, err := filterWhere([]Filter{{`n" = 1 OR "n`, 1.0}}, types, ""); err == nil {
 		t.Error("unknown column must fail")
 	}
-	if _, _, err := filterWhere([]Filter{{"n", []any{1.0}}}, types); err == nil {
+	if _, _, err := filterWhere([]Filter{{"n", []any{1.0}}}, types, ""); err == nil {
 		t.Error("list value must fail")
 	}
 }
@@ -59,7 +59,7 @@ func TestTableFilters(t *testing.T) {
 		INSERT INTO pts VALUES (1, 'U9A', 0.1, 12.34, '2026-07-14 10:20:30', true), (2, 'U9A', 0.1, NULL, '2026-01-02', false),
 			(3, 'O''Brien "q"', 2.5, -1, NULL, NULL), (4, NULL, NULL, NULL, NULL, NULL), (5, 'x'' OR ''1''=''1', 3, 7, NULL, true);
 		INSERT INTO pts SELECT range + 10, 'Z', 1, 1, NULL, NULL FROM range(500);
-		INSERT INTO pts VALUES (999, 'U18A', 9, 9, NULL, NULL);`)
+		INSERT INTO pts VALUES (999, 'U18A', 9, 9, NULL, NULL), (1000, 'EXCITACIÓN TENSIÓN', NULL, NULL, NULL, NULL);`)
 	db.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -82,17 +82,26 @@ func TestTableFilters(t *testing.T) {
 	cases := []struct {
 		name    string
 		filters []Filter
+		search  string
 		count   int
 	}{
-		{"text", []Filter{{sigla, "U9A"}}, 2},
-		{"quotes", []Filter{{sigla, `O'Brien "q"`}}, 1},
-		{"injection text is just a value", []Filter{{sigla, `x' OR '1'='1`}}, 1},
-		{"null", []Filter{{sigla, nil}}, 1},
-		{"integer", []Filter{{"id", 3.0}}, 1}, // JSON numbers reach Go as float64
-		{"beyond the loaded rows", []Filter{{sigla, "U18A"}}, 1},
-		{"two filters are ANDed", []Filter{{sigla, "U9A"}, {"valor", nil}}, 1},
-		{"no match", []Filter{{sigla, "u9a"}}, 0},
-		{"many rows, limit kept", []Filter{{sigla, "Z"}}, 500},
+		{"text", []Filter{{sigla, "U9A"}}, "", 2},
+		{"quotes", []Filter{{sigla, `O'Brien "q"`}}, "", 1},
+		{"injection text is just a value", []Filter{{sigla, `x' OR '1'='1`}}, "", 1},
+		{"null", []Filter{{sigla, nil}}, "", 1},
+		{"integer", []Filter{{"id", 3.0}}, "", 1}, // JSON numbers reach Go as float64
+		{"beyond the loaded rows", []Filter{{sigla, "U18A"}}, "", 1},
+		{"two filters are ANDed", []Filter{{sigla, "U9A"}, {"valor", nil}}, "", 1},
+		{"no match", []Filter{{sigla, "u9a"}}, "", 0},
+		{"many rows, limit kept", []Filter{{sigla, "Z"}}, "", 500},
+		// search: the whole table, every word in one cell, any order, no case or accents
+		{"search beyond the loaded rows", nil, "u18a", 1},
+		{"search words any order", nil, `"q" o'brien`, 1},
+		{"search words in different rows", nil, "u9a brien", 0},
+		{"search accents", nil, "tension EXCITACION", 1},
+		{"search is not fuzzy", nil, "tensao", 0},
+		{"search with filter", []Filter{{"id", 1.0}}, "u9a", 1},
+		{"search many rows", nil, "z", 500},
 	}
 	for source, file := range files {
 		t.Run(source, func(t *testing.T) {
@@ -102,26 +111,26 @@ func TestTableFilters(t *testing.T) {
 			}
 			defer m.Close()
 			for _, c := range cases {
-				n, err := m.GetRowCount("pts", c.filters...)
+				n, err := m.GetRowCount("pts", c.search, c.filters...)
 				if err != nil || n != c.count {
 					t.Errorf("%s: count %d, want %d (%v)", c.name, n, c.count, err)
 				}
-				rows, err := m.QueryTable("pts", 100, c.filters...)
+				rows, err := m.QueryTable("pts", 100, c.search, c.filters...)
 				if err != nil || len(rows) != min(c.count, 100) {
 					t.Errorf("%s: %d rows, want %d (%v)", c.name, len(rows), min(c.count, 100), err)
 				}
 			}
-			if _, err := m.QueryTable("pts", 100, Filter{"nope", 1.0}); err == nil {
+			if _, err := m.QueryTable("pts", 100, "", Filter{"nope", 1.0}); err == nil {
 				t.Error("unknown column must fail")
 			}
 			// every shown value, sent back as the UI does, must find its own row (REAL, DECIMAL, TIMESTAMP, BOOLEAN too)
-			rows, err := m.QueryTable("pts", 5)
+			rows, err := m.QueryTable("pts", 5, "")
 			if err != nil || len(rows) != 5 {
 				t.Fatalf("rows: %d %v", len(rows), err)
 			}
 			for _, row := range rows {
 				for col, v := range row {
-					got, err := m.QueryTable("pts", 1000, Filter{col, uiValue(t, v)}, Filter{"id", uiValue(t, row["id"])})
+					got, err := m.QueryTable("pts", 1000, "", Filter{col, uiValue(t, v)}, Filter{"id", uiValue(t, row["id"])})
 					if err != nil || len(got) != 1 {
 						t.Errorf("id %v, %s = %v: %d rows (%v)", row["id"], col, v, len(got), err)
 					}
@@ -151,7 +160,7 @@ func TestBigNumbersKeepDigits(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Close()
-	rows, err := m.QueryTable("big", 10)
+	rows, err := m.QueryTable("big", 10, "")
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("rows %d %v", len(rows), err)
 	}
@@ -169,7 +178,7 @@ func TestBigNumbersKeepDigits(t *testing.T) {
 		t.Errorf("SQL tab: %v %v", res.Rows, err)
 	}
 	for _, col := range []string{"i", "u", "d"} {
-		if n, err := m.GetRowCount("big", Filter{col, uiValue(t, rows[0][col])}); err != nil || n != 1 {
+		if n, err := m.GetRowCount("big", "", Filter{col, uiValue(t, rows[0][col])}); err != nil || n != 1 {
 			t.Errorf("filter %s: %d rows %v", col, n, err)
 		}
 	}

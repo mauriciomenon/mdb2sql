@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"mdb2sql/backend"
+	"mdb2sql/i18n"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -35,10 +38,10 @@ func TestLicense(t *testing.T) {
 
 func TestGetAppInfo(t *testing.T) {
 	info := NewApp().GetAppInfo()
-	if info.Version != "1.2.0" {
+	if info.Version != "1.3.0" {
 		t.Fatalf("version must come from wails.json info.productVersion, got %q", info.Version)
 	}
-	if got := windowTitle(); got != "mdb2sql 1.2.0 - Go" {
+	if got := windowTitle(); got != "mdb2sql 1.3.0 - Go" {
 		t.Fatalf("window title must carry the wails.json version, got %q", got)
 	}
 	if !regexp.MustCompile(`^\d+\.\d+`).MatchString(info.Go) {
@@ -185,7 +188,104 @@ func TestDefaultSaveDir(t *testing.T) {
 	}
 }
 
-// Tema e ultima pasta sobrevivem a um reinicio; valor desconhecido e recusado
+// the user's real settings (a saved language, for one) must not change what the tests see
+func TestMain(m *testing.M) {
+	dir, _ := os.MkdirTemp("", "mdb2sql-settings-")
+	os.Setenv("APPDATA", dir)
+	os.Setenv("XDG_CONFIG_HOME", dir)
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// Access is converted once to a SQLite file that waits for "save or delete"; another file cannot be opened before
+// that, a remembered choice is applied by itself (never over an existing file), and exit removes what is left
+func TestConvertedSQLiteLifecycle(t *testing.T) {
+	// not t.TempDir: the sqlite extension unpacked here stays loaded in this process, so Windows cannot delete it
+	cache, _ := os.MkdirTemp("", "mdb2sql-cache-")
+	t.Cleanup(func() { os.RemoveAll(cache) }) // best effort
+	t.Setenv("LOCALAPPDATA", cache)
+	t.Setenv("XDG_CACHE_HOME", cache)
+	t.Setenv("MDB2SQL_ACCESS_READER", "")
+	mdb := filepath.Join("backend", "testdata", "types.mdb")
+	other := filepath.Join(t.TempDir(), "other.duckdb")
+	db, _ := sql.Open("duckdb", other)
+	db.Exec("CREATE TABLE t (id INTEGER)")
+	db.Close()
+
+	app := NewApp()
+	if _, err := app.LoadDatabase(mdb); err != nil {
+		t.Skipf("no Access reader or sqlite extension here (run a build first): %v", err)
+	}
+	first := app.converted
+	if app.PendingConversion() != "types.sqlite" || first == "" {
+		t.Fatalf("pending %q (%q)", app.PendingConversion(), first)
+	}
+	if _, err := app.LoadDatabase(other); err == nil || app.dbName != "types.mdb" {
+		t.Fatalf("opened another file over a pending conversion: %v", err)
+	}
+	if res, err := app.ResolveConversion("cancel", true); err != nil || res.Done || app.converted == "" {
+		t.Fatalf("cancel: %+v %v", res, err)
+	}
+	if res, err := app.ResolveConversion("delete", true); err != nil || !res.Done {
+		t.Fatalf("delete: %+v %v", res, err)
+	}
+	if _, err := os.Stat(first); !os.IsNotExist(err) || app.dbName != "" || app.RememberedChoice() != "delete" {
+		t.Fatalf("after delete: %v, open %q, remembered %q", err, app.dbName, app.RememberedChoice())
+	}
+
+	// remembered "delete": the next file just opens
+	if _, err := app.LoadDatabase(mdb); err != nil {
+		t.Fatal(err)
+	}
+	second := app.converted
+	if _, err := app.LoadDatabase(other); err != nil || app.converted != "" {
+		t.Fatalf("remembered delete: %v %q", err, app.converted)
+	}
+	if _, err := os.Stat(second); !os.IsNotExist(err) {
+		t.Fatalf("second converted file left: %v", err)
+	}
+
+	// remembered "save" (folder of the first save): types.sqlite, then types (2).sqlite, never over a file; two
+	// copies of the .mdb, since the same file reopened uses the SQLite saved from it (session cache)
+	copyMDB := func(name string) string {
+		data, _ := os.ReadFile(mdb)
+		p := filepath.Join(t.TempDir(), name)
+		os.WriteFile(p, data, 0o644)
+		return p
+	}
+	app.convChoice, app.convDir = "save", t.TempDir()
+	for _, c := range []struct{ src, want string }{{mdb, "types.sqlite"}, {copyMDB("types.mdb"), "types (2).sqlite"}} {
+		if _, err := app.LoadDatabase(c.src); err != nil {
+			t.Fatal(err)
+		}
+		if app.beforeClose(context.Background()) { // the window may close: the choice was applied
+			t.Fatal("close blocked with a remembered choice")
+		}
+		if _, err := os.Stat(filepath.Join(app.convDir, c.want)); err != nil {
+			t.Fatalf("%s not saved: %v", c.want, err)
+		}
+	}
+	// session cache: the same .mdb again opens types.sqlite, no new conversion
+	if _, err := app.LoadDatabase(mdb); err != nil || app.converted != "" || app.dbManager.Source() != backend.SourceSQLite {
+		t.Fatalf("reopen: %v, converted %q, source %q", err, app.converted, app.dbManager.Source())
+	}
+	if app.savedConversion(copyMDB("other.mdb")) != "" {
+		t.Fatal("cache hit for a file never converted")
+	}
+	// an exit with a pending file removes it
+	app.convChoice = ""
+	if _, err := app.LoadDatabase(copyMDB("third.mdb")); err != nil {
+		t.Fatal(err)
+	}
+	last := app.converted
+	app.shutdown(context.Background())
+	if _, err := os.Stat(last); !os.IsNotExist(err) {
+		t.Fatalf("converted file left after exit: %v", err)
+	}
+}
+
+// Tema, idioma e ultima pasta sobrevivem a um reinicio; valor desconhecido e recusado
 func TestSettingsPersist(t *testing.T) {
 	t.Setenv("APPDATA", t.TempDir())         // Windows
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // Linux
@@ -201,5 +301,22 @@ func TestSettingsPersist(t *testing.T) {
 	}
 	if got := NewApp().GetTheme(); got != "dark" {
 		t.Fatalf("theme after restart %q", got)
+	}
+	defer i18n.SetLang("en")
+	if app.GetLanguage() != "en" {
+		t.Fatalf("default language %q", app.GetLanguage())
+	}
+	if err := app.SetLanguage("es"); err != nil || app.SetLanguage("fr") == nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	if got := NewApp().GetLanguage(); got != "es" || i18n.T("menu.file") != "Archivo" {
+		t.Fatalf("language after restart %q", got)
+	}
+	// the Log panel starts collapsed and keeps the last state
+	if app.GetLogOpen() {
+		t.Fatal("log expanded by default")
+	}
+	if err := app.SetLogOpen(true); err != nil || !NewApp().GetLogOpen() {
+		t.Fatalf("log state after restart: %v", err)
 	}
 }

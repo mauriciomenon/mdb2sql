@@ -36,9 +36,20 @@ func odbcInstalled() bool {
 	return err == nil && v == "Installed"
 }
 
-func hideWindow(cmd *exec.Cmd) {
+func prepareTool(cmd *exec.Cmd) {
 	// a GUI exe starting console programs would flash a console window per call
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+}
+
+// processAlive: a process we may not open (access denied) still exists
+func processAlive(pid int) bool {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return err == windows.ERROR_ACCESS_DENIED
+	}
+	defer windows.CloseHandle(h)
+	var code uint32
+	return windows.GetExitCodeProcess(h, &code) == nil && code == 259 // STILL_ACTIVE
 }
 
 func odbcConnString(path string) string {
