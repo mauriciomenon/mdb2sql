@@ -28,14 +28,28 @@ if missing:
 tools = sorted(p for p in (root / ".tools" / "mdbtools").iterdir() if p.is_file() and p.name != ".sha256")
 bundled = required[:1] + [str(p.relative_to(root)) for p in tools]
 
+# Linux: o _sysconfigdata do Python do uv guarda o caminho de instalacao (pasta do usuario de build) e o pandas o
+# importa; vai no pacote uma copia com essa pasta trocada por /build (build/sysconfig, antes da stdlib no pathex)
+pathex = ["src"]
+if not exe:
+    import importlib
+    import pprint
+    import sysconfig
+
+    name = sysconfig._get_sysconfigdata_name()
+    data = importlib.import_module(name).build_time_vars
+    clean = {k: v.replace(str(root), "/build") if isinstance(v, str) else v for k, v in data.items()}
+    (root / "build" / "sysconfig").mkdir(parents=True, exist_ok=True)
+    (root / "build" / "sysconfig" / f"{name}.py").write_text(f"build_time_vars = {pprint.pformat(clean)}\n")
+    pathex.insert(0, str(root / "build" / "sysconfig"))
+
 a = Analysis(
     ["src/main.py"],
-    pathex=["src"],
+    pathex=pathex,
     datas=[("build/VERSION", "."), ("build/BUILD", "."), ("src/resources/mdb2sql.ico", "resources"),
            ("src/resources/mdb2sql.png", "resources"), ("src/resources/i18n", "resources/i18n")] + [(path, Path(path).parent.name) for path in bundled],
     # pandas importa pytest so em pandas.testing; ferramenta de teste nao vai no exe
-    # Linux: o _sysconfigdata do Python do uv guarda o caminho de instalacao (pasta do usuario de build); o app nao le
-    excludes=["pytest", "_pytest", "pygments", "openpyxl"] + ([] if exe else ["_sysconfigdata__linux_x86_64-linux-gnu"]),
+    excludes=["pytest", "_pytest", "pygments", "openpyxl"],
 )
 pyz = PYZ(a.pure)
 
