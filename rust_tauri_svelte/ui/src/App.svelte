@@ -238,6 +238,7 @@
   function ask() {
     rememberChoice = false;
     convertDialog.showModal();
+    convertDialog.querySelector('button.save').focus(); // o showModal poe o foco na caixa de lembrar
     return new Promise((resolve) => (answer = resolve));
   }
 
@@ -681,7 +682,7 @@
     <p class="file">{`${stem(openedPath)}.sqlite`}</p>
     <label class="remember"><input type="checkbox" bind:checked={rememberChoice} /> {t('convert.remember')}</label>
     <div class="actions">
-      <button type="button" use:focusNow onclick={() => reply('save')}>{t('convert.save')}</button>
+      <button type="button" class="save" onclick={() => reply('save')}>{t('convert.save')}</button>
       <button type="button" class="secondary" onclick={() => reply('delete')}>{t('convert.delete')}</button>
       <button type="button" class="secondary close" onclick={() => reply('cancel')}>{t('common.cancel')}</button>
     </div>
@@ -1430,6 +1431,11 @@
     flex: 0 1 400px;
     min-width: 140px;
     padding: 3px 8px;
+  }
+
+  /* contagem numa linha so: a busca encolhe antes (ate 140 px) */
+  .table-bar > span {
+    white-space: nowrap;
   }
 
   .table-bar h2,

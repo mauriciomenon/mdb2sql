@@ -92,8 +92,8 @@ export default {
   'sql.noRows': 'Nenhuma linha',
 
   'data.noTable': 'Nenhuma tabela aberta',
-  'data.showing': 'Mostrando {shown} de {total} linhas, {columns} colunas',
-  'data.showingMatches': 'Mostrando {shown} de {matching} linhas encontradas ({total} na tabela), {columns} colunas',
+  'data.showing': '{shown} de {total} linhas, {columns} colunas',
+  'data.showingMatches': '{shown} de {matching} encontradas ({total} na tabela), {columns} colunas',
   'data.rows': 'Linhas de {table}',
   'data.allHidden': 'Todas as colunas ocultas',
   'data.noMatch': 'Nenhuma linha encontrada',
