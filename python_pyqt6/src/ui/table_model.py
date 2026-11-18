@@ -129,6 +129,8 @@ class TableModel(QAbstractTableModel):
             return self.columns[section]
         if role == Qt.ItemDataRole.ToolTipRole:  # nome inteiro mesmo se a coluna ficar estreita
             return self.column_tips[section] if self.column_tips else self.columns[section]
+        if role == Qt.ItemDataRole.TextAlignmentRole:  # cabecalho alinhado como a coluna: numeros a direita
+            return self.data(self.index(0, section), role) if self.rows else None
         return None
 
     def set_rows(

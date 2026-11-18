@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from PyQt6.QtCore import (
+    QEvent,
     QObject,
     QRunnable,
     QSettings,
@@ -233,7 +234,7 @@ class MainWindow(QMainWindow):
         self.columns_action.setToolTip(tr("tip.columns"))
 
         self.find_action = self._action("action.find", self._focus_search, QKeySequence.StandardKey.Find)
-        self.tables_action = self._action("action.go_tables", self._focus_tables, "Ctrl+L")
+        self.tables_action = self._action("action.go_tables", self._focus_tables, "Ctrl+T")
         self.data_tab_action = self._action("tab.data_menu", lambda: self.tabs.setCurrentIndex(0), "Ctrl+1")
         self.schema_tab_action = self._action("tab.schema_menu", lambda: self.tabs.setCurrentIndex(1), "Ctrl+2")
         self.sql_tab_action = self._action("tab.sql_menu", self._focus_sql, "Ctrl+3")
@@ -401,12 +402,17 @@ class MainWindow(QMainWindow):
         self.resizeDocks([self.tables_dock], [260], Qt.Orientation.Horizontal)
 
     def _create_log(self) -> None:
-        # Exibir > Log: mensagens da sessao (hora + texto), selecionaveis, Ctrl+C e "Copiar tudo"
+        # Painel Log embaixo: mensagens da sessao (hora + texto), selecionaveis, Ctrl+C e "Copiar tudo";
+        # recolhido por padrao (estado lembrado); recolhido, a barra de status mostra erro > aviso > ultima acao
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setAccessibleName(tr("log.title"))
         self.log_view.setMaximumBlockCount(LOG_LINES)
         self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        font.setPointSizeF(max(8.0, self.font().pointSizeF() - 1))  # um passo menor que a base, legivel
+        self.log_view.setFont(font)
+        self.log_view.setMinimumHeight(4 * self.log_view.fontMetrics().lineSpacing() + 12)  # minimo: 4 linhas
         self.log_copy_button = copy_all = QPushButton(tr("log.copy_all"))
         copy_all.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.log_view.toPlainText()))
         bar = QHBoxLayout()
@@ -414,23 +420,91 @@ class MainWindow(QMainWindow):
         bar.addWidget(copy_all)
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setContentsMargins(6, 0, 6, 6)
         layout.addWidget(self.log_view)
         layout.addLayout(bar)
 
+        # cabecalho do painel: titulo e a seta que recolhe (sem botoes de flutuar/fechar)
+        self.log_collapse = QToolButton()
+        self.log_collapse.setArrowType(Qt.ArrowType.DownArrow)
+        self.log_collapse.setAutoRaise(True)
+        self.log_collapse.setToolTip(tr("log.toggle_tip"))
+        self.log_collapse.setAccessibleName(tr("log.hide"))
+        self.log_collapse.clicked.connect(lambda: self.set_log_visible(False))
+        header = QWidget()
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(8, 2, 4, 2)
+        header_layout.addWidget(QLabel(tr("log.title")))
+        header_layout.addStretch(1)
+        header_layout.addWidget(self.log_collapse)
+
         self.log_dock = QDockWidget(tr("log.title"), self)
         self.log_dock.setObjectName("logDock")
-        self.log_dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        self.log_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+        self.log_dock.setTitleBarWidget(header)
         self.log_dock.setWidget(panel)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
-        self.resizeDocks([self.log_dock], [160], Qt.Orientation.Vertical)
         self.log_dock.hide()
-        self.log_action = self.log_dock.toggleViewAction()
-        self.log_action.setText(tr("menu.log"))
-        self.log_action.setShortcut(QKeySequence("Ctrl+Shift+L"))
+        self.log_action = QAction(tr("menu.log"), self, checkable=True)
+        self.log_action.setShortcut(QKeySequence("Ctrl+L"))
+        self.log_action.triggered.connect(self.set_log_visible)
+        self._latest = {"error": "", "warning": ""}  # ultimo erro e ultimo aviso da sessao
+        self._unread = {"error": 0, "warning": 0}  # chegaram com o painel recolhido
 
-    def log(self, text: str) -> None:
+    def log(self, text: str, level: str = "info") -> None:
+        """Linha do painel Log; level 'error' ou 'warning' entra na barra de status quando o painel esta recolhido."""
         self.log_view.appendPlainText(f"{datetime.now():%H:%M:%S}  {text}")
+        if level in self._latest:
+            self._latest[level] = text
+            if self.log_dock.isHidden():
+                self._unread[level] += 1
+        self._refresh_log_status()
+
+    def set_log_visible(self, visible: bool) -> None:
+        self.settings.setValue("log_visible", bool(visible))
+        self.log_action.setChecked(bool(visible))
+        self.log_dock.setVisible(bool(visible))
+        if visible:
+            self._unread = {"error": 0, "warning": 0}
+            # ~15% da altura (minimo 4 linhas; maximo 30%, em resizeEvent); a borda continua arrastavel
+            self.resizeDocks([self.log_dock], [max(self.log_view.minimumHeight() + 60, round(self.height() * 0.15))],
+                             Qt.Orientation.Vertical)
+        self._refresh_log_status()
+
+    def _refresh_log_status(self) -> None:
+        if not hasattr(self, "log_toggle"):
+            return  # ainda montando a janela
+        visible = not self.log_dock.isHidden()
+        self.log_toggle.setArrowType(Qt.ArrowType.DownArrow if visible else Qt.ArrowType.UpArrow)
+        unread = self._unread["error"] + self._unread["warning"]
+        self.log_unread.setText(f"({unread})" if unread else "")
+        self.log_unread.setVisible(bool(unread))
+        # recolhido: a linha mais importante ainda nao lida (erro destacado > aviso > ultima acao, que ja esta la)
+        for level in ("error", "warning"):
+            if self._unread[level]:
+                text = self._latest[level]
+                self.status_label.setText(text)
+                self.status_label.setToolTip(text)
+                self.status_label.setStyleSheet(f"color: {self._alert_color(level)};")
+                return
+
+    def _alert_color(self, level: str) -> str:
+        # !T: Colors that stay readable on the current (light or dark) system palette
+        dark = self.palette().window().color().lightness() < 128
+        if level == "error":
+            return "#ff8a80" if dark else "#b3261e"
+        return "#ffd180" if dark else "#8a5300"
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt)
+        super().resizeEvent(event)
+        self.log_dock.setMaximumHeight(max(self.log_view.minimumHeight() + 60, round(self.height() * 0.3)))
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 (Qt)
+        # clique na mensagem da barra de status reexibe o log
+        if watched is self.status_label and event.type() == QEvent.Type.MouseButtonRelease:
+            if event.button() == Qt.MouseButton.LeftButton and self.log_dock.isHidden():
+                self.set_log_visible(True)
+        return super().eventFilter(watched, event)
 
     def _create_toolbar(self) -> None:
         toolbar = QToolBar(tr("toolbar.main"), self)
@@ -543,10 +617,23 @@ class MainWindow(QMainWindow):
         self.progress.setFixedWidth(120)
         self.progress.hide()
 
+        # seta que recolhe/reexibe o painel Log e o contador de erros/avisos nao lidos (so com o painel recolhido)
+        self.log_toggle = QToolButton()
+        self.log_toggle.setAutoRaise(True)
+        self.log_toggle.setToolTip(tr("log.toggle_tip"))
+        self.log_toggle.setAccessibleName(tr("menu.log").replace("&", ""))
+        self.log_toggle.clicked.connect(lambda: self.set_log_visible(self.log_dock.isHidden()))
+        self.log_unread = QLabel()
+        self.log_unread.setToolTip(tr("log.unread_tip"))
+        self.status_label.installEventFilter(self)  # clique na mensagem reexibe o log
+
         status_bar = self.statusBar()
+        status_bar.addWidget(self.log_toggle)
+        status_bar.addWidget(self.log_unread)
         status_bar.addWidget(self.status_label, 1)
         status_bar.addPermanentWidget(self.progress)
         status_bar.addPermanentWidget(self.info_label)
+        self.set_log_visible(self.settings.value("log_visible", False, type=bool))  # padrao: recolhido
 
     def status_menu(self, label: QLabel) -> QMenu:
         menu = QMenu(self)
@@ -558,17 +645,15 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------- helpers
 
-    def _set_message(self, label: QLabel, text: str, error: bool = False, log: bool = True) -> None:
+    def _set_message(
+        self, label: QLabel, text: str, error: bool = False, log: bool = True, warning: bool = False
+    ) -> None:
+        level = "error" if error else "warning" if warning else "info"
         label.setText(text)
         label.setToolTip(text)  # texto inteiro se a barra de status estreitar o rotulo
+        label.setStyleSheet("" if level == "info" else f"color: {self._alert_color(level)};")
         if log and text:
-            self.log(text)
-        if not error:
-            label.setStyleSheet("")
-            return
-        # !T: Pick a red that stays readable on the current (light or dark) system palette
-        dark = self.palette().window().color().lightness() < 128
-        label.setStyleSheet(f"color: {'#ff8a80' if dark else '#b3261e'};")
+            self.log(text, level)  # depois do texto: com o Log recolhido, um erro nao lido continua na barra
 
     def _run(
         self,
@@ -1152,15 +1237,15 @@ class MainWindow(QMainWindow):
             if text:
                 dialog.setLabelText(tr("export.running_item", name=out.name, item=text))
 
-        def finished(message: str, error: bool = False) -> None:
+        def finished(message: str, error: bool = False, warning: bool = False) -> None:
             dialog.canceled.disconnect(cancel.set)
             dialog.close()
             dialog.deleteLater()  # nao acumula dialogos "Export" escondidos
-            self._set_message(self.info_label, message, error=error)
+            self._set_message(self.info_label, message, error=error, warning=warning)
 
         def cancelled_or_done(_request_id: int, count: object) -> None:
             if count is None:
-                finished(tr("export.cancelled", name=out.name))
+                finished(tr("export.cancelled", name=out.name), warning=True)
             else:
                 finished(tr(f"export.done_{unit}", count=num(count), path=out))  # type: ignore[arg-type]
 

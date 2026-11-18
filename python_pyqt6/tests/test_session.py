@@ -5,8 +5,8 @@ import shutil
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import QSettings
-from PyQt6.QtGui import QAction
+from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtGui import QAction, QFontDatabase
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QDockWidget, QLabel, QLineEdit, QMenu, QTabWidget
 
 from backend import access
@@ -126,6 +126,41 @@ def test_log_panel_keeps_the_messages_and_copies(qtbot, people_db: Path) -> None
     assert [a.text() for a in menu.actions()] == ["&Copy", "&Log"]
     menu.actions()[0].trigger()
     assert QApplication.clipboard().text() == "Loaded: people.duckdb (2 tables) via DuckDB"
+
+
+def test_log_panel_collapsed_shows_the_most_important_line(qtbot) -> None:
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.show()
+    # recolhido por padrao; Ctrl+L, Exibir > Log e as setas (barra de status e cabecalho do painel)
+    assert win.log_dock.isHidden() and win.log_action.shortcut().toString() == "Ctrl+L"
+    assert win.tables_action.shortcut().toString() == "Ctrl+T"
+    assert win.log_toggle.arrowType() == Qt.ArrowType.UpArrow and win.log_unread.isHidden()
+    # fonte monoespacada um passo menor que a base; minimo de 4 linhas
+    assert win.log_view.font().family() == QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()
+    assert win.log_view.font().pointSizeF() == max(8.0, win.font().pointSizeF() - 1)
+    assert win.log_view.minimumHeight() >= 4 * win.log_view.fontMetrics().lineSpacing()
+
+    # erro > aviso > ultima acao: com o painel recolhido, o erro fica na barra (destacado) mesmo depois de outra acao
+    win._set_message(win.info_label, "SQL error: boom", error=True)
+    win._set_message(win.info_label, "Export cancelled: x.csv not written", warning=True)
+    win._set_message(win.status_label, "Loaded: a.duckdb (1 tables) via DuckDB")
+    assert win.status_label.text() == "SQL error: boom" and "color" in win.status_label.styleSheet()
+    assert win.log_unread.text() == "(2)" and not win.log_unread.isHidden()
+
+    # clique na mensagem reexibe o log e zera os nao lidos; a seta do cabecalho recolhe; estado lembrado
+    qtbot.mouseClick(win.status_label, Qt.MouseButton.LeftButton)
+    assert not win.log_dock.isHidden() and win.log_unread.isHidden() and QSettings().value("log_visible") in (True, "true")
+    assert win.log_toggle.arrowType() == Qt.ArrowType.DownArrow
+    assert "SQL error: boom" in win.log_view.toPlainText()
+    assert win.log_dock.maximumHeight() <= round(win.height() * 0.3) + win.log_view.minimumHeight() + 60
+    win.log_collapse.click()
+    assert win.log_dock.isHidden() and QSettings().value("log_visible") in (False, "false")
+    win.log_toggle.click()
+    assert not win.log_dock.isHidden()
+    again = MainWindow()  # proxima abertura: como ficou
+    qtbot.addWidget(again)
+    assert not again.log_dock.isHidden()
 
 
 def test_language_is_saved_and_applies_on_next_start(qtbot) -> None:

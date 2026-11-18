@@ -51,7 +51,7 @@ what to do with the converted SQLite:
 the folder of the session is removed on exit, and the folder of a session that crashed is removed at the next start
 (`%TEMP%\mdb2sql-python-pyqt6\`, `/tmp/mdb2sql-python-pyqt6/` on Linux).
 
-Left panel: list of tables with a filter box (Ctrl+L goes to the list); all words, any order, no case or accents.
+Left panel: list of tables with a filter box (Ctrl+T goes to the list); all words, any order, no case or accents.
 Names are never cut: the panel opens as wide as the longest name (up to 35% of the window, then it scrolls).
 Tabs:
 
@@ -95,9 +95,13 @@ Menus:
 - **Edit**: Copy Value (Ctrl+C), Copy Row (Ctrl+Shift+C), Copy Row with Header, Find in Table (Ctrl+F), Filter by
   This Value, Clear Filters. Copy is also on the right-click menu of every grid. Copied rows are TAB-separated:
   they paste as columns in Excel.
-- **View**: Tables Panel (Ctrl+B), Log (Ctrl+Shift+L), Go to Table List (Ctrl+L), Data / Schema / SQL tabs, Run SQL.
-  The **Log** panel lists the messages of the session with the time (selectable, Ctrl+C, "Copy all").
-  Right-click on the status bar: Copy (the whole message) and Log.
+- **View**: Tables Panel (Ctrl+B), Log (Ctrl+L), Go to Table List (Ctrl+T), Data / Schema / SQL tabs, Run SQL.
+  The **Log** panel, at the bottom (about 15% of the height, drag the edge to resize), lists the messages of the
+  session with the time in a smaller fixed font (selectable, Ctrl+C, "Copy all"). It starts collapsed and keeps
+  the last state; the arrow in its header and the arrow at the left of the status bar collapse and expand it. While
+  it is collapsed, the status bar shows the most important message (last error in red, then last warning, then
+  the last action) and the number of errors and warnings not seen yet; a click on the message opens the log.
+  Right-click on the status bar: Copy (the whole message) and Log. Numeric columns and their headers are right-aligned.
 - **Settings > Theme**: System, Light or Dark. **Settings > Language**: English (default), Português (Brasil),
   Español; applies when the program is reopened. Both are saved (Windows registry `HKCU\Software\MDB2SQL`,
   Linux `~/.config/MDB2SQL/MDB2SQL.conf`).

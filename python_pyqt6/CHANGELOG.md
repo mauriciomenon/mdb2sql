@@ -24,7 +24,10 @@
 - Languages: English (default), Português (Brasil), Español, in Settings > Language (saved; applies when the
   program is reopened). Every text of the windows, dialogs, messages, About and tooltips comes from
   `src/resources/i18n/<language>.json`.
-- View > Log (Ctrl+Shift+L): the messages of the session with the time, selectable, Ctrl+C and "Copy all".
+- Log panel at the bottom (View > Log, Ctrl+L; Go to Table List moved to Ctrl+T): messages of the session with the
+  time, smaller fixed font, selectable, Ctrl+C and "Copy all"; collapsed by default and remembered; arrows in its
+  header and in the status bar; collapsed, the status bar keeps the last error (red) > warning > action and counts
+  the unseen ones. Status lines without "...". Numeric column headers right-aligned like their cells.
   Right-click on the status bar: Copy, Log.
 - Debian amd64: `build_debian_amd64.sh` (and `build_debian_amd64_wsl.ps1` from Windows) build a `.deb` and a `.zip`.
 - Linux: X11 first, Wayland only as fallback, with a "Display mode" warning naming what is missing and the

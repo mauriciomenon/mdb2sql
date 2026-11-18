@@ -27,7 +27,7 @@ from ui.main_window import MainWindow, apply_theme
 def show_display_warning(window: MainWindow, notice: Notice) -> DisplayWarning:
     box = DisplayWarning(notice, window)
     box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-    window.log(notice.text())
+    window.log(notice.text(), "warning")
     box.open()
     return box
 
