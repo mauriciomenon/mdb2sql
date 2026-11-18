@@ -55,7 +55,8 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
+		// opaque: A is 0-255; A 1 left the GTK window almost transparent on Wayland (blank page in WSLg)
+		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 255},
 		OnStartup:        app.startup,
 		OnBeforeClose:    app.beforeClose,
 		OnShutdown:       app.shutdown,
