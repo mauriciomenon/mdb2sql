@@ -4,4 +4,4 @@ go_wails_react/go.mod text eol=lf
 go_wails_react/go.sum text eol=lf
 go_wails_react/frontend/wailsjs/** text eol=lf
 rust_tauri_svelte/gen/** text eol=lf
-LICENSE -text
+/LICENSE -text
