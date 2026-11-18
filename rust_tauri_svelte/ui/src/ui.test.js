@@ -148,7 +148,7 @@ test('X11 warning is short, with a clickable Help link and a Copy command button
 });
 
 // REGRA_VISUAL "Painel de Log": recolhido por padrao e lembrado, seta no log e na barra, View > Log, Ctrl+L,
-// ~15% da altura (4 linhas a 30%), fonte de codigo um passo menor que a base (13 px), linhas sem "..."
+// ~10% da altura (3 linhas a 25%), fonte de codigo menor (11 px, o minimo do app), linhas sem "..."
 test('log panel collapses and expands in one click and remembers the choice', () => {
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
   assert.match(app, /let logOpen = \$state\(loadSetting\(LOG_KEY\) === 'open'\);/);
@@ -158,6 +158,6 @@ test('log panel collapses and expands in one click and remembers the choice', ()
   assert.match(app, /e\.ctrlKey && !e\.altKey && e\.key\.toLowerCase\(\) === 'l'/);
   assert.match(app, /onclick=\{\(\) => setLog\(true\)\}>\{headline\.text\}/);
   const css = app.match(/<style>([\s\S]*)<\/style>/)[1];
-  assert.match(css, /\.log textarea \{[^}]*height: 15vh;[^}]*min-height: calc\(4 \* 1\.4em \+ 14px\);[^}]*max-height: 30vh;[^}]*font-size: 12px;/);
+  assert.match(css, /\.log textarea \{[^}]*height: 10vh;[^}]*min-height: calc\(3 \* 1\.4em \+ 10px\);[^}]*max-height: 25vh;[^}]*font-size: 11px;/);
   for (const [key, text] of Object.entries(en)) if (key.startsWith('status.')) assert.doesNotMatch(text, /\.\.\./, key);
 });

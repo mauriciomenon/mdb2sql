@@ -1392,20 +1392,24 @@
     font-weight: 400;
   }
 
-  /* ~15% da altura, de 4 linhas a 30%; a borda de baixo do campo redimensiona */
+  /* ~10% da altura, de 3 linhas a 25%; a borda de baixo do campo redimensiona; fonte de codigo no minimo do app */
   .log textarea {
-    height: 15vh;
-    min-height: calc(4 * 1.4em + 14px);
-    max-height: 30vh;
+    height: 10vh;
+    min-height: calc(3 * 1.4em + 10px);
+    max-height: 25vh;
+    padding: 4px 8px;
     resize: vertical;
     font-family: Consolas, 'Cascadia Mono', monospace;
-    font-size: 12px;
+    font-size: 11px;
     line-height: 1.4;
     white-space: pre;
   }
 
+  /* cabecalho do log compacto (rotulo do tamanho dos outros rotulos), para o painel ficar baixo */
   .log-bar h2 {
     margin-right: auto;
+    color: var(--muted);
+    font-size: 11px;
   }
 
   /* seta de abrir/recolher o log: discreta, sem caixa */
