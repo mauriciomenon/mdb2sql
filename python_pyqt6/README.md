@@ -96,7 +96,7 @@ Menus:
   This Value, Clear Filters. Copy is also on the right-click menu of every grid. Copied rows are TAB-separated:
   they paste as columns in Excel.
 - **View**: Tables Panel (Ctrl+B), Log (Ctrl+L), Go to Table List (Ctrl+T), Data / Schema / SQL tabs, Run SQL.
-  The **Log** panel, at the bottom (about 15% of the height, drag the edge to resize), lists the messages of the
+  The **Log** panel, at the bottom (about 10% of the height, drag the edge to resize), lists the messages of the
   session with the time in a smaller fixed font (selectable, Ctrl+C, "Copy all"). It starts collapsed and keeps
   the last state; the arrow in its header and the arrow at the left of the status bar collapse and expand it. While
   it is collapsed, the status bar shows the most important message (last error in red, then last warning, then

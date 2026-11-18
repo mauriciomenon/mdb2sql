@@ -136,10 +136,10 @@ def test_log_panel_collapsed_shows_the_most_important_line(qtbot) -> None:
     assert win.log_dock.isHidden() and win.log_action.shortcut().toString() == "Ctrl+L"
     assert win.tables_action.shortcut().toString() == "Ctrl+T"
     assert win.log_toggle.arrowType() == Qt.ArrowType.UpArrow and win.log_unread.isHidden()
-    # fonte monoespacada um passo menor que a base; minimo de 4 linhas
+    # fonte monoespacada um passo menor que a base; minimo de 3 linhas
     assert win.log_view.font().family() == QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()
     assert win.log_view.font().pointSizeF() == max(8.0, win.font().pointSizeF() - 1)
-    assert win.log_view.minimumHeight() >= 4 * win.log_view.fontMetrics().lineSpacing()
+    assert win.log_view.minimumHeight() >= 3 * win.log_view.fontMetrics().lineSpacing()
 
     # erro > aviso > ultima acao: com o painel recolhido, o erro fica na barra (destacado) mesmo depois de outra acao
     win._set_message(win.info_label, "SQL error: boom", error=True)
@@ -153,7 +153,7 @@ def test_log_panel_collapsed_shows_the_most_important_line(qtbot) -> None:
     assert not win.log_dock.isHidden() and win.log_unread.isHidden() and QSettings().value("log_visible") in (True, "true")
     assert win.log_toggle.arrowType() == Qt.ArrowType.DownArrow
     assert "SQL error: boom" in win.log_view.toPlainText()
-    assert win.log_dock.maximumHeight() <= round(win.height() * 0.3) + win.log_view.minimumHeight() + 60
+    assert win.log_dock.maximumHeight() <= max(round(win.height() * 0.25), win.log_view.minimumHeight() + 32)
     win.log_collapse.click()
     assert win.log_dock.isHidden() and QSettings().value("log_visible") in (False, "false")
     win.log_toggle.click()

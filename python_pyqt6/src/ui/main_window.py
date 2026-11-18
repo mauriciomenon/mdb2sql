@@ -412,19 +412,17 @@ class MainWindow(QMainWindow):
         font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         font.setPointSizeF(max(8.0, self.font().pointSizeF() - 1))  # um passo menor que a base, legivel
         self.log_view.setFont(font)
-        self.log_view.setMinimumHeight(4 * self.log_view.fontMetrics().lineSpacing() + 12)  # minimo: 4 linhas
-        self.log_copy_button = copy_all = QPushButton(tr("log.copy_all"))
-        copy_all.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.log_view.toPlainText()))
-        bar = QHBoxLayout()
-        bar.addStretch(1)
-        bar.addWidget(copy_all)
+        self.log_view.setMinimumHeight(3 * self.log_view.fontMetrics().lineSpacing() + 10)  # minimo: 3 linhas
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(6, 0, 6, 6)
+        layout.setContentsMargins(6, 0, 6, 4)
         layout.addWidget(self.log_view)
-        layout.addLayout(bar)
 
-        # cabecalho do painel: titulo e a seta que recolhe (sem botoes de flutuar/fechar)
+        # cabecalho do painel: titulo, "Copiar tudo" e a seta que recolhe (sem botoes de flutuar/fechar)
+        self.log_copy_button = copy_all = QToolButton()
+        copy_all.setText(tr("log.copy_all"))
+        copy_all.setAutoRaise(True)
+        copy_all.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.log_view.toPlainText()))
         self.log_collapse = QToolButton()
         self.log_collapse.setArrowType(Qt.ArrowType.DownArrow)
         self.log_collapse.setAutoRaise(True)
@@ -436,6 +434,7 @@ class MainWindow(QMainWindow):
         header_layout.setContentsMargins(8, 2, 4, 2)
         header_layout.addWidget(QLabel(tr("log.title")))
         header_layout.addStretch(1)
+        header_layout.addWidget(copy_all)
         header_layout.addWidget(self.log_collapse)
 
         self.log_dock = QDockWidget(tr("log.title"), self)
@@ -466,8 +465,8 @@ class MainWindow(QMainWindow):
         self.log_dock.setVisible(bool(visible))
         if visible:
             self._unread = {"error": 0, "warning": 0}
-            # ~15% da altura (minimo 4 linhas; maximo 30%, em resizeEvent); a borda continua arrastavel
-            self.resizeDocks([self.log_dock], [max(self.log_view.minimumHeight() + 60, round(self.height() * 0.15))],
+            # ~10% da altura (minimo 3 linhas; maximo 25%, em resizeEvent); a borda continua arrastavel
+            self.resizeDocks([self.log_dock], [max(self.log_view.minimumHeight() + 32, round(self.height() * 0.10))],
                              Qt.Orientation.Vertical)
         self._refresh_log_status()
 
@@ -497,7 +496,7 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt)
         super().resizeEvent(event)
-        self.log_dock.setMaximumHeight(max(self.log_view.minimumHeight() + 60, round(self.height() * 0.3)))
+        self.log_dock.setMaximumHeight(max(self.log_view.minimumHeight() + 32, round(self.height() * 0.25)))
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 (Qt)
         # clique na mensagem da barra de status reexibe o log
