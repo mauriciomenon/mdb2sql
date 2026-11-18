@@ -29,10 +29,15 @@
 - Colunas...: **Show all**/**Hide all** agem so nas colunas listadas pela busca do dialogo.
 - O temporario da exportacao fica numa pasta propria, criada de forma exclusiva ao lado do destino.
 - odbc-api so no Windows (o pacote Linux nao depende do unixODBC).
+- Linux: X11 primeiro (`GDK_BACKEND=x11,wayland` quando o usuario nao definiu), Wayland so de reserva, com aviso
+  "Display mode" e o comando da distro quando o X11 falta (README, secao "Linux: X11 e Wayland").
 
 ### Corrigido
 
 - Campo Moeda (Currency) do Access pelo mdbtools perdia a 3a e a 4a casa (`1234567.8912` virava `1234567.89`).
+- SQLite (convertido do Access e Exportar > SQLite): Moeda e decimais com mais de 15 digitos iam como texto, e no
+  sqlite3 `WHERE preco > 20`, `ORDER BY` e `SUM` comparavam como texto (nwind: 47 linhas e soma 1670.87 em vez de
+  37 e 1695.11). Agora vao como REAL quando cabem exatos num DOUBLE (`REAL_DECIMAL(p,s)`).
 
 ## 1.2.0
 

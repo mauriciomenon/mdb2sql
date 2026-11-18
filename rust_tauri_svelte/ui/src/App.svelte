@@ -92,6 +92,8 @@
   let progressDialog;
   let progress = $state.raw(null); // { label, done, total, item } da exportacao em andamento
   let convertDialog;
+  let x11Dialog;
+  let x11 = $state.raw(null); // Linux sem X11: { missing, display, distro, command, link } (backend display.rs)
 
   let dbPath = $state('');
   let openedPath = $state('');
@@ -145,6 +147,17 @@
   });
   let schemaColumns = $derived(
     ['schema.number', 'schema.column', 'schema.type', 'schema.null'].map((key) => ({ name: t(key), type: '' }))
+  );
+  // texto do aviso de X11 no idioma escolhido (copiavel no dialogo e no log)
+  let x11Text = $derived(
+    x11
+      ? t(x11.command ? 'x11.body' : 'x11.bodyNoCommand', {
+          missing: t(x11.missing === 'no_display' ? 'x11.noDisplay' : 'x11.noServer', { display: x11.display }),
+          distro: x11.distro,
+          command: x11.command,
+          link: x11.link,
+        })
+      : ''
   );
   let aboutRows = $derived.by(() => {
     if (!aboutInfo) return [];
@@ -224,6 +237,13 @@
         if (await settleConverted()) await invoke('exit_app');
       }),
     ];
+    // Linux sem X11 (janela no Wayland de reserva): aviso a cada abertura, enquanto a condicao existir
+    invoke('display_warning').then((warning) => {
+      if (!warning) return;
+      x11 = warning;
+      note(`${t('x11.title')}: ${x11Text}`);
+      x11Dialog.showModal();
+    });
     // caminho da linha de comando ou de MDB2SQL_DB_PATH
     invoke('startup_path').then((path) => {
       if (path) {
@@ -666,6 +686,13 @@
       </dl>
     {/if}
     <button type="button" onclick={() => aboutDialog.close()}>{t('common.close')}</button>
+  </dialog>
+
+  <!-- Linux: X11 indisponivel, janela no Wayland (reserva); texto selecionavel -->
+  <dialog bind:this={x11Dialog} class="x11" aria-labelledby="x11-title">
+    <h2 id="x11-title">{t('x11.title')}</h2>
+    <p class="note">{x11Text}</p>
+    <button type="button" onclick={() => x11Dialog.close()}>{t('common.ok')}</button>
   </dialog>
 
   <!-- SQLite convertido do Access: salvar, apagar ou cancelar (Esc = cancelar) -->
@@ -1343,6 +1370,14 @@
   .context button:hover,
   .context button:focus-visible {
     background: var(--row-hover);
+  }
+
+  dialog.x11 {
+    width: 520px;
+  }
+
+  dialog.x11 .note {
+    user-select: text;
   }
 
   /* pergunta do SQLite convertido: titulo, nome do arquivo, lembrar, botoes alinhados */

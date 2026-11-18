@@ -17,6 +17,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 
+#[cfg(windows)]
 pub const ACCESS_DRIVER: &str = "Microsoft Access Driver (*.mdb, *.accdb)";
 pub const MDBTOOLS_VERSION: &str = "1.0.1";
 const INSTALL_HINT: &str = "Install the Microsoft Access Database Engine 2016 Redistributable, 64-bit \
@@ -293,6 +294,7 @@ fn mdbtools_dir() -> Result<PathBuf, String> {
 }
 
 fn mdb_tool(dir: &Path, name: &str) -> Command {
+    #[cfg_attr(not(windows), allow(unused_mut))] // so o Windows mexe no comando (CREATE_NO_WINDOW)
     let mut cmd = Command::new(dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)));
     #[cfg(windows)]
     {

@@ -84,7 +84,11 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
 **Menu File**: **Export** (abaixo) e **Close database**.
   - **Database to SQLite (.sqlite)** / **Database to DuckDB (.duckdb)**: todas as tabelas, com os tipos. No SQLite
     datas vao como texto ISO e o tipo fica declarado na coluna (o arquivo reabre com os mesmos tipos); decimais
-    com mais de 15 digitos e inteiros de 128 bits/UBIGINT ficam como texto exato (`TEXT_DECIMAL(p,s)` etc.).
+    com mais de 15 digitos (a Moeda do Access e `DECIMAL(19,4)`) vao como numero REAL (tipo declarado
+    `REAL_DECIMAL(p,s)`) quando todo valor da coluna cabe exato num DOUBLE, de modo que no sqlite3 `WHERE preco > 20`,
+    `ORDER BY` e `SUM` comparam como numero; se algum valor so cabe exato como texto, a coluna fica texto exato
+    (`TEXT_DECIMAL(p,s)`, que no sqlite3 compara como texto). Inteiros de 128 bits/UBIGINT ficam como texto exato.
+    O mesmo vale para o SQLite convertido do Access.
   - **Database to Excel (.xlsx, one sheet per table)**: uma aba por tabela (nome sem `[ ] : * ? / \`, ate 31
     caracteres, repetidos ganham `~2`); tabela com mais de 1.048.575 linhas continua em `<nome> (2)`...
   - **Current table to CSV / Excel** (tabela inteira) e **SQL result to CSV / Excel** (roda de novo o ultimo SQL).
@@ -107,6 +111,23 @@ enderecos).
 
 **Variaveis de ambiente** (opcionais): `MDB2SQL_DB_PATH` = banco aberto ao iniciar;
 `MDB2SQL_ACCESS_READER=mdbtools` (ou `odbc`) forca o leitor de .mdb/.accdb.
+
+## Linux: X11 e Wayland
+
+O programa abre a janela em **X11** (o GTK recebe `GDK_BACKEND=x11,wayland`) e usa **Wayland** so como reserva.
+Se voce definiu `GDK_BACKEND`, vale a sua escolha e nao ha aviso. Sem X11 (variavel `DISPLAY` vazia, ou nenhum
+servidor X respondendo nela) a janela abre no Wayland e aparece o aviso **Display mode** (texto selecionavel, tambem
+no View > Log) com o comando que instala o servidor X da sua distribuicao. Sem X11 e sem Wayland o programa diz isso
+no terminal e sai com codigo 1. As bibliotecas do GTK e do WebKitGTK vem como dependencias do `.deb`; o que pode
+faltar e so o servidor X (XWayland):
+
+| Distribuicao (ID / ID_LIKE do /etc/os-release) | Comando |
+| --- | --- |
+| Debian, Ubuntu e derivados | `sudo apt install xwayland` |
+| Fedora, RHEL, CentOS, Rocky | `sudo dnf install xorg-x11-server-Xwayland` |
+| Arch | `sudo pacman -S xorg-xwayland` |
+| openSUSE | `sudo zypper install xwayland` |
+| Outras | instale o XWayland (ou um servidor X) pelo gerenciador de pacotes da distribuicao |
 
 ## O que o programa grava no computador
 

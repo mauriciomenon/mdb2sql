@@ -244,6 +244,7 @@ mod tests {
 
     #[test]
     fn sqlite_declared_types_map_to_duckdb() {
+        assert_eq!(duck_type("REAL_DECIMAL(19,4)"), "DECIMAL(19,4)");
         for (declared, duck) in [
             ("INTEGER", "INTEGER"),
             ("int(11)", "BIGINT"),
@@ -515,7 +516,7 @@ mod tests {
                 "id INTEGER",
                 "tiny SMALLINT",
                 "small INTEGER",
-                "price TEXT_DECIMAL(19,4)",
+                "price REAL_DECIMAL(19,4)",
                 "exact TEXT_DECIMAL(18,4)",
                 "ratio DOUBLE",
                 "name VARCHAR",
@@ -534,6 +535,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!((exact.as_str(), raw, null_name), ("12345678901234.5683", vec![0, 1, 254, 255], None));
+        // Moeda que cabe num DOUBLE vai como numero: o sqlite3 compara e soma como numero (nao como texto)
+        let (price_type, over_20, total): (String, i64, f64) = lite
+            .query_row(
+                "SELECT (SELECT typeof(price) FROM \"Sample Types\" WHERE id = 1), count(*), sum(price) FROM \"Sample Types\" WHERE price > 20",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((price_type.as_str(), over_20, total), ("real", 1, 1234567.8912));
+        // o decimal de 18 digitos nao cabe num DOUBLE: fica texto exato
+        let exact_type: String = lite.query_row("SELECT typeof(exact) FROM \"Sample Types\" WHERE id = 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(exact_type, "text");
         drop(lite);
 
         // o que o app mostra veio do SQLite e tem os tipos do Access
@@ -578,6 +591,108 @@ mod tests {
         // o temporario some quando o Converted vai embora (Apagar, fechar ou sair)
         drop(opened);
         assert!(!lite_path.exists());
+    }
+
+    // Moeda/decimal no SQLite convertido: quem abre o arquivo no sqlite3 (ou outro programa) compara e soma como
+    // numero, nao como texto. nwind.mdb do mdbtestdata (copia fora do git): MDB2SQL_TEST_NWIND=<copia>.
+    // Esperado (Products.UnitPrice, Moeda): 37 linhas > 20, soma 1695.11, maiores 263.5, 123.79, 97.0
+    #[test]
+    fn currency_in_the_converted_sqlite_compares_as_a_number() {
+        let Ok(nwind) = std::env::var("MDB2SQL_TEST_NWIND") else {
+            eprintln!("MDB2SQL_TEST_NWIND not set, skipping");
+            return;
+        };
+        let manager = DBManager::new();
+        let opened = manager.connect_with(&nwind, Some("mdbtools"), &mut no_progress()).unwrap();
+        let lite = rusqlite::Connection::open_with_flags(
+            opened.converted.as_ref().unwrap().path(),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let declared: String =
+            lite.query_row("SELECT type FROM pragma_table_info('Products') WHERE name = 'UnitPrice'", [], |r| r.get(0)).unwrap();
+        let types: Vec<(String, i64)> = lite
+            .prepare("SELECT typeof(UnitPrice), count(*) FROM Products GROUP BY 1 ORDER BY 1")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let (count, sum): (i64, f64) =
+            lite.query_row("SELECT count(*), sum(UnitPrice) FROM Products WHERE UnitPrice > 20", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        let top: Vec<rusqlite::types::Value> = lite
+            .prepare("SELECT UnitPrice FROM Products ORDER BY UnitPrice DESC LIMIT 3")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        eprintln!("sqlite3: UnitPrice {declared}, typeof {types:?}, > 20: {count} rows, sum {sum:.2}, top {top:?}");
+        // a mesma conta na aba SQL do app (DuckDB sobre o SQLite carregado)
+        let app = manager
+            .run_sql("SELECT count(*) AS n, sum(UnitPrice) AS s FROM Products WHERE UnitPrice > 20", 10)
+            .unwrap();
+        let app_top = manager.run_sql("SELECT UnitPrice FROM Products ORDER BY UnitPrice DESC LIMIT 3", 10).unwrap();
+        eprintln!("app SQL tab: {:?} top {:?}", app.rows, app_top.rows);
+        assert_eq!(types, [("real".to_string(), 77)]);
+        assert_eq!((count, format!("{sum:.2}")), (37, "1695.11".to_string()));
+        assert_eq!(top, [263.5, 123.79, 97.0].map(rusqlite::types::Value::Real));
+        assert_eq!(app.rows[0]["n"], json!(37));
+        assert_eq!(app.rows[0]["s"], json!("1695.1100"));
+        let app_top: Vec<&serde_json::Value> = app_top.rows.iter().map(|r| &r["UnitPrice"]).collect();
+        assert_eq!(app_top, [&json!("263.5000"), &json!("123.7900"), &json!("97.0000")]);
+    }
+
+    // REGRA_X11: (ambiente, os-release, servidor X) -> (backend, aviso)
+    #[test]
+    fn linux_display_prefers_x11_and_warns_on_wayland_fallback() {
+        use crate::backend::display::{BACKENDS, Decision, DisplayWarning, HELP_LINK, decide};
+        let run = |vars: &[(&str, &str)], os: &str, x_alive: bool| {
+            let vars: Vec<(String, String)> = vars.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+            let env = move |name: &str| vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
+            decide(&env, os, &|socket| {
+                assert_eq!(socket, "/tmp/.X11-unix/X0");
+                x_alive
+            })
+        };
+        let debian = "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nID=debian\n";
+        let warning = |missing, display: &str, distro: &str, command| Decision::Use {
+            backend: BACKENDS,
+            warning: Some(DisplayWarning { missing, display: display.into(), distro: distro.into(), command, link: HELP_LINK }),
+        };
+        // escolha do usuario: respeitada, sem aviso
+        assert_eq!(run(&[("GDK_BACKEND", "wayland")], debian, false), Decision::UserChoice);
+        // X11 respondendo: x11 primeiro, sem aviso; DISPLAY remoto nao e testado
+        assert_eq!(run(&[("DISPLAY", ":0")], debian, true), Decision::Use { backend: "x11,wayland", warning: None });
+        assert_eq!(run(&[("DISPLAY", "host:10")], debian, false), Decision::Use { backend: BACKENDS, warning: None });
+        // sem DISPLAY, com Wayland: reserva + aviso com o comando da distro
+        let wayland = [("WAYLAND_DISPLAY", "wayland-0")];
+        assert_eq!(
+            run(&wayland, debian, true),
+            warning("no_display", "", "Debian GNU/Linux 13 (trixie)", Some("sudo apt install xwayland"))
+        );
+        // DISPLAY definido mas sem servidor X
+        assert_eq!(
+            run(&[("DISPLAY", ":0.0"), ("WAYLAND_DISPLAY", "wayland-0")], debian, false),
+            warning("no_server", ":0.0", "Debian GNU/Linux 13 (trixie)", Some("sudo apt install xwayland"))
+        );
+        let families = [
+            ("PRETTY_NAME=\"Ubuntu 24.04 LTS\"\nID=ubuntu\nID_LIKE=debian\n", Some("sudo apt install xwayland")),
+            ("PRETTY_NAME=\"Fedora Linux 43\"\nID=fedora\n", Some("sudo dnf install xorg-x11-server-Xwayland")),
+            ("PRETTY_NAME=\"Rocky Linux 10\"\nID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\n", Some("sudo dnf install xorg-x11-server-Xwayland")),
+            ("PRETTY_NAME=\"Arch Linux\"\nID=arch\n", Some("sudo pacman -S xorg-xwayland")),
+            ("PRETTY_NAME=\"openSUSE Tumbleweed\"\nID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"\n", Some("sudo zypper install xwayland")),
+            ("PRETTY_NAME=\"NixOS 25.11\"\nID=nixos\n", None),
+        ];
+        for (os, command) in families {
+            let Decision::Use { warning: Some(w), .. } = run(&wayland, os, true) else { panic!("{os}") };
+            assert_eq!(w.command, command, "{os}");
+            assert!(os.contains(&w.distro), "{os}");
+        }
+        assert_eq!(run(&wayland, "", true), warning("no_display", "", "Linux", None));
+        // sem X11 e sem Wayland: erro (o processo sai com codigo 1)
+        assert_eq!(run(&[], debian, false), Decision::NoDisplay);
+        assert_eq!(run(&[("DISPLAY", ":0")], debian, false), Decision::NoDisplay);
     }
 
     // salvar move o SQLite para onde o usuario escolheu; erro mantem o temporario; restos de processos mortos somem

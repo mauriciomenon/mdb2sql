@@ -155,6 +155,13 @@ export default {
   'status.sqliteDeleted': 'SQLite convertido eliminado',
   'status.logCopied': 'Registro copiado',
 
+  'common.ok': 'Aceptar',
+  'x11.title': 'Modo de visualización',
+  'x11.body': 'X11 no disponible; el programa usa Wayland (respaldo). Falta: {missing}. Para usar X11 en {distro}: {command}. Ayuda: {link}',
+  'x11.bodyNoCommand': 'X11 no disponible; el programa usa Wayland (respaldo). Falta: {missing}. Ayuda: {link}',
+  'x11.noDisplay': 'servidor X (DISPLAY no definido)',
+  'x11.noServer': 'servidor X (sin respuesta en DISPLAY={display})',
+
   'err.noDatabase': 'Ninguna base de datos abierta',
   'err.unsupported': 'Tipo de archivo no admitido:',
   'err.badPath': 'Archivo no encontrado:',

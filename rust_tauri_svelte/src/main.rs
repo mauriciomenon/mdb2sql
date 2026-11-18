@@ -12,6 +12,7 @@ mod backend;
 
 use backend::converted::{self, Converted};
 use backend::db_manager::{ColumnSchema, DBManager, Filter, SqlResult, Step};
+use backend::display::DisplayWarning;
 use backend::export::{self, Source, Summary};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -27,6 +28,8 @@ struct AppState {
     cancel_export: AtomicBool,
     converted: Mutex<Option<Converted>>,
     exiting: AtomicBool,
+    // Linux sem X11: aviso de que a janela esta no Wayland (reserva); None no resto
+    display_warning: Option<DisplayWarning>,
 }
 
 // NIVEL BASICO: Banco aberto: caminho absoluto, tabelas, por qual caminho foi lido e se ha SQLite convertido
@@ -131,6 +134,12 @@ fn exit_app(app: AppHandle, state: State<'_, AppState>) {
     state.exiting.store(true, Ordering::SeqCst);
     state.converted.lock().unwrap().take();
     app.exit(0);
+}
+
+// NIVEL BASICO: Aviso de X11 indisponivel (Linux), mostrado pela interface ao abrir
+#[tauri::command]
+fn display_warning(state: State<'_, AppState>) -> Option<DisplayWarning> {
+    state.display_warning.clone()
 }
 
 // NIVEL BASICO: GetTableData retorna ate `limit` linhas (default 100) que passam pelos filtros e pela pesquisa
@@ -279,6 +288,9 @@ fn main() {
     // invoke_handler registra comandos disponiveis para frontend
     // run() inicia event loop (janela fica aberta ate fechar)
 
+    // Linux: X11 primeiro, Wayland de reserva (antes do GTK iniciar); sem nenhum dos dois o processo sai aqui
+    let x11_warning = backend::display::apply();
+
     // o app caiu antes? apaga os SQLite convertidos que ficaram para tras
     converted::clean_stale(&converted::temp_dir());
 
@@ -290,6 +302,7 @@ fn main() {
             cancel_export: AtomicBool::new(false),
             converted: Mutex::new(None),
             exiting: AtomicBool::new(false),
+            display_warning: x11_warning,
         })
         .invoke_handler(tauri::generate_handler![
             startup_path,
@@ -298,6 +311,7 @@ fn main() {
             save_converted,
             discard_converted,
             exit_app,
+            display_warning,
             get_table_data,
             get_row_count,
             get_table_schema,
