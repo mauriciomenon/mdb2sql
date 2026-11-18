@@ -83,7 +83,9 @@ for p in mdb-tables mdb-schema mdb-export; do install -m 755 "$mdb_dir/usr/bin/$
 install -m 644 "$mdb_dir/usr/lib/x86_64-linux-gnu/libmdb.so.3" "$emb/libmdb.so.3"
 install -m 644 "$mdb_dir/usr/share/doc/mdbtools/copyright" "$emb/copyright"
 echo "mdbtools 1.0.1-0.1 (Debian 13, deb.debian.org)" >"$emb/VERSION.txt"
-get "$ext_url" "$ext_sha256" "$emb/sqlite_scanner.duckdb_extension.gz"
+# kept in .tools/downloads (the WSL wrapper cleans backend/embedded), so a rebuild needs no network for it
+get "$ext_url" "$ext_sha256" "$tools/downloads/sqlite_scanner.duckdb_extension.gz"
+install -m 644 "$tools/downloads/sqlite_scanner.duckdb_extension.gz" "$emb/sqlite_scanner.duckdb_extension.gz"
 
 source_id=$(git describe --tags --always --long 2>/dev/null || git rev-parse --short HEAD)
 version=$(sed -n 's/.*"productVersion": "\(.*\)".*/\1/p' wails.json)
