@@ -146,6 +146,19 @@ pub fn wholeFloatText(s: []const u8) []const u8 {
     return int;
 }
 
+// !T: Single-button dialogs (Columns, About, display warning): Esc always closes; Enter closes only when no item has
+// the focus (with focus the item keeps the Enter: the search box only filters, a focused button runs itself).
+pub fn dialogCloses(esc: bool, enter: bool, item_has_focus: bool) bool {
+    return esc or (enter and !item_has_focus);
+}
+
+test "Columns dialog keys: Enter in the search box does not close, Esc always does" {
+    try t.expect(!dialogCloses(false, true, true)); // Enter com o foco na caixa de busca: so filtra
+    try t.expect(dialogCloses(false, true, false)); // Enter sem item com foco: botao padrao (Fechar)
+    try t.expect(dialogCloses(true, false, true)); // Esc fecha mesmo com a caixa em foco
+    try t.expect(!dialogCloses(false, false, false));
+}
+
 // Dialogo Colunas: a coluna aparece na lista se o nome contem o texto da busca (sem diferenciar caixa)
 pub fn columnListed(name: []const u8, needle: []const u8) bool {
     return needle.len == 0 or std.ascii.findIgnoreCase(name, needle) != null;

@@ -601,10 +601,11 @@ fn centerNext() void {
     ig.igSetNextWindowPos(.{ .x = vp.*.Pos.x + vp.*.Size.x / 2, .y = vp.*.Pos.y + vp.*.Size.y / 2 }, ig.ImGuiCond_Always, .{ .x = 0.5, .y = 0.5 });
 }
 
-// Dialogo com um botao so (Fechar/OK): Enter (o botao padrao) ou Esc fecham
+// Dialogo com um botao so (Fechar/OK): Esc fecha sempre; Enter fecha so sem item em foco (na caixa de busca o Enter
+// so filtra; um botao com foco e acionado pela navegacao do Dear ImGui)
 fn dialogKeyClose() bool {
-    return ig.igIsKeyPressed_Bool(ig.ImGuiKey_Escape, false) or ig.igIsKeyPressed_Bool(ig.ImGuiKey_Enter, false) or
-        ig.igIsKeyPressed_Bool(ig.ImGuiKey_KeypadEnter, false);
+    const enter = ig.igIsKeyPressed_Bool(ig.ImGuiKey_Enter, false) or ig.igIsKeyPressed_Bool(ig.ImGuiKey_KeypadEnter, false);
+    return dbm.gridtools.dialogCloses(ig.igIsKeyPressed_Bool(ig.ImGuiKey_Escape, false), enter, ig.igIsAnyItemFocused() or ig.igIsAnyItemActive());
 }
 
 // Botoes de dialogo do mesmo tamanho, alinhados a direita
