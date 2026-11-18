@@ -37,6 +37,170 @@ extern fn ImGui_ImplOpenGL3_Shutdown() void;
 extern fn shim_io_setup() void;
 extern fn shim_add_font(path: [*:0]const u8, size_pixels: f32) void;
 extern fn shim_clipper_range(clipper: *const ig.ImGuiListClipper, start: *c_int, end: *c_int) void;
+extern fn shim_capture_setup() void;
+extern fn shim_capture_frame(w: f32, h: f32) void;
+
+// --capture (auxiliar de teste, fora da UI): a interface e desenhada num framebuffer proprio do tamanho de cada
+// passo e lida com glReadPixels; a janela fica invisivel e o mouse desligado
+extern "opengl32" fn glReadPixels(x: c_int, y: c_int, w: c_int, h: c_int, format: c_uint, kind: c_uint, data: [*]u8) callconv(.winapi) void;
+const Fbo = struct {
+    genFramebuffers: *const fn (c_int, *c_uint) callconv(.winapi) void,
+    bindFramebuffer: *const fn (c_uint, c_uint) callconv(.winapi) void,
+    genRenderbuffers: *const fn (c_int, *c_uint) callconv(.winapi) void,
+    bindRenderbuffer: *const fn (c_uint, c_uint) callconv(.winapi) void,
+    renderbufferStorage: *const fn (c_uint, c_uint, c_int, c_int) callconv(.winapi) void,
+    framebufferRenderbuffer: *const fn (c_uint, c_uint, c_uint, c_uint) callconv(.winapi) void,
+    checkFramebufferStatus: *const fn (c_uint) callconv(.winapi) c_uint,
+    fb: c_uint = 0,
+    rb: c_uint = 0,
+    w: u32 = 0,
+    h: u32 = 0,
+
+    fn load() !Fbo {
+        return .{
+            .genFramebuffers = try glProc(*const fn (c_int, *c_uint) callconv(.winapi) void, "glGenFramebuffers"),
+            .bindFramebuffer = try glProc(*const fn (c_uint, c_uint) callconv(.winapi) void, "glBindFramebuffer"),
+            .genRenderbuffers = try glProc(*const fn (c_int, *c_uint) callconv(.winapi) void, "glGenRenderbuffers"),
+            .bindRenderbuffer = try glProc(*const fn (c_uint, c_uint) callconv(.winapi) void, "glBindRenderbuffer"),
+            .renderbufferStorage = try glProc(*const fn (c_uint, c_uint, c_int, c_int) callconv(.winapi) void, "glRenderbufferStorage"),
+            .framebufferRenderbuffer = try glProc(*const fn (c_uint, c_uint, c_uint, c_uint) callconv(.winapi) void, "glFramebufferRenderbuffer"),
+            .checkFramebufferStatus = try glProc(*const fn (c_uint) callconv(.winapi) c_uint, "glCheckFramebufferStatus"),
+        };
+    }
+
+    fn glProc(comptime T: type, name: [*:0]const u8) !T {
+        return @ptrCast(glfw.getProcAddress(name) orelse return error.APIUnavailable);
+    }
+
+    // Deixa ligado um framebuffer RGBA8 de w x h (refeito quando o tamanho muda)
+    fn use(f: *Fbo, w: u32, h: u32) !void {
+        const framebuffer = 0x8D40;
+        const renderbuffer = 0x8D41;
+        if (f.fb == 0) {
+            f.genFramebuffers(1, &f.fb);
+            f.genRenderbuffers(1, &f.rb);
+        }
+        f.bindFramebuffer(framebuffer, f.fb);
+        if (f.w == w and f.h == h) return;
+        f.bindRenderbuffer(renderbuffer, f.rb);
+        f.renderbufferStorage(renderbuffer, 0x8058, @intCast(w), @intCast(h)); // GL_RGBA8
+        f.framebufferRenderbuffer(framebuffer, 0x8CE0, renderbuffer, f.rb); // GL_COLOR_ATTACHMENT0
+        if (f.checkFramebufferStatus(framebuffer) != 0x8CD5) return error.APIUnavailable; // GL_FRAMEBUFFER_COMPLETE
+        f.w = w;
+        f.h = h;
+    }
+};
+
+// Roteiro de --capture (dbm.capture.plan): cada passo pede um estado, espera o trabalho acabar e alguns quadros
+// para o layout assentar, e grava o PNG
+const Capture = struct {
+    out_dir: []const u8,
+    fbo: Fbo,
+    step: usize = 0,
+    applied: bool = false,
+    settle: u32 = 0,
+    since: f64 = 0, // igGetTime() do 1o quadro ocioso do passo
+    failed: ?[]const u8 = null,
+
+    fn size(c: *const Capture) [2]u32 {
+        const s = dbm.capture.plan[@min(c.step, dbm.capture.plan.len - 1)];
+        return .{ s.w, s.h };
+    }
+
+    fn idle(app: *const App) bool {
+        return app.db.isOpen() and app.selected != null and !app.slot.busy() and !app.want_open and !app.want_reload and
+            !app.want_run and app.want_select == null and app.want_filter == null and app.want_unfilter == null and !app.want_clear_filters;
+    }
+
+    // Antes de app.update(): pede o estado do passo atual quando nada esta rodando
+    fn before(c: *Capture, app: *App) void {
+        if (!app.slot.busy() and !app.want_open and !app.db.isOpen()) {
+            c.failed = "the database did not open";
+            return;
+        }
+        if (c.applied or !idle(app)) return;
+        c.applied = true;
+        const cap = dbm.capture;
+        switch (cap.plan[c.step].action) {
+            .show => {},
+            .filter => {
+                const col = indexOf(app.col_names, cap.filter_column) orelse {
+                    c.failed = "column " ++ cap.filter_column ++ " not found";
+                    return;
+                };
+                const value = app.gpa.dupe(u8, cap.filter_value) catch {
+                    c.failed = "out of memory";
+                    return;
+                };
+                app.want_filter = .{ .col = col, .value = value };
+            },
+            .columns => {
+                // varias ocultas, como na captura (c)
+                for ([_]usize{ 1, 4, 5, 6, 7 }) |i| if (i < app.col_names.len) app.data_sel.hidden.set(i);
+                app.data_sel.open_columns = true;
+            },
+            .close_columns => app.data_sel.close_columns = true,
+            .other_table => {
+                const i = indexOf(app.db.table_names, cap.second_table) orelse {
+                    c.failed = "table " ++ cap.second_table ++ " not found";
+                    return;
+                };
+                if (app.selected != i) app.want_select = i;
+            },
+            .about => app.want_about = true,
+        }
+    }
+
+    // Depois de desenhar no framebuffer: grava o quadro quando o estado assentou; true = terminou
+    fn after(c: *Capture, app: *App, io: std.Io) bool {
+        if (c.failed == null and ig.igGetTime() > 600) c.failed = "timeout: the state did not settle in 10 minutes";
+        if (c.failed != null) return true;
+        if (!c.applied or !idle(app)) {
+            c.settle = 0;
+            return false;
+        }
+        c.settle += 1;
+        if (c.settle == 1) c.since = ig.igGetTime();
+        // popups, auto-ajuste das colunas e o escurecimento do fundo do modal levam alguns quadros e ~0,3 s
+        if (c.settle < 8 or ig.igGetTime() - c.since < 0.5) return false;
+        c.save(app.gpa, io) catch |e| {
+            c.failed = @errorName(e);
+            return true;
+        };
+        c.step += 1;
+        c.applied = false;
+        c.settle = 0;
+        return c.step == dbm.capture.plan.len;
+    }
+
+    fn save(c: *Capture, gpa: std.mem.Allocator, io: std.Io) !void {
+        const w = c.fbo.w;
+        const h = c.fbo.h;
+        const pixels = try gpa.alloc(u8, @as(usize, w) * h * 4);
+        defer gpa.free(pixels);
+        glReadPixels(0, 0, @intCast(w), @intCast(h), 0x1908, 0x1401, pixels.ptr); // GL_RGBA, GL_UNSIGNED_BYTE
+        const png = try dbm.capture.encodePng(gpa, w, h, pixels);
+        defer gpa.free(png);
+        var name_buf: [64]u8 = undefined;
+        const name = try std.fmt.bufPrint(&name_buf, "{s}.png", .{dbm.capture.plan[c.step].name});
+        const path = try std.fs.path.join(gpa, &.{ c.out_dir, name });
+        defer gpa.free(path);
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = png });
+    }
+
+    // Erro vai para <pasta>/capture_error.txt (o exe de release nao tem console)
+    fn report(c: *const Capture, gpa: std.mem.Allocator, io: std.Io) void {
+        const why = c.failed orelse return;
+        const path = std.fs.path.join(gpa, &.{ c.out_dir, "capture_error.txt" }) catch return;
+        defer gpa.free(path);
+        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = why }) catch {};
+    }
+
+    fn indexOf(names: anytype, want: []const u8) ?usize {
+        for (names, 0..) |n, i| if (std.mem.eql(u8, n, want)) return i;
+        return null;
+    }
+};
 
 extern "shell32" fn ShellExecuteW(hwnd: ?*anyopaque, op: [*:0]const u16, file: [*:0]const u16, params: ?[*:0]const u16, dir: ?[*:0]const u16, show: c_int) callconv(.winapi) ?*anyopaque;
 
@@ -765,7 +929,7 @@ const App = struct {
         }
         app.want_about = false;
         const vp = ig.igGetMainViewport();
-        ig.igSetNextWindowPos(.{ .x = vp.*.Pos.x + vp.*.Size.x / 2, .y = vp.*.Pos.y + vp.*.Size.y / 2 }, ig.ImGuiCond_Appearing, .{ .x = 0.5, .y = 0.5 });
+        ig.igSetNextWindowPos(.{ .x = vp.*.Pos.x + vp.*.Size.x / 2, .y = vp.*.Pos.y + vp.*.Size.y / 2 }, ig.ImGuiCond_Always, .{ .x = 0.5, .y = 0.5 }); // sempre no centro, mesmo com a janela redimensionada
         if (!ig.igBeginPopupModal(title, &app.about_open, ig.ImGuiWindowFlags_AlwaysAutoResize | ig.ImGuiWindowFlags_NoSavedSettings)) return;
         defer ig.igEndPopup();
         const about = dbm.about;
@@ -915,14 +1079,14 @@ const App = struct {
             app.want_reload = true;
         }
         ig.igSetItemTooltip("%s", search_rule);
-        ig.igSameLine(0, -1);
+        sameLineIfFits(buttonWidth("< Prev"), -1); // janela estreita: os botoes descem em vez de serem cortados
         ig.igBeginDisabled(app.page == 0);
         if (button("< Prev")) {
             app.page -|= 1;
             app.want_reload = true;
         }
         ig.igEndDisabled();
-        ig.igSameLine(0, -1);
+        sameLineIfFits(buttonWidth("Next >"), -1);
         ig.igBeginDisabled(app.page + 1 >= pages);
         if (button("Next >")) {
             app.page += 1;
@@ -930,7 +1094,7 @@ const App = struct {
         }
         ig.igEndDisabled();
         // exportar a tabela fica so no Export... da barra de cima (um botao por acao)
-        ig.igSameLine(0, -1);
+        sameLineIfFits(buttonWidth("Columns..."), -1);
         columnsButton(&app.data_sel);
         // contagem na linha de baixo: ao lado dos botoes ela ficava cortada na janela de 1280
         const first = app.page * page_size;
@@ -1040,6 +1204,7 @@ const GridSel = struct {
     hidden: std.StaticBitSet(max_grid_cols) = .empty,
     header_col: usize = 0, // coluna do menu do cabecalho
     open_columns: bool = false, // abrir o dialogo "Columns"
+    close_columns: bool = false, // fechar o dialogo (so o --capture usa)
     col_filter: [64:0]u8 = @splat(0), // busca por nome dentro do dialogo
     has_filters: bool = false, // habilita "Clear filters" no menu da celula
     want_filter: bool = false, // menu da celula: filtrar pelo valor da celula selecionada
@@ -1188,7 +1353,10 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         sel.col_filter[0] = 0;
         _ = ig.igOpenPopup_Str(dialog_title, 0);
     }
-    if (!ig.igIsPopupOpen_Str(dialog_title, 0)) return changed;
+    if (!ig.igIsPopupOpen_Str(dialog_title, 0)) {
+        sel.close_columns = false;
+        return changed;
+    }
     // Tamanho proporcional a janela (REGRA_VISUAL): largura ~65% (420..900 px), altura ate 70%; redimensionavel,
     // a grade de caixas se refaz pela largura disponivel; a fonte e sempre a base do app
     const st = ig.igGetStyle();
@@ -1204,12 +1372,16 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
     const n_rows: f32 = @floatFromInt((n_cols + per_row0 - 1) / per_row0);
     const overhead = ig.igGetFrameHeight() + 2 * st.*.WindowPadding.y + ig.igGetFrameHeightWithSpacing() + 2 * st.*.WindowPadding.y + footer_h;
     const dlg_h = @min(overhead + n_rows * row_h, vp.*.Size.y * 0.7);
-    ig.igSetNextWindowPos(.{ .x = vp.*.Pos.x + vp.*.Size.x / 2, .y = vp.*.Pos.y + vp.*.Size.y / 2 }, ig.ImGuiCond_Appearing, .{ .x = 0.5, .y = 0.5 });
+    ig.igSetNextWindowPos(.{ .x = vp.*.Pos.x + vp.*.Size.x / 2, .y = vp.*.Pos.y + vp.*.Size.y / 2 }, ig.ImGuiCond_Always, .{ .x = 0.5, .y = 0.5 }); // sempre no centro e dentro da janela
     ig.igSetNextWindowSize(.{ .x = dlg_w, .y = dlg_h }, ig.ImGuiCond_Appearing);
     ig.igSetNextWindowSizeConstraints(.{ .x = @min(420, vp.*.Size.x - 16), .y = overhead + 3 * row_h }, .{ .x = vp.*.Size.x - 16, .y = vp.*.Size.y - 16 }, null, null);
     var dialog_open = true;
     if (ig.igBeginPopupModal(dialog_title, &dialog_open, ig.ImGuiWindowFlags_NoSavedSettings)) {
         defer ig.igEndPopup();
+        if (sel.close_columns) {
+            sel.close_columns = false;
+            ig.igCloseCurrentPopup();
+        }
         ig.igSetNextItemWidth(-1);
         _ = ig.igInputTextWithHint("##colfilter", "find a column", &sel.col_filter, sel.col_filter.len + 1, 0, null, null);
         const needle = zstr(&sel.col_filter);
@@ -1281,6 +1453,7 @@ pub fn main(init: std.process.Init) void {
         messageBox(std.fmt.bufPrint(&buf, "MDB2SQL could not start: {t}{s}", .{ e, hint }) catch "MDB2SQL could not start", 0x10);
         std.process.exit(1);
     };
+    if (capture_failed) std.process.exit(2);
 }
 
 fn run(init: std.process.Init) !void {
@@ -1300,13 +1473,14 @@ fn run(init: std.process.Init) !void {
     // a instancia DuckDB do programa nasce aqui, na thread da UI (ver db.zig)
     try app.db.start();
 
-    if (init.environ_map.get("APPDATA")) |appdata| {
-        app.prefs_path = try std.fs.path.join(arena, &.{ appdata, "mdb2sql", "zig-imgui.ini" });
-        app.prefs = settings.Settings.load(init.io, app.prefs_path);
-    }
-
     // Argumentos: caminho do banco e estado inicial opcional
     const args = try init.minimal.args.toSlice(arena);
+    // --capture: auxiliar de teste (README-BUILD.txt); nao le nem grava as configuracoes salvas
+    const capture_opts = dbm.capture.parse(args) catch return showUsage();
+    if (capture_opts == null) if (init.environ_map.get("APPDATA")) |appdata| {
+        app.prefs_path = try std.fs.path.join(arena, &.{ appdata, "mdb2sql", "zig-imgui.ini" });
+        app.prefs = settings.Settings.load(init.io, app.prefs_path);
+    };
     var theme = app.prefs.theme;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -1336,6 +1510,10 @@ fn run(init: std.process.Init) !void {
                 theme = std.meta.stringToEnum(settings.Theme, value) orelse return showUsage();
             } else if (std.mem.eql(u8, arg, "--export")) {
                 app.start_export = std.meta.stringToEnum(ExportKind, value) orelse return showUsage();
+            } else if (std.mem.eql(u8, arg, "--db")) {
+                app.setPath(value);
+            } else if (std.mem.eql(u8, arg, "--capture")) {
+                // lido por dbm.capture.parse
             } else if (std.mem.eql(u8, arg, "--menu")) {
                 app.start_menu = std.meta.stringToEnum(@typeInfo(@FieldType(App, "start_menu")).optional.child, value) orelse return showUsage();
             } else return showUsage();
@@ -1344,16 +1522,18 @@ fn run(init: std.process.Init) !void {
     if (app.path[0] == 0) if (init.environ_map.get("MDB2SQL_DB_PATH")) |p| app.setPath(p);
     app.want_open = app.path[0] != 0;
     app.start_sql = app.want_open and app.sql[0] != 0;
+    if (capture_opts != null and app.start_table.len == 0) app.start_table = dbm.capture.first_table;
 
     try glfw.init();
     defer glfw.terminate();
     glfw.windowHint(.context_version_major, 3);
     glfw.windowHint(.context_version_minor, 3);
     glfw.windowHint(.opengl_profile, .opengl_core_profile);
+    if (capture_opts != null) glfw.windowHint(.visible, false); // nada aparece na tela do usuario
     const window = try glfw.Window.create(1280, 800, app_title, null, null);
     defer window.destroy();
     glfw.makeContextCurrent(window);
-    glfw.swapInterval(1);
+    glfw.swapInterval(if (capture_opts != null) 0 else 1);
     _ = glfw.setDropCallback(window, onDrop);
     app.hwnd = @ptrCast(glfw.getWin32Window(window));
 
@@ -1370,10 +1550,21 @@ fn run(init: std.process.Init) !void {
         shim_add_font(font, 16 * scale);
     } else |_| ig.igGetStyle().*.FontScaleDpi = scale;
 
-    if (!ImGui_ImplGlfw_InitForOpenGL(window, true)) return error.PlatformError;
+    // no --capture o GLFW nao entrega mouse nem teclado reais ao ImGui
+    if (!ImGui_ImplGlfw_InitForOpenGL(window, capture_opts == null)) return error.PlatformError;
     defer ImGui_ImplGlfw_Shutdown();
     if (!ImGui_ImplOpenGL3_Init("#version 330")) return error.APIUnavailable;
     defer ImGui_ImplOpenGL3_Shutdown();
+    var capture: ?Capture = null;
+    if (capture_opts) |o| {
+        shim_capture_setup();
+        try std.Io.Dir.cwd().createDirPath(init.io, o.out_dir);
+        capture = .{ .out_dir = o.out_dir, .fbo = try Fbo.load() };
+    }
+    defer if (capture) |*c| {
+        c.report(init.gpa, init.io);
+        if (c.failed != null) capture_failed = true;
+    };
 
     while (!window.shouldClose() and !app.want_exit) {
         glfw.pollEvents();
@@ -1382,19 +1573,35 @@ fn run(init: std.process.Init) !void {
             dropped[0] = 0;
             app.want_open = true;
         }
+        if (capture) |*c| c.before(&app);
         app.update();
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
+        if (capture) |*c| {
+            const sz = c.size();
+            shim_capture_frame(@floatFromInt(sz[0]), @floatFromInt(sz[1]));
+        }
         ig.igNewFrame();
         app.draw();
         ig.igRender();
 
-        const fb = window.getFramebufferSize();
+        var fb = window.getFramebufferSize();
+        if (capture) |*c| {
+            const sz = c.size();
+            try c.fbo.use(sz[0], sz[1]);
+            fb = .{ @intCast(sz[0]), @intCast(sz[1]) };
+        }
         glViewport(0, 0, fb[0], fb[1]);
         glClearColor(0.1, 0.1, 0.1, 1);
         glClear(0x4000); // GL_COLOR_BUFFER_BIT
         ImGui_ImplOpenGL3_RenderDrawData(ig.igGetDrawData());
+        if (capture) |*c| {
+            if (c.after(&app, init.io)) break;
+            continue; // janela invisivel: nada para mostrar
+        }
         window.swapBuffers();
     }
 }
+
+var capture_failed = false; // --capture terminou com erro (detalhe em <pasta>/capture_error.txt)

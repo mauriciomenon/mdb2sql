@@ -92,3 +92,10 @@ Windows - dist\w11\amd64\
     $env:MDB2SQL_TEST_SQLITE_EXT = (Resolve-Path .tools\duckdb-ext-v2.0.0\sqlite_scanner.duckdb_extension).Path
     zig build test -Doptimize=ReleaseSafe --summary all
   Variaveis do programa: MDB2SQL_DB_PATH (arquivo aberto ao iniciar), MDB2SQL_ACCESS_READER=odbc|mdbtools|auto.
+  Capturas de tela (auxiliar de teste, fora da interface): o programa abre o banco sem janela visivel, sem
+  mouse nem foco, passa sozinho pelos estados das capturas e grava um PNG por estado; nao le nem grava as
+  configuracoes salvas. Use uma COPIA do banco. Saida 0; com erro, saida 2 e <pasta>\capture_error.txt.
+    mdb2sql-zig.exe --capture C:\copia\shots --db C:\copia\DB4.duckdb --theme dark
+    (Access: $env:MDB2SQL_ACCESS_READER = 'mdbtools' ou 'odbc' antes, com --db C:\copia\DB4.accdb)
+  Estados (src\capture.zig): RANGER_SOSTAT, filtro SUBNAM = 'U02', dialogo Columns com colunas ocultas
+  (1280x800 e 1920x1129), janela estreita 720x800, RANGER_SOANLG e Sobre.
