@@ -108,8 +108,9 @@ def export_database(
 def _database_to_db(
     manager: DBManager, tables: list[str], out: Path, progress: Progress, cancel: threading.Event | None
 ) -> None:
+    sqlite = out.suffix.lower() == ".sqlite"
     with manager.cursor() as cursor:
-        if out.suffix.lower() == ".sqlite":
+        if sqlite:
             load_sqlite_extension(cursor)
             cursor.execute(f"ATTACH {sql_string(str(out))} AS export_db (TYPE sqlite, READ_WRITE)")
         else:
@@ -118,7 +119,16 @@ def _database_to_db(
             for done, table in enumerate(tables):
                 _check(cancel)
                 progress(done, len(tables), table)
-                cursor.execute(f"CREATE TABLE export_db.{quote(table)} AS SELECT * FROM {quote(table)}")
+                select = "*"
+                if sqlite:
+                    # o DuckDB grava DECIMAL no SQLite como VARCHAR (texto: > 20, ORDER BY e SUM comparariam texto);
+                    # DOUBLE vira REAL, com afinidade numerica
+                    columns = cursor.execute(f"DESCRIBE {quote(table)}").fetchall()
+                    select = ", ".join(
+                        f"CAST({quote(name)} AS DOUBLE) AS {quote(name)}" if kind.startswith("DECIMAL") else quote(name)
+                        for name, kind, *_ in columns
+                    )
+                cursor.execute(f"CREATE TABLE export_db.{quote(table)} AS SELECT {select} FROM {quote(table)}")
         finally:
             # o ATTACH vale para todos os cursores do banco: soltar o arquivo mesmo em erro/cancelamento
             cursor.execute("DETACH export_db")

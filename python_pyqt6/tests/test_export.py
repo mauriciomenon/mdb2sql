@@ -1,3 +1,4 @@
+import sqlite3
 import threading
 from pathlib import Path
 
@@ -8,6 +9,28 @@ import pytest
 from backend import export
 from backend.db_manager import DBManager
 from backend.export import Cancelled, default_save_dir, export_database, export_result, sheet_name
+
+
+def test_export_to_sqlite_keeps_decimals_numeric(tmp_path: Path) -> None:
+    # DECIMAL exportado como texto faria "> 20", ORDER BY e SUM compararem texto (precos do nwind.mdb)
+    source = tmp_path / "prices.duckdb"
+    prices = [18, 19, 10, 22, 21.35, 25, 30, 40, 97, 31, 21, 38, 6, 23.25, 15.5, 17.45, 39, 62.5, 9.2, 81, 10, 21.05,
+              9, 4.5, 14, 31.23, 43.9, 45.6, 123.79, 25.89, 12.5, 32, 2.5, 14, 18, 19, 26, 263.5]
+    with duckdb.connect(str(source)) as conn:
+        conn.execute("CREATE TABLE Products (UnitPrice DECIMAL(19,4))")
+        conn.executemany("INSERT INTO Products VALUES (?)", [[str(p)] for p in prices])
+    out = tmp_path / "prices.sqlite"
+    with DBManager(str(source)) as manager:
+        export_database(manager, out, _noop)
+
+    lite = sqlite3.connect(out)
+    expected = sorted(p for p in prices if p > 20)
+    assert lite.execute("SELECT DISTINCT typeof(UnitPrice) FROM Products").fetchall() == [("real",)]
+    count, total = lite.execute("SELECT count(*), round(sum(UnitPrice), 2) FROM Products WHERE UnitPrice > 20").fetchone()
+    assert (count, total) == (len(expected), round(sum(expected), 2))
+    top = [r[0] for r in lite.execute("SELECT UnitPrice FROM Products ORDER BY UnitPrice DESC LIMIT 3")]
+    lite.close()
+    assert top == [263.5, 123.79, 97.0]
 
 
 def _noop(*_args) -> None:

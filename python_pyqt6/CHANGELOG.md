@@ -10,7 +10,9 @@
 - Closing the file (File > Close Database, new), opening another one or quitting asks once: "Save SQLite..."
   (default: next to the source, `<source>.sqlite`), "Delete" or "Cancel"; "Remember for this session" skips the
   question. The temporary folder of a crashed run is removed at the next start.
-- Export > Database to SQLite on an Access file copies the converted SQLite (types kept).
+- Export > Database to SQLite on an Access file copies the converted SQLite (types kept). From DuckDB or SQLite,
+  DECIMAL columns are written as REAL (before: TEXT, so `> 20`, ORDER BY and SUM compared text).
+- mdbtools 1.0.1 limits now documented: empty text reads as NULL; dates before 1900 or after ~9998 become NULL.
 - SQLite: DECIMAL(p,s) and BOOLEAN columns show as decimal and true/false (DuckDB reads them as DOUBLE/BIGINT).
   `.db` is opened as SQLite unless the file is a DuckDB database.
 - Search (Data tab) runs in the database over the whole table, before the "Rows" limit: a row beyond the loaded
