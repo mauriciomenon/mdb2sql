@@ -367,11 +367,13 @@
     return path;
   }
 
+  // outro arquivo (ou nenhum): tabela, pesquisa e filtros zerados, escopo de volta ao padrao de Settings
   function resetTable() {
     selectedTable = '';
     hidden = new Set();
     filters = [];
     search = '';
+    scope = defaultScope;
     dropFound();
     columns = [];
     rows = [];

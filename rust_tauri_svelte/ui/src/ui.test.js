@@ -135,6 +135,12 @@ test('All tables search: stale answers are dropped and a failure ends the search
   assert.match(ui, /\{#if found\?\.tables\}\s*\{#each found\.tables as f/);
 });
 
+// decisao 2 (igual nas 4 versoes): outro arquivo limpa a pesquisa e o filtro de tabelas e volta ao escopo de Settings
+test('opening another file clears the searches and goes back to the default scope', () => {
+  assert.match(appFunction('resetTable'), /search = '';\s*scope = defaultScope;/);
+  assert.match(appFunction('openDatabase'), /tableText = tableFilter = '';[^]*resetTable\(\);/);
+});
+
 // decisao 3: nenhum caminho deixa a tabela sem coluna visivel (Ocultar todas e a caixa da ultima visivel)
 test('the Columns dialog never hides the last visible column', () => {
   const dialog = markup('./App.svelte').match(/<dialog\s+bind:this=\{columnsDialog\}[\s\S]*?<\/dialog>/)[0];
