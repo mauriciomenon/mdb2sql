@@ -103,7 +103,9 @@
   let source = $state('');
   let converted = $state(false); // ha SQLite convertido do Access ainda nao salvo nem apagado
   let tables = $state([]);
+  let tableText = $state(''); // texto do filtro de tabelas; tableFilter e o que esta valendo na lista
   let tableFilter = $state('');
+  let tableTimer;
   let selectedTable = $state('');
   let columns = $state([]); // [{ name, type, null }] na ordem real da tabela
   // raw: linhas so sao trocadas inteiras, sem proxy por celula
@@ -373,7 +375,8 @@
       source = opened.source;
       converted = opened.converted;
       dbPath = opened.path;
-      tableFilter = '';
+      clearTimeout(tableTimer);
+      tableText = tableFilter = '';
       sqlResult = null;
       lastSql = '';
       saveSetting(LAST_DIR_KEY, dirOf(opened.path));
@@ -511,10 +514,19 @@
     document.getElementById(`table-${next}`)?.scrollIntoView({ block: 'nearest' });
   }
 
+  // filtro de tabelas e pesquisa da aba Data: valem quando a digitacao para por SEARCH_DELAY_MS; Enter vale na hora
+  const delayOf = (event) => (event.key === 'Enter' ? 0 : SEARCH_DELAY_MS);
+
+  function onTableFilter(event) {
+    const text = event.currentTarget.value;
+    clearTimeout(tableTimer);
+    tableTimer = setTimeout(() => (tableFilter = text), delayOf(event));
+  }
+
   function onSearch(event) {
     search = event.currentTarget.value;
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => openTable(selectedTable), SEARCH_DELAY_MS);
+    searchTimer = setTimeout(() => openTable(selectedTable), delayOf(event));
   }
 
   // NIVEL BASICO: Troca os filtros e refaz a consulta da tabela aberta (as linhas vem do banco ja filtradas)
@@ -826,7 +838,15 @@
   <div class="workspace">
     <nav aria-label={t('tables.list')}>
       <label for="table-filter">{t('tables.label', { shown: visibleTables.length, total: tables.length })}</label>
-      <input id="table-filter" type="search" bind:value={tableFilter} placeholder={t('tables.filter')} disabled={tables.length === 0} />
+      <input
+        id="table-filter"
+        type="search"
+        bind:value={tableText}
+        oninput={onTableFilter}
+        onkeydown={(e) => e.key === 'Enter' && onTableFilter(e)}
+        placeholder={t('tables.filter')}
+        disabled={tables.length === 0}
+      />
       <!-- nome inteiro sempre (quebra a linha, nada de reticencias); setas, Home e End trocam de tabela -->
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <div
@@ -902,7 +922,15 @@
               : t('data.showing', { shown: fmt(rows.length), total: fmt(rowCount), columns: columns.length })}
           </span>
           <button type="button" class="secondary columns-button" title={t('columns.tip')} onclick={() => columnsDialog.showModal()}>{t('columns.button')}</button>
-          <input class="search" type="search" value={search} oninput={onSearch} aria-label={t('search.label')} placeholder={t('search.placeholder')} />
+          <input
+            class="search"
+            type="search"
+            value={search}
+            oninput={onSearch}
+            onkeydown={(e) => e.key === 'Enter' && onSearch(e)}
+            aria-label={t('search.label')}
+            placeholder={t('search.placeholder')}
+          />
         </div>
         {#if filters.length}
           <div class="filters" role="group" aria-label={t('filters.label')}>

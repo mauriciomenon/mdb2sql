@@ -84,6 +84,20 @@ test('grid cells, NULL included, keep full contrast', () => {
   }
 });
 
+// dono: o filtro de tabelas e a pesquisa da aba Data esperam a digitacao parar (300 ms, igual nas 4 versoes);
+// Enter vale na hora; a lista de tabelas usa o texto que ja valeu, nao o que esta sendo digitado
+test('table filter and Data search wait 300 ms, Enter runs at once', () => {
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  assert.match(app, /const SEARCH_DELAY_MS = 300;/);
+  assert.match(app, /const delayOf = \(event\) => \(event\.key === 'Enter' \? 0 : SEARCH_DELAY_MS\);/);
+  assert.match(app, /tableTimer = setTimeout\(\(\) => \(tableFilter = text\), delayOf\(event\)\);/);
+  assert.match(app, /searchTimer = setTimeout\(\(\) => openTable\(selectedTable\), delayOf\(event\)\);/);
+  assert.match(app, /const words = searchWords\(tableFilter\);/);
+  const ui = markup('./App.svelte');
+  assert.match(ui, /bind:value=\{tableText\}\s+oninput=\{onTableFilter\}\s+onkeydown=\{\(e\) => e\.key === 'Enter' && onTableFilter\(e\)\}/);
+  assert.match(ui, /oninput=\{onSearch\}\s+onkeydown=\{\(e\) => e\.key === 'Enter' && onSearch\(e\)\}/);
+});
+
 // dono: colunas do Schema apertadas; so ela ganha 6 px de cada lado da celula (Data e SQL seguem com 10 px)
 test('only the Schema grid gets wider cell spacing', () => {
   const app = markup('./App.svelte');
