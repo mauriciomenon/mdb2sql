@@ -222,6 +222,11 @@ describe('App IPC flow', () => {
     // the search stays when another table is chosen
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'tension de campo'));
+    // Enter searches at once, without the pause
+    fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'u9a' } });
+    expect(bridge.GetTableData).not.toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'u9a');
+    fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
+    expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'u9a');
   });
 
   it('filters by the right-clicked value in the database query and shows removable chips', async () => {
@@ -764,10 +769,14 @@ describe('App IPC flow', () => {
     render(<App />);
     menu('File', 'Open sample data');
     await screen.findByText('Alpha');
+    // applied after a 300 ms pause in typing, like the Data search
     fireEvent.change(screen.getByLabelText('Filter 3 tables'), { target: { value: 'gen ranger' } });
-    expect(screen.queryByRole('button', { name: 'RANGER_SOACCU' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'RANGER_SOACCU' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'RANGER_SOACCU' })).not.toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'RANGER_SOGEN' })).toBeInTheDocument();
+    // Enter applies it at once
     fireEvent.change(screen.getByLabelText('Filter 3 tables'), { target: { value: 'campo tensao' } });
+    fireEvent.keyDown(screen.getByLabelText('Filter 3 tables'), { key: 'Enter' });
     expect(screen.getByRole('button', { name: 'TENSÃO_CAMPO' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'RANGER_SOGEN' })).not.toBeInTheDocument();
   });

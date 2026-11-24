@@ -64,6 +64,7 @@ declare global {
 }
 
 const ROW_LIMITS = [100, 500, 1000]; // more would render too many cells (130-column tables)
+const TYPING_PAUSE = 300; // ms without typing before the table list filter and the Data search apply (Enter: at once)
 const THEMES: Theme[] = ['system', 'light', 'dark'];
 
 // Linhas (rotulo, valor) do dialogo Sobre; versao de wails.json, numero/data do build gravados pelo build, runtimes
@@ -175,6 +176,7 @@ function App() {
   const [source, setSource] = useState('');
   const [converted, setConverted] = useState(false);
   const [filter, setFilter] = useState('');
+  const [tableFilter, setTableFilter] = useState(''); // filter applied to the table list, after a pause
   const [selectedTable, setSelectedTable] = useState('');
   const [rows, setRows] = useState<Row[]>([]);
   const [rowCount, setRowCount] = useState(0);
@@ -338,9 +340,14 @@ function App() {
 
   // the Data tab searches the whole table in the database: wait for a pause in typing, then query
   useEffect(() => {
-    const id = setTimeout(() => setTableSearch(search.trim()), 300);
+    const id = setTimeout(() => setTableSearch(search.trim()), TYPING_PAUSE);
     return () => clearTimeout(id);
   }, [search]);
+
+  useEffect(() => {
+    const id = setTimeout(() => setTableFilter(filter), TYPING_PAUSE);
+    return () => clearTimeout(id);
+  }, [filter]);
 
   // (a search typed in the SQL tab reaches the table when the Data or Schema tab comes back)
   useEffect(() => {
@@ -497,6 +504,7 @@ function App() {
       setDbName(name);
       setTables(tableList);
       setFilter('');
+      setTableFilter('');
       setStatus(t('status.loaded', name, tableList.length));
       if (tableList.length > 0) {
         await loadTable(tableList[0], limit, undefined, tableSearch);
@@ -616,9 +624,9 @@ function App() {
   ];
 
   const visibleTables = useMemo(() => {
-    const words = searchWords(filter);
+    const words = searchWords(tableFilter);
     return words.length ? tables.filter((tb) => hasAllWords(normalizeText(tb), words)) : tables;
-  }, [tables, filter]);
+  }, [tables, tableFilter]);
 
   // schema order = database column order (Go maps reach JS sorted by key); also gives empty tables a header
   // memoized so the search index below is built once per load, not on every keystroke
@@ -813,6 +821,7 @@ function App() {
           title={t('search.tip')}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && setTableFilter(filter)}
           disabled={tables.length === 0}
         />
         <ul>
@@ -854,6 +863,7 @@ function App() {
                 title={t('search.tip')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && setTableSearch(search.trim())}
               />
               <label className="field">
                 {t('rows.label')}
