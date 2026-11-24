@@ -516,6 +516,23 @@ def test_header_menu_fits_hides_and_shows_columns(qtbot, window: MainWindow) -> 
     assert window.hidden_columns == set() and _hidden(window) == [False, False]
 
 
+def test_header_right_click_still_works_after_gc(window: MainWindow) -> None:
+    # 1.3.0: a conexao do clique direito segurava o proprio cabecalho; depois de um gc.collect() o menu sumia ou o
+    # app caia (access violation) no clique direito
+    import gc
+
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtWidgets import QMenu
+
+    gc.collect()
+    for view in (window.data_table, window.sql_table):
+        view.horizontalHeader().customContextMenuRequested.emit(QPoint(5, 5))
+        menus = [m for m in window.findChildren(QMenu) if m.isVisible()]
+        assert len(menus) == 1
+        assert (window.columns_action in menus[0].actions()) == (view is window.data_table)
+        menus[0].close()
+
+
 def test_sql_header_menu_hides_until_the_next_query(qtbot, window: MainWindow) -> None:
     window.sql_edit.setPlainText("SELECT id, name FROM people")
     window.run_sql()

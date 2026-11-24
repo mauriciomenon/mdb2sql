@@ -356,10 +356,11 @@ class MainWindow(QMainWindow):
         separator.setSeparator(True)
         self.data_table.addActions([separator, self.filter_value_action, self.clear_filters_action])
         for view in (self.data_table, self.sql_table):
-            header = view.horizontalHeader()
-            header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            header.customContextMenuRequested.connect(
-                lambda pos, v=view, h=header: self.header_menu(h.logicalIndexAt(pos), v).popup(h.mapToGlobal(pos))
+            view.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            # !T: The slot must not hold the header itself: header wrapper <-> slot is a cycle only the GC sees, and
+            # !T: after a gc.collect() the slot was gone (no menu) or freed (crash on right-click, 1.3.0)
+            view.horizontalHeader().customContextMenuRequested.connect(
+                lambda pos, v=view: self._popup_header_menu(v, pos)
             )
 
         self.empty_label = QLabel(tr("status.empty"))
@@ -1267,6 +1268,10 @@ class MainWindow(QMainWindow):
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.hiddenChanged.connect(self.set_hidden_columns)  # vale na hora; Fechar so fecha
         dialog.open()
+
+    def _popup_header_menu(self, view: QTableView, pos) -> None:
+        header = view.horizontalHeader()
+        self.header_menu(header.logicalIndexAt(pos), view).popup(header.mapToGlobal(pos))
 
     def header_menu(self, column: int, view: QTableView | None = None) -> QMenu:
         """Clique direito no cabecalho das grades Data e SQL (column = -1 fora de uma coluna): ajustar a largura e
