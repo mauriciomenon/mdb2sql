@@ -16,8 +16,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
+
+	"mdb2sql/i18n"
 
 	"github.com/duckdb/duckdb-go/v2"
 )
@@ -25,6 +28,9 @@ import (
 // Struct que gerencia acesso aos bancos DuckDB - conectar, listar tabelas, queries
 // !T: Every format ends up in one in-memory DuckDB: DuckDB/SQLite files attached read-only as "src", Access imported
 type DBManager struct {
+	// every read (query, count, "All tables" search, export) holds mu.RLock for its whole run and Open/Close change
+	// the connection under mu.Lock: they wait for the reads, so none meets a closed or another file's connection
+	mu        sync.RWMutex
 	conn      *sql.DB // !T: Standard sql.DB interface from database/sql
 	currentDB string
 	source    string // reader used: DuckDB, SQLite, Access ODBC or mdbtools
@@ -87,11 +93,13 @@ func (m *DBManager) Open(ctx context.Context, dbPath string, progress Progress) 
 		RemoveConverted(converted)
 		return err
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.conn, m.currentDB, m.source, m.converted = conn, dbPath, source, converted
 
 	// Pre-carrega cache de tabelas para validar nomes sem overhead por chamada
 	if err := m.refreshTableCache(); err != nil {
-		m.Close()
+		m.close()
 		RemoveConverted(converted)
 		return fmt.Errorf("failed to load table cache: %w", err)
 	}
@@ -99,11 +107,19 @@ func (m *DBManager) Open(ctx context.Context, dbPath string, progress Progress) 
 }
 
 // Source returns the reader used for the open file ("" when nothing is open)
-func (m *DBManager) Source() string { return m.source }
+func (m *DBManager) Source() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.source
+}
 
 // Converted is the SQLite file an Access file was converted to ("" for other files); the caller owns it: Close
 // does not delete it (the user chooses to save or delete it, see app.go)
-func (m *DBManager) Converted() string { return m.converted }
+func (m *DBManager) Converted() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.converted
+}
 
 // fileKind: Access by extension; SQLite by its file header (a .db may be either); otherwise DuckDB
 func fileKind(path string) string {
@@ -240,6 +256,8 @@ type QueryResult struct {
 
 // RunQuery executa SQL livre e devolve no maximo limit linhas
 func (m *DBManager) RunQuery(ctx context.Context, query string, limit int) (QueryResult, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.conn == nil {
 		return QueryResult{}, fmt.Errorf("no database connected")
 	}
@@ -319,20 +337,13 @@ func uniqueNames(cols []string) []string {
 // Retorna lista de nomes de tabelas no banco atual
 // !T: Executes DuckDB-specific SHOW TABLES query and returns string slice
 func (m *DBManager) ListTables() ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.conn == nil {
 		return nil, fmt.Errorf("no database connected")
 	}
 
-	// Usa cache preenchido no Connect; evita nova consulta se cache existir
-	if len(m.tableList) > 0 && len(m.tableSet) == len(m.tableList) {
-		copied := make([]string, len(m.tableList))
-		copy(copied, m.tableList)
-		return copied, nil
-	}
-
-	if err := m.refreshTableCache(); err != nil {
-		return nil, err
-	}
+	// cache filled by Open (the attached file is read-only); a read never rewrites it, others may be reading it
 	copied := make([]string, len(m.tableList))
 	copy(copied, m.tableList)
 	return copied, nil
@@ -349,6 +360,13 @@ type ColumnSchema struct {
 // Retorna schema de uma tabela (colunas, tipos, nullable)
 // !T: Executes PRAGMA table_info() which is more efficient than DESCRIBE SELECT *
 func (m *DBManager) GetTableSchema(tableName string) ([]ColumnSchema, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.tableSchema(tableName)
+}
+
+// tableSchema: GetTableSchema for callers that hold mu (a second RLock could wait behind a waiting Close forever)
+func (m *DBManager) tableSchema(tableName string) ([]ColumnSchema, error) {
 	if m.conn == nil {
 		return nil, fmt.Errorf("no database connected")
 	}
@@ -407,11 +425,6 @@ func (m *DBManager) validateTableName(tableName string) (string, error) {
 	}
 
 	// Usa cache para evitar overhead de conexao repetida
-	if m.tableSet == nil || len(m.tableSet) == 0 {
-		if err := m.refreshTableCache(); err != nil {
-			return "", err
-		}
-	}
 	if _, ok := m.tableSet[tableName]; !ok {
 		return "", fmt.Errorf("table not found: %s", tableName)
 	}
@@ -479,7 +492,7 @@ func (m *DBManager) tableWhere(tableName string, filters []Filter, search string
 	if len(filters) == 0 && strings.TrimSpace(search) == "" {
 		return "", nil, nil
 	}
-	schema, err := m.GetTableSchema(tableName)
+	schema, err := m.tableSchema(tableName)
 	if err != nil {
 		return "", nil, err
 	}
@@ -499,6 +512,8 @@ func AccessReader() string {
 // Executa SELECT na tabela e retorna resultados como slice de maps
 // !T: Returns []map[string]interface{} for dynamic column handling in frontend
 func (m *DBManager) QueryTable(tableName string, limit int, search string, filters ...Filter) ([]map[string]interface{}, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.conn == nil {
 		return nil, fmt.Errorf("no database connected")
 	}
@@ -560,6 +575,13 @@ func (m *DBManager) QueryTable(tableName string, limit int, search string, filte
 // Retorna numero total de linhas em uma tabela
 // !T: Executes COUNT(*) query with validated table name
 func (m *DBManager) GetRowCount(tableName string, search string, filters ...Filter) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.rowCount(context.Background(), tableName, search, filters...)
+}
+
+// rowCount: GetRowCount for callers that hold mu; ctx stops a count that is running
+func (m *DBManager) rowCount(ctx context.Context, tableName string, search string, filters ...Filter) (int, error) {
 	if m.conn == nil {
 		return 0, fmt.Errorf("no database connected")
 	}
@@ -580,8 +602,8 @@ func (m *DBManager) GetRowCount(tableName string, search string, filters ...Filt
 	}
 	query := fmt.Sprintf(`SELECT COUNT(*) FROM %s%s`, quoteIdent(tableName), where)
 	var count int
-	if err = m.conn.QueryRow(query, args...).Scan(&count); err != nil {
-		return 0, fmt.Errorf("failed to count rows: %w", err)
+	if err = m.conn.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("%s: %w", i18n.T("err.countFailed"), err)
 	}
 
 	return count, nil
@@ -597,6 +619,8 @@ type TableHits struct {
 // table opened from the list shows those same rows; only tables with a match, in table list order. progress gets
 // each table as it is counted (the 287 tables of DB4.sqlite take 10-20 s; counting several at once was slower).
 func (m *DBManager) SearchTables(ctx context.Context, search string, progress Progress) ([]TableHits, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.conn == nil {
 		return nil, fmt.Errorf("no database connected")
 	}
@@ -606,7 +630,7 @@ func (m *DBManager) SearchTables(ctx context.Context, search string, progress Pr
 			return nil, err
 		}
 		progress(i+1, len(m.tableList), table)
-		n, err := m.GetRowCount(table, search)
+		n, err := m.rowCount(ctx, table, search) // a cancel also stops the count running, the last table's too
 		if err != nil {
 			return nil, err
 		}
@@ -631,8 +655,15 @@ func DuckDBVersion() (string, error) {
 }
 
 // Fecha conexao com o banco - sempre chame ao finalizar uso
-// !T: Closes sql.DB connection and resets manager state
+// !T: Closes sql.DB connection and resets manager state. It waits for the reads in progress: a running search or
+// query is cancelled first (app.go), so the wait is short
 func (m *DBManager) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.close()
+}
+
+func (m *DBManager) close() error {
 	if m.conn != nil {
 		err := m.conn.Close()
 		m.conn = nil
@@ -664,7 +695,7 @@ func listTables(db *sql.DB) ([]string, error) {
 	return tables, rows.Err()
 }
 
-// Atualiza cache de tabelas existentes no banco atual
+// Atualiza cache de tabelas existentes no banco atual (Open, under mu.Lock)
 func (m *DBManager) refreshTableCache() error {
 	if m.conn == nil {
 		return fmt.Errorf("no database connected")

@@ -64,6 +64,7 @@
   "err.badPath": "Caminho de banco inválido",
   "err.badReader": "MDB2SQL_ACCESS_READER=\"{0}\": use odbc, mdbtools ou deixe vazio",
   "err.bridge": "Ponte IPC indisponível",
+  "err.countFailed": "Não foi possível contar as linhas",
   "err.exportCancelled": "Exportação cancelada",
   "err.exportOverOpen": "Não é possível exportar sobre o arquivo aberto",
   "err.forcedMdbtools": "MDB2SQL_ACCESS_READER=mdbtools, mas o mdbtools não está embutido neste build nem no PATH",

@@ -161,9 +161,11 @@ describe('App IPC flow', () => {
     expect(header('NAME')).not.toBeInTheDocument();
     expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
     expect(screen.getByText('1 hidden column')).toBeInTheDocument();
+    // one column always stays: Hide all keeps the first listed, and the box of the last visible one is disabled
     fireEvent.click(screen.getByRole('button', { name: 'Hide all' }));
-    expect(screen.getByText('2 hidden columns')).toBeInTheDocument();
-    expect(header('ID')).not.toBeInTheDocument();
+    expect(screen.getByText('1 hidden column')).toBeInTheDocument();
+    expect(header('ID')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'ID' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
     expect(screen.getByRole('checkbox', { name: 'NAME' })).toBeChecked();
     fireEvent.click(screen.getByRole('checkbox', { name: 'ID' }));
@@ -241,6 +243,9 @@ describe('App IPC flow', () => {
     expect(screen.queryByRole('columnheader', { name: 'NAME' })).not.toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'ID' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Filter columns'), { target: { value: 'id' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Hide all' })); // ID is the last visible one: it stays
+    expect(screen.getByText('1 of 2 visible')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'ID' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Show all' })); // ID is visible already; NAME stays hidden
     expect(screen.getByText('1 of 2 visible')).toBeInTheDocument();
     expect(document.querySelector('.col-list').style.getPropertyValue('--col-w')).toBe('150px');
@@ -328,6 +333,102 @@ describe('App IPC flow', () => {
     // the selector beside the search does not change the saved default
     fireEvent.click(screen.getByRole('radio', { name: 'All tables' }));
     expect(SetSearchScope).toHaveBeenCalledTimes(1);
+  });
+
+  // audit 2026-11-24: an older "All tables" answer never shows; a failed search shows its error and ends "Searching"
+  it('drops the answer of an older All tables search and ends Searching when the search fails', async () => {
+    const answers = [];
+    const SearchAllTables = vi.fn(() => new Promise((resolve, reject) => answers.push({ resolve, reject })));
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables, GetSearchScope: vi.fn(async () => 'all') } } } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+    const box = screen.getByLabelText('Search the table');
+    const searchFor = (text) => {
+      fireEvent.change(box, { target: { value: text } });
+      fireEvent.keyDown(box, { key: 'Enter' });
+    };
+    searchFor('ana');
+    await waitFor(() => expect(SearchAllTables).toHaveBeenLastCalledWith('ana'));
+    searchFor('bob'); // a new term before the answer
+    await waitFor(() => expect(SearchAllTables).toHaveBeenLastCalledWith('bob'));
+    await act(async () => answers[0].resolve([{ table: 'RANGER_SOGEN', rows: 9 }]));
+    expect(screen.queryByRole('row', { name: 'RANGER_SOGEN 9' })).not.toBeInTheDocument();
+    expect(screen.getByText('Searching')).toBeInTheDocument();
+    searchFor(''); // the term erased: the grid comes back and the answer of "bob" is dropped too
+    await act(async () => answers[1].resolve([{ table: 'RANGER_SOGEN', rows: 5 }]));
+    expect(screen.queryByRole('row', { name: 'RANGER_SOGEN 5' })).not.toBeInTheDocument();
+    expect(await screen.findByText('Alpha')).toBeInTheDocument();
+
+    searchFor('zed');
+    await waitFor(() => expect(SearchAllTables).toHaveBeenLastCalledWith('zed'));
+    expect(screen.getByText('Searching')).toBeInTheDocument();
+    await act(async () => answers[2].reject(new Error('Could not count the rows: boom')));
+    expect(screen.queryByText('Searching')).not.toBeInTheDocument();
+    expect(screen.getByText('Could not count the rows: boom')).toBeInTheDocument();
+  });
+
+  // decision 1 (same in the 4 apps): a table opened from the All tables list shows the count listed, so its value
+  // filters are cleared, also when it is the table open now
+  it('opens a table of the All tables list without its value filters', async () => {
+    const SearchAllTables = vi.fn(async () => [{ table: 'RANGER_SOACCU', rows: 2 }]);
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables } } } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    fireEvent.contextMenu(await screen.findByText('Beta'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Filter by this value' }));
+    await screen.findByText("Filter: NAME = 'Beta'");
+    fireEvent.click(screen.getByRole('radio', { name: 'All tables' }));
+    fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'a' } });
+    fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
+    const hit = await screen.findByRole('row', { name: 'RANGER_SOACCU 2' });
+    fireEvent.click(within(hit).getByRole('button', { name: 'RANGER_SOACCU' }));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], 'a'));
+    expect(screen.queryByRole('group', { name: 'Active filters' })).not.toBeInTheDocument();
+  });
+
+  // Go stops a running search when the file closes, and its "cancelled" answer arrives before Close returns
+  it('closes the file during an All tables search without showing the cancelled search as an error', async () => {
+    let cancelSearch;
+    const SearchAllTables = vi.fn(() => new Promise((_, reject) => (cancelSearch = reject)));
+    const CloseDatabase = vi.fn(async () => {
+      cancelSearch(new Error('Could not count the rows: context canceled'));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables, CloseDatabase, GetSearchScope: vi.fn(async () => 'all') } } } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+    fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'ana' } });
+    fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
+    await waitFor(() => expect(SearchAllTables).toHaveBeenCalledWith('ana'));
+    menu('File', 'Close database');
+    await waitFor(() => expect(CloseDatabase).toHaveBeenCalled());
+    expect(await screen.findByText('Closed sample.duckdb')).toBeInTheDocument();
+    expect(screen.queryByText(/context canceled/)).not.toBeInTheDocument();
+  });
+
+  // audit 2026-11-24: the search of the previous file ran again on the next one
+  it('opens another file with no Data search, no table list filter and the search scope of Settings', async () => {
+    const SearchAllTables = vi.fn(async () => [{ table: 'RANGER_SOGEN', rows: 1 }]);
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables, GetSearchScope: vi.fn(async () => 'all') } } } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+    fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'ana' } });
+    fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
+    await screen.findByRole('row', { name: 'RANGER_SOGEN 1' });
+    fireEvent.click(screen.getByRole('radio', { name: 'This table' }));
+    fireEvent.change(screen.getByLabelText('Filter 2 tables'), { target: { value: 'gen' } });
+
+    menu('File', 'Open sample data');
+    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], ''));
+    expect(screen.getByLabelText('Search the table')).toHaveValue('');
+    expect(screen.getByLabelText('Filter 2 tables')).toHaveValue('');
+    expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true');
+    expect(await screen.findByText('Alpha')).toBeInTheDocument();
+    expect(SearchAllTables).toHaveBeenCalledTimes(1);
   });
 
   it('filters by the right-clicked value in the database query and shows removable chips', async () => {

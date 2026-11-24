@@ -64,6 +64,7 @@
   "err.badPath": "Invalid database path",
   "err.badReader": "MDB2SQL_ACCESS_READER=\"{0}\": use odbc, mdbtools or leave it empty",
   "err.bridge": "IPC bridge not available",
+  "err.countFailed": "Could not count the rows",
   "err.exportCancelled": "Export cancelled",
   "err.exportOverOpen": "Cannot export over the open database file",
   "err.forcedMdbtools": "MDB2SQL_ACCESS_READER=mdbtools, but mdbtools is not embedded in this build nor on PATH",

@@ -210,7 +210,10 @@ function App() {
   const [tableSearch, setTableSearch] = useState(''); // search applied in the database (Data tab), after a pause
   const [scope, setScope] = useState<Scope>('table'); // where the Data tab searches now
   const [defaultScope, setDefaultScope] = useState<Scope>('table'); // Settings > Default search scope
-  const [hits, setHits] = useState<TableHits[] | null>(null); // "All tables" result (null = not yet)
+  const defaultScopeRef = useRef<Scope>('table'); // the same, for openPath started by an older render (startup file)
+  // "All tables" result and the search it answers (null = searching or failed)
+  const [hits, setHits] = useState<{ search: string; tables: TableHits[] } | null>(null);
+  const [searching, setSearching] = useState(false);
   const [sel, setSel] = useState<{ row: Row; col: string } | null>(null); // selected cell
   // open context menu: of the selected cell, of a column header (header = column name) or of the status bar
   const [menu, setMenu] = useState<{ x: number; y: number; header?: string; status?: boolean } | null>(null);
@@ -342,6 +345,7 @@ function App() {
     bridge?.GetSearchScope?.()
       .then((s) => {
         if (SCOPES.includes(s)) {
+          defaultScopeRef.current = s;
           setDefaultScope(s);
           setScope(s);
         }
@@ -396,17 +400,22 @@ function App() {
     return () => clearTimeout(id);
   }, [filter]);
 
-  // "All tables": Go counts the matching rows of every table; the list replaces the grid
+  // "All tables": Go counts the matching rows of every table; the list replaces the grid. Another term, scope or
+  // file drops the running search's answer; a failure shows its error and ends "Searching"
   const searchAll = scope === 'all' && view === 'data' && tableSearch !== '' && tables.length > 0;
   useEffect(() => {
-    if (!searchAll) return;
     const req = ++searchReq.current;
     setHits(null);
+    setSearching(searchAll);
+    if (!searchAll) return;
     setProgress(null); // Go sends one progress event per table counted
     Promise.resolve(window.go?.main?.App?.SearchAllTables?.(tableSearch))
-      .then((found) => req === searchReq.current && setHits(found ?? []))
-      .catch((err) => req === searchReq.current && fail(err));
+      .then((found) => req === searchReq.current && setHits({ search: tableSearch, tables: found ?? [] }))
+      .catch((err) => req === searchReq.current && fail(err))
+      .finally(() => req === searchReq.current && setSearching(false));
   }, [searchAll, tableSearch, tables]);
+  // the list of the search typed now only (the effect above clears an older one after this render)
+  const shownHits = hits?.search === tableSearch ? hits.tables : null;
 
   // (a search typed in the SQL tab reaches the table when the Data or Schema tab comes back)
   useEffect(() => {
@@ -442,6 +451,7 @@ function App() {
 
   // the default also applies now; the selector beside the search changes only the current session
   function chooseDefaultScope(s: Scope) {
+    defaultScopeRef.current = s;
     setDefaultScope(s);
     setScope(s);
     window.go?.main?.App?.SetSearchScope?.(s)?.catch(fail);
@@ -536,8 +546,8 @@ function App() {
     const name = dbName;
     if (!(await settleConversion())) return;
     try {
+      clearDatabase(); // first: Go stops the running search or query, and their "cancelled" answers must be dropped
       await window.go?.main?.App?.CloseDatabase?.();
-      clearDatabase();
       setStatus(t('status.closed', name));
     } catch (err) {
       fail(err);
@@ -576,11 +586,15 @@ function App() {
       setConverted(!!(await bridge.PendingConversion?.()));
       setDbName(name);
       setTables(tableList);
+      // another file starts clean: no table list filter, no Data search, the search scope of Settings
       setFilter('');
       setTableFilter('');
+      setSearch('');
+      setTableSearch('');
+      setScope(defaultScopeRef.current);
       setStatus(t('status.loaded', name, tableList.length));
       if (tableList.length > 0) {
-        await loadTable(tableList[0], limit, undefined, tableSearch);
+        await loadTable(tableList[0], limit, undefined, '');
         setSql(`SELECT * FROM "${tableList[0].replace(/"/g, '""')}" LIMIT 100`);
       }
     } catch (err) {
@@ -1038,8 +1052,8 @@ function App() {
               }}
             >
               {searchAll ? (
-                hits &&
-                (hits.length > 0 ? (
+                shownHits &&
+                (shownHits.length > 0 ? (
                   <table className="hits">
                     <thead>
                       <tr>
@@ -1050,7 +1064,7 @@ function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {hits.map((h) => (
+                      {shownHits.map((h) => (
                         <tr key={h.table}>
                           <td>
                             <button className="table-item" onClick={() => openHit(h.table)}>
@@ -1095,9 +1109,9 @@ function App() {
               {view === 'sql'
                 ? result && t('info.sql', result.rows.length) + (result.more ? t('info.sqlLimit', limit) : '')
                 : searchAll
-                  ? hits
-                    ? t('info.searchAll', hits.length, tableSearch)
-                    : progressText(t('job.searching'), progress, t)
+                  ? shownHits
+                    ? t('info.searchAll', shownHits.length, tableSearch)
+                    : searching && progressText(t('job.searching'), progress, t)
                   : t('info.showing', shownTable, rows.length, rowCount) + (narrowed ? t('info.filtered', totalCount) : '')}
               {sqlSearching && t('info.searchSql', visibleRows.length, search.trim())}
               {copied && ` - ${copied}`}
@@ -1401,9 +1415,15 @@ function ColumnsDialog({ table, columns, hidden, setHidden, onClose, t }: Column
     return words.length ? columns.filter((c) => hasAllWords(normalizeText(c), words)) : columns;
   }, [columns, query]);
   const visible = columns.filter((c) => !hidden.has(c)).length;
-  // Show/Hide all act on the listed columns only (all of them when the search is empty)
+  // Show/Hide all act on the listed columns only (all of them when the search is empty); one column always stays
+  // visible: hiding every one keeps the first listed
   const showListed = (show: boolean) =>
-    setHidden((old) => (show ? new Set([...old].filter((c) => !listed.includes(c))) : new Set([...old, ...listed])));
+    setHidden((old) => {
+      if (show) return new Set([...old].filter((c) => !listed.includes(c)));
+      const next = new Set([...old, ...listed]);
+      if (columns.every((c) => next.has(c))) next.delete(listed[0]);
+      return next;
+    });
   const toggle = (col: string, show: boolean) =>
     setHidden((old) => {
       const next = new Set(old);
@@ -1430,7 +1450,12 @@ function ColumnsDialog({ table, columns, hidden, setHidden, onClose, t }: Column
         <div className="col-list" style={{ '--col-w': `${columnCellWidth(columns)}px` } as React.CSSProperties}>
           {listed.map((col) => (
             <label key={col} title={col}>
-              <input type="checkbox" checked={!hidden.has(col)} onChange={(e) => toggle(col, e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={!hidden.has(col)}
+                disabled={visible === 1 && !hidden.has(col)}
+                onChange={(e) => toggle(col, e.target.checked)}
+              />
               <span>{col}</span>
             </label>
           ))}
