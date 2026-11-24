@@ -166,6 +166,11 @@ export function statusLine(entries: LogEntry[], readMark: number, status: string
   return { text: pick?.text ?? (error || status), level: pick?.level ?? (error ? 'error' : 'info'), unread: unread.length };
 }
 
+// Keeps a context menu inside the window: a long column list moves it up (taller than the window, it scrolls)
+function keepInWindow(el: HTMLElement | null) {
+  if (el) el.style.top = `${Math.max(4, Math.min(el.getBoundingClientRect().top, window.innerHeight - el.offsetHeight - 4))}px`;
+}
+
 function getWailsBridge() {
   const bridge = window.go?.main?.App;
   if (!bridge) {
@@ -208,6 +213,7 @@ function App() {
   const [filters, setFilters] = useState<Filter[]>([]); // of the current table, applied by Go in the query
   const [totalCount, setTotalCount] = useState(0); // rows of the table without filters and search
   const [hidden, setHidden] = useState<Set<string>>(new Set()); // hidden columns of the current table
+  const [widths, setWidths] = useState<Record<string, number>>({}); // Data columns resized by hand (current table)
   const [colsOpen, setColsOpen] = useState(false); // "Columns..." dialog
   const [copied, setCopied] = useState('');
   const [sql, setSql] = useState('');
@@ -298,6 +304,21 @@ function App() {
     const startY = e.clientY;
     const startH = logHeight;
     const move = (ev: MouseEvent) => setLogHeight(clampLogHeight(startH + startY - ev.clientY, window.innerHeight));
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }
+
+  // dragging the right edge of a Data header sets the column width (header menu > Size column to fit undoes it)
+  function startColResize(e: React.MouseEvent<HTMLElement>, col: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = e.currentTarget.parentElement!.getBoundingClientRect().width;
+    const move = (ev: MouseEvent) => setWidths((old) => ({ ...old, [col]: Math.max(24, Math.round(startW + ev.clientX - startX)) }));
     const up = () => {
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
@@ -574,7 +595,10 @@ function App() {
       setSel(null);
       setCopied('');
       setFilters(tableFilters);
-      if (!keep) setHidden(new Set());
+      if (!keep) {
+        setHidden(new Set());
+        setWidths({});
+      }
       if (view === 'sql') setView('data');
       const bridge = getWailsBridge();
       const narrowed = tableFilters.length > 0 || find !== '';
@@ -688,6 +712,11 @@ function App() {
   // numeric columns are right-aligned, header included (cells: by their value type)
   const numericCols = useMemo(() => new Set(gridColumns.filter((c) => gridRows.some((r) => typeof r[c] === 'number'))), [gridColumns, gridRows]);
   const hiddenCount = gridColumns.length - shownColumns.length;
+  // a column resized by hand keeps its width and cuts its cells (no "..."); the others fit their content
+  const colStyle = (col: string): React.CSSProperties | undefined => {
+    const w = view === 'data' ? widths[col] : undefined;
+    return w ? { width: w, minWidth: w, maxWidth: w, overflow: 'hidden' } : undefined;
+  };
   // the search of the rows on screen, not of the one being typed: the counts below belong to those rows
   const narrowed = filters.length > 0 || shownFind !== '';
   const copyCell = () => sel && copyText(cellText(sel.row[sel.col]), t('copied.value'));
@@ -720,6 +749,7 @@ function App() {
               key={col}
               scope="col"
               className={numericCols.has(col) ? 'num' : undefined}
+              style={colStyle(col)}
               title={col}
               onContextMenu={
                 view === 'data'
@@ -732,6 +762,7 @@ function App() {
               }
             >
               {col}
+              {view === 'data' && <span className="col-resize" onMouseDown={(e) => startColResize(e, col)} />}
             </th>
           ))}
         </tr>
@@ -743,6 +774,7 @@ function App() {
               <td
                 key={col}
                 className={typeof row[col] === 'number' ? 'num' : undefined}
+                style={colStyle(col)}
                 aria-selected={sel?.row === row && sel.col === col ? 'true' : undefined}
                 tabIndex={-1} // focusable: keyboard and UI Automation can select a cell and open its menu (menu key)
                 onFocus={() => setSel({ row, col })}
@@ -1128,19 +1160,50 @@ function App() {
         </div>
       )}
 
+      {/* header menu as in the Dear ImGui table of the Zig version: fit, the columns with a check mark, show all;
+          the last visible column cannot be hidden here (its header is what opens this menu) */}
       {menu?.header !== undefined && (
         <div
+          key={`${menu.x},${menu.y}`}
+          ref={keepInWindow}
           className="menu"
           role="menu"
           aria-label={t('colmenu.label')}
-          style={{ left: Math.min(menu.x, window.innerWidth - 220), top: Math.min(menu.y, window.innerHeight - 120) }}
+          style={{ left: Math.min(menu.x, window.innerWidth - 220), top: menu.y }}
         >
-          <button role="menuitem" autoFocus onClick={() => setColumnHidden(menu.header!, true)}>
+          <button
+            role="menuitem"
+            autoFocus
+            onClick={() =>
+              setWidths((old) => {
+                const { [menu.header!]: _, ...rest } = old;
+                return rest;
+              })
+            }
+          >
+            {t('colmenu.fit')}
+          </button>
+          <button role="menuitem" onClick={() => setWidths({})}>
+            {t('colmenu.fitAll')}
+          </button>
+          <hr />
+          <button role="menuitem" disabled={shownColumns.length < 2} onClick={() => setColumnHidden(menu.header!, true)}>
             {t('colmenu.hide')}
           </button>
           <button role="menuitem" onClick={() => setColsOpen(true)}>
             {t('colmenu.columns')}
           </button>
+          <hr />
+          {gridColumns.map((col) => {
+            const shown = !hidden.has(col);
+            return (
+              <button key={col} role="menuitemcheckbox" aria-checked={shown} disabled={shown && shownColumns.length < 2} onClick={() => setColumnHidden(col, shown)}>
+                <span className="check">{shown ? '✓' : ''}</span>
+                {col}
+              </button>
+            );
+          })}
+          <hr />
           <button role="menuitem" disabled={hiddenCount === 0} onClick={() => setHidden(new Set())}>
             {t('colmenu.showAll')}
           </button>

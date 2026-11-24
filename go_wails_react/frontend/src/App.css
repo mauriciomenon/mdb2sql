@@ -413,6 +413,16 @@ th {
   padding: 5px 16px;
 }
 
+/* right edge of a Data header: drag to resize the column (header menu > Size column to fit undoes it) */
+.col-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+}
+
 /* numbers to the right, the header of a numeric column too */
 td.num,
 th.num {
@@ -450,6 +460,8 @@ td[aria-selected='true'] {
   display: flex;
   flex-direction: column;
   min-width: 200px;
+  max-height: calc(100vh - 8px);
+  overflow-y: auto;
   padding: 4px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -463,6 +475,12 @@ td[aria-selected='true'] {
   gap: 16px;
   border: 0;
   text-align: left;
+}
+
+/* the column list of the header menu: check mark, then the name (as in Settings) */
+.menu [role='menuitemcheckbox'] {
+  justify-content: flex-start;
+  gap: 0;
 }
 
 .menu button:hover {

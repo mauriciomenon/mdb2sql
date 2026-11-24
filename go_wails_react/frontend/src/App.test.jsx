@@ -172,15 +172,19 @@ describe('App IPC flow', () => {
     expect(header('ID')).not.toBeInTheDocument();
     expect(header('NAME')).toBeInTheDocument();
 
+    // header menu: the columns with a check mark (a click toggles one); the last visible one cannot be hidden there
     fireEvent.contextMenu(header('NAME'));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Hide this column' }));
-    expect(screen.getByText('2 hidden columns')).toBeInTheDocument();
-    // every header is hidden now; the dialog is still reachable from the button
-    fireEvent.click(screen.getByRole('button', { name: 'Columns...' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'ID' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.getByRole('menuitem', { name: 'Hide this column' })).toBeDisabled();
+    expect(screen.getByRole('menuitemcheckbox', { name: /NAME/ })).toBeDisabled();
+    expect(screen.getByRole('menuitemcheckbox', { name: /ID/ })).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /ID/ }));
+    expect(header('ID')).toBeInTheDocument();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     fireEvent.contextMenu(header('ID'));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Show all' }));
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /NAME/ }));
+    expect(screen.getByText('1 hidden column')).toBeInTheDocument();
+    fireEvent.contextMenu(header('ID'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Show all columns' }));
     expect(screen.queryByText(/hidden columns?$/)).not.toBeInTheDocument();
     expect(screen.getByText('Alpha')).toBeInTheDocument();
 
@@ -190,6 +194,38 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], ''));
     await waitFor(() => expect(header('NAME')).toBeInTheDocument());
+  });
+
+  it('resizes a Data column by its header edge; Size column to fit and Size all columns to fit undo it', async () => {
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+    const header = (name) => screen.getByRole('columnheader', { name });
+    const drag = (name, dx) => {
+      fireEvent.mouseDown(header(name).querySelector('.col-resize'), { clientX: 100 });
+      fireEvent.mouseMove(window, { clientX: 100 + dx });
+      fireEvent.mouseUp(window);
+    };
+    drag('NAME', 40); // jsdom has no layout: the header starts at 0 px
+    expect(header('NAME').style.maxWidth).toBe('40px');
+    expect(screen.getByText('Beta').style.maxWidth).toBe('40px'); // its cells too
+    drag('ID', 10);
+    expect(header('ID').style.width).toBe('24px'); // never narrower than 24 px
+
+    fireEvent.contextMenu(header('NAME'));
+    const items = [...screen.getByRole('menu', { name: 'Column' }).querySelectorAll('button')].map((b) => b.textContent);
+    expect(items).toEqual(['Size column to fit', 'Size all columns to fit', 'Hide this column', 'Columns...', '✓ID', '✓NAME', 'Show all columns']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Size column to fit' }));
+    expect(header('NAME').style.width).toBe('');
+    expect(header('ID').style.width).toBe('24px');
+    fireEvent.contextMenu(header('NAME'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Size all columns to fit' }));
+    expect(header('ID').style.width).toBe('');
+
+    // the widths belong to the open table: another table starts fitted
+    drag('ID', 60);
+    fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
+    await waitFor(() => expect(header('ID').style.width).toBe(''));
   });
 
   it('Show all / Hide all act only on the columns the dialog search lists', async () => {
