@@ -419,9 +419,10 @@ def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None
     window.columns_button.click()
     dialog = window.findChild(ColumnsDialog)
     assert [dialog.list.item(i).text() for i in range(3)] == ["id", "name", "score"]
-    dialog.set_all(False)  # "Ocultar todas": vale na hora
-    assert _hidden(window) == [True, True, True]
+    dialog.set_all(False)  # "Ocultar todas": vale na hora; a primeira fica (sempre ao menos uma visivel)
+    assert _hidden(window) == [False, True, True]
     dialog.list.item(1).setCheckState(Qt.CheckState.Checked)
+    dialog.list.item(0).setCheckState(Qt.CheckState.Unchecked)
     dialog.accept()  # Fechar
 
     assert _hidden(window) == [True, False, True]
@@ -449,20 +450,39 @@ def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None
 def test_columns_dialog_checks_all_selected_rows(qtbot) -> None:
     dialog = ColumnsDialog(["a", "b", "c", "d"], {"d"})
     qtbot.addWidget(dialog)
-    for row in (0, 1, 2):
+    for row in (0, 1):
         dialog.list.item(row).setSelected(True)
-    dialog.list.item(1).setCheckState(Qt.CheckState.Unchecked)  # desmarcar uma das selecionadas desmarca as tres
+    dialog.list.item(1).setCheckState(Qt.CheckState.Unchecked)  # desmarcar uma das selecionadas desmarca as duas
 
-    assert dialog.hidden() == {"a", "b", "c", "d"}
+    assert dialog.hidden() == {"a", "b", "d"}
     dialog.list.clearSelection()
     dialog.list.item(3).setCheckState(Qt.CheckState.Checked)
-    assert dialog.hidden() == {"a", "b", "c"}
+    assert dialog.hidden() == {"a", "b"}
 
     # busca no topo: Mostrar todas so marca as encontradas
     dialog.search.setText("B")
     assert [dialog.list.item(r).isHidden() for r in range(4)] == [True, False, True, True]
     dialog.set_all(True)
-    assert dialog.hidden() == {"a", "c"}
+    assert dialog.hidden() == {"a"}
+
+
+def test_columns_dialog_keeps_one_column_visible(qtbot) -> None:
+    # igual nas 4 versoes: nenhum caminho deixa a grade sem colunas
+    dialog = ColumnsDialog(["only"], set())
+    qtbot.addWidget(dialog)
+    dialog.set_all(False)  # "Ocultar todas" numa tabela de uma coluna
+    assert dialog.hidden() == set()
+
+    dialog = ColumnsDialog(["a", "b", "c"], set())
+    qtbot.addWidget(dialog)
+    dialog.set_all(False)
+    assert dialog.hidden() == {"b", "c"}  # a primeira listada fica
+    dialog.list.item(0).setCheckState(Qt.CheckState.Unchecked)  # desmarcar a ultima visivel nao vale
+    assert dialog.hidden() == {"b", "c"}
+    dialog.set_all(True)
+    dialog.list.selectAll()
+    dialog.list.item(2).setCheckState(Qt.CheckState.Unchecked)  # as tres selecionadas: a desmarcada fica
+    assert dialog.hidden() == {"a", "b"}
 
 
 def test_columns_dialog_grid_is_proportional(qtbot) -> None:
