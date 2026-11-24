@@ -98,27 +98,35 @@ accents, own icon, excelize 2.11.1.
 Open a file with File > Open database (the dialog lists Access, SQLite and DuckDB files), on the command line
 (`mdb2sql.exe "C:\data\DB4.accdb"`, or drag the file onto the exe) or with `MDB2SQL_DB_PATH`.
 
-- Left: the tables; "Filter N tables" narrows the list (same word rule as the search).
+- Left: the tables; "Filter N tables" narrows the list (same word rule as the search) after a 300 ms pause in
+  typing; Enter applies it at once.
 - Right, three tabs:
   - Data: the first rows of the table (Rows: 100, 500 or 1000). "Search the whole table" keeps the rows with
     one cell containing every word typed, in any order, ignoring case and accents, over the whole table in the
     database: `tension de campo` finds "EXCITACION TENSION DE CAMPO" even beyond the first rows; there is no
-    fuzzy match (`tensao` does not find "TENSION").
+    fuzzy match (`tensao` does not find "TENSION"). It runs after a 300 ms pause in typing (Enter: at once).
+    Beside it, This table | All tables: All tables lists the tables with matching rows (same rule) and how many;
+    a click opens that table with the same search. The default is in Settings > Default search scope.
   - Schema: column names, types and nullability.
   - SQL: any DuckDB SQL over the open database; Run or Ctrl+Enter; the search field filters its loaded result.
 - Click a cell; Ctrl+C copies the value. Right-click a cell: Filter by this value, Clear filters, Copy value,
   Copy row, Copy row with header (TAB-separated, pastes into Excel in columns).
-- Filter by a value: a `WHERE column = value` (`IS NULL` for an empty cell) in the database query; filters on
+- A NULL cell shows NULL; Settings > Show NULL off leaves it empty (copy and exports are the same either way).
+- Filter by a value: a `WHERE column = value` (`IS NULL` for a NULL cell) in the database query; filters on
   several columns add up (AND) and show as removable chips. Exports ignore filters and search.
 - Columns...: one checkbox per column, a field to filter the list; "Show all" and "Hide all" act on the
-  listed columns only. Right-click a column header: Hide this column, Columns..., Show all.
+  listed columns only. Right-click a Data column header: Size column to fit, Size all columns to fit, Hide this
+  column, Columns..., the columns with a check mark (a click shows or hides one; the last visible one stays) and
+  Show all columns. Dragging the right edge of a header resizes the column; fit returns it to its content.
+  Hidden columns and widths last while the table is open.
 - Status bar: the last message, or the last unread error or warning while the log is collapsed (click: opens
   the log; right-click > Copy), and the reader used ("Opened via mdbtools,
   converted to SQLite", "Opened via SQLite"...).
 
 Menus: File (Open database..., Open sample data, Close database, Exit), Export (Database as SQLite / DuckDB /
 Excel; Current table as CSV / Excel; SQL result as CSV / Excel; all with progress and Cancel; a failed export
-leaves no half file), View (Log), Settings (Theme: System, Light, Dark; Language), Help (About).
+leaves no half file), View (Log), Settings (Theme: System, Light, Dark; Language; Default search scope: This
+table, All tables; Show NULL), Help (About).
 
 Opening Access: the progress window counts the tables; Cancel (or Esc) stops it. The 287-table NMR5 test file
 (115 MB) takes about 10 s with the ODBC driver and about 33 s with mdbtools on Windows (Intel Core Ultra 7 258V, 8
