@@ -1086,7 +1086,7 @@ const App = struct {
         if (out.kind == .open) {
             if (app.start_search.len > 0 and app.selected != null) {
                 copyZ(&app.search, app.start_search);
-                app.want_reload = true;
+                app.runSearch(); // no escopo de Settings: esta tabela ou todas
             }
             app.start_search = "";
         }
