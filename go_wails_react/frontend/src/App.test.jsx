@@ -161,9 +161,11 @@ describe('App IPC flow', () => {
     expect(header('NAME')).not.toBeInTheDocument();
     expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
     expect(screen.getByText('1 hidden column')).toBeInTheDocument();
+    // one column always stays: Hide all keeps the first listed, and the box of the last visible one is disabled
     fireEvent.click(screen.getByRole('button', { name: 'Hide all' }));
-    expect(screen.getByText('2 hidden columns')).toBeInTheDocument();
-    expect(header('ID')).not.toBeInTheDocument();
+    expect(screen.getByText('1 hidden column')).toBeInTheDocument();
+    expect(header('ID')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'ID' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
     expect(screen.getByRole('checkbox', { name: 'NAME' })).toBeChecked();
     fireEvent.click(screen.getByRole('checkbox', { name: 'ID' }));
@@ -241,6 +243,9 @@ describe('App IPC flow', () => {
     expect(screen.queryByRole('columnheader', { name: 'NAME' })).not.toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'ID' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Filter columns'), { target: { value: 'id' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Hide all' })); // ID is the last visible one: it stays
+    expect(screen.getByText('1 of 2 visible')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'ID' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Show all' })); // ID is visible already; NAME stays hidden
     expect(screen.getByText('1 of 2 visible')).toBeInTheDocument();
     expect(document.querySelector('.col-list').style.getPropertyValue('--col-w')).toBe('150px');

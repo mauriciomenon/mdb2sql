@@ -1415,9 +1415,15 @@ function ColumnsDialog({ table, columns, hidden, setHidden, onClose, t }: Column
     return words.length ? columns.filter((c) => hasAllWords(normalizeText(c), words)) : columns;
   }, [columns, query]);
   const visible = columns.filter((c) => !hidden.has(c)).length;
-  // Show/Hide all act on the listed columns only (all of them when the search is empty)
+  // Show/Hide all act on the listed columns only (all of them when the search is empty); one column always stays
+  // visible: hiding every one keeps the first listed
   const showListed = (show: boolean) =>
-    setHidden((old) => (show ? new Set([...old].filter((c) => !listed.includes(c))) : new Set([...old, ...listed])));
+    setHidden((old) => {
+      if (show) return new Set([...old].filter((c) => !listed.includes(c)));
+      const next = new Set([...old, ...listed]);
+      if (columns.every((c) => next.has(c))) next.delete(listed[0]);
+      return next;
+    });
   const toggle = (col: string, show: boolean) =>
     setHidden((old) => {
       const next = new Set(old);
@@ -1444,7 +1450,12 @@ function ColumnsDialog({ table, columns, hidden, setHidden, onClose, t }: Column
         <div className="col-list" style={{ '--col-w': `${columnCellWidth(columns)}px` } as React.CSSProperties}>
           {listed.map((col) => (
             <label key={col} title={col}>
-              <input type="checkbox" checked={!hidden.has(col)} onChange={(e) => toggle(col, e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={!hidden.has(col)}
+                disabled={visible === 1 && !hidden.has(col)}
+                onChange={(e) => toggle(col, e.target.checked)}
+              />
               <span>{col}</span>
             </label>
           ))}
