@@ -878,15 +878,23 @@ const App = struct {
         app.global = null;
     }
 
-    // Busca da caixa da aba Data no escopo atual (Enter ou 300 ms depois da ultima tecla)
+    // Busca da caixa da aba Data no escopo atual (Enter ou 300 ms depois da ultima tecla). Todas as tabelas: a lista
+    // anterior some ate o resultado do termo novo chegar
     fn runSearch(app: *App) void {
         app.search_wait.due = null;
         if (app.scope == .table) {
             app.page = 0;
             app.want_reload = true;
-        } else if (std.mem.indexOfNone(u8, zstr(&app.search), &std.ascii.whitespace) == null) {
-            app.clearGlobal();
-        } else app.want_global = true;
+            return;
+        }
+        app.clearGlobal();
+        app.want_global = std.mem.indexOfNone(u8, zstr(&app.search), &std.ascii.whitespace) != null;
+    }
+
+    // A busca global com este termo ainda e a que a tela pede: escopo Todas as tabelas, o mesmo texto na caixa e
+    // nenhum arquivo para abrir. Senao o resultado e descartado e a busca em andamento para.
+    fn wantsGlobal(app: *const App, term: *const [256:0]u8) bool {
+        return app.scope == .all and !app.want_open and std.mem.eql(u8, zstr(term), zstr(&app.search));
     }
 
     // Seletor da aba Data ou Configuracoes: o texto da caixa ainda nao aplicado neste escopo e buscado agora
@@ -1021,10 +1029,14 @@ const App = struct {
                 app.clearTable();
                 app.takeTable(&out, zstr(&app.slot.req.search));
             },
-            .search_all => if (out.err == null) {
-                app.clearGlobal();
-                app.global = .{ .term = app.slot.req.search, .hits = out.hits };
-                out.hits = &.{};
+            .search_all => {
+                // termo apagado ou trocado, outro escopo, tabela ou arquivo: resultado velho (ou o Cancelar dele) some
+                if (!app.wantsGlobal(&app.slot.req.search)) return;
+                app.clearGlobal(); // falha: lista vazia e o erro na barra de status
+                if (out.err == null) {
+                    app.global = .{ .term = app.slot.req.search, .hits = out.hits };
+                    out.hits = &.{};
+                }
             },
             .reload => if (out.err == null) {
                 if (app.data) |*old| old.deinit();
@@ -1246,6 +1258,10 @@ const App = struct {
         }
         app.want_browse = false;
 
+        // busca global que a tela nao quer mais: para entre uma tabela e outra (o DuckDB interrompe a consulta), para a
+        // busca nova ou a outra acao nao esperarem por ela
+        if (app.slot.busyWith(.search_all) and !app.slot.progress.cancel.load(.monotonic) and !app.wantsGlobal(&app.slot.req.search))
+            app.slot.cancel();
         if (app.slot.busy()) return; // um trabalho por vez; os pedidos abaixo ficam para depois
         if (app.choice) |ch| {
             app.choice = null;
