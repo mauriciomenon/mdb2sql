@@ -67,6 +67,15 @@ test('catalog texts are short and plain', () => {
   }
 });
 
+// Schema: o titulo da coluna de nulidade era "Null"/"Nulo" e parecia um valor NULL sobre os YES/NO
+test('Schema titles name the nullability column, never just NULL', () => {
+  const titles = (code) => ['schema.column', 'schema.type', 'schema.nullable'].map((key) => CATALOGS[code][key]);
+  assert.deepEqual(titles('en'), ['Column', 'Type', 'Nullable']);
+  assert.deepEqual(titles('pt-BR'), ['Coluna', 'Tipo', 'Aceita nulo']);
+  assert.deepEqual(titles('es'), ['Columna', 'Tipo', 'Admite nulo']);
+  assert.match(read('./App.svelte'), /'schema\.type', 'schema\.nullable'\]\.map/);
+});
+
 test('license line of the About says GPL v2 or later in each language', () => {
   assert.equal(CATALOGS['pt-BR']['about.licenseValue'], 'GPL v2 ou posterior');
   assert.equal(CATALOGS.en['about.licenseValue'], 'GPL v2 or later');

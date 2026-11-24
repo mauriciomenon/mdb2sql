@@ -1,9 +1,9 @@
 // NIVEL BASICO: Logica da grade sem interface: texto para copiar, colunas ocultas, filtros e busca por palavras
 // NIVEL TECNICO: plain module so `node --test` can run it without a browser
 
-// Valor de uma celula como texto puro (NULL vira vazio)
-export function cellText(value) {
-  return value === null || value === undefined ? '' : String(value);
+// Valor de uma celula como texto puro; NULL vira nullText (vazio para copiar; na grade, "NULL" com Settings > Exibir NULL)
+export function cellText(value, nullText = '') {
+  return value === null || value === undefined ? nullText : String(value);
 }
 
 // Campo no formato que o Excel entende ao colar: TAB, quebra de linha ou aspas dentro do valor
@@ -37,6 +37,11 @@ export function toggleHidden(hidden, name) {
   const next = new Set(hidden);
   if (!next.delete(name)) next.add(name);
   return next;
+}
+
+// menu do cabecalho: como toggleHidden, menos para a ultima coluna visivel (total = colunas da tabela), que fica
+export function toggleShown(hidden, name, total) {
+  return !hidden.has(name) && total - hidden.size <= 1 ? hidden : toggleHidden(hidden, name);
 }
 
 // Mostrar todas (hide = false) / Ocultar todas (hide = true) so nas colunas listadas no dialogo Colunas...

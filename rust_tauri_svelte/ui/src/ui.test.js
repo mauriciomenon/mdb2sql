@@ -77,11 +77,56 @@ test('grid cells, NULL included, keep full contrast', () => {
   // o cabecalho fixo fica por cima das celulas que rolam por baixo dele
   const th = rules.find(([sel]) => sel === 'th')[1];
   assert.match(th, /z-index:\s*1/);
-  // cabecalho inteiro: a coluna cresce ate caber nome e valores, sem limite nem reticencias
+  // cabecalho inteiro: a coluna cresce ate caber nome e valores, sem limite nem reticencias (largura fixa so na
+  // coluna que o usuario arrasta, em style; Ajustar coluna volta a caber tudo)
   assert.match(th, /white-space:\s*nowrap/);
   for (const [sel, body] of rules.filter(([sel]) => /^(th|td)\b/.test(sel))) {
     assert.doesNotMatch(body, /max-width|text-overflow|overflow:\s*hidden/, sel);
   }
+});
+
+// item 5 do dono: seletor de duas opcoes (nada de checkbox) junto a pesquisa da aba Data, o mesmo par em Settings
+// (escopo padrao, gravado); Todas as tabelas lista as achadas e escolher uma abre com a mesma pesquisa
+test('Data search scope: two-option selector next to the field and its default in Settings', () => {
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  assert.match(app, /const SCOPES = \[\s*\['table', 'scope\.table'\],\s*\['all', 'scope\.all'\],\s*\];/);
+  assert.deepEqual([en['scope.table'], en['scope.all']], ['This table', 'All tables']);
+  const ui = markup('./App.svelte');
+  const bar = ui.slice(ui.indexOf('{#if everywhere}'), ui.indexOf('class="search"'));
+  assert.match(bar, /<div class="scope" role="radiogroup" aria-label=\{t\('scope\.label'\)\}>\s*\{#each SCOPES as \[id, key\]\}/);
+  assert.match(bar, /role="radio" aria-checked=\{scope === id\}[^>]*onclick=\{\(\) => setScope\(id\)\}/);
+  assert.doesNotMatch(bar, /checkbox/);
+  const settings = ui.slice(ui.indexOf("openMenu === 'settings'"), ui.indexOf("openMenu === 'help'"));
+  assert.match(settings, /\{t\('settings\.searchScope'\)\}[\s\S]*\{#each SCOPES as \[id, key\]\}[\s\S]*onclick=\{\(\) => setDefaultScope\(id\)\}/);
+  assert.match(app, /let defaultScope = \$state\(loadSetting\(SCOPE_KEY\) === 'all' \? 'all' : 'table'\);/);
+  assert.match(app, /saveSetting\(SCOPE_KEY, next === 'all' \? 'all' : null\);/);
+  assert.match(app, /invoke\('search_all_tables', \{ search: words \}\)/);
+  assert.match(ui, /onclick=\{\(\) => openFound\(f\.table\)\}>\{t\('found\.item', \{ table: f\.table, count: fmt\(f\.count\) \}\)\}/);
+  assert.match(app, /function openFound\(name\) \{\s*scope = 'table';\s*openTable\(name, search\);/);
+});
+
+// dono: o filtro de tabelas e a pesquisa da aba Data esperam a digitacao parar (300 ms, igual nas 4 versoes);
+// Enter vale na hora; a lista de tabelas usa o texto que ja valeu, nao o que esta sendo digitado
+test('table filter and Data search wait 300 ms, Enter runs at once', () => {
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  assert.match(app, /const SEARCH_DELAY_MS = 300;/);
+  assert.match(app, /const delayOf = \(event\) => \(event\.key === 'Enter' \? 0 : SEARCH_DELAY_MS\);/);
+  assert.match(app, /tableTimer = setTimeout\(\(\) => \(tableFilter = text\), delayOf\(event\)\);/);
+  assert.match(app, /searchTimer = setTimeout\(runSearch, delayOf\(event\)\);/);
+  assert.match(app, /const words = searchWords\(tableFilter\);/);
+  const ui = markup('./App.svelte');
+  assert.match(ui, /bind:value=\{tableText\}\s+oninput=\{onTableFilter\}\s+onkeydown=\{\(e\) => e\.key === 'Enter' && onTableFilter\(e\)\}/);
+  assert.match(ui, /oninput=\{onSearch\}\s+onkeydown=\{\(e\) => e\.key === 'Enter' && onSearch\(e\)\}/);
+});
+
+// dono: colunas do Schema apertadas; so ela ganha 6 px de cada lado da celula (Data e SQL seguem com 10 px)
+test('only the Schema grid gets wider cell spacing', () => {
+  const app = markup('./App.svelte');
+  assert.equal(count(app, '--cell-x='), 1);
+  assert.match(app, /<Grid\s+--cell-x="16px"\s+columns=\{schemaColumns\}/);
+  const css = readFileSync(new URL('./Grid.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
+  assert.match(css, /\n {2}th \{[^}]*padding: 6px var\(--cell-x, 10px\);/);
+  assert.match(css, /\n {2}td \{[^}]*padding: 4px var\(--cell-x, 10px\);/);
 });
 
 // regra do dono: ~65% da janela entre 420 e 900 px, ate 70% da altura, grade de 1 a 6 colunas, so rola na vertical,
@@ -120,8 +165,26 @@ test('the table name above the grid is never squeezed', () => {
 test('each grid context menu lists an action once', () => {
   const grid = markup('./Grid.svelte');
   const [header, cell] = grid.split('{:else if menu}');
-  assert.deepEqual(buttonLabels(header), ['Hide this column', 'Columns...', 'Show all']);
+  assert.deepEqual(buttonLabels(header), ['Size column to fit', 'Size all columns to fit', 'Hide this column', 'Columns...', 'Show all columns']);
   assert.deepEqual(buttonLabels(cell), ['Copy value', 'Copy row', 'Copy row with header', 'Filter by this value', 'Clear filters']);
+});
+
+// item 11 do dono, como o menu do cabecalho do ImGui: Ajustar coluna/todas em toda grade (a borda do cabecalho
+// arrasta a largura); na aba Data a lista das colunas com marca (clique alterna, menu aberto), sem ocultar a ultima
+test('header menu sizes columns in every grid and lists the Data columns to show or hide', () => {
+  const code = readFileSync(new URL('./Grid.svelte', import.meta.url), 'utf8');
+  assert.match(code, /const th = event\.target\.closest\('th\[data-c\]'\);/); // cabecalho de qualquer grade
+  const header = markup('./Grid.svelte').split('{:else if menu}')[0];
+  assert.ok(header.indexOf("t('grid.fitAll')") < header.indexOf('{#if actions}'), 'ajustar fora do if actions');
+  assert.match(header, /\{#each actions\.all as col \(col\.name\)\}/);
+  assert.match(header, /role="menuitemcheckbox"\s+aria-checked=\{shown\}\s+disabled=\{shown && last\}/);
+  assert.match(header, /e\.stopPropagation\(\);[^}]*actions\.hide\(col\.name\);/);
+  assert.match(header, /disabled=\{last\} onclick=\{\(\) => act\('hide', menu\.header\)\}/);
+  assert.match(code, /onpointerdown=\{\(e\) => startResize\(e, col\.name\)\}/);
+  assert.equal(count(code, 'style={sized(col.name)}'), 2); // cabecalho e celulas da coluna
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  assert.match(app, /hide: \(name\) => \(hidden = toggleShown\(hidden, name, columns\.length\)\)/);
+  assert.match(app, /actions=\{\{ \.\.\.gridActions, all: columns, hidden, filtered: filters\.length > 0 \}\}/);
 });
 
 // log copiavel: View > Log abre o painel (texto selecionavel, Ctrl+C), Copiar tudo; barra de status: botao direito > Copiar
