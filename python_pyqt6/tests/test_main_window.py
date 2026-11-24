@@ -83,6 +83,10 @@ def test_select_sort_search_and_copy(qtbot, window: MainWindow) -> None:
     assert _column(window, 0) == ["10", "2", "1"]
 
     window.search_edit.setText("CARLA")
+    # 300 ms depois da ultima tecla a consulta sai na hora: sem os 150 ms da navegacao pela lista (eram ~470 ms)
+    request = window._table_request
+    window.search_timer.timeout.emit()
+    assert window._table_request == request + 1 and not window.table_load_timer.isActive()
     qtbot.waitUntil(lambda: window.data_proxy.rowCount() == 1, timeout=5000)
     assert _column(window, 1) == ["carla"]
     assert window.info_label.text() == "people: Showing 1 of 1 matching rows (3 rows in table)"
@@ -189,6 +193,46 @@ def test_search_all_tables_and_open_one(qtbot, window: MainWindow) -> None:
     again = MainWindow()
     qtbot.addWidget(again)
     assert again.scope_actions["all"].isChecked() and again.default_scope_actions["all"].isChecked()
+
+
+def test_search_all_tables_never_shows_an_old_result_and_reports_failure(qtbot, window: MainWindow, tmp_path: Path):
+    # igual nas 4 versoes: apagar o termo descarta a busca que ainda roda (o resultado dela chegaria antes dos 300 ms)
+    window.scope_actions["all"].trigger()
+    window.search_edit.setText("ANA")
+    window.search_timer.timeout.emit()  # a busca de "ANA" sai agora
+    window.search_edit.clear()
+    qtbot.waitUntil(lambda: window._busy == 0, timeout=30000)
+    assert window.found_list.count() == 0
+
+    # falha (view que da erro ao ler): o erro vai para a barra e o "Searching" sai
+    import duckdb
+
+    bad = tmp_path / "bad.duckdb"
+    with duckdb.connect(str(bad)) as conn:
+        conn.execute("CREATE TABLE a (s VARCHAR)")
+        conn.execute("CREATE VIEW z AS SELECT CAST(error('broken view') AS VARCHAR) AS s")
+    window.open_database(bad)
+    qtbot.waitUntil(lambda: window.current_db_path == bad and window.loaded_table is not None
+                    and window._busy == 0, timeout=30000)
+    window.scope_actions["all"].trigger()
+    window.search_edit.setText("foo")
+    qtbot.waitUntil(lambda: "broken view" in window.status_label.text() and window._busy == 0, timeout=30000)
+    assert window.status_label.text() == "Error: broken view"
+    assert window.info_label.text() == "a: 0 rows" and not window.progress.isVisible()
+
+
+def test_opening_a_found_table_clears_its_value_filters(qtbot, window: MainWindow) -> None:
+    # igual nas 4 versoes: a lista diz "people (1)" e a grade mostra 1, mesmo com o filtro id = 2 (Bruno) antes
+    _select_table(qtbot, window, "people")
+    _reloaded(qtbot, window, lambda: window.add_filter("id", 2))
+    window.scope_actions["all"].trigger()
+    window.search_edit.setText("ANA")
+    qtbot.waitUntil(lambda: window.found_list.count() == 1, timeout=30000)
+    window.found_list.itemClicked.emit(window.found_list.item(0))
+    qtbot.waitUntil(lambda: window.loaded_search == "ANA" and window._busy == 0, timeout=30000)
+
+    assert window.filters == [] and _chips(window) == [] and window.clear_filters_button.isHidden()
+    assert window.matched_rows == 1 and _column(window, 1) == ["Ana"]
 
 
 def test_show_null_setting(qtbot, window: MainWindow) -> None:
@@ -356,6 +400,25 @@ def test_results_of_the_previous_database_are_dropped(qtbot, window: MainWindow,
     assert window.current_db_path == other and window.windowTitle().startswith("other.duckdb")
 
 
+def test_another_file_starts_without_search_and_with_the_default_scope(qtbot, window: MainWindow, tmp_path: Path):
+    # igual nas 4 versoes: a pesquisa "Ana" de A nao roda em B e o filtro "empty" da lista nao esconde a tabela de B
+    import duckdb
+
+    other = tmp_path / "other.duckdb"
+    with duckdb.connect(str(other)) as conn:
+        conn.execute("CREATE TABLE People (name VARCHAR)")
+    window.scope_actions["all"].trigger()
+    window.search_edit.setText("Ana")
+    window.table_filter.setText("empty")
+    window.open_database(other)
+    qtbot.waitUntil(lambda: window.current_db_path == other and window.loaded_table is not None
+                    and window._busy == 0, timeout=30000)
+
+    assert window.search_edit.text() == "" and window.table_filter.text() == ""
+    assert window.scope_actions["table"].isChecked() and window.data_stack.currentWidget() is window.data_table
+    assert not window.table_list.item(0).isHidden() and window.loaded_search == ""
+
+
 def test_nothing_duplicated(qtbot, points_window: MainWindow) -> None:
     # estado mais cheio da tela: tabela, filtro ativo (botao do filtro + Limpar filtros) e coluna oculta
     win = points_window
@@ -396,9 +459,10 @@ def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None
     window.columns_button.click()
     dialog = window.findChild(ColumnsDialog)
     assert [dialog.list.item(i).text() for i in range(3)] == ["id", "name", "score"]
-    dialog.set_all(False)  # "Ocultar todas": vale na hora
-    assert _hidden(window) == [True, True, True]
+    dialog.set_all(False)  # "Ocultar todas": vale na hora; a primeira fica (sempre ao menos uma visivel)
+    assert _hidden(window) == [False, True, True]
     dialog.list.item(1).setCheckState(Qt.CheckState.Checked)
+    dialog.list.item(0).setCheckState(Qt.CheckState.Unchecked)
     dialog.accept()  # Fechar
 
     assert _hidden(window) == [True, False, True]
@@ -426,20 +490,39 @@ def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None
 def test_columns_dialog_checks_all_selected_rows(qtbot) -> None:
     dialog = ColumnsDialog(["a", "b", "c", "d"], {"d"})
     qtbot.addWidget(dialog)
-    for row in (0, 1, 2):
+    for row in (0, 1):
         dialog.list.item(row).setSelected(True)
-    dialog.list.item(1).setCheckState(Qt.CheckState.Unchecked)  # desmarcar uma das selecionadas desmarca as tres
+    dialog.list.item(1).setCheckState(Qt.CheckState.Unchecked)  # desmarcar uma das selecionadas desmarca as duas
 
-    assert dialog.hidden() == {"a", "b", "c", "d"}
+    assert dialog.hidden() == {"a", "b", "d"}
     dialog.list.clearSelection()
     dialog.list.item(3).setCheckState(Qt.CheckState.Checked)
-    assert dialog.hidden() == {"a", "b", "c"}
+    assert dialog.hidden() == {"a", "b"}
 
     # busca no topo: Mostrar todas so marca as encontradas
     dialog.search.setText("B")
     assert [dialog.list.item(r).isHidden() for r in range(4)] == [True, False, True, True]
     dialog.set_all(True)
-    assert dialog.hidden() == {"a", "c"}
+    assert dialog.hidden() == {"a"}
+
+
+def test_columns_dialog_keeps_one_column_visible(qtbot) -> None:
+    # igual nas 4 versoes: nenhum caminho deixa a grade sem colunas
+    dialog = ColumnsDialog(["only"], set())
+    qtbot.addWidget(dialog)
+    dialog.set_all(False)  # "Ocultar todas" numa tabela de uma coluna
+    assert dialog.hidden() == set()
+
+    dialog = ColumnsDialog(["a", "b", "c"], set())
+    qtbot.addWidget(dialog)
+    dialog.set_all(False)
+    assert dialog.hidden() == {"b", "c"}  # a primeira listada fica
+    dialog.list.item(0).setCheckState(Qt.CheckState.Unchecked)  # desmarcar a ultima visivel nao vale
+    assert dialog.hidden() == {"b", "c"}
+    dialog.set_all(True)
+    dialog.list.selectAll()
+    dialog.list.item(2).setCheckState(Qt.CheckState.Unchecked)  # as tres selecionadas: a desmarcada fica
+    assert dialog.hidden() == {"a", "b"}
 
 
 def test_columns_dialog_grid_is_proportional(qtbot) -> None:

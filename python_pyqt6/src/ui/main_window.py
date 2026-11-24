@@ -19,7 +19,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QFontMetrics, QGuiApplication, QIcon, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QGuiApplication, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -293,8 +293,7 @@ class MainWindow(QMainWindow):
 
         # pesquisa da aba Data: Esta tabela | Todas as tabelas junto ao campo; o escopo inicial vem de
         # Configuracoes > Escopo padrao da busca (gravado entre execucoes)
-        scope = str(self.settings.value("search_scope", "table"))
-        scope = scope if scope in SCOPES else "table"
+        scope = self.default_scope()
         self.scope_group = QActionGroup(self)
         self.scope_actions: dict[str, QAction] = {}
         self.default_scope_group = QActionGroup(self)
@@ -328,7 +327,9 @@ class MainWindow(QMainWindow):
         self.sql_edit = QPlainTextEdit()
         self.sql_edit.setAccessibleName("SQL")
         self.sql_edit.setPlaceholderText("SELECT * FROM ...")
-        self.sql_edit.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        sql_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        sql_font.setPointSizeF(self.font().pointSizeF())  # monoespacada no tamanho da base (14 px), nao nos 9 pt
+        self.sql_edit.setFont(sql_font)
         self.sql_edit.addAction(self.run_sql_action)
         run_button = QPushButton(tr("button.run"))
         run_button.setAccessibleName(tr("action.run_sql").replace("&", ""))
@@ -626,7 +627,7 @@ class MainWindow(QMainWindow):
         self.search_edit.setAccessibleName(tr("search.name"))
         self.search_edit.setMinimumWidth(280)
         self.search_edit.setMaximumWidth(420)
-        self.search_edit.textChanged.connect(lambda _text: self.search_timer.start())
+        self.search_edit.textChanged.connect(self._search_edited)
         toolbar.addActions(list(self.scope_actions.values()))  # dois botoes de alternar, um marcado
         toolbar.addWidget(self.search_edit)
 
@@ -671,6 +672,10 @@ class MainWindow(QMainWindow):
         self.settings.setValue("theme", name)
         self.theme_actions[name].setChecked(True)
         apply_theme(name)
+
+    def default_scope(self) -> str:
+        scope = str(self.settings.value("search_scope", "table"))
+        return scope if scope in SCOPES else "table"
 
     def set_default_scope(self, name: str) -> None:
         # grava o padrao e ja vale na tela
@@ -888,6 +893,12 @@ class MainWindow(QMainWindow):
         previous = self.table_list.currentItem().text() if self.table_list.currentItem() else None
         if db_path != self.current_db_path:
             self._reset_view(None)  # outro arquivo: filtros e colunas ocultas nao valem mais
+            # nem a pesquisa da aba Data e o filtro da lista; o escopo volta ao padrao de Configuracoes (4 versoes)
+            self.search_edit.clear()
+            self.table_filter.clear()
+            self.search_timer.stop()
+            self.table_filter_timer.stop()
+            self.scope_actions[self.default_scope()].setChecked(True)
             self.loaded_table = None
             self.table_model.set_rows([])
             self.schema_model.set_rows([])
@@ -1041,9 +1052,18 @@ class MainWindow(QMainWindow):
     # --------------------------------------------------------------- table
 
     def reload_table(self) -> None:
+        # limite, filtro e pesquisa: consulta na hora (a pesquisa ja esperou os 300 ms); os 150 ms de
+        # table_load_timer sao so da navegacao pela lista com as setas
         item = self.table_list.currentItem()
         if item is not None:
             self.on_table_selected(item.text())
+            self._start_table_worker()
+
+    def _search_edited(self) -> None:
+        # o termo mudou: a busca em todas as tabelas ainda rodando para na proxima tabela e o resultado dela nao
+        # aparece (chegaria antes dos 300 ms); a nova sai 300 ms depois da ultima tecla
+        self._found_request += 1
+        self.search_timer.start()
 
     def _search_now(self) -> None:
         """Pesquisa da aba Data (300 ms depois da ultima tecla, ou ao trocar o escopo): na tabela aberta, no banco
@@ -1085,8 +1105,11 @@ class MainWindow(QMainWindow):
             self._set_message(self.info_label, tr("status.error", message=message), error=True)
 
     def open_found_table(self, item: QListWidgetItem) -> None:
-        # a tabela escolhida abre na aba Data com a mesma pesquisa; o escopo volta para esta tabela
+        # a tabela escolhida abre na aba Data com a mesma pesquisa e sem filtros por valor (a grade mostra o numero
+        # listado, igual nas 4 versoes); o escopo volta para esta tabela
         self.scope_actions["table"].setChecked(True)
+        self.filters.clear()
+        self._refresh_filter_bar()
         found = self.table_list.findItems(item.data(Qt.ItemDataRole.UserRole), Qt.MatchFlag.MatchExactly)
         if found:
             self.table_list.setCurrentItem(found[0])
@@ -1105,6 +1128,7 @@ class MainWindow(QMainWindow):
         self.table_load_timer.start()
 
     def _start_table_worker(self) -> None:
+        self.table_load_timer.stop()
         if self.manager is None or not self.pending_table_name:
             return
 
@@ -1143,7 +1167,7 @@ class MainWindow(QMainWindow):
             view.resizeColumnToContents(column)  # !T: Qt takes the larger of the header text and the content
             # !T: Qt measures only the first rows (resize precision); the longest texts of all loaded rows are
             # !T: measured here so no value is cut with "..."; only above MAX_COLUMN_WIDTH (tooltip has the full text)
-            metrics = QFontMetrics(model.cell_font(column, view.font()))
+            metrics = view.fontMetrics()
             longest = max((metrics.horizontalAdvance(text) for text in model.longest_texts(column)), default=0)
             width = max(view.columnWidth(column), longest + padding)
             view.setColumnWidth(column, min(width + gap, MAX_COLUMN_WIDTH))

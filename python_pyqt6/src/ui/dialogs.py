@@ -231,21 +231,29 @@ class ColumnsDialog(QDialog):
 
     def _item_changed(self, changed: QListWidgetItem) -> None:
         # varias selecionadas (Shift/Ctrl + clique): marcar uma aplica o mesmo estado a todas
+        self.list.blockSignals(True)
         if changed.isSelected():
-            self.list.blockSignals(True)
             for item in self.list.selectedItems():
                 item.setCheckState(changed.checkState())
-            self.list.blockSignals(False)
+        self._keep_one(changed)
+        self.list.blockSignals(False)
         self.hiddenChanged.emit(self.hidden())
 
     def set_all(self, visible: bool) -> None:
         state = Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked
+        listed = [self.list.item(row) for row in range(self.list.count()) if not self.list.item(row).isHidden()]
         self.list.blockSignals(True)
-        for row in range(self.list.count()):
-            if not self.list.item(row).isHidden():
-                self.list.item(row).setCheckState(state)
+        for item in listed:
+            item.setCheckState(state)
+        if listed:
+            self._keep_one(listed[0])  # Ocultar todas: a primeira listada fica (como no Zig)
         self.list.blockSignals(False)
         self.hiddenChanged.emit(self.hidden())
+
+    def _keep_one(self, item: QListWidgetItem) -> None:
+        # sempre fica ao menos uma coluna visivel (igual nas 4 versoes): sem nenhuma marcada, `item` volta
+        if len(self.hidden()) == self.list.count():
+            item.setCheckState(Qt.CheckState.Checked)
 
     def hidden(self) -> set[str]:
         items = (self.list.item(row) for row in range(self.list.count()))

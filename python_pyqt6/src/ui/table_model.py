@@ -1,5 +1,6 @@
 # Modelo de tabela somente leitura para linhas vindas do DuckDB (lista de dicts)
-# !T: Read-only table model; exposes display text, numeric alignment/font and a typed sort role
+# !T: Read-only table model; exposes display text, numeric alignment and a typed sort role. Every cell uses the base
+# !T: font (Segoe UI 14 px like the other stacks; its digits have one width, so right-aligned numbers line up)
 
 import heapq
 import unicodedata
@@ -8,7 +9,6 @@ from typing import Any
 
 import pandas as pd
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
-from PyQt6.QtGui import QFont, QFontDatabase
 
 # !T: Role read by QSortFilterProxyModel so numbers sort as numbers, not as text
 SORT_ROLE = Qt.ItemDataRole.UserRole
@@ -18,13 +18,8 @@ _INT64_MAX = 2**63 - 1
 
 
 def is_missing(value: Any) -> bool:
-    # !T: pandas turns SQL NULL into None, NaN, NaT or NA depending on the column type
-    return (
-        value is None
-        or value is pd.NaT
-        or value is pd.NA
-        or (isinstance(value, float) and value != value)
-    )
+    # !T: SQL NULL only: the rows are plain Python values (NULL is None); a DOUBLE NaN is a value and shows as nan
+    return value is None or value is pd.NaT or value is pd.NA
 
 
 def is_number(value: Any) -> bool:
@@ -46,8 +41,8 @@ def grid_text(value: Any, null_text: str = "") -> str:
 
 
 def sort_key(value: Any) -> int | float | str | None:
-    if is_missing(value):
-        return None
+    if is_missing(value) or (isinstance(value, float) and value != value):
+        return None  # !T: NaN has no order (every comparison is false): it sorts with the NULLs
     if is_number(value):
         # !T: Qt variants hold 64-bit ints and doubles only
         if isinstance(value, Decimal) or (isinstance(value, int) and abs(value) > _INT64_MAX):
@@ -76,7 +71,6 @@ class TableModel(QAbstractTableModel):
         self.column_tips: list[str] = []
         self.numeric: list[bool] = []
         self.null_text = ""  # texto da celula NULL na grade: "NULL" ou vazio (Configuracoes > Exibir NULL)
-        self._fixed_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
 
     def set_null_text(self, text: str) -> None:
         self.null_text = text
@@ -90,9 +84,6 @@ class TableModel(QAbstractTableModel):
         # move it to the table worker if larger "Rows" limits are added
         name = self.columns[column]
         return heapq.nlargest(count, (grid_text(row.get(name), self.null_text) for row in self.rows), key=len)
-
-    def cell_font(self, column: int, base: QFont) -> QFont:
-        return self._fixed_font if self.numeric[column] else base
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self.rows)
@@ -108,8 +99,6 @@ class TableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.TextAlignmentRole:
             side = Qt.AlignmentFlag.AlignRight if self.numeric[column] else Qt.AlignmentFlag.AlignLeft
             return side | Qt.AlignmentFlag.AlignVCenter
-        if role == Qt.ItemDataRole.FontRole:
-            return self._fixed_font if self.numeric[column] else None
         if role == Qt.ItemDataRole.ToolTipRole:
             # texto longo inteiro na dica (na grade so corta acima de MAX_COLUMN_WIDTH, 1200 px)
             text = display_text(self.rows[index.row()].get(self.columns[column]))

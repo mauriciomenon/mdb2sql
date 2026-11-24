@@ -16,12 +16,15 @@ from ui.table_model import (
 
 
 def test_missing_values_show_as_empty_text() -> None:
-    for value in (None, float("nan"), pd.NaT, pd.NA):
+    for value in (None, pd.NaT, pd.NA):
         assert is_missing(value)
         assert display_text(value) == ""
         assert sort_key(value) is None
     assert not is_missing(0)
     assert display_text(0) == "0"
+    # DOUBLE NaN e um valor (n IS NULL e falso no banco): aparece e copia como nan; ordena junto com os NULL
+    nan = float("nan")
+    assert not is_missing(nan) and display_text(nan) == "nan" and sort_key(nan) is None
 
 
 def test_numbers_keep_their_type_for_sorting() -> None:
@@ -39,7 +42,7 @@ def test_whole_doubles_show_without_decimal_part_but_copy_the_real_value(qtbot) 
     values = [2.0, 2316.0, -0.0, 2.5, 1e20, float("nan"), None, Decimal("1.50"), 7]
     model.set_rows([{"v": v} for v in values])
     shown = [model.data(model.index(r, 0)) for r in range(len(values))]
-    assert shown == ["2", "2316", "0", "2.5", "1e+20", "", "", "1.50", "7"]
+    assert shown == ["2", "2316", "0", "2.5", "1e+20", "nan", "", "1.50", "7"]
     copied = [model.data(model.index(r, 0), COPY_ROLE) for r in range(len(values))]
     assert copied[:2] == ["2.0", "2316.0"] and copied[3] == "2.5"  # copia o valor real
     assert model.data(model.index(1, 0), SORT_ROLE) == 2316.0
@@ -47,13 +50,14 @@ def test_whole_doubles_show_without_decimal_part_but_copy_the_real_value(qtbot) 
 
 
 def test_null_text_is_display_only(qtbot) -> None:
-    # Configuracoes > Exibir NULL: a grade mostra "NULL"; texto vazio continua vazio; copiar continua vazio
+    # Configuracoes > Exibir NULL: a grade mostra "NULL" so no NULL de verdade (None), nunca no NaN; texto vazio
+    # continua vazio; copiar continua vazio
     model = TableModel()
     model.set_rows([{"v": None}, {"v": float("nan")}, {"v": ""}, {"v": 2.0}])
     changed = []
     model.dataChanged.connect(lambda first, last, _roles: changed.append((first.row(), last.row())))
     model.set_null_text("NULL")
-    assert [model.data(model.index(r, 0)) for r in range(4)] == ["NULL", "NULL", "", "2"]
+    assert [model.data(model.index(r, 0)) for r in range(4)] == ["NULL", "nan", "", "2"]
     assert model.data(model.index(0, 0), COPY_ROLE) == "" and changed == [(0, 3)]  # a vista redesenha na hora
     assert model.longest_texts(0, 1) == ["NULL"]  # a largura da coluna conta o texto que aparece
     model.set_null_text("")
@@ -71,7 +75,8 @@ def test_model_roles(qtbot) -> None:
     assert model.data(model.index(1, 1)) == ""
     assert model.data(model.index(0, 0), Qt.ItemDataRole.TextAlignmentRole) & Qt.AlignmentFlag.AlignRight
     assert model.data(model.index(0, 1), Qt.ItemDataRole.TextAlignmentRole) & Qt.AlignmentFlag.AlignLeft
-    assert model.data(model.index(0, 0), Qt.ItemDataRole.FontRole) is not None
+    # numeros na fonte base como o texto (Segoe UI 14 px nas 4 versoes), nao na monoespacada de 9 pt do sistema
+    assert model.data(model.index(0, 0), Qt.ItemDataRole.FontRole) is None
     assert model.data(model.index(0, 1), Qt.ItemDataRole.FontRole) is None
     assert model.headerData(1, Qt.Orientation.Horizontal) == "name"
     # cabecalho alinhado como a coluna: numeros a direita, texto a esquerda
