@@ -1000,6 +1000,13 @@ const App = struct {
                 app.clearTable();
                 app.clearResult();
                 app.clearGlobal();
+                // arquivo novo comeca sem o filtro da lista de tabelas e sem a busca da aba Data, no escopo de Settings
+                app.table_filter = @splat(0);
+                app.table_filter_applied = @splat(0);
+                app.table_filter_wait.due = null;
+                app.search = @splat(0);
+                app.search_wait.due = null;
+                app.scope = app.prefs.search_scope;
                 app.sql_msg.len = 0;
                 app.tables_w = 0;
                 app.opened +%= 1;
