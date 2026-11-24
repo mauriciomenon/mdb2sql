@@ -368,6 +368,25 @@ describe('App IPC flow', () => {
     expect(screen.getByText('Could not count the rows: boom')).toBeInTheDocument();
   });
 
+  // decision 1 (same in the 4 apps): a table opened from the All tables list shows the count listed, so its value
+  // filters are cleared, also when it is the table open now
+  it('opens a table of the All tables list without its value filters', async () => {
+    const SearchAllTables = vi.fn(async () => [{ table: 'RANGER_SOACCU', rows: 2 }]);
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables } } } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    fireEvent.contextMenu(await screen.findByText('Beta'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Filter by this value' }));
+    await screen.findByText("Filter: NAME = 'Beta'");
+    fireEvent.click(screen.getByRole('radio', { name: 'All tables' }));
+    fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'a' } });
+    fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
+    const hit = await screen.findByRole('row', { name: 'RANGER_SOACCU 2' });
+    fireEvent.click(within(hit).getByRole('button', { name: 'RANGER_SOACCU' }));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], 'a'));
+    expect(screen.queryByRole('group', { name: 'Active filters' })).not.toBeInTheDocument();
+  });
+
   // Go stops a running search when the file closes, and its "cancelled" answer arrives before Close returns
   it('closes the file during an All tables search without showing the cancelled search as an error', async () => {
     let cancelSearch;
