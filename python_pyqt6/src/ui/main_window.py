@@ -331,11 +331,12 @@ class MainWindow(QMainWindow):
         separator = QAction(self)
         separator.setSeparator(True)
         self.data_table.addActions([separator, self.filter_value_action, self.clear_filters_action])
-        header = self.data_table.horizontalHeader()
-        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        header.customContextMenuRequested.connect(
-            lambda pos: self.header_menu(header.logicalIndexAt(pos)).popup(header.mapToGlobal(pos))
-        )
+        for view in (self.data_table, self.sql_table):
+            header = view.horizontalHeader()
+            header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            header.customContextMenuRequested.connect(
+                lambda pos, v=view, h=header: self.header_menu(h.logicalIndexAt(pos), v).popup(h.mapToGlobal(pos))
+            )
 
         self.empty_label = QLabel(tr("status.empty"))
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1032,15 +1033,15 @@ class MainWindow(QMainWindow):
         # o separador do painel continua arrastavel; so ajusta na abertura do arquivo
         self.resizeDocks([self.tables_dock], [self.tables_panel_width(tables)], Qt.Orientation.Horizontal)
 
-    def _fit_columns(self, view: QTableView) -> None:
-        view.sortByColumn(-1, Qt.SortOrder.AscendingOrder)  # volta para a ordem do backend
-        view.resizeColumnsToContents()  # !T: Qt takes the larger of the header text and the content
-        # !T: Qt measures only the first rows (resize precision); the longest texts of all loaded rows are measured
-        # !T: here so no value is cut with "..."; only above MAX_COLUMN_WIDTH (tooltip has the full text)
+    def _fit_columns(self, view: QTableView, columns: list[int] | None = None) -> None:
+        """Largura das colunas (todas sem `columns`) pelo texto mais longo: cabecalho ou valor de qualquer linha."""
         model: TableModel = view.model().sourceModel()
         padding = 2 * (view.style().pixelMetric(QStyle.PixelMetric.PM_FocusFrameHMargin, None, view) + 1) + 8
         gap = SCHEMA_GAP if view is self.schema_table else 0
-        for column in range(model.columnCount()):
+        for column in range(model.columnCount()) if columns is None else columns:
+            view.resizeColumnToContents(column)  # !T: Qt takes the larger of the header text and the content
+            # !T: Qt measures only the first rows (resize precision); the longest texts of all loaded rows are
+            # !T: measured here so no value is cut with "..."; only above MAX_COLUMN_WIDTH (tooltip has the full text)
             metrics = QFontMetrics(model.cell_font(column, view.font()))
             longest = max((metrics.horizontalAdvance(text) for text in model.longest_texts(column)), default=0)
             width = max(view.columnWidth(column), longest + padding)
@@ -1066,6 +1067,7 @@ class MainWindow(QMainWindow):
         self.loaded_search = payload["search"]
 
         for view in (self.data_table, self.schema_table):
+            view.sortByColumn(-1, Qt.SortOrder.AscendingOrder)  # volta para a ordem do backend
             self._fit_columns(view)
         self._apply_hidden_columns()  # o reset do modelo mostra todas: oculta de novo as escolhidas
         self._apply_search()
@@ -1155,8 +1157,12 @@ class MainWindow(QMainWindow):
         self._apply_hidden_columns()
         self._apply_search()  # atualiza "N colunas ocultas" na barra de status
 
-    def hide_column(self, name: str) -> None:
-        self.set_hidden_columns(self.hidden_columns | {name})
+    def _set_hidden(self, view: QTableView, names: set[str]) -> None:
+        if view is self.data_table:
+            self.set_hidden_columns(names)  # aba Data: vale ate trocar de tabela, contada na barra de status
+            return
+        for column, name in enumerate(view.model().sourceModel().columns):  # resultado SQL: ate a proxima consulta
+            view.setColumnHidden(column, name in names)
 
     def choose_columns(self) -> None:
         for open_dialog in self.findChildren(ColumnsDialog):
@@ -1168,15 +1174,31 @@ class MainWindow(QMainWindow):
         dialog.hiddenChanged.connect(self.set_hidden_columns)  # vale na hora; Fechar so fecha
         dialog.open()
 
-    def header_menu(self, column: int) -> QMenu:
-        """Menu do clique direito no cabecalho da aba Data (column = -1 fora de uma coluna)."""
+    def header_menu(self, column: int, view: QTableView | None = None) -> QMenu:
+        """Clique direito no cabecalho das grades Data e SQL (column = -1 fora de uma coluna): ajustar a largura e
+        ocultar/mostrar colunas; a lista marca as visiveis (clique alterna) e a ultima visivel nao sai."""
+        view = view or self.data_table
+        names = view.model().sourceModel().columns
+        hidden = {name for c, name in enumerate(names) if view.isColumnHidden(c)}
+        last = len(names) - len(hidden) <= 1
+        on_column = 0 <= column < len(names)
         menu = QMenu(self)
         menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        hide = menu.addAction(tr("columns.hide_this"))
-        hide.setEnabled(0 <= column < len(self.table_model.columns))
-        hide.triggered.connect(lambda: self.hide_column(self.table_model.columns[column]))
-        menu.addAction(self.columns_action)
-        menu.addAction(tr("columns.show_all"), lambda: self.set_hidden_columns(set()))
+        menu.addAction(tr("columns.fit"), lambda: self._fit_columns(view, [column])).setEnabled(on_column)
+        menu.addAction(tr("columns.fit_all"), lambda: self._fit_columns(view))
+        menu.addSeparator()
+        hide = menu.addAction(tr("columns.hide_this"), lambda: self._set_hidden(view, hidden | {names[column]}))
+        hide.setEnabled(on_column and not last)
+        if view is self.data_table:
+            menu.addAction(self.columns_action)
+        menu.addAction(tr("columns.show_all_columns"), lambda: self._set_hidden(view, set()))
+        menu.addSeparator()
+        for name in names:
+            # "&" no nome da coluna e texto, nao atalho
+            toggle = menu.addAction(name.replace("&", "&&"), lambda _c=False, n=name: self._set_hidden(view, hidden ^ {n}))
+            toggle.setCheckable(True)
+            toggle.setChecked(name not in hidden)
+            toggle.setEnabled(name in hidden or not last)
         return menu
 
     # ----------------------------------------------------------------- SQL
@@ -1202,6 +1224,9 @@ class MainWindow(QMainWindow):
             return
         query, columns, rows, more = result  # type: ignore[misc]
         self.sql_model.set_rows(rows, columns)
+        for column in range(len(columns)):
+            self.sql_table.setColumnHidden(column, False)  # o cabecalho guarda as ocultas por posicao: outro resultado
+        self.sql_table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)  # volta para a ordem do backend
         self._fit_columns(self.sql_table)
         self.sql_query = query if columns else None
         if not columns:

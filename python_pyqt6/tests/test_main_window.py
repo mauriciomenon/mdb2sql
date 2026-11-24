@@ -337,7 +337,7 @@ def test_nothing_duplicated(qtbot, points_window: MainWindow) -> None:
     # botao e menu usam a mesma acao (uma acao so, nao duas copias)
     assert win.columns_button.defaultAction() is win.columns_action
     assert win.clear_filters_button.defaultAction() is win.clear_filters_action
-    assert win.header_menu(0).actions()[1] is win.columns_action
+    assert win.columns_action in win.header_menu(0).actions()
     assert win.export_button.menu() is win.export_menu
 
 
@@ -438,21 +438,63 @@ def test_columns_dialog_grid_is_proportional(qtbot) -> None:
     dialog.close()
 
 
-def test_header_menu_hides_one_column_and_table_switch_resets(qtbot, window: MainWindow) -> None:
+def _header_action(win: MainWindow, column: int, text: str, view=None):
+    return next(a for a in win.header_menu(column, view).actions() if a.text() == text)
+
+
+def test_header_menu_fits_hides_and_shows_columns(qtbot, window: MainWindow) -> None:
     _select_table(qtbot, window, "people")
     menu = window.header_menu(2)
-    assert [a.text() for a in menu.actions()] == ["Hide this column", "Columns...", "Show all"]
-    menu.actions()[0].trigger()
+    assert [a.text() for a in menu.actions() if not a.isSeparator()] == [
+        "Size column to fit", "Size all columns to fit", "Hide this column", "Columns...", "Show all columns",
+        "id", "name", "score",
+    ]
+    assert all(a.isCheckable() and a.isChecked() for a in menu.actions()[-3:])  # marca = visivel
+    assert not _header_action(window, -1, "Size column to fit").isEnabled()  # clique fora de uma coluna
+    assert not _header_action(window, -1, "Hide this column").isEnabled()
+
+    # ajustar uma e todas: largura volta ao texto mais longo; a ordenacao escolhida fica
+    table = window.data_table
+    fitted = [table.columnWidth(c) for c in range(2)]
+    window.data_table.sortByColumn(0, Qt.SortOrder.DescendingOrder)
+    table.setColumnWidth(0, 20)
+    table.setColumnWidth(1, 20)
+    _header_action(window, 0, "Size column to fit").trigger()
+    assert [table.columnWidth(c) for c in range(2)] == [fitted[0], 20]
+    _header_action(window, 0, "Size all columns to fit").trigger()
+    assert [table.columnWidth(c) for c in range(2)] == fitted
+    assert _column(window, 0) == ["10", "2", "1"]
+
+    # a lista alterna; ocultar desta coluna; a ultima visivel nao pode sair
+    _header_action(window, 0, "score").trigger()
     assert _hidden(window) == [False, False, True]
     assert window.info_label.text() == "people: Showing 3 of 3 rows - 1 hidden column"
-    assert not window.header_menu(-1).actions()[0].isEnabled()  # clique fora de uma coluna
-
-    window.header_menu(0).actions()[2].trigger()  # Mostrar todas
+    _header_action(window, 0, "Hide this column").trigger()
+    assert _hidden(window) == [True, False, True]
+    assert not _header_action(window, 1, "name").isEnabled()
+    assert not _header_action(window, 1, "Hide this column").isEnabled()
+    _header_action(window, 1, "id").trigger()  # clicar numa oculta mostra de novo
+    assert _hidden(window) == [False, False, True]
+    _header_action(window, 0, "Show all columns").trigger()
     assert _hidden(window) == [False, False, False]
 
     window.set_hidden_columns({"name"})
-    _select_table(qtbot, window, "empty_table")
+    _select_table(qtbot, window, "empty_table")  # trocar de tabela mostra todas (nada vai para disco)
     assert window.hidden_columns == set() and _hidden(window) == [False, False]
+
+
+def test_sql_header_menu_hides_until_the_next_query(qtbot, window: MainWindow) -> None:
+    window.sql_edit.setPlainText("SELECT id, name FROM people")
+    window.run_sql()
+    qtbot.waitUntil(lambda: window.sql_model.rowCount() == 3, timeout=30000)
+    texts = [a.text() for a in window.header_menu(0, window.sql_table).actions() if not a.isSeparator()]
+    assert texts == ["Size column to fit", "Size all columns to fit", "Hide this column", "Show all columns",
+                     "id", "name"]  # sem "Colunas...": o dialogo e da aba Data
+
+    _header_action(window, 0, "id", window.sql_table).trigger()
+    assert window.sql_table.isColumnHidden(0) and not window.sql_table.isColumnHidden(1)
+    window.run_sql()
+    qtbot.waitUntil(lambda: not window.sql_table.isColumnHidden(0), timeout=30000)
 
 
 @pytest.fixture

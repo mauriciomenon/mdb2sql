@@ -303,7 +303,8 @@ def test_no_ui_text_outside_the_catalogs(qtbot, people_db: Path, monkeypatch) ->
         while (inner := re.sub(r"\[\[[^\[\]]*\]\]", "", bare)) != bare:  # marcas aninhadas: "[[[[Build]]:]]"
             bare = inner
         # o que sobra fora das marcas so pode ser dado (nome de tabela/coluna/arquivo, valor) ou nome de produto
-        leftover = re.sub(r"people\.duckdb|people|empty_table|name = 'Ana'|×|via DuckDB|[\s:;()\-]", "", bare)
+        # (o menu do cabecalho lista as colunas da tabela aberta: code, label)
+        leftover = re.sub(r"people\.duckdb|people|empty_table|name = 'Ana'|code|label|×|via DuckDB|[\s:;()\-]", "", bare)
         if leftover and not NOT_TEXT.fullmatch(text.replace("&", "").strip()):
             outside.append((kind, text))
     assert outside == [], "\n".join(map(repr, outside))
