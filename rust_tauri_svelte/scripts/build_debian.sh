@@ -22,7 +22,7 @@ esac
 cargo_home=${CARGO_HOME:-$HOME/.cargo}
 rustup_home=${RUSTUP_HOME:-$HOME/.rustup}
 [ ! -d "$cargo_home/bin" ] || PATH="$cargo_home/bin:$PATH"
-for tool in git curl rustup cargo corepack make gcc zip dpkg-deb; do
+for tool in git curl rustup cargo node make gcc zip dpkg-deb; do
     command -v "$tool" >/dev/null || fail 3 "$tool nao encontrado"
 done
 # pacotes do sistema que o Tauri (WebKitGTK) pede para compilar; o .deb pede so as bibliotecas de execucao
@@ -51,12 +51,23 @@ mkdir -p .tools/bin
 if ! .tools/bin/cargo-tauri tauri --version 2>/dev/null | grep -q "$tauri_cli_version"; then
     cargo install --root .tools tauri-cli --version "$tauri_cli_version" --locked
 fi
-# pnpm na versao do packageManager do ui/package.json, pelo corepack do Node (o Tauri chama "pnpm" no build)
-pnpm_version=$(sed -n 's/.*"packageManager": "pnpm@\(.*\)".*/\1/p' ui/package.json)
-printf '#!/bin/sh\nexec corepack pnpm@%s "$@"\n' "$pnpm_version" >.tools/bin/pnpm
-chmod 755 .tools/bin/pnpm
-PATH="$root/.tools/bin:$PATH"
-export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+# pnpm (mesma versao do scripts/setup_tools.ps1; sha256 publicado no release), com store e cache em .tools (o Tauri
+# chama "pnpm" no build)
+pnpm_version=12.23.0
+pnpm_sha256=b515e29f2ac1adc0fbe63173414a6682827baff24f17e7ad3476821bdef236ac
+pnpm_tgz=.tools/pnpm-$pnpm_version-linux-x64.tar.gz
+if ! echo "$pnpm_sha256  $pnpm_tgz" | sha256sum -c - >/dev/null 2>&1; then
+    curl -fsSL --retry 3 -o "$pnpm_tgz" "https://github.com/pnpm/pnpm/releases/download/v$pnpm_version/pnpm-linux-x64.tar.gz" ||
+        fail 3 "download do pnpm $pnpm_version falhou"
+    echo "$pnpm_sha256  $pnpm_tgz" | sha256sum -c - >/dev/null 2>&1 || { rm -f "$pnpm_tgz"; fail 1 "sha256 do pnpm $pnpm_version errado"; }
+fi
+rm -rf .tools/pnpm
+mkdir -p .tools/pnpm
+tar -xzf "$pnpm_tgz" -C .tools/pnpm
+PATH="$root/.tools/pnpm:$root/.tools/bin:$PATH"
+export pnpm_config_store_dir="$root/.tools/pnpm-store" pnpm_config_cache_dir="$root/.tools/pnpm-cache"
+# um node_modules ligado a outro store (o do corepack de antes) faz o install recusar; refeito do store de .tools
+rm -rf ../node_modules ui/node_modules
 pnpm --dir .. install --frozen-lockfile --filter mdb2sql-ui
 
 # mdbtools 1.0.1 do fonte oficial (sha256 conferido), estatico e sem GLib: os exes so dependem da libc.

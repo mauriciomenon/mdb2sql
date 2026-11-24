@@ -3,7 +3,9 @@
 param([switch]$Dist)
 $ErrorActionPreference = 'Stop'
 
-$targets = 'target', 'ui\dist', 'dist\.stage'
+# node_modules do workspace pnpm (raiz e ui): ligado ao store de outra stack ou de outro pnpm, o install recusa;
+# refeito do store de .tools em segundos
+$targets = 'target', 'ui\dist', 'dist\.stage', '..\node_modules', 'ui\node_modules'
 if ($Dist) { $targets += 'dist' }
 foreach ($target in $targets) {
     $path = Join-Path $PSScriptRoot $target

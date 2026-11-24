@@ -16,3 +16,10 @@ $env:MDB2SQL_BUILD_DATE = Get-Date -Format 'yyyy-MM-dd'
 
 # o build oficial sempre leva o mdbtools dentro do exe: sem .tools\mdbtools-1.0.1-w11-amd64\ o build.rs para
 $env:MDB2SQL_REQUIRE_MDBTOOLS = '1'
+
+# pnpm fixo de setup_tools.ps1 (.tools\pnpm), com store e cache tambem em .tools: nada do pnpm fica fora desta pasta
+if (Test-Path '.tools\pnpm\pnpm.exe') {
+    $env:PATH = "$Root\.tools\pnpm;$env:PATH"
+    $env:pnpm_config_store_dir = "$Root\.tools\pnpm-store"
+    $env:pnpm_config_cache_dir = "$Root\.tools\pnpm-cache"
+}

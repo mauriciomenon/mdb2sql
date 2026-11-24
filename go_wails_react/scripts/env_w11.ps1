@@ -1,4 +1,4 @@
-# Ambiente comum de build e teste (dot-source: . scripts\env_w11.ps1): Go, GCC e Wails no PATH.
+# Ambiente comum de build e teste (dot-source: . scripts\env_w11.ps1): Go, GCC, Wails e pnpm no PATH.
 # Tambem serve para desenvolver: `. scripts\env_w11.ps1; wails dev`. Vai para a raiz do subprojeto.
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path $PSScriptRoot
@@ -30,7 +30,15 @@ if (Test-Path (Join-Path $toolsBin 'wails.exe')) { $env:PATH = "$toolsBin;$env:P
 # makensis para `wails build -nsis` (sem .tools vale o NSIS do sistema, se houver)
 $toolsNsis = Get-ChildItem (Join-Path $tools 'nsis') -Directory -Filter 'nsis-*' -ErrorAction Ignore | Select-Object -First 1
 if ($toolsNsis) { $env:PATH = "$($toolsNsis.FullName);$env:PATH" }
+# pnpm fixo de .tools, com store e cache tambem em .tools: nada do pnpm fica fora desta pasta
+$toolsPnpm = Join-Path $tools 'pnpm'
+if (Test-Path (Join-Path $toolsPnpm 'pnpm.exe')) {
+    $env:PATH = "$toolsPnpm;$env:PATH"
+    $env:pnpm_config_store_dir = Join-Path $tools 'pnpm-store'
+    $env:pnpm_config_cache_dir = Join-Path $tools 'pnpm-cache'
+}
 "go:    $((Get-Command go).Source)"
 "gcc:   $((Get-Command gcc).Source)"
 "wails: $((Get-Command wails).Source)"
 "nsis:  $((Get-Command makensis -ErrorAction Ignore).Source)"
+"pnpm:  $((Get-Command pnpm -ErrorAction Ignore).Source)"

@@ -24,7 +24,6 @@ for p in build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev dpkg-dev 
     dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"
 done
 [ -z "$missing" ] || fail 3 "faltam pacotes: sudo apt install$missing"
-command -v corepack >/dev/null || fail 3 "corepack nao encontrado (vem com o Node.js 20+; Debian: sudo apt install nodejs)"
 
 if [ -n "$(git status --porcelain)" ]; then
     git status --short
@@ -42,6 +41,9 @@ libmdb3t64_1.0.1-0.1_amd64.deb:705eaf16f423be3eebb4c794fca817130dbcabbafd10c408f
 # DuckDB sqlite extension for the DuckDB linked by duckdb-go (v2.0.0), Linux build; signed by DuckDB (2026-10-20)
 ext_url=https://extensions.duckdb.org/v2.0.0/linux_amd64/sqlite_scanner.duckdb_extension.gz
 ext_sha256=59b8a0ba6d7599d4aa584bd24e8b4cc3247076bb174157f43e110e56e6c72e86
+# pnpm, the version of packageManager in frontend/package.json; sha256 published in the GitHub release
+pnpm_version=12.23.0
+pnpm_sha256=b515e29f2ac1adc0fbe63173414a6682827baff24f17e7ad3476821bdef236ac
 
 tools=$root/.tools/linux
 mkdir -p "$tools/downloads"
@@ -64,10 +66,13 @@ if [ ! -x "$tools/bin/wails" ] || [ ! -f "$tools/bin/.wails-$wails_version-go$go
     GOBIN="$tools/bin" go install "github.com/wailsapp/wails/v2/cmd/wails@$wails_version"
     touch "$tools/bin/.wails-$wails_version-go$go_version"
 fi
-# pnpm in the version of frontend/package.json (packageManager), run by corepack; wails calls "pnpm"
-printf '#!/bin/sh\nexec corepack pnpm "$@"\n' >"$tools/bin/pnpm"
-chmod 755 "$tools/bin/pnpm"
-export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+# pnpm with store and cache in .tools too; wails calls "pnpm"
+get "https://github.com/pnpm/pnpm/releases/download/v$pnpm_version/pnpm-linux-x64.tar.gz" "$pnpm_sha256" \
+    "$tools/downloads/pnpm-$pnpm_version-linux-x64.tar.gz"
+rm -rf "${tools:?}/pnpm"
+mkdir -p "$tools/pnpm"
+tar -C "$tools/pnpm" -xzf "$tools/downloads/pnpm-$pnpm_version-linux-x64.tar.gz"
+export PATH="$tools/pnpm:$PATH" pnpm_config_store_dir="$tools/pnpm-store" pnpm_config_cache_dir="$tools/pnpm-cache"
 
 # what goes inside the binary (go:embed backend/embedded): mdbtools of Debian with libmdb.so.3, and the sqlite extension
 ./clean.sh # a stale frontend/dist would be embedded instead of the new UI

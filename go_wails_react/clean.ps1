@@ -7,7 +7,10 @@ $ErrorActionPreference = 'Stop'
 # build\ e gerado pelo wails build
 $targets = 'build\bin', 'build\windows\installer\tmp', 'build\windows\installer\wails_tools.nsh', 'build\windows\info.json',
     'build\windows\wails.exe.manifest',
-    'frontend\dist', 'dist\.stage'
+    'frontend\dist', 'dist\.stage',
+    # node_modules do workspace pnpm (raiz e frontend): ligado ao store de outra stack ou de outro pnpm, o install
+    # recusa; refeito do store de .tools em segundos
+    '..\node_modules', 'frontend\node_modules'
 if ($Dist) { $targets += 'dist' }
 foreach ($target in $targets) {
     $path = Join-Path $PSScriptRoot $target

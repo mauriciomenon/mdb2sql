@@ -5,9 +5,10 @@
 #   .tools/nsis     NSIS (makensis), para o instalador
 #   .tools/mdbtools mdb-tables/mdb-schema/mdb-export estaticos (embutidos no exe)
 #   .tools/duckdb-ext  extensao sqlite do DuckDB (embutida no exe)
+#   .tools/pnpm     pnpm (executavel do release oficial)
 # Chamado por ..\build_w11_amd64.ps1; sozinho: pwsh -NoProfile -File scripts/setup_tools.ps1
 # (repetir e seguro: so refaz o que mudou)
-# Node.js e pnpm continuam sendo pre-requisitos do sistema (ver README.md desta pasta).
+# Node.js continua pre-requisito do sistema (ver README.md desta pasta).
 $ErrorActionPreference = 'Stop'
 
 # Versoes fixas. Para atualizar: troque versao + sha256 juntos (sha256 publicado pelo proprio projeto).
@@ -33,6 +34,9 @@ $mdbtoolsSha256 = 'e15c69b9da2f8218f8c1db18fe0147d242cb888522d6c481e8c7c9d97e040
 # (PRAGMA platform = windows_amd64_mingw); arquivo assinado pelo DuckDB, publicado em 2026-10-20; embutida no exe
 $duckdbExtUrl = 'https://extensions.duckdb.org/v2.0.0/windows_amd64_mingw/sqlite_scanner.duckdb_extension.gz'
 $duckdbExtSha256 = '781af1d36475e9119dcf2b7b204ab3acc74602b34d6cf3a250c769d04ebf746d'
+# pnpm: ultima versao (2026-11-22), a mesma do packageManager de frontend/package.json; sha256 publicado no release
+$pnpmVersion = '12.23.0'
+$pnpmSha256 = '1a954bdc1b15ff036294279391d01a09407b7d46ff972a59d81f23becce96c1c'
 
 $tools = Join-Path (Split-Path $PSScriptRoot) '.tools'
 $downloads = Join-Path $tools 'downloads'
@@ -72,6 +76,8 @@ Install-Zip "Go $goVersion" "https://go.dev/dl/go$goVersion.windows-amd64.zip" $
 Install-Zip "WinLibs GCC $winlibsTag" "https://github.com/brechtsanders/winlibs_mingw/releases/download/$winlibsTag/$winlibsZip" $winlibsSha256 (Join-Path $tools 'winlibs')
 Install-Zip "NSIS $nsisVersion" "https://downloads.sourceforge.net/project/nsis/NSIS%203/$nsisVersion/nsis-$nsisVersion.zip" $nsisSha256 (Join-Path $tools 'nsis')
 Install-Zip "mdbtools ($mdbtoolsTag)" "https://github.com/mauriciomenon/mdbtools_custom/releases/download/$mdbtoolsTag/$mdbtoolsZip" $mdbtoolsSha256 (Join-Path $tools 'mdbtools')
+# o wails.json chama "pnpm": env_w11.ps1 poe esta pasta no PATH
+Install-Zip "pnpm $pnpmVersion" "https://github.com/pnpm/pnpm/releases/download/v$pnpmVersion/pnpm-win32-x64.zip" $pnpmSha256 (Join-Path $tools 'pnpm')
 
 # a extensao fica compactada (.gz): e assim que vai para dentro do exe
 $extDir = Join-Path $tools 'duckdb-ext'
@@ -105,3 +111,4 @@ if (Test-Path $wailsMarker) {
 & (Join-Path $bin 'wails.exe') version | Select-Object -First 1
 "NSIS $(& (Join-Path $tools "nsis\nsis-$nsisVersion\makensis.exe") /VERSION)"
 Get-Content (Join-Path $tools "mdbtools\$([IO.Path]::GetFileNameWithoutExtension($mdbtoolsZip))\VERSION.txt") -TotalCount 1
+"pnpm $(& (Join-Path $tools 'pnpm\pnpm.exe') --version)"

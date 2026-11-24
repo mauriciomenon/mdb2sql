@@ -1,12 +1,15 @@
 # Prepara o que o build do app Tauri precisa e nao vem do sistema, em versoes fixas.
 # Chamado por ..\build_w11_amd64.ps1; sozinho: pwsh -NoProfile -File scripts/setup_tools.ps1
-# Fica no sistema (ver README): rustup, MSVC Build Tools + Windows SDK, Node.js + pnpm, WebView2.
+# Fica no sistema (ver README): rustup, MSVC Build Tools + Windows SDK, Node.js, WebView2.
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path $PSScriptRoot)
 
 $TauriCliVersion = '2.12.4'  # crates.io, 2026-10-21; mesma serie do crate tauri 2.12 do Cargo.lock
+# pnpm: ultima versao (2026-11-22), a mesma do packageManager de ui/package.json; sha256 publicado no release
+$PnpmVersion = '12.23.0'
+$PnpmSha256 = '1a954bdc1b15ff036294279391d01a09407b7d46ff972a59d81f23becce96c1c'
 
-foreach ($tool in 'rustup', 'cargo', 'pnpm') {
+foreach ($tool in 'rustup', 'cargo', 'node') {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { throw "$tool nao encontrado no PATH (pre-requisito do sistema)" }
 }
 
@@ -18,6 +21,23 @@ if ($LASTEXITCODE) { throw "rustup toolchain install falhou ($LASTEXITCODE)" }
 # com o crate e o cargo confere o sha256 de cada dependencia contra o indice do crates.io
 cargo install --root .tools tauri-cli --version $TauriCliVersion --locked
 if ($LASTEXITCODE) { throw "cargo install tauri-cli falhou ($LASTEXITCODE)" }
+
+# pnpm em .tools\pnpm (o Tauri chama "pnpm" no build)
+$pnpmDir = '.tools\pnpm'
+if (-not (Test-Path "$pnpmDir\.installed-$PnpmSha256")) {
+    $zip = '.tools\pnpm-win32-x64.zip'
+    New-Item -ItemType Directory -Force .tools | Out-Null
+    Invoke-WebRequest "https://github.com/pnpm/pnpm/releases/download/v$PnpmVersion/pnpm-win32-x64.zip" -OutFile $zip
+    $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+    if ($hash -ne $PnpmSha256) { Remove-Item $zip; throw "sha256 de pnpm-win32-x64.zip $PnpmVersion errado: $hash" }
+    Remove-Item -Recurse -Force $pnpmDir -ErrorAction Ignore
+    New-Item -ItemType Directory $pnpmDir | Out-Null
+    & (Join-Path $env:SystemRoot 'System32\tar.exe') -xf $zip -C $pnpmDir
+    if ($LASTEXITCODE) { throw "extracao de pnpm-win32-x64.zip falhou" }
+    Remove-Item $zip
+    New-Item -ItemType File "$pnpmDir\.installed-$PnpmSha256" | Out-Null
+}
+. (Join-Path $PSScriptRoot 'env_w11.ps1')  # pnpm de .tools no PATH, com store e cache em .tools
 
 # dependencias do frontend nas versoes exatas do pnpm-lock.yaml (o workspace pnpm fica na raiz do repositorio)
 pnpm --dir .. install --frozen-lockfile --filter mdb2sql-ui

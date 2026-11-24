@@ -8,7 +8,8 @@ case "${1:-}" in
     --dist) targets=(dist) ;;
     *) echo "Usage: $0 [--dist]" >&2; exit 2 ;;
 esac
-targets+=(target ui/dist dist/.stage)
+# pnpm workspace node_modules (repo root and ui): linked to another store, pnpm install refuses; rebuilt from .tools
+targets+=(target ui/dist dist/.stage ../node_modules ui/node_modules)
 
 for target in "${targets[@]}"; do
     if [[ -e "$root_dir/$target" ]]; then
