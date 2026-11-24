@@ -1739,7 +1739,11 @@ const App = struct {
                 const cols = [_][:0]const u8{ tr("schema_column"), tr("schema_type"), tr("schema_null") };
                 var shown = g.*;
                 shown.columns = &cols;
+                // um pouco mais de espaco entre as colunas (so o horizontal das celulas, +6 px de cada lado)
+                const pad = ig.igGetStyle().*.CellPadding;
+                ig.igPushStyleVar_Vec2(ig.ImGuiStyleVar_CellPadding, .{ .x = pad.x * 2, .y = pad.y });
                 _ = drawGrid("##schema", &shown, null, &app.schema_sel, null, .plain, &app.prefs);
+                ig.igPopStyleVar(1);
             }
         }
         if (ig.igBeginTabItem(idLabel(&lb[2], "tab_sql", "sql"), null, if (app.focus_sql) ig.ImGuiTabItemFlags_SetSelected else 0)) {
