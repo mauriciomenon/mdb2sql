@@ -32,6 +32,7 @@ pub const rows_match = "{d} de {d} linhas encontradas{s}";
 pub const schema_column = "Coluna";
 pub const schema_type = "Tipo";
 pub const schema_null = "Aceita nulo";
+pub const null_text = "NULL";
 
 // menus da grade e dialogo Colunas
 pub const filter_by_value = "Filtrar por este valor";
@@ -59,6 +60,7 @@ pub const theme_system = "Sistema";
 pub const theme_light = "Claro";
 pub const theme_dark = "Escuro";
 pub const menu_language = "Idioma";
+pub const menu_show_null = "Exibir NULL";
 pub const menu_help = "Ajuda";
 pub const menu_about = "Sobre o mdb2sql";
 pub const export_db_sqlite = "Banco para SQLite (.sqlite)...";

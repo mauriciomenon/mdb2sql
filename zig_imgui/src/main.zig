@@ -1068,6 +1068,10 @@ const App = struct {
 
     fn update(app: *App) void {
         if (app.slot.poll()) |out| app.apply(out);
+        if (prefs_dirty) {
+            prefs_dirty = false;
+            app.savePrefs();
+        }
 
         if (app.want_theme) |theme| {
             app.prefs.theme = theme;
@@ -1386,6 +1390,16 @@ const App = struct {
                     const l: i18n.Lang = @fromBackingInt(@intCast(i));
                     if (ig.igMenuItem_Bool(n, null, i18n.lang == l, true)) app.want_lang = l;
                 }
+            }
+            // as opcoes da tela, com o padrao gravado: NULL e cabecalho na copia
+            ig.igSeparator();
+            if (ig.igMenuItem_Bool(tr("menu_show_null"), null, app.prefs.show_null, true)) {
+                app.prefs.show_null = !app.prefs.show_null;
+                app.savePrefs();
+            }
+            if (ig.igMenuItem_Bool(tr("copy_header"), null, app.prefs.copy_header, true)) {
+                app.prefs.copy_header = !app.prefs.copy_header;
+                app.savePrefs();
             }
         }
         if (ig.igBeginMenu(help_l, true)) {
@@ -1725,7 +1739,7 @@ const App = struct {
                 const cols = [_][:0]const u8{ tr("schema_column"), tr("schema_type"), tr("schema_null") };
                 var shown = g.*;
                 shown.columns = &cols;
-                _ = drawGrid("##schema", &shown, null, &app.schema_sel, null, .plain);
+                _ = drawGrid("##schema", &shown, null, &app.schema_sel, null, .plain, &app.prefs);
             }
         }
         if (ig.igBeginTabItem(idLabel(&lb[2], "tab_sql", "sql"), null, if (app.focus_sql) ig.ImGuiTabItemFlags_SetSelected else 0)) {
@@ -1804,7 +1818,7 @@ const App = struct {
         }
 
         app.data_sel.has_filters = app.filters.items.len > 0;
-        if (app.data) |*g| if (drawGrid("##data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null, .filter)) |s| {
+        if (app.data) |*g| if (drawGrid("##data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null, .filter, &app.prefs)) |s| {
             app.sort_col = s.col;
             app.sort_desc = s.desc;
             app.page = 0;
@@ -1848,7 +1862,7 @@ const App = struct {
             ig.igSameLine(0, -1);
             textSlice(hidden[3..]); // sem o " | " do comeco
         }
-        _ = drawGrid("##result", g, null, &app.result_sel, app.result_rows, .hide);
+        _ = drawGrid("##result", g, null, &app.result_sel, app.result_rows, .hide, &app.prefs);
     }
 };
 
@@ -1896,16 +1910,17 @@ const max_grid_cols = 512;
 // plain: so copia; hide: tambem ocultar colunas; filter: tambem "Filtrar por este valor" (aba Dados)
 const GridMode = enum { plain, hide, filter };
 
-var copy_header = false; // "Copiar linha" tambem copia a linha de nomes das colunas
+var prefs_dirty = false; // opcao mudada dentro de uma grade (menu da celula): update() grava as configuracoes
 
-// Poe na area de transferencia o valor da celula selecionada ou a linha dela separada por TAB (NULL = vazio)
-fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool) void {
+// Poe na area de transferencia o valor da celula selecionada ou a linha dela separada por TAB (NULL = vazio);
+// `header`: a linha de nomes das colunas vem antes
+fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool, header: bool) void {
     const r = sel.row orelse return;
     if (r >= g.rows.len or sel.col >= g.columns.len) return;
     var out: std.Io.Writer.Allocating = .init(std.heap.page_allocator);
     defer out.deinit();
     const w = &out.writer;
-    (if (whole_row) dbm.gridtools.writeRow(w, g.columns, g.rows[r], copy_header) else w.writeAll(g.rows[r][sel.col] orelse "")) catch return;
+    (if (whole_row) dbm.gridtools.writeRow(w, g.columns, g.rows[r], header) else w.writeAll(g.rows[r][sel.col] orelse "")) catch return;
     w.writeByte(0) catch return;
     ig.igSetClipboardText(out.written().ptr);
 }
@@ -1914,8 +1929,8 @@ fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool) void 
 // `rows` limita e ordena as linhas mostradas (filtro); null = todas.
 // Clique seleciona a celula; Ctrl+C copia o valor; o clique direito abre o menu da celula (copiar, filtrar).
 // Com `mode` != .plain o clique direito no cabecalho oculta colunas e abre o popup "Colunas...".
-// NULL aparece como celula vazia (igual as outras stacks).
-fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, rows: ?[]const usize, mode: GridMode) ?Sort {
+// NULL aparece como celula vazia ou como "NULL" (Configuracoes > Exibir NULL).
+fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, rows: ?[]const usize, mode: GridMode, prefs: *settings.Settings) ?Sort {
     const n_cols: usize = @min(g.columns.len, max_grid_cols);
     if (n_cols == 0) return null;
     const can_hide = mode != .plain;
@@ -1997,9 +2012,11 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
                 ig.igPopID();
                 // DOUBLE inteiro sem ".0" so na tela; a celula (copia, filtro) segue com o texto original
                 const float = c < g.float_cols.len and g.float_cols[c];
-                if (cell) |s| {
+                const disp: ?[]const u8 = if (cell) |s|
+                    (if (float) dbm.gridtools.wholeFloatText(s) else s)
+                else if (prefs.show_null) tr("null_text") else null;
+                if (disp) |txt| {
                     ig.igSameLine(0, 0);
-                    const txt = if (float) dbm.gridtools.wholeFloatText(s) else s;
                     // numero alinhado a direita (o cabecalho tambem); texto a esquerda
                     if (c < g.num_cols.len and g.num_cols[c]) rightAlign(textWidth(txt), 0);
                     textSlice(txt);
@@ -2008,7 +2025,7 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         }
     }
 
-    if (ig.igIsWindowFocused(0) and ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_C)) copySelection(g, sel, false);
+    if (ig.igIsWindowFocused(0) and ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_C)) copySelection(g, sel, false, prefs.copy_header);
     if (open_menu) _ = ig.igOpenPopup_Str("##copy", 0);
     if (ig.igBeginPopup("##copy", 0)) {
         defer ig.igEndPopup();
@@ -2017,10 +2034,11 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
             if (ig.igMenuItem_Bool(tr("clear_filters"), null, false, sel.has_filters)) sel.want_clear = true;
             ig.igSeparator();
         }
-        if (ig.igMenuItem_Bool(tr("copy_value"), "Ctrl+C", false, true)) copySelection(g, sel, false);
-        if (ig.igMenuItem_Bool(tr("copy_row"), null, false, true)) copySelection(g, sel, true);
+        if (ig.igMenuItem_Bool(tr("copy_value"), "Ctrl+C", false, true)) copySelection(g, sel, false, prefs.copy_header);
+        if (ig.igMenuItem_Bool(tr("copy_row"), null, false, true)) copySelection(g, sel, true, prefs.copy_header);
         ig.igSeparator();
-        _ = ig.igCheckbox(tr("copy_header"), &copy_header);
+        // a mesma opcao de Configuracoes, gravada
+        if (ig.igCheckbox(tr("copy_header"), &prefs.copy_header)) prefs_dirty = true;
     }
     if (!can_hide) return changed;
 

@@ -32,6 +32,7 @@ pub const rows_match = "{d} of {d} rows match{s}";
 pub const schema_column = "Column";
 pub const schema_type = "Type";
 pub const schema_null = "Nullable";
+pub const null_text = "NULL";
 
 // grid menus and Columns dialog
 pub const filter_by_value = "Filter by this value";
@@ -59,6 +60,7 @@ pub const theme_system = "System";
 pub const theme_light = "Light";
 pub const theme_dark = "Dark";
 pub const menu_language = "Language";
+pub const menu_show_null = "Show NULL";
 pub const menu_help = "Help";
 pub const menu_about = "About mdb2sql";
 pub const export_db_sqlite = "Database to SQLite (.sqlite)...";
