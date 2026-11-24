@@ -156,7 +156,8 @@ The flags set the start state (for scripts and screenshots); `--theme` and `--la
 
 ## Tested
 
-Windows 11 Pro x64 (build 26300) and Debian 13 (WSL 2), Zig 0.17.1, DuckDB 2.0.0, Dear ImGui 1.93.0, GLFW 3.4.
+Windows 11 Pro x64 (build 26300) and Debian 13 (WSL 2), Zig 0.17.1, DuckDB 2.0.0, Dear ImGui 1.93.0, GLFW 3.4,
+FreeType 2.15.0.
 Databases used: COPIES of the real NMR5 files `2026-07-14 DB4.accdb` and `2026-06-25 DB3 1.accdb`, `nwind.mdb` from
 the public mdbtools test data, and the small `testdata/mdb2sql_test.mdb` kept in this folder.
 
@@ -300,6 +301,7 @@ On Debian itself: `./build_debian_amd64.sh`. Everything about building, products
 | [Zig](https://ziglang.org) | 0.17.1 | compiler | sha256 in `scripts/setup_tools.ps1` and `scripts/setup_tools_linux.sh` |
 | [Dear ImGui](https://github.com/ocornut/imgui) | 1.93.0 docking, commit `6d32174` | UI, GLFW and OpenGL3 backends | hash in `build.zig.zon` |
 | [cimgui](https://github.com/cimgui/cimgui) | tag `1.93dock`, commit `2a6a93f` | C API of Dear ImGui | hash in `build.zig.zon` |
+| [FreeType](https://freetype.org) | 2.15.0 (tag `VER-2-15-0`), GPLv2 option of its dual license | text rasterizer of Dear ImGui (hinted glyphs) | hash in `build.zig.zon` |
 | [zglfw](https://github.com/zig-gamedev/zglfw) | commit `2450fe3` (GLFW 3.4) | window, input, OpenGL context | hash in `build.zig.zon` |
 | [libduckdb](https://github.com/duckdb/duckdb/releases/tag/v2.0.0) | 2.0.0, `duckdb-shared-libs-{windows,linux}-amd64.tar.gz` | database engine | hash in `build.zig.zon` |
 | DuckDB `sqlite_scanner` extension | v2.0.0 windows_amd64 / linux_amd64 (signed by DuckDB) | SQLite read and write | sha256 in the setup scripts |
