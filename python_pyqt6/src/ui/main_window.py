@@ -19,7 +19,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QFontMetrics, QGuiApplication, QIcon, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QGuiApplication, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -327,7 +327,9 @@ class MainWindow(QMainWindow):
         self.sql_edit = QPlainTextEdit()
         self.sql_edit.setAccessibleName("SQL")
         self.sql_edit.setPlaceholderText("SELECT * FROM ...")
-        self.sql_edit.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        sql_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        sql_font.setPointSizeF(self.font().pointSizeF())  # monoespacada no tamanho da base (14 px), nao nos 9 pt
+        self.sql_edit.setFont(sql_font)
         self.sql_edit.addAction(self.run_sql_action)
         run_button = QPushButton(tr("button.run"))
         run_button.setAccessibleName(tr("action.run_sql").replace("&", ""))
@@ -1165,7 +1167,7 @@ class MainWindow(QMainWindow):
             view.resizeColumnToContents(column)  # !T: Qt takes the larger of the header text and the content
             # !T: Qt measures only the first rows (resize precision); the longest texts of all loaded rows are
             # !T: measured here so no value is cut with "..."; only above MAX_COLUMN_WIDTH (tooltip has the full text)
-            metrics = QFontMetrics(model.cell_font(column, view.font()))
+            metrics = view.fontMetrics()
             longest = max((metrics.horizontalAdvance(text) for text in model.longest_texts(column)), default=0)
             width = max(view.columnWidth(column), longest + padding)
             view.setColumnWidth(column, min(width + gap, MAX_COLUMN_WIDTH))

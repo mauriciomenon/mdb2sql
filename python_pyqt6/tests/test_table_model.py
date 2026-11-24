@@ -75,7 +75,8 @@ def test_model_roles(qtbot) -> None:
     assert model.data(model.index(1, 1)) == ""
     assert model.data(model.index(0, 0), Qt.ItemDataRole.TextAlignmentRole) & Qt.AlignmentFlag.AlignRight
     assert model.data(model.index(0, 1), Qt.ItemDataRole.TextAlignmentRole) & Qt.AlignmentFlag.AlignLeft
-    assert model.data(model.index(0, 0), Qt.ItemDataRole.FontRole) is not None
+    # numeros na fonte base como o texto (Segoe UI 14 px nas 4 versoes), nao na monoespacada de 9 pt do sistema
+    assert model.data(model.index(0, 0), Qt.ItemDataRole.FontRole) is None
     assert model.data(model.index(0, 1), Qt.ItemDataRole.FontRole) is None
     assert model.headerData(1, Qt.Orientation.Horizontal) == "name"
     # cabecalho alinhado como a coluna: numeros a direita, texto a esquerda
