@@ -181,7 +181,11 @@ function getWailsBridge() {
 
 function App() {
   const [lang, setLang] = useState<Lang>('en');
-  const t: T = (key, ...args) => translate(lang, key, ...args);
+  // t reads the language when called, not when its render ran: work started by an older render (the startup file)
+  // finishes in the current language
+  const langRef = useRef<Lang>(lang);
+  langRef.current = lang;
+  const t: T = (key, ...args) => translate(langRef.current, key, ...args);
   const [tables, setTables] = useState<string[]>([]);
   const [dbName, setDbName] = useState('');
   const [source, setSource] = useState('');
@@ -343,9 +347,10 @@ function App() {
         }
       })
       .catch(() => {});
-    bridge?.GetLanguage?.()
+    const langLoaded = Promise.resolve(bridge?.GetLanguage?.())
       .then((l) => {
         if (l && LANGS.includes(l)) {
+          langRef.current = l; // before the re-render: the startup file below already speaks it
           setLang(l);
           setStatusText(translate(l, 'status.none'));
         }
@@ -360,7 +365,10 @@ function App() {
         }
       })
       .catch(() => {});
-    bridge?.StartupPath?.().then((p) => p && openPath(p)).catch(fail);
+    langLoaded
+      .then(() => bridge?.StartupPath?.())
+      .then((p) => p && openPath(p))
+      .catch(fail);
   }, []);
 
   useEffect(() => {

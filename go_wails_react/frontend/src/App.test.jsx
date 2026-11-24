@@ -536,6 +536,14 @@ describe('App IPC flow', () => {
     expect(document.documentElement.dataset.theme).toBe('dark');
   });
 
+  // the startup file was opened by the first render, whose texts were English: pt-BR got "Loaded: ... (2 tables)"
+  it('speaks the saved language when it opens the file of the command line', async () => {
+    const StartupPath = vi.fn(async () => 'C:\\data\\DB4.sqlite');
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, StartupPath, GetLanguage: vi.fn(async () => 'pt-BR') } } } });
+    render(<App />);
+    expect(await screen.findByText('Carregado: DB4.sqlite (2 tabelas)')).toBeInTheDocument();
+  });
+
   it('switches the language from Settings > Language without restarting and saves it', async () => {
     const SetLanguage = vi.fn(async () => {});
     const GetLanguage = vi.fn(async () => 'es');
