@@ -195,6 +195,20 @@ def test_search_all_tables_and_open_one(qtbot, window: MainWindow) -> None:
     assert again.scope_actions["all"].isChecked() and again.default_scope_actions["all"].isChecked()
 
 
+def test_opening_a_found_table_clears_its_value_filters(qtbot, window: MainWindow) -> None:
+    # igual nas 4 versoes: a lista diz "people (1)" e a grade mostra 1, mesmo com o filtro id = 2 (Bruno) antes
+    _select_table(qtbot, window, "people")
+    _reloaded(qtbot, window, lambda: window.add_filter("id", 2))
+    window.scope_actions["all"].trigger()
+    window.search_edit.setText("ANA")
+    qtbot.waitUntil(lambda: window.found_list.count() == 1, timeout=30000)
+    window.found_list.itemClicked.emit(window.found_list.item(0))
+    qtbot.waitUntil(lambda: window.loaded_search == "ANA" and window._busy == 0, timeout=30000)
+
+    assert window.filters == [] and _chips(window) == [] and window.clear_filters_button.isHidden()
+    assert window.matched_rows == 1 and _column(window, 1) == ["Ana"]
+
+
 def test_show_null_setting(qtbot, window: MainWindow) -> None:
     # Configuracoes > Exibir NULL: desligado por padrao (sem a chave gravada = celula vazia, como antes); ligado
     # mostra o texto NULL so na grade; gravado

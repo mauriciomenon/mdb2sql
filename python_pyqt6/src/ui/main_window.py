@@ -1097,8 +1097,11 @@ class MainWindow(QMainWindow):
             self._set_message(self.info_label, tr("status.error", message=message), error=True)
 
     def open_found_table(self, item: QListWidgetItem) -> None:
-        # a tabela escolhida abre na aba Data com a mesma pesquisa; o escopo volta para esta tabela
+        # a tabela escolhida abre na aba Data com a mesma pesquisa e sem filtros por valor (a grade mostra o numero
+        # listado, igual nas 4 versoes); o escopo volta para esta tabela
         self.scope_actions["table"].setChecked(True)
+        self.filters.clear()
+        self._refresh_filter_bar()
         found = self.table_list.findItems(item.data(Qt.ItemDataRole.UserRole), Qt.MatchFlag.MatchExactly)
         if found:
             self.table_list.setCurrentItem(found[0])
