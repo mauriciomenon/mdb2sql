@@ -104,6 +104,8 @@ winget install Microsoft.EdgeWebView2Runtime
 ```
 
 #### Build Go/Wails Implementation
+pnpm is not installed on the system: `scripts\setup_tools.ps1` downloads pnpm 12.23.0 to `go_wails_react\.tools\pnpm`
+and `. scripts\env_w11.ps1` puts it on PATH (Go, GCC and Wails too). The same holds for rust_tauri_svelte.
 ```powershell
 cd go_wails_react\frontend
 pnpm install --frozen-lockfile   # workspace member; uses the root pnpm-lock.yaml

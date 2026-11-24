@@ -84,15 +84,8 @@ node --version
 npm --version
 ```
 
-**Instalar pnpm globalmente:**
-```bash
-sudo npm install -g pnpm
-```
-
-**Verificar:**
-```bash
-pnpm --version
-```
+**pnpm:** nao instalar no sistema. O `build_debian_amd64.sh` de go_wails_react e de rust_tauri_svelte baixa o
+pnpm 12.23.0 para a pasta `.tools` da stack (store e cache tambem em `.tools`) e o poe no PATH durante o build.
 
 ---
 
@@ -549,7 +542,7 @@ Debian: 13.2 stable
 Kernel: 6.x
 Node.js: 23.3.0
 npm: 10.9.0
-pnpm: Latest
+pnpm: 12.23.0 (na pasta .tools da stack, nao no sistema)
 Python: 3.12.x
 uv: latest
 Go: 1.26.11

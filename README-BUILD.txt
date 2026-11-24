@@ -40,7 +40,7 @@ detalhes; aqui fica so o mapa. Nao ha build na raiz.
 4. PRE-REQUISITOS DO SISTEMA (o resto vem para .tools\)
 -------------------------------------------------------
   python_pyqt6        uv
-  go_wails_react      Node.js 22+ e pnpm, WebView2
-  rust_tauri_svelte   rustup, Visual Studio Build Tools (C++ + Windows SDK), Node.js e pnpm, WebView2
+  go_wails_react      Node.js 22+, WebView2 (o pnpm vem para .tools\, nunca no sistema)
+  rust_tauri_svelte   rustup, Visual Studio Build Tools (C++ + Windows SDK), Node.js, WebView2 (pnpm em .tools\)
   zig_imgui           nada alem do PowerShell 7 e do tar.exe do Windows
   Guias de instalacao: docs\SetupWindows11.md, docs\SetupWindows.md, docs\SetupDebian.md.

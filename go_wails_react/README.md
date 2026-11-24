@@ -195,9 +195,9 @@ shows "build dev".
 
 cgo (duckdb-go) needs a GCC with the UCRT runtime on Windows; the Wails CLI 2.13.0 does not run on Go 1.27; the
 sqlite extension is the signed file of the platform of the linked DuckDB, embedded and loaded from disk, never
-downloaded at run time. System prerequisites: Windows: Node.js 22+ and pnpm, WebView2, git. Debian:
+downloaded at run time. System prerequisites: Windows: Node.js 22+, WebView2, git. Debian:
 `sudo apt install build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev dpkg-dev zip curl nodejs`
-(Node 20.19+; pnpm comes through corepack).
+(Node 20.19+). pnpm 12.23.0 is downloaded to `.tools` by the build command, never installed on the system.
 
 ### Build
 

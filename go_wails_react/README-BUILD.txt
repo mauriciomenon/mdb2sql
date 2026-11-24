@@ -30,8 +30,7 @@ fica cada coisa. Versao: info.productVersion em wails.json (fonte unica).
   conferindo o sha256 de cada arquivo.
 
 Requisitos (Windows):
-  No sistema: Node.js 22+ e pnpm (workspace pnpm da raiz do repositorio, pnpm-lock.yaml unico),
-              WebView2 Runtime (parte do Windows 11), git. gh (GitHub CLI logado) so se o release do
+  No sistema: Node.js 22+, WebView2 Runtime (parte do Windows 11), git. gh (GitHub CLI logado) so se o release do
               mdbtools_custom continuar privado (o curl recebe 404 e o script tenta o gh).
   Baixados para .tools\ pelo proprio comando (sha256 conferido), cerca de 1,4 GB:
     .tools\go          Go 1.26.10 (zip oficial de go.dev)
@@ -40,15 +39,19 @@ Requisitos (Windows):
     .tools\nsis        NSIS 3.12 (makensis, para o instalador)
     .tools\mdbtools    mdbtools 1.0.1 estatico (release win-static-1.0.1 de mdbtools_custom)
     .tools\duckdb-ext  extensao sqlite do DuckDB v2.0.0 windows_amd64_mingw (.gz)
+    .tools\pnpm        pnpm 12.23.0 (zip do release oficial); store e cache em .tools\pnpm-store e .tools\pnpm-cache.
+                       O workspace pnpm e da raiz do repositorio (pnpm-lock.yaml unico); o clean apaga o
+                       node_modules da raiz e o refaz deste store.
   Sem .tools\ o build usa go/wails do PATH (GOTOOLCHAIN=go1.26.11), o GCC de MDB2SQL_GCC_BIN e o
   makensis do PATH; mdbtools e a extensao sao obrigatorios (vao para dentro do exe).
 
 Requisitos (Debian 13 amd64):
   No sistema (uma vez, com root): sudo apt install build-essential pkg-config libgtk-3-dev
-              libwebkit2gtk-4.1-dev dpkg-dev zip curl nodejs        (Node.js 20.19+; o pnpm vem pelo corepack)
+              libwebkit2gtk-4.1-dev dpkg-dev zip curl nodejs        (Node.js 20.19+)
   Baixados para .tools/linux/ pelo proprio comando (sha256 conferido):
     go/            Go 1.26.10 (tar.gz oficial de go.dev)
-    bin/wails      Wails CLI 2.13.0 (go install); bin/pnpm chama "corepack pnpm" (versao de frontend/package.json)
+    bin/wails      Wails CLI 2.13.0 (go install)
+    pnpm/          pnpm 12.23.0 (tar.gz do release oficial); store e cache em pnpm-store/ e pnpm-cache/
     mdbtools/      mdbtools_1.0.1-0.1 e libmdb3t64_1.0.1-0.1 do Debian 13 (deb.debian.org, extraidos sem root)
     downloads/     os .deb, o tar.gz do Go
   A extensao sqlite do DuckDB v2.0.0 linux_amd64 vai direto para backend/embedded/ (sha256 conferido).

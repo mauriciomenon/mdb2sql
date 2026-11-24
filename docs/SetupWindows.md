@@ -67,15 +67,9 @@ node --version
 npm --version
 ```
 
-**Install pnpm globally:**
-```powershell
-npm install -g pnpm@10.18.2
-```
-
-**Verify pnpm:**
-```powershell
-pnpm --version
-```
+**pnpm:** do not install it on the system. `build_w11_amd64.ps1` of go_wails_react and rust_tauri_svelte downloads
+pnpm 12.23.0 to `<stack>\.tools\pnpm` (store and cache also in `.tools`); `. scripts\env_w11.ps1` of the stack puts
+it on PATH for the manual commands below.
 
 ---
 
@@ -474,7 +468,7 @@ New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
 ```
 Node.js: 23.3.0
 npm: 10.9.0
-pnpm: 10.18.2
+pnpm: 12.23.0 (in <stack>\.tools, not on the system)
 Python: 3.12.x
 uv: latest
 Go: 1.26.11

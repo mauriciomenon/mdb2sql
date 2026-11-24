@@ -27,7 +27,7 @@ rodar e onde fica cada coisa. Versao: "version" em Cargo.toml (fonte unica; carg
   macOS, Arch, BSD   sem script nesta versao (fica para a proxima rodada; nada testado).
 
 Requisitos (Debian 13 amd64, no Linux ou no WSL):
-  No sistema: git, curl, rustup, Node.js >= 20.19 (traz o corepack), gcc/make (build-essential), zip,
+  No sistema: git, curl, rustup, Node.js >= 20.19, gcc/make (build-essential), zip,
               dpkg-dev e as bibliotecas de desenvolvimento do Tauri:
                 sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev \
                     libsoup-3.0-dev librsvg2-dev libxdo-dev libssl-dev dpkg-dev zip
@@ -35,7 +35,8 @@ Requisitos (Debian 13 amd64, no Linux ou no WSL):
   Preparados pelo comando (scripts/build_debian.sh), na pasta .tools/ do clone Linux:
     Rust 1.99.1              rust-toolchain.toml (rustup)
     .tools/bin/cargo-tauri   tauri-cli 2.12.4, cargo install --locked
-    .tools/bin/pnpm          pnpm da versao do ui/package.json pelo corepack
+    .tools/pnpm/             pnpm 12.23.0 (tar.gz do release oficial, sha256 conferido); store e cache em
+                             .tools/pnpm-store e .tools/pnpm-cache
     .tools/mdbtools-1.0.1-linux-amd64/
                              mdbtools 1.0.1 compilado do fonte oficial (github.com/mdbtools/mdbtools, release
                              v1.0.1, mdbtools-1.0.1.tar.gz, sha256 ff9c425a88bc20bf9318a332eec50b17e77896eef65a0e69415ccb4e396d1812
@@ -47,7 +48,7 @@ Requisitos (Debian 13 amd64, no Linux ou no WSL):
 
 Requisitos (Windows):
   No sistema: rustup, Visual Studio Build Tools (C++ + Windows SDK: link.exe e o cl.exe que compila o
-              DuckDB e o SQLite embutidos), Node.js + pnpm, WebView2 Runtime, gh logado (so se o download
+              DuckDB e o SQLite embutidos), Node.js, WebView2 Runtime, gh logado (so se o download
               anonimo do mdbtools falhar: o repositorio mdbtools_custom e privado).
   Preparados pelo comando:
     Rust 1.99.1              rust-toolchain.toml, instalado pelo rustup (assinatura conferida)
@@ -57,7 +58,10 @@ Requisitos (Windows):
                              mdbtools-1.0.1-w11-amd64.zip, sha256 e15c69b9da2f8218f8c1db18fe0147d242cb888522d6c481e8c7c9d97e0405de
                              conferido); mdb-tables, mdb-schema, mdb-export, COPYING, COPYING.LIB e VERSION.txt vao
                              para dentro do exe (include_bytes! em src\backend\access.rs)
-    node_modules             pnpm install --frozen-lockfile (pnpm-lock.yaml da raiz)
+    .tools\pnpm\             pnpm 12.23.0 (zip do release oficial, sha256 conferido); store e cache em
+                             .tools\pnpm-store e .tools\pnpm-cache
+    node_modules             pnpm install --frozen-lockfile (pnpm-lock.yaml da raiz); o clean apaga o node_modules
+                             da raiz e o refaz do store de .tools
     NSIS e WiX               baixados pelo tauri-cli para %LOCALAPPDATA%\tauri na 1a vez (hash conferido)
   O build demora (~10 min): o DuckDB (C++) leva varios minutos e o clean apaga target\.
   Sem .tools\mdbtools-1.0.1-w11-amd64\ o cargo nao compila: rode scripts\setup_tools.ps1 uma vez.
@@ -113,7 +117,7 @@ Debian - dist/debian/amd64/ (dist\debianmd64\ no Windows, pelo WSL)
 --------------------
   build_w11_amd64.ps1
    -> clean.ps1
-   -> scripts\setup_tools.ps1   rustup toolchain install, cargo install tauri-cli, pnpm install, mdbtools
+   -> scripts\setup_tools.ps1   rustup toolchain install, cargo install tauri-cli, pnpm (.tools\pnpm) e pnpm install, mdbtools
    -> scripts\build_w11.ps1     cargo tauri build (exe + NSIS + MSI)
    -> scripts\test_w11.ps1      cargo test --release e pnpm --filter mdb2sql-ui test
    -> scripts\package_w11.ps1   copia, renomeia e zipa para dist\w11\amd64\
