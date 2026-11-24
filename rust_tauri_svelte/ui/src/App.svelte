@@ -1171,7 +1171,8 @@
   :global(body) {
     background: var(--bg);
     color: var(--text);
-    font: 13px/1.4 'Segoe UI', system-ui, -apple-system, 'Roboto', sans-serif;
+    /* 14px: o tamanho de letra das 4 versoes (o do Go/Wails) */
+    font: 14px/1.4 'Segoe UI', system-ui, -apple-system, 'Roboto', sans-serif;
   }
 
   .app {
