@@ -111,7 +111,7 @@ export default {
   'schema.number': '#',
   'schema.column': 'Column',
   'schema.type': 'Type',
-  'schema.null': 'Null',
+  'schema.nullable': 'Nullable',
 
   'grid.cell': 'Cell',
   'grid.columnMenu': 'Column {name}',

@@ -163,7 +163,7 @@
     return columns.filter((col) => hasAllWords(fold(col.name), words));
   });
   let schemaColumns = $derived(
-    ['schema.number', 'schema.column', 'schema.type', 'schema.null'].map((key) => ({ name: t(key), type: '' }))
+    ['schema.number', 'schema.column', 'schema.type', 'schema.nullable'].map((key) => ({ name: t(key), type: '' }))
   );
   // aviso de X11 em 3 linhas curtas (dialogo e log): situacao, o fato (sem rotulo "Falta:"), comando da distro (sem comando em
   // distro desconhecida)

@@ -111,7 +111,7 @@ export default {
   'schema.number': '#',
   'schema.column': 'Coluna',
   'schema.type': 'Tipo',
-  'schema.null': 'Nulo',
+  'schema.nullable': 'Aceita nulo',
 
   'grid.cell': 'Célula',
   'grid.columnMenu': 'Coluna {name}',
