@@ -9,12 +9,10 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QCoreApplication, QLibraryInfo, QLocale, QSettings, Qt, QTranslator
-from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
 from backend.database_tasks import database_path_from_env
 from shared import i18n
-from shared.bundle import resource
 from shared.display import Notice, linux_choice
 from shared.i18n import tr
 from ui.dialogs import DisplayWarning
@@ -52,10 +50,6 @@ def main():
 
     # Cria aplicacao Qt - cada app PyQt6 precisa exatamente 1 QApplication
     app = QApplication(sys.argv)
-    # icone da barra de titulo e da barra de tarefas: .ico com varios tamanhos + PNG 1024 para telas de DPI alto
-    icon = QIcon(str(resource("mdb2sql.ico")))
-    icon.addFile(str(resource("mdb2sql.png")))
-    app.setWindowIcon(icon)
     # Tema claro/escuro segue o sistema pelo estilo nativo (windows11, macOS, Fusion)
     # !T: The Windows 10 style ("windowsvista") has no dark mode; Fusion follows the system scheme
     if app.style().objectName() == "windowsvista":

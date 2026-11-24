@@ -19,7 +19,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QFontMetrics, QGuiApplication, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QFontMetrics, QGuiApplication, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -61,6 +61,7 @@ from backend.export import Cancelled, default_save_dir, export_database, export_
 from backend.temp_store import SessionDir
 from shared import i18n
 from shared.about import app_title
+from shared.bundle import resource
 from shared.i18n import num, tr
 from shared.tsv import rows_to_tsv
 from ui.dialogs import AboutDialog, ColumnsDialog
@@ -155,6 +156,11 @@ class _DatabaseWorker(QRunnable):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        # icone da barra de titulo, da barra de tarefas e dos dialogos, de onde quer que a janela seja aberta (exe,
+        # codigo, testes): .ico com varios tamanhos + PNG 1024 para telas de DPI alto
+        icon = QIcon(str(resource("mdb2sql.ico")))
+        icon.addFile(str(resource("mdb2sql.png")))
+        QGuiApplication.setWindowIcon(icon)
         self.settings = QSettings()
         self.manager: DBManager | None = None
         self.current_db_path: Path | None = None

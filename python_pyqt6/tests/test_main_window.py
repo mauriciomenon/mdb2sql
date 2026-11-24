@@ -39,13 +39,11 @@ def test_starts_empty(qtbot) -> None:
     assert win.progress.isHidden()
 
 
-def test_app_icon_loads(qtbot) -> None:
-    from PyQt6.QtGui import QIcon
-
-    from shared.bundle import resource
-
-    icon = QIcon(str(resource("mdb2sql.ico")))
-    assert 16 in {size.width() for size in icon.availableSizes()}  # .ico com varios tamanhos, lido pelo Qt
+def test_window_has_app_icon_without_main(qtbot) -> None:
+    # a janela aberta sem main.py (testes, codigo) tambem leva o icone: .ico com varios tamanhos, lido pelo Qt
+    win = MainWindow()
+    qtbot.addWidget(win)
+    assert 16 in {size.width() for size in win.windowIcon().availableSizes()}
 
 
 def test_missing_database_reports_error(qtbot, tmp_path: Path) -> None:
