@@ -106,21 +106,30 @@ While a file opens, the status line shows the time, a progress bar (tables conve
 ### Window
 
 - **Table list** (left): every table with its row count, the whole name shown (the panel starts as wide as the
-  longest name, up to 40% of the window, and scrolls sideways beyond that); the box on top filters by name.
-- **Data** tab: 100 rows per page, **< Prev** / **Next >**, search box (Enter), click a column header to sort.
-  The search runs in the database over the **whole table** (every column), for Access, SQLite and DuckDB alike, before
-  the paging: the row count and pages follow it.
+  longest name, up to 40% of the window, and scrolls sideways beyond that); the box on top filters by name 300 ms
+  after the last key (Enter: at once).
+- **Data** tab: 100 rows per page, **< Prev** / **Next >**, search box, click a column header to sort. The search
+  runs 300 ms after the last key (Enter: at once), in the database over the **whole table** (every column), for
+  Access, SQLite and DuckDB alike, before the paging: the row count and pages follow it.
+- Next to the search box, **This table** | **All tables**: with **All tables** the text is searched in every table
+  (same rule and same query as the table search) and the Data tab lists the tables with the number of rows found;
+  clicking one opens that table with the same search, showing that same number of rows. The default is in
+  **Settings > Default search scope**.
 - **Columns...** (Data tab and SQL result): one check box per column, a box to find a column by name, **Show all** and
   **Hide all** (with text in the find box they act only on the columns listed). Right-click a column header:
-  **Hide this column**, **Columns...**, **Show all**. Hidden columns are still searched and exported.
+  **Size column to fit**, **Size all columns to fit**, **Hide this column**, **Show all columns**, **Columns...** and
+  the list of columns with a check mark (a click shows or hides it; the menu stays open). The last visible column
+  cannot be hidden. Hidden columns last while the table is open, are not saved, and are still searched and exported.
 - **Filter by this value** (right-click a cell of the Data tab): exact `column = value` filter in the database
   query; several add up (AND) and combine with the search; each is a button above the grid (click to remove).
 - **Schema** tab: column, type, nullable. **SQL** tab: any SQL, **Run** (Ctrl+Enter), first 10,000 rows shown.
 - **Search rule**: the text is split into words; a row matches when one cell holds every word, in any order,
   ignoring case and accents (`Tensión campo` finds `EXCITACION TENSION DE CAMPO`; `tensao` does not: there is no
   fuzzy matching).
-- A NULL cell is shown empty (as in the other stacks); copy gives an empty value.
-- Every grid: click a cell, **Ctrl+C** copies it, right-click: **Copy value** / **Copy row (TAB separated)**.
+- A NULL cell is shown empty; with **Settings > Show NULL** on it shows `NULL` (display only: copy gives an empty
+  value, search and export do not change).
+- Every grid: click a cell, **Ctrl+C** copies it, right-click: **Copy value** / **Copy row (TAB separated)** and
+  **Copy row includes the header** (the same option as in Settings).
 - Long work runs in the background with **Cancel**.
 
 ### Menus
@@ -135,14 +144,15 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   important message not yet seen in the log (last error in red, else last warning, else the last action) with a
   count of new ones; clicking it opens the log. Right-click the status bar: **Copy** (the whole text).
 - Numbers are right-aligned in the grids and in the row counts of the table list (headers too); arrows are `←` `→`.
-- **Settings > Theme**: System, Light, Dark. **Settings > Language**: English, Português (Brasil), Español. Both are
-  saved and apply at once, without restarting.
+- **Settings > Theme**: System, Light, Dark. **Settings > Language**: English, Português (Brasil), Español.
+  **Settings > Default search scope**: This table, All tables. **Settings > Show NULL** (off by default).
+  **Settings > Copy row includes the header**. All are saved and apply at once, without restarting.
 - **Help > About mdb2sql**: version, build, stack, Access reader, license and the GitHub and GitLab links.
 
 ### Saved settings
 
 Windows: `%APPDATA%\mdb2sql\zig-imgui.ini`; Linux: `~/.config/mdb2sql/zig-imgui.ini` (`$XDG_CONFIG_HOME` if set).
-Theme, language and the last folder used.
+Theme, language, Log panel, default search scope, Show NULL, Copy row includes the header and the last folder used.
 
 ### Command line
 
