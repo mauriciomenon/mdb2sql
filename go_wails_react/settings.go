@@ -16,7 +16,7 @@ type Settings struct {
 	Language string `json:"language"` // en (default), pt-BR or es
 	LastDir  string `json:"lastDir"`
 	LogOpen  bool   `json:"logOpen"`  // Log panel expanded (default: collapsed)
-	ShowNull bool   `json:"showNull"` // a NULL cell shows "NULL" (default) or stays empty
+	ShowNull bool   `json:"showNull"` // a NULL cell shows "NULL"; off (default) it stays empty
 	// Data tab search when the app starts: "table" (the open table, default) or "all" (all tables)
 	SearchScope string `json:"searchScope"`
 }
@@ -61,7 +61,7 @@ func settingsPath() string {
 }
 
 func loadSettings() Settings {
-	s := Settings{Theme: "system", Language: i18n.Langs[0], ShowNull: true}
+	s := Settings{Theme: "system", Language: i18n.Langs[0]}
 	if data, err := os.ReadFile(settingsPath()); err == nil {
 		_ = json.Unmarshal(data, &s) // a broken file just falls back to the defaults
 	}

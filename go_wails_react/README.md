@@ -111,7 +111,8 @@ Open a file with File > Open database (the dialog lists Access, SQLite and DuckD
   - SQL: any DuckDB SQL over the open database; Run or Ctrl+Enter; the search field filters its loaded result.
 - Click a cell; Ctrl+C copies the value. Right-click a cell: Filter by this value, Clear filters, Copy value,
   Copy row, Copy row with header (TAB-separated, pastes into Excel in columns).
-- A NULL cell shows NULL; Settings > Show NULL off leaves it empty (copy and exports are the same either way).
+- A NULL cell is empty; Settings > Show NULL (off by default) shows NULL there. Display only: copy, search and
+  exports are the same either way.
 - Filter by a value: a `WHERE column = value` (`IS NULL` for a NULL cell) in the database query; filters on
   several columns add up (AND) and show as removable chips. Exports ignore filters and search.
 - Columns...: one checkbox per column, a field to filter the list; "Show all" and "Hide all" act on the

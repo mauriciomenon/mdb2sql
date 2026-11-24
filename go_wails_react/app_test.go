@@ -319,14 +319,14 @@ func TestSettingsPersist(t *testing.T) {
 	if err := app.SetLogOpen(true); err != nil || !NewApp().GetLogOpen() {
 		t.Fatalf("log state after restart: %v", err)
 	}
-	// Show NULL: on by default, also for a settings file written before the option existed
+	// Show NULL: off by default, also for a settings file written before the option existed
 	if err := os.WriteFile(settingsPath(), []byte(`{"theme": "dark"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if app = NewApp(); !app.GetShowNull() {
-		t.Fatal("Show NULL off by default")
+	if app = NewApp(); app.GetShowNull() {
+		t.Fatal("Show NULL on by default")
 	}
-	if err := app.SetShowNull(false); err != nil || NewApp().GetShowNull() {
+	if err := app.SetShowNull(true); err != nil || !NewApp().GetShowNull() {
 		t.Fatalf("Show NULL after restart: %v", err)
 	}
 	// default search scope: this table, then what was chosen; an unknown one is refused

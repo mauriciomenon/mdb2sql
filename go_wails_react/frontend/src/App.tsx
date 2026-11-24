@@ -199,7 +199,7 @@ function App() {
   const [job, setJob] = useState(''); // verb of the running load/export ("" = none)
   const [progress, setProgress] = useState<Progress | null>(null);
   const [theme, setThemeState] = useState<Theme>('system');
-  const [showNull, setShowNull] = useState(true); // Settings > Show NULL
+  const [showNull, setShowNull] = useState(false); // Settings > Show NULL (off: a NULL cell is empty)
   const [openMenu, setOpenMenu] = useState<MenuName | null>(null);
   const [about, setAbout] = useState<AppInfo | null>(null);
   const [search, setSearch] = useState('');
@@ -334,7 +334,7 @@ function App() {
     const bridge = window.go?.main?.App;
     bridge?.GetLogOpen?.().then((open) => open && setLogOpen(true)).catch(() => {});
     bridge?.GetTheme?.().then((th) => th && setThemeState(th)).catch(() => {});
-    bridge?.GetShowNull?.().then((show) => setShowNull(show !== false)).catch(() => {});
+    bridge?.GetShowNull?.().then((show) => setShowNull(show === true)).catch(() => {});
     bridge?.GetSearchScope?.()
       .then((s) => {
         if (SCOPES.includes(s)) {
