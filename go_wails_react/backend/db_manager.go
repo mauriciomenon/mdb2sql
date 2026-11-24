@@ -20,6 +20,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"mdb2sql/i18n"
+
 	"github.com/duckdb/duckdb-go/v2"
 )
 
@@ -601,7 +603,7 @@ func (m *DBManager) rowCount(ctx context.Context, tableName string, search strin
 	query := fmt.Sprintf(`SELECT COUNT(*) FROM %s%s`, quoteIdent(tableName), where)
 	var count int
 	if err = m.conn.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
-		return 0, fmt.Errorf("failed to count rows: %w", err)
+		return 0, fmt.Errorf("%s: %w", i18n.T("err.countFailed"), err)
 	}
 
 	return count, nil

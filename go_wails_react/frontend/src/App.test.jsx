@@ -330,6 +330,39 @@ describe('App IPC flow', () => {
     expect(SetSearchScope).toHaveBeenCalledTimes(1);
   });
 
+  // audit 2026-11-24: an older "All tables" answer never shows; a failed search shows its error and ends "Searching"
+  it('drops the answer of an older All tables search and ends Searching when the search fails', async () => {
+    const answers = [];
+    const SearchAllTables = vi.fn(() => new Promise((resolve, reject) => answers.push({ resolve, reject })));
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables, GetSearchScope: vi.fn(async () => 'all') } } } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+    const box = screen.getByLabelText('Search the table');
+    const searchFor = (text) => {
+      fireEvent.change(box, { target: { value: text } });
+      fireEvent.keyDown(box, { key: 'Enter' });
+    };
+    searchFor('ana');
+    await waitFor(() => expect(SearchAllTables).toHaveBeenLastCalledWith('ana'));
+    searchFor('bob'); // a new term before the answer
+    await waitFor(() => expect(SearchAllTables).toHaveBeenLastCalledWith('bob'));
+    await act(async () => answers[0].resolve([{ table: 'RANGER_SOGEN', rows: 9 }]));
+    expect(screen.queryByRole('row', { name: 'RANGER_SOGEN 9' })).not.toBeInTheDocument();
+    expect(screen.getByText('Searching')).toBeInTheDocument();
+    searchFor(''); // the term erased: the grid comes back and the answer of "bob" is dropped too
+    await act(async () => answers[1].resolve([{ table: 'RANGER_SOGEN', rows: 5 }]));
+    expect(screen.queryByRole('row', { name: 'RANGER_SOGEN 5' })).not.toBeInTheDocument();
+    expect(await screen.findByText('Alpha')).toBeInTheDocument();
+
+    searchFor('zed');
+    await waitFor(() => expect(SearchAllTables).toHaveBeenLastCalledWith('zed'));
+    expect(screen.getByText('Searching')).toBeInTheDocument();
+    await act(async () => answers[2].reject(new Error('Could not count the rows: boom')));
+    expect(screen.queryByText('Searching')).not.toBeInTheDocument();
+    expect(screen.getByText('Could not count the rows: boom')).toBeInTheDocument();
+  });
+
   it('filters by the right-clicked value in the database query and shows removable chips', async () => {
     const GetRowCount = vi.fn(async (_table, filters) => (filters.length ? 1 : 2));
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetRowCount } } } });

@@ -64,6 +64,7 @@
   "err.badPath": "Ruta de base de datos no válida",
   "err.badReader": "MDB2SQL_ACCESS_READER=\"{0}\": use odbc, mdbtools o déjelo vacío",
   "err.bridge": "Puente IPC no disponible",
+  "err.countFailed": "No se pudieron contar las filas",
   "err.exportCancelled": "Exportación cancelada",
   "err.exportOverOpen": "No se puede exportar sobre el archivo abierto",
   "err.forcedMdbtools": "MDB2SQL_ACCESS_READER=mdbtools, pero mdbtools no está integrado en este build ni en el PATH",
