@@ -348,7 +348,7 @@ const Capture = struct {
                 return true;
             }
         }
-        if (c.check(app)) |why| c.wrong.print(app.gpa, "{s}: {s}\n", .{ dbm.capture.plan[c.step].name, why }) catch {};
+        c.check(app);
         c.save(app.gpa, io) catch |e| {
             c.failed = @errorName(e);
             return true;
@@ -360,25 +360,26 @@ const Capture = struct {
     }
 
     // O que o estado assentado tem de mostrar; null = certo
-    fn check(c: *const Capture, app: *const App) ?[]const u8 {
+    fn check(c: *Capture, app: *const App) void {
         const cap = dbm.capture;
-        return switch (cap.plan[c.step].action) {
-            .click_cell => if (app.data_sel.hiddenCount(app.col_names.len) != c.hidden_before) "clicking a cell showed the hidden columns again" else null,
-            .global_late => blk: {
-                const g = app.global orelse break :blk "no global search result";
-                for (g.hits) |h| if (std.mem.eql(u8, app.db.table_names[h.table], cap.late_table)) break :blk null;
-                break :blk "the table after the 10,000th catalog column is missing from the result";
+        switch (cap.plan[c.step].action) {
+            .click_cell => if (app.data_sel.hiddenCount(app.col_names.len) != c.hidden_before) c.note(app.gpa, "clicking a cell showed the hidden columns again"),
+            .global_late => {
+                const g = app.global orelse return c.note(app.gpa, "no global search result");
+                for (g.hits) |h| if (std.mem.eql(u8, app.db.table_names[h.table], cap.late_table)) return;
+                c.note(app.gpa, "the table after the 10,000th catalog column is missing from the result");
             },
-            .global_clear => if (!c.cleared)
-                "the search ended before the term could be cleared"
-            else if (app.global != null) "the old result came back after the term was cleared" else null,
-            .open_hit => if (app.filters.items.len > 0 or app.total != c.hit_rows) "the opened table does not show the row count listed" else null,
+            .global_clear => if (!c.cleared) c.note(app.gpa, "the search ended before the term could be cleared") else if (app.global != null) c.note(app.gpa, "the old result came back after the term was cleared"),
+            .open_hit => if (app.filters.items.len > 0 or app.total != c.hit_rows) c.note(app.gpa, "the opened table does not show the row count listed"),
             .reopen => if (app.table_filter[0] != 0 or app.table_filter_applied[0] != 0 or app.search[0] != 0 or app.scope != app.prefs.search_scope)
-                "the reopened file kept the table filter, the search or the scope"
-            else
-                null,
-            else => null,
-        };
+                c.note(app.gpa, "the reopened file kept the table filter, the search or the scope"),
+            else => {},
+        }
+    }
+
+    // Conferencia que falhou: listada em capture_error.txt, a captura continua
+    fn note(c: *Capture, gpa: std.mem.Allocator, why: []const u8) void {
+        c.wrong.print(gpa, "{s}: {s}\n", .{ dbm.capture.plan[c.step].name, why }) catch {};
     }
 
     fn save(c: *Capture, gpa: std.mem.Allocator, io: std.Io) !void {
