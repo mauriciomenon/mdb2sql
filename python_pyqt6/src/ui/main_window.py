@@ -1041,9 +1041,12 @@ class MainWindow(QMainWindow):
     # --------------------------------------------------------------- table
 
     def reload_table(self) -> None:
+        # limite, filtro e pesquisa: consulta na hora (a pesquisa ja esperou os 300 ms); os 150 ms de
+        # table_load_timer sao so da navegacao pela lista com as setas
         item = self.table_list.currentItem()
         if item is not None:
             self.on_table_selected(item.text())
+            self._start_table_worker()
 
     def _search_now(self) -> None:
         """Pesquisa da aba Data (300 ms depois da ultima tecla, ou ao trocar o escopo): na tabela aberta, no banco
@@ -1105,6 +1108,7 @@ class MainWindow(QMainWindow):
         self.table_load_timer.start()
 
     def _start_table_worker(self) -> None:
+        self.table_load_timer.stop()
         if self.manager is None or not self.pending_table_name:
             return
 

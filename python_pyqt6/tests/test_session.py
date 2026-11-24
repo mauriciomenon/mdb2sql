@@ -268,7 +268,7 @@ def test_no_ui_text_outside_the_catalogs(qtbot, people_db: Path, monkeypatch) ->
     win.show()
     win.open_database(people_db)
     qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
-    win.add_filter("name", "Ana")
+    win.add_filter("label", "Ana")  # coluna da tabela aberta (empty_table): o filtro recarrega na hora, sem erro
     qtbot.waitUntil(lambda: win._busy == 0, timeout=30000)
     win.log_dock.show()
     win.show_about()
@@ -305,7 +305,7 @@ def test_no_ui_text_outside_the_catalogs(qtbot, people_db: Path, monkeypatch) ->
             bare = inner
         # o que sobra fora das marcas so pode ser dado (nome de tabela/coluna/arquivo, valor) ou nome de produto
         # (o menu do cabecalho lista as colunas da tabela aberta: code, label)
-        leftover = re.sub(r"people\.duckdb|people|empty_table|name = 'Ana'|code|label|×|via DuckDB|[\s:;()\-]", "", bare)
+        leftover = re.sub(r"people\.duckdb|people|empty_table|label = 'Ana'|code|label|×|via DuckDB|[\s:;()\-]", "", bare)
         if leftover and not NOT_TEXT.fullmatch(text.replace("&", "").strip()):
             outside.append((kind, text))
     assert outside == [], "\n".join(map(repr, outside))

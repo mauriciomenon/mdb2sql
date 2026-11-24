@@ -83,6 +83,10 @@ def test_select_sort_search_and_copy(qtbot, window: MainWindow) -> None:
     assert _column(window, 0) == ["10", "2", "1"]
 
     window.search_edit.setText("CARLA")
+    # 300 ms depois da ultima tecla a consulta sai na hora: sem os 150 ms da navegacao pela lista (eram ~470 ms)
+    request = window._table_request
+    window.search_timer.timeout.emit()
+    assert window._table_request == request + 1 and not window.table_load_timer.isActive()
     qtbot.waitUntil(lambda: window.data_proxy.rowCount() == 1, timeout=5000)
     assert _column(window, 1) == ["carla"]
     assert window.info_label.text() == "people: Showing 1 of 1 matching rows (3 rows in table)"
