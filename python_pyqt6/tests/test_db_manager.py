@@ -62,6 +62,35 @@ def test_connect_sets_current_db_and_closes_previous(tmp_path: Path) -> None:
         first_conn.execute("SHOW TABLES")
 
 
+def test_close_interrupts_a_running_query(people_db: Path) -> None:
+    # fechar o arquivo durante uma consulta longa (busca global, contagem) nao espera o fim dela: a tela nao trava
+    import threading
+    import time
+
+    manager = DBManager(str(people_db))
+    errors: list[Exception] = []
+
+    def run() -> None:
+        try:
+            manager.execute_query("SELECT sum(i % 7) FROM range(1000000000) r(i)")  # ~7 s sem interromper
+        except duckdb.Error as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    deadline = time.monotonic() + 10
+    while not manager._cursors and time.monotonic() < deadline:
+        time.sleep(0.01)
+    time.sleep(0.2)  # a consulta ja esta rodando
+    start = time.monotonic()
+    manager.close()
+    elapsed = time.monotonic() - start
+    worker.join(10)
+
+    assert errors and isinstance(errors[0], duckdb.InterruptException), errors
+    assert elapsed < 2 and manager.conn is None
+
+
 def test_duckdb_real_query_sample(sample_database_path: Path) -> None:
     if not sample_database_path.exists():
         pytest.skip("sample.duckdb not found")

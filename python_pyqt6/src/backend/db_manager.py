@@ -127,7 +127,7 @@ class DBManager:
         self.reader = ""  # caminho usado para abrir: Access ODBC, mdbtools, SQLite ou DuckDB
         self.converted: Optional[Path] = None  # SQLite convertido do Access (pasta propria, apagada em release())
         self._tables: Optional[List[str]] = None
-        self._users = 0  # cursores em uso (outras threads); close() espera chegar a zero
+        self._cursors: set[duckdb.DuckDBPyConnection] = set()  # em uso (outras threads); close() interrompe e espera
         self._idle = threading.Condition()
 
         if db_path:
@@ -217,18 +217,18 @@ class DBManager:
     @contextmanager
     def cursor(self) -> Iterator[duckdb.DuckDBPyConnection]:
         # !T: A DuckDB connection must not be shared between threads; a cursor is a new connection to the same db.
-        # !T: Counted so close() never pulls the connection from under a query running in another thread
+        # !T: Tracked so close() interrupts it and never pulls the connection from under a query in another thread
         with self._idle:
             if not self.conn:
                 raise RuntimeError(tr("error.no_database"))
-            self._users += 1
             cursor = self.conn.cursor()
+            self._cursors.add(cursor)
         try:
-            with cursor:
-                yield cursor
+            yield cursor
         finally:
             with self._idle:
-                self._users -= 1
+                cursor.close()
+                self._cursors.discard(cursor)
                 self._idle.notify_all()
 
     def list_tables(self) -> List[str]:
@@ -369,8 +369,13 @@ class DBManager:
         Fecha conexao com o banco - sempre chame ao finalizar uso.
         """
         with self._idle:
-            # espera as consultas de outras threads terminarem (cada uma e curta: tabela, contagem, SQL)
-            self._idle.wait_for(lambda: self._users == 0)
+            # consultas de outras threads (tabela, contagem, busca global, SQL) sao interrompidas, nao esperadas ate o
+            # fim: quem fecha ja descarta o resultado delas (uma contagem longa travava a tela ~1,5 s)
+            # !T: Repeated: an interrupt that lands between two queries of a worker would be lost
+            while self._cursors:
+                for cursor in self._cursors:
+                    cursor.interrupt()
+                self._idle.wait(0.05)
             if self.conn:
                 # !T: Explicitly close connection to release file handle
                 self.conn.close()
