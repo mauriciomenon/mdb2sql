@@ -23,14 +23,7 @@ void shim_capture_frame(float w, float h) {
 }
 
 ImFont *shim_add_font(const char *path, float size_pixels) {
-    ImFontConfig *cfg = ImFontConfig_ImFontConfig();
-    // FreeType (build.zig) com o hinting da propria fonte, glifo no pixel inteiro e 1.3x mais encorpado: o mais
-    // proximo do texto nativo do Windows entre as variantes comparadas em captura (o stb_truetype borrava os tracos)
-    cfg->PixelSnapH = true;
-    cfg->RasterizerMultiply = 1.3f;
-    ImFont *font = ImFontAtlas_AddFontFromFileTTF(igGetIO_Nil()->Fonts, path, size_pixels, cfg, NULL);
-    ImFontConfig_destroy(cfg); // o atlas guarda uma copia
-    return font;
+    return ImFontAtlas_AddFontFromFileTTF(igGetIO_Nil()->Fonts, path, size_pixels, NULL, NULL);
 }
 
 void shim_clipper_range(const ImGuiListClipper *clipper, int *start, int *end) {

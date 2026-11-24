@@ -28,9 +28,5 @@
             .url = "https://github.com/ocornut/imgui/archive/6d32174508fb8c518e7a832cc1d571fadd5cba76.tar.gz",
             .hash = "N-V-__8AAGNjfgBD2GOqdPUGkR89I-Ygw93OyAENnPPahX_t",
         },
-        .freetype = .{
-            .url = "https://github.com/freetype/freetype/archive/refs/tags/VER-2-15-0.tar.gz",
-            .hash = "N-V-__8AAH-MrwAf0TyUzzZD5HQjeEj7gW-BmhiGMR0yAzrJ",
-        },
     },
 }

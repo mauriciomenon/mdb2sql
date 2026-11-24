@@ -72,35 +72,11 @@ pub fn build(b: *std.Build) void {
     _ = tree.addCopyFile(cimgui.path("cimgui_impl.cpp"), "cimgui_impl.cpp");
     const src = tree.getDirectory();
 
-    // FreeType (fonte fixado no zon) para o imgui_freetype: glifos com hinting, mais nitidos que os do
-    // stb_truetype padrao do Dear ImGui. Mesma lista de fontes do CMakeLists.txt do FreeType; ftsystem/ftdebug ANSI.
-    const freetype = b.dependency("freetype", .{});
-    const ft_mod = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
-    ft_mod.addIncludePath(freetype.path("include"));
-    ft_mod.addCSourceFiles(.{
-        .root = freetype.path("src"),
-        .files = &.{
-            "autofit/autofit.c", "base/ftbase.c",   "base/ftbbox.c",       "base/ftbdf.c",      "base/ftbitmap.c",
-            "base/ftcid.c",      "base/ftfstype.c", "base/ftgasp.c",       "base/ftglyph.c",    "base/ftgxval.c",
-            "base/ftinit.c",     "base/ftmm.c",     "base/ftotval.c",      "base/ftpatent.c",   "base/ftpfr.c",
-            "base/ftstroke.c",   "base/ftsynth.c",  "base/fttype1.c",      "base/ftwinfnt.c",   "base/ftsystem.c",
-            "base/ftdebug.c",    "bdf/bdf.c",       "bzip2/ftbzip2.c",     "cache/ftcache.c",   "cff/cff.c",
-            "cid/type1cid.c",    "gzip/ftgzip.c",   "hvf/hvf.c",           "lzw/ftlzw.c",       "pcf/pcf.c",
-            "pfr/pfr.c",         "psaux/psaux.c",   "pshinter/pshinter.c", "psnames/psnames.c", "raster/raster.c",
-            "sdf/sdf.c",         "sfnt/sfnt.c",     "smooth/smooth.c",     "svg/svg.c",         "truetype/truetype.c",
-            "type1/type1.c",     "type42/type42.c", "winfonts/winfnt.c",
-        },
-        .flags = &.{ "-DFT2_BUILD_LIBRARY", "-fno-sanitize=undefined" },
-    });
-    const ft_lib = b.addLibrary(.{ .name = "freetype", .linkage = .static, .root_module = ft_mod });
-
     const imgui_mod = b.createModule(.{ .target = target, .optimize = optimize, .link_libcpp = true });
     imgui_mod.addIncludePath(src);
     imgui_mod.addIncludePath(src.path(b, "imgui"));
     imgui_mod.addIncludePath(src.path(b, "imgui/backends"));
     imgui_mod.addIncludePath(zglfw.path("libs/glfw/include"));
-    imgui_mod.addIncludePath(freetype.path("include"));
-    imgui_mod.linkLibrary(ft_lib);
     imgui_mod.addCSourceFiles(.{
         .root = src,
         .files = &.{
@@ -111,14 +87,11 @@ pub fn build(b: *std.Build) void {
             "imgui/imgui_demo.cpp", // cimgui.cpp referencia ShowDemoWindow
             "imgui/backends/imgui_impl_glfw.cpp",
             "imgui/backends/imgui_impl_opengl3.cpp",
-            "imgui/misc/freetype/imgui_freetype.cpp",
             "cimgui.cpp",
             "cimgui_impl.cpp",
         },
         .flags = &.{
             "-fno-sanitize=undefined",
-            "-DIMGUI_ENABLE_FREETYPE", // FreeType vira o carregador de fontes padrao do atlas
-            "-DIMGUI_ENABLE_STB_TRUETYPE", // o cimgui.cpp tambem expoe o carregador stb_truetype
             "-DIMGUI_IMPL_API=extern \"C\"",
             "-DIMGUI_DISABLE_OBSOLETE_FUNCTIONS=1",
             "-DCIMGUI_NO_EXPORT",
