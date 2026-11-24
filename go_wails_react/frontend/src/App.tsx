@@ -394,6 +394,7 @@ function App() {
     if (!searchAll) return;
     const req = ++searchReq.current;
     setHits(null);
+    setProgress(null); // Go sends one progress event per table counted
     Promise.resolve(window.go?.main?.App?.SearchAllTables?.(tableSearch))
       .then((found) => req === searchReq.current && setHits(found ?? []))
       .catch((err) => req === searchReq.current && fail(err));
@@ -1086,7 +1087,9 @@ function App() {
               {view === 'sql'
                 ? result && t('info.sql', result.rows.length) + (result.more ? t('info.sqlLimit', limit) : '')
                 : searchAll
-                  ? hits && t('info.searchAll', hits.length, tableSearch)
+                  ? hits
+                    ? t('info.searchAll', hits.length, tableSearch)
+                    : progressText(t('job.searching'), progress, t)
                   : t('info.showing', shownTable, rows.length, rowCount) + (narrowed ? t('info.filtered', totalCount) : '')}
               {sqlSearching && t('info.searchSql', visibleRows.length, search.trim())}
               {copied && ` - ${copied}`}

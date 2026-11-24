@@ -506,8 +506,8 @@ func (a *App) GetRowCount(tableName string, filters []backend.Filter, search str
 	return a.dbManager.GetRowCount(tableName, search, filters...)
 }
 
-// SearchAllTables: the tables with rows matching search (Data tab, "All tables") and how many; a new search stops
-// the previous one
+// SearchAllTables: the tables with rows matching search (Data tab, "All tables") and how many, with a progress
+// event per table; a new search stops the previous one
 func (a *App) SearchAllTables(search string) ([]backend.TableHits, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.jobMu.Lock()
@@ -517,7 +517,7 @@ func (a *App) SearchAllTables(search string) ([]backend.TableHits, error) {
 	a.searchCancel = cancel
 	a.jobMu.Unlock()
 	defer cancel()
-	return a.dbManager.SearchTables(ctx, search)
+	return a.dbManager.SearchTables(ctx, search, a.progress)
 }
 
 // GetTableSchema retorna schema da tabela com tipos de colunas

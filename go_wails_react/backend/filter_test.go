@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -161,16 +162,21 @@ func TestSearchTables(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Close()
-	hits, err := m.SearchTables(context.Background(), "tensao")
+	var seen []string
+	progress := func(done, total int, table string) { seen = append(seen, fmt.Sprintf("%d/%d %s", done, total, table)) }
+	hits, err := m.SearchTables(context.Background(), "tensao", progress)
 	if want := []TableHits{{"obs livre", 1}, {"pontos", 2}}; err != nil || !reflect.DeepEqual(hits, want) {
 		t.Errorf("hits %v (%v), want %v", hits, err, want)
 	}
-	if hits, err := m.SearchTables(context.Background(), "nada assim"); err != nil || hits == nil || len(hits) != 0 {
+	if want := []string{"1/3 numeros", "2/3 obs livre", "3/3 pontos"}; !reflect.DeepEqual(seen, want) {
+		t.Errorf("progress %v, want %v", seen, want)
+	}
+	if hits, err := m.SearchTables(context.Background(), "nada assim", progress); err != nil || hits == nil || len(hits) != 0 {
 		t.Errorf("no match: %v %v (want an empty list, not null)", hits, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := m.SearchTables(ctx, "tensao"); err == nil {
+	if _, err := m.SearchTables(ctx, "tensao", progress); err == nil {
 		t.Error("cancelled search must stop")
 	}
 }

@@ -594,16 +594,18 @@ type TableHits struct {
 }
 
 // SearchTables counts, table by table, the rows that match search with the rule of the Data tab search, so the
-// table opened from the list shows those same rows; only tables with a match, in table list order
-func (m *DBManager) SearchTables(ctx context.Context, search string) ([]TableHits, error) {
+// table opened from the list shows those same rows; only tables with a match, in table list order. progress gets
+// each table as it is counted (the 287 tables of DB4.sqlite take 10-20 s; counting several at once was slower).
+func (m *DBManager) SearchTables(ctx context.Context, search string, progress Progress) ([]TableHits, error) {
 	if m.conn == nil {
 		return nil, fmt.Errorf("no database connected")
 	}
 	hits := []TableHits{}
-	for _, table := range m.tableList {
+	for i, table := range m.tableList {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		progress(i+1, len(m.tableList), table)
 		n, err := m.GetRowCount(table, search)
 		if err != nil {
 			return nil, err

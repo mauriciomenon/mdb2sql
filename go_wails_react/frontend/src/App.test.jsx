@@ -1,6 +1,6 @@
 import React from 'react';
 import { readFileSync } from 'node:fs';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { vi, beforeEach } from 'vitest';
 import App, { aboutRows, clampLogHeight, columnCellWidth, filterLabel, gridText, LOG_MIN, logLine, progressText, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
 import { CATALOGS, LANGS, translate } from './i18n';
@@ -271,8 +271,14 @@ describe('App IPC flow', () => {
   });
 
   it('searches all tables from the Data tab and opens a table of the list with the same search', async () => {
-    const SearchAllTables = vi.fn(async () => [{ table: 'RANGER_SOGEN', rows: 3 }]);
-    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables } } } });
+    let answer;
+    const SearchAllTables = vi.fn(() => new Promise((resolve) => (answer = resolve)));
+    let goProgress;
+    const EventsOn = vi.fn((name, cb) => {
+      if (name === 'progress') goProgress = cb;
+      return () => {};
+    });
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables } } }, runtime: { EventsOn } });
     render(<App />);
     menu('File', 'Open sample data');
     await screen.findByText('Alpha');
@@ -287,6 +293,10 @@ describe('App IPC flow', () => {
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'tensao' } });
     fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
     await waitFor(() => expect(SearchAllTables).toHaveBeenCalledWith('tensao'));
+    // while Go counts, the line under the grid shows the table being counted
+    act(() => goProgress({ done: 1, total: 2, label: 'RANGER_SOACCU' }));
+    expect(screen.getByText('Searching RANGER_SOACCU - 1 of 2')).toBeInTheDocument();
+    await act(async () => answer([{ table: 'RANGER_SOGEN', rows: 3 }]));
     const hit = await screen.findByRole('row', { name: 'RANGER_SOGEN 3' });
     expect(screen.getByRole('columnheader', { name: 'Rows found' })).toBeInTheDocument();
     expect(screen.getByText('1 tables with rows matching "tensao"')).toBeInTheDocument();
@@ -297,7 +307,7 @@ describe('App IPC flow', () => {
     expect(within(scope).getByRole('radio', { name: 'This table' })).toHaveAttribute('aria-checked', 'true');
     expect(await screen.findByText('Alpha')).toBeInTheDocument();
 
-    SearchAllTables.mockResolvedValueOnce([]);
+    SearchAllTables.mockImplementationOnce(async () => []);
     fireEvent.click(within(scope).getByRole('radio', { name: 'All tables' }));
     expect(await screen.findByText('No table matches.')).toBeInTheDocument();
   });
