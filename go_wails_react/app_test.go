@@ -124,8 +124,15 @@ func TestSearchStopsWhenFileChanges(t *testing.T) {
 			}
 		}
 		searched, changed := make(chan error, 1), make(chan error, 1)
+		registered := func() bool { app.jobMu.Lock(); defer app.jobMu.Unlock(); return app.searchCancel != nil }
+		app.jobMu.Lock()
+		app.searchCancel = nil
+		app.jobMu.Unlock()
 		go func() { _, err := app.SearchAllTables("x"); searched <- err }()
-		time.Sleep(300 * time.Millisecond)
+		for !registered() { // a loaded machine may start the goroutine late; the change must find the search
+			time.Sleep(20 * time.Millisecond)
+		}
+		time.Sleep(300 * time.Millisecond) // counting the view by now
 		go func() { changed <- change() }()
 		select {
 		case err := <-searched:
