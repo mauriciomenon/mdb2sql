@@ -70,6 +70,7 @@ from ui.table_model import COPY_ROLE, SORT_ROLE, TableModel, fold, search_words
 ROW_LIMITS = (100, 1_000, 10_000)
 MAX_COLUMN_WIDTH = 1200  # trava de seguranca: abaixo disso nenhum valor nem nome de coluna e cortado
 LOG_LINES = 5000
+SEARCH_DELAY_MS = 300
 # Configuracoes > Tema: valor gravado em QSettings -> esquema de cores do Qt
 THEMES = {"system": Qt.ColorScheme.Unknown, "light": Qt.ColorScheme.Light, "dark": Qt.ColorScheme.Dark}
 # resposta da pergunta sobre o SQLite convertido do Access
@@ -176,10 +177,15 @@ class MainWindow(QMainWindow):
         self.table_load_timer.setInterval(150)
         self.table_load_timer.timeout.connect(self._start_table_worker)
 
+        # pesquisa da aba Data e filtro da lista de tabelas: 300 ms depois da ultima tecla (igual nas 4 versoes)
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
-        self.search_timer.setInterval(200)
+        self.search_timer.setInterval(SEARCH_DELAY_MS)
         self.search_timer.timeout.connect(self.reload_table)  # a pesquisa vai na consulta: tabela inteira
+        self.table_filter_timer = QTimer(self)
+        self.table_filter_timer.setSingleShot(True)
+        self.table_filter_timer.setInterval(SEARCH_DELAY_MS)
+        self.table_filter_timer.timeout.connect(lambda: self._filter_tables(self.table_filter.text()))
 
         self.init_ui()
         if self.session.removed:
@@ -387,7 +393,7 @@ class MainWindow(QMainWindow):
         self.table_filter.setClearButtonEnabled(True)
         self.table_filter.setAccessibleName(tr("tables.filter"))
         self.table_filter.setToolTip(tr("tip.words"))
-        self.table_filter.textChanged.connect(self._filter_tables)
+        self.table_filter.textChanged.connect(lambda _text: self.table_filter_timer.start())
 
         self.table_list = QListWidget()
         self.table_list.setAccessibleName(tr("tables.title"))

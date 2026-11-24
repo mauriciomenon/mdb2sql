@@ -90,13 +90,17 @@ def test_select_sort_search_and_copy(qtbot, window: MainWindow) -> None:
     assert QApplication.clipboard().text() == "10\tcarla\t7.25"
 
 
-def test_table_filter_hides_non_matching(window: MainWindow) -> None:
+def test_table_filter_hides_non_matching(qtbot, window: MainWindow) -> None:
+    # filtro da lista e pesquisa da aba Data: 300 ms depois da ultima tecla, igual nas 4 versoes
+    assert window.table_filter_timer.interval() == window.search_timer.interval() == 300
     window.table_filter.setText("peo")
+    assert not window.table_list.item(0).isHidden() and window.table_filter_timer.isActive()  # ainda esperando
 
+    qtbot.waitUntil(lambda: window.table_list.item(0).isHidden(), timeout=2000)
     hidden = {window.table_list.item(i).text(): window.table_list.item(i).isHidden() for i in range(2)}
     assert hidden == {"empty_table": True, "people": False}
     window.table_filter.setText("TABLE Émpty")  # todas as palavras, qualquer ordem, sem caixa nem acento
-    assert [window.table_list.item(i).isHidden() for i in range(2)] == [False, True]
+    qtbot.waitUntil(lambda: [window.table_list.item(i).isHidden() for i in range(2)] == [False, True], timeout=2000)
 
 
 def test_row_limit_reloads_table(qtbot, window: MainWindow) -> None:
