@@ -50,6 +50,10 @@ def main():
 
     # Cria aplicacao Qt - cada app PyQt6 precisa exatamente 1 QApplication
     app = QApplication(sys.argv)
+    # texto no tamanho das outras versoes (Segoe UI 14 px do Go/Wails = 10.5 pt); o padrao do sistema (9 pt) era menor
+    font = app.font()
+    font.setPointSizeF(10.5)
+    app.setFont(font)
     # Tema claro/escuro segue o sistema pelo estilo nativo (windows11, macOS, Fusion)
     # !T: The Windows 10 style ("windowsvista") has no dark mode; Fusion follows the system scheme
     if app.style().objectName() == "windowsvista":
