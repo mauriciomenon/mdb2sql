@@ -130,7 +130,12 @@ Debian - dist/debian/amd64/
     mdb2sql-zig.exe --capture C:\copia\shots --db C:\copia\DB4.accdb --theme light
   Estados (src\capture.zig): RANGER_SOSTAT, filtro SUBNAM = 'U02', Columns com colunas ocultas (1280x800 e
   1920x1129), janela estreita 720x800, RANGER_SOANLG, Log, Settings > Language, About, dialogo do SQLite convertido,
-  os mesmos em portugues e espanhol, e por fim Delete (a captura confere que o temporario sumiu). Com
+  os mesmos em portugues e espanhol, e por fim Delete (a captura confere que o temporario sumiu).
+  Estados conferidos (m_, n_, o_): clique numa celula com colunas ocultas (continuam ocultas), busca em todas as
+  tabelas por ELSUL (a RANGER_SOXAGC, depois da coluna 10.000 do catalogo do DB4, esta no resultado), termo apagado
+  com a busca rodando (o resultado velho nao volta), acerto da tabela aberta com o filtro SUBNAM = 'U02' (abre sem o
+  filtro, com a contagem listada) e o mesmo arquivo aberto de novo (filtro da lista de tabelas e busca vazios, escopo
+  padrao). Conferencia que falha vai para capture_error.txt (saida 2) e a captura continua. Com
   $env:MDB2SQL_CAPTURE_SAVE = '1' o ultimo passo responde Save (resposta lembrada, grava <pasta>\<origem>.sqlite sem
   dialogo) e confere que o arquivo salvo e um SQLite e que o temporario sumiu. Linux: o 1o passo (0_display_warning)
   grava o aviso "Display mode" quando o programa abriu no Wayland por reserva (ex.: env -u DISPLAY no WSLg); com X11
