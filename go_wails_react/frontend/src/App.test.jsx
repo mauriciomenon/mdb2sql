@@ -1,8 +1,8 @@
 import React from 'react';
 import { readFileSync } from 'node:fs';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { vi, beforeEach } from 'vitest';
-import App, { aboutRows, clampLogHeight, columnCellWidth, filterLabel, LOG_MIN, logLine, progressText, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
+import App, { aboutRows, clampLogHeight, columnCellWidth, filterLabel, gridText, LOG_MIN, logLine, progressText, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
 import { CATALOGS, LANGS, translate } from './i18n';
 
 const tables = ['RANGER_SOACCU', 'RANGER_SOGEN'];
@@ -74,6 +74,11 @@ describe('App IPC flow', () => {
 
     fireEvent.click(await screen.findByRole('tab', { name: /Schema \(2\)/ }));
     expect(screen.getByText('INTEGER')).toBeInTheDocument();
+    // titles from the catalog (never a value or "null"); the nullability values as Go sends them
+    const schemaTable = screen.getByRole('columnheader', { name: 'Nullable' }).closest('table');
+    expect([...schemaTable.querySelectorAll('th')].map((th) => th.textContent)).toEqual(['Column', 'Type', 'Nullable']);
+    expect([...schemaTable.querySelectorAll('tbody tr')].map((tr) => tr.lastChild.textContent)).toEqual(['NO', 'YES']);
+    expect(schemaTable.className).toBe('schema'); // wider cell padding than the data grid (App.css)
   });
 
   it('does nothing when the dialog is cancelled', async () => {
@@ -167,15 +172,19 @@ describe('App IPC flow', () => {
     expect(header('ID')).not.toBeInTheDocument();
     expect(header('NAME')).toBeInTheDocument();
 
+    // header menu: the columns with a check mark (a click toggles one); the last visible one cannot be hidden there
     fireEvent.contextMenu(header('NAME'));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Hide this column' }));
-    expect(screen.getByText('2 hidden columns')).toBeInTheDocument();
-    // every header is hidden now; the dialog is still reachable from the button
-    fireEvent.click(screen.getByRole('button', { name: 'Columns...' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'ID' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.getByRole('menuitem', { name: 'Hide this column' })).toBeDisabled();
+    expect(screen.getByRole('menuitemcheckbox', { name: /NAME/ })).toBeDisabled();
+    expect(screen.getByRole('menuitemcheckbox', { name: /ID/ })).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /ID/ }));
+    expect(header('ID')).toBeInTheDocument();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     fireEvent.contextMenu(header('ID'));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Show all' }));
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /NAME/ }));
+    expect(screen.getByText('1 hidden column')).toBeInTheDocument();
+    fireEvent.contextMenu(header('ID'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Show all columns' }));
     expect(screen.queryByText(/hidden columns?$/)).not.toBeInTheDocument();
     expect(screen.getByText('Alpha')).toBeInTheDocument();
 
@@ -185,6 +194,38 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], ''));
     await waitFor(() => expect(header('NAME')).toBeInTheDocument());
+  });
+
+  it('resizes a Data column by its header edge; Size column to fit and Size all columns to fit undo it', async () => {
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+    const header = (name) => screen.getByRole('columnheader', { name });
+    const drag = (name, dx) => {
+      fireEvent.mouseDown(header(name).querySelector('.col-resize'), { clientX: 100 });
+      fireEvent.mouseMove(window, { clientX: 100 + dx });
+      fireEvent.mouseUp(window);
+    };
+    drag('NAME', 40); // jsdom has no layout: the header starts at 0 px
+    expect(header('NAME').style.maxWidth).toBe('40px');
+    expect(screen.getByText('Beta').style.maxWidth).toBe('40px'); // its cells too
+    drag('ID', 10);
+    expect(header('ID').style.width).toBe('24px'); // never narrower than 24 px
+
+    fireEvent.contextMenu(header('NAME'));
+    const items = [...screen.getByRole('menu', { name: 'Column' }).querySelectorAll('button')].map((b) => b.textContent);
+    expect(items).toEqual(['Size column to fit', 'Size all columns to fit', 'Hide this column', 'Columns...', '✓ID', '✓NAME', 'Show all columns']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Size column to fit' }));
+    expect(header('NAME').style.width).toBe('');
+    expect(header('ID').style.width).toBe('24px');
+    fireEvent.contextMenu(header('NAME'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Size all columns to fit' }));
+    expect(header('ID').style.width).toBe('');
+
+    // the widths belong to the open table: another table starts fitted
+    drag('ID', 60);
+    fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
+    await waitFor(() => expect(header('ID').style.width).toBe(''));
   });
 
   it('Show all / Hide all act only on the columns the dialog search lists', async () => {
@@ -222,6 +263,71 @@ describe('App IPC flow', () => {
     // the search stays when another table is chosen
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'tension de campo'));
+    // Enter searches at once, without the pause
+    fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'u9a' } });
+    expect(bridge.GetTableData).not.toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'u9a');
+    fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
+    expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'u9a');
+  });
+
+  it('searches all tables from the Data tab and opens a table of the list with the same search', async () => {
+    let answer;
+    const SearchAllTables = vi.fn(() => new Promise((resolve) => (answer = resolve)));
+    let goProgress;
+    const EventsOn = vi.fn((name, cb) => {
+      if (name === 'progress') goProgress = cb;
+      return () => {};
+    });
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables } } }, runtime: { EventsOn } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+    const scope = screen.getByRole('radiogroup', { name: 'Search in' });
+    expect(within(scope).getAllByRole('radio').map((r) => r.textContent)).toEqual(['This table', 'All tables']);
+    expect(within(scope).getByRole('radio', { name: 'This table' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+
+    fireEvent.click(within(scope).getByRole('radio', { name: 'All tables' }));
+    expect(SearchAllTables).not.toHaveBeenCalled(); // nothing to search yet: the table stays
+    expect(screen.getByText('Alpha')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'tensao' } });
+    fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
+    await waitFor(() => expect(SearchAllTables).toHaveBeenCalledWith('tensao'));
+    // while Go counts, the line under the grid shows the table being counted
+    act(() => goProgress({ done: 1, total: 2, label: 'RANGER_SOACCU' }));
+    expect(screen.getByText('Searching RANGER_SOACCU - 1 of 2')).toBeInTheDocument();
+    await act(async () => answer([{ table: 'RANGER_SOGEN', rows: 3 }]));
+    const hit = await screen.findByRole('row', { name: 'RANGER_SOGEN 3' });
+    expect(screen.getByRole('columnheader', { name: 'Rows found' })).toBeInTheDocument();
+    expect(screen.getByText('1 tables with rows matching "tensao"')).toBeInTheDocument();
+    expect(bridge.GetTableData).not.toHaveBeenCalledWith('RANGER_SOACCU', 100, [], 'tensao'); // the grid is not queried
+
+    fireEvent.click(within(hit).getByRole('button', { name: 'RANGER_SOGEN' }));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'tensao'));
+    expect(within(scope).getByRole('radio', { name: 'This table' })).toHaveAttribute('aria-checked', 'true');
+    expect(await screen.findByText('Alpha')).toBeInTheDocument();
+
+    SearchAllTables.mockImplementationOnce(async () => []);
+    fireEvent.click(within(scope).getByRole('radio', { name: 'All tables' }));
+    expect(await screen.findByText('No table matches.')).toBeInTheDocument();
+  });
+
+  it('keeps the default search scope in Settings and applies it', async () => {
+    const SetSearchScope = vi.fn(async () => {});
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SetSearchScope, GetSearchScope: vi.fn(async () => 'all') } } } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+    expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.getByText('Default search scope')).toBeInTheDocument();
+    expect(screen.getByRole('menuitemradio', { name: /All tables/ })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /This table/ }));
+    expect(SetSearchScope).toHaveBeenCalledWith('table');
+    expect(screen.getByRole('radio', { name: 'This table' })).toHaveAttribute('aria-checked', 'true');
+    // the selector beside the search does not change the saved default
+    fireEvent.click(screen.getByRole('radio', { name: 'All tables' }));
+    expect(SetSearchScope).toHaveBeenCalledTimes(1);
   });
 
   it('filters by the right-clicked value in the database query and shows removable chips', async () => {
@@ -430,6 +536,14 @@ describe('App IPC flow', () => {
     expect(document.documentElement.dataset.theme).toBe('dark');
   });
 
+  // the startup file was opened by the first render, whose texts were English: pt-BR got "Loaded: ... (2 tables)"
+  it('speaks the saved language when it opens the file of the command line', async () => {
+    const StartupPath = vi.fn(async () => 'C:\\data\\DB4.sqlite');
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, StartupPath, GetLanguage: vi.fn(async () => 'pt-BR') } } } });
+    render(<App />);
+    expect(await screen.findByText('Carregado: DB4.sqlite (2 tabelas)')).toBeInTheDocument();
+  });
+
   it('switches the language from Settings > Language without restarting and saves it', async () => {
     const SetLanguage = vi.fn(async () => {});
     const GetLanguage = vi.fn(async () => 'es');
@@ -531,6 +645,36 @@ describe('App IPC flow', () => {
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetLogOpen: vi.fn(async () => true) } } } });
     render(<App />);
     expect(await screen.findByRole('textbox', { name: 'Log' })).toBeInTheDocument();
+  });
+
+  it('leaves NULL cells empty by default; Settings > Show NULL shows NULL and saves the choice', async () => {
+    const SetShowNull = vi.fn(async () => {});
+    const ClipboardSetText = vi.fn(async () => true);
+    const GetTableData = vi.fn(async () => [{ ID: 1, NAME: null }]);
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, SetShowNull } } }, runtime: { ClipboardSetText } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByRole('cell', { name: '1' });
+    expect(screen.queryByText('NULL')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.getByRole('menuitemcheckbox', { name: /Show NULL/ })).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /Show NULL/ }));
+    expect(SetShowNull).toHaveBeenCalledWith(true);
+    const cell = screen.getByText('NULL');
+    fireEvent.contextMenu(cell);
+    fireEvent.click(screen.getByRole('menuitem', { name: /Copy value/ }));
+    await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('')); // display only: copy keeps the real value
+    expect(gridText(null, '')).toBe('');
+    expect(gridText(0, 'NULL')).toBe('0');
+  });
+
+  it('starts with NULL shown when Show NULL was left on', async () => {
+    const GetTableData = vi.fn(async () => [{ ID: 1, NAME: null }]);
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, GetShowNull: vi.fn(async () => true) } } } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    expect(await screen.findByText('NULL')).toBeInTheDocument();
   });
 
   it('right-aligns numeric columns, header included', async () => {
@@ -734,10 +878,14 @@ describe('App IPC flow', () => {
     render(<App />);
     menu('File', 'Open sample data');
     await screen.findByText('Alpha');
+    // applied after a 300 ms pause in typing, like the Data search
     fireEvent.change(screen.getByLabelText('Filter 3 tables'), { target: { value: 'gen ranger' } });
-    expect(screen.queryByRole('button', { name: 'RANGER_SOACCU' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'RANGER_SOACCU' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'RANGER_SOACCU' })).not.toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'RANGER_SOGEN' })).toBeInTheDocument();
+    // Enter applies it at once
     fireEvent.change(screen.getByLabelText('Filter 3 tables'), { target: { value: 'campo tensao' } });
+    fireEvent.keyDown(screen.getByLabelText('Filter 3 tables'), { key: 'Enter' });
     expect(screen.getByRole('button', { name: 'TENSÃO_CAMPO' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'RANGER_SOGEN' })).not.toBeInTheDocument();
   });
@@ -817,7 +965,7 @@ describe('language catalogs', () => {
 
   it('hold every key the screen uses', () => {
     const used = [...source.matchAll(/\bt\(\s*'([^']+)'/g)].map((m) => m[1]);
-    used.push(...['system', 'light', 'dark'].map((th) => `theme.${th}`), ...LANGS.map((l) => `lang.${l}`));
+    used.push(...['system', 'light', 'dark'].map((th) => `theme.${th}`), ...LANGS.map((l) => `lang.${l}`), 'scope.table', 'scope.all');
     expect(used.length).toBeGreaterThan(80);
     expect(used.filter((k) => !(k in CATALOGS.en))).toEqual([]);
   });

@@ -48,10 +48,11 @@ type App struct {
 	convCache               map[string]savedConv // session cache: Access fileKey -> SQLite saved from it
 	displayWarn             *DisplayWarning // Linux: X11 missing, running on Wayland (display.go)
 
-	jobMu       sync.Mutex
-	cancel      context.CancelFunc // of the running load or export
-	queryCancel context.CancelFunc // of the running SQL tab query (one at a time)
-	querySeq    int
+	jobMu        sync.Mutex
+	cancel       context.CancelFunc // of the running load or export
+	queryCancel  context.CancelFunc // of the running SQL tab query (one at a time)
+	querySeq     int
+	searchCancel context.CancelFunc // of the running "All tables" search
 }
 
 // AppInfo alimenta o dialogo Sobre: versao do app e versoes de runtime lidas em execucao
@@ -503,6 +504,20 @@ func (a *App) GetTableData(tableName string, limit int, filters []backend.Filter
 // !T: Executes COUNT(*) query and returns integer result
 func (a *App) GetRowCount(tableName string, filters []backend.Filter, search string) (int, error) {
 	return a.dbManager.GetRowCount(tableName, search, filters...)
+}
+
+// SearchAllTables: the tables with rows matching search (Data tab, "All tables") and how many, with a progress
+// event per table; a new search stops the previous one
+func (a *App) SearchAllTables(search string) ([]backend.TableHits, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	a.jobMu.Lock()
+	if a.searchCancel != nil {
+		a.searchCancel()
+	}
+	a.searchCancel = cancel
+	a.jobMu.Unlock()
+	defer cancel()
+	return a.dbManager.SearchTables(ctx, search, a.progress)
 }
 
 // GetTableSchema retorna schema da tabela com tipos de colunas

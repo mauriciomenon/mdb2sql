@@ -587,6 +587,36 @@ func (m *DBManager) GetRowCount(tableName string, search string, filters ...Filt
 	return count, nil
 }
 
+// TableHits is one table of the "All tables" search and how many of its rows match
+type TableHits struct {
+	Table string `json:"table"`
+	Rows  int    `json:"rows"`
+}
+
+// SearchTables counts, table by table, the rows that match search with the rule of the Data tab search, so the
+// table opened from the list shows those same rows; only tables with a match, in table list order. progress gets
+// each table as it is counted (the 287 tables of DB4.sqlite take 10-20 s; counting several at once was slower).
+func (m *DBManager) SearchTables(ctx context.Context, search string, progress Progress) ([]TableHits, error) {
+	if m.conn == nil {
+		return nil, fmt.Errorf("no database connected")
+	}
+	hits := []TableHits{}
+	for i, table := range m.tableList {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		progress(i+1, len(m.tableList), table)
+		n, err := m.GetRowCount(table, search)
+		if err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			hits = append(hits, TableHits{table, n})
+		}
+	}
+	return hits, nil
+}
+
 // DuckDBVersion retorna a versao da biblioteca DuckDB linkada (ex.: "v2.0.0")
 // !T: Uses a throwaway in-memory database so it works before any file is opened
 func DuckDBVersion() (string, error) {

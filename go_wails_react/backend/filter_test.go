@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -137,6 +139,45 @@ func TestTableFilters(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// "All tables" search: per table, the rows the Data tab search finds there (same rule, so the opened table shows
+// them); tables without a match are left out; a cancelled search stops
+func TestSearchTables(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "all.duckdb")
+	db, err := sql.Open("duckdb", src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE pontos (id INTEGER, nome VARCHAR); INSERT INTO pontos VALUES (1, 'Tensão de campo'), (2, 'TENSAO'), (3, 'x');
+		CREATE TABLE numeros (n INTEGER); INSERT INTO numeros VALUES (1);
+		CREATE TABLE "obs livre" (obs VARCHAR); INSERT INTO "obs livre" VALUES ('sem tensão'), (NULL);`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewDBManager()
+	if err := m.Connect(src); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	var seen []string
+	progress := func(done, total int, table string) { seen = append(seen, fmt.Sprintf("%d/%d %s", done, total, table)) }
+	hits, err := m.SearchTables(context.Background(), "tensao", progress)
+	if want := []TableHits{{"obs livre", 1}, {"pontos", 2}}; err != nil || !reflect.DeepEqual(hits, want) {
+		t.Errorf("hits %v (%v), want %v", hits, err, want)
+	}
+	if want := []string{"1/3 numeros", "2/3 obs livre", "3/3 pontos"}; !reflect.DeepEqual(seen, want) {
+		t.Errorf("progress %v, want %v", seen, want)
+	}
+	if hits, err := m.SearchTables(context.Background(), "nada assim", progress); err != nil || hits == nil || len(hits) != 0 {
+		t.Errorf("no match: %v %v (want an empty list, not null)", hits, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := m.SearchTables(ctx, "tensao", progress); err == nil {
+		t.Error("cancelled search must stop")
 	}
 }
 

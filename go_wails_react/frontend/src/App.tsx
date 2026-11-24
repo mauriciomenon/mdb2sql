@@ -10,6 +10,8 @@ type Row = Record<string, unknown>;
 type Column = { name: string; type: string; null: string };
 export type Theme = 'system' | 'light' | 'dark';
 type View = 'data' | 'schema' | 'sql';
+type Scope = 'table' | 'all'; // Data tab search: the open table or all tables
+type TableHits = { table: string; rows: number };
 type MenuName = 'file' | 'export' | 'view' | 'settings' | 'help';
 type QueryResult = { columns: string[]; rows: Row[]; more: boolean };
 type Progress = { done: number; total: number; label: string };
@@ -44,6 +46,11 @@ declare global {
           SetTheme?: (theme: Theme) => Promise<void>;
           GetLanguage?: () => Promise<Lang>;
           SetLanguage?: (lang: Lang) => Promise<void>;
+          GetShowNull?: () => Promise<boolean>;
+          SetShowNull?: (show: boolean) => Promise<void>;
+          GetSearchScope?: () => Promise<Scope>;
+          SetSearchScope?: (scope: Scope) => Promise<void>;
+          SearchAllTables?: (search: string) => Promise<TableHits[]>;
           PendingConversion?: () => Promise<string>;
           RememberedChoice?: () => Promise<string>;
           ResolveConversion?: (choice: string, remember: boolean) => Promise<Conversion>;
@@ -62,7 +69,9 @@ declare global {
 }
 
 const ROW_LIMITS = [100, 500, 1000]; // more would render too many cells (130-column tables)
+const TYPING_PAUSE = 300; // ms without typing before the table list filter and the Data search apply (Enter: at once)
 const THEMES: Theme[] = ['system', 'light', 'dark'];
+const SCOPES: Scope[] = ['table', 'all'];
 
 // Linhas (rotulo, valor) do dialogo Sobre; versao de wails.json, numero/data do build gravados pelo build, runtimes
 // lidos em execucao. Valor que comeca com https:// vira link aberto no navegador padrao.
@@ -91,6 +100,9 @@ export function filterLabel(f: Filter): string {
 export const withFilter = (filters: Filter[], f: Filter) => [...filters.filter((x) => x.column !== f.column), f];
 
 export const cellText = (v: unknown) => String(v ?? '');
+
+// Text a grid cell shows: NULL as nullText (Settings > Show NULL: "NULL" or empty); copy and search use cellText
+export const gridText = (v: unknown, nullText: string) => (v === null || v === undefined ? nullText : String(v));
 
 // Regra de colagem do Excel/Sheets: campo com TAB, quebra de linha ou aspas vai entre aspas, com aspas dobradas
 // !T: Without the quoting, a TAB or line break inside a value would shift the pasted cells
@@ -154,6 +166,11 @@ export function statusLine(entries: LogEntry[], readMark: number, status: string
   return { text: pick?.text ?? (error || status), level: pick?.level ?? (error ? 'error' : 'info'), unread: unread.length };
 }
 
+// Keeps a context menu inside the window: a long column list moves it up (taller than the window, it scrolls)
+function keepInWindow(el: HTMLElement | null) {
+  if (el) el.style.top = `${Math.max(4, Math.min(el.getBoundingClientRect().top, window.innerHeight - el.offsetHeight - 4))}px`;
+}
+
 function getWailsBridge() {
   const bridge = window.go?.main?.App;
   if (!bridge) {
@@ -164,12 +181,17 @@ function getWailsBridge() {
 
 function App() {
   const [lang, setLang] = useState<Lang>('en');
-  const t: T = (key, ...args) => translate(lang, key, ...args);
+  // t reads the language when called, not when its render ran: work started by an older render (the startup file)
+  // finishes in the current language
+  const langRef = useRef<Lang>(lang);
+  langRef.current = lang;
+  const t: T = (key, ...args) => translate(langRef.current, key, ...args);
   const [tables, setTables] = useState<string[]>([]);
   const [dbName, setDbName] = useState('');
   const [source, setSource] = useState('');
   const [converted, setConverted] = useState(false);
   const [filter, setFilter] = useState('');
+  const [tableFilter, setTableFilter] = useState(''); // filter applied to the table list, after a pause
   const [selectedTable, setSelectedTable] = useState('');
   const [rows, setRows] = useState<Row[]>([]);
   const [rowCount, setRowCount] = useState(0);
@@ -181,16 +203,21 @@ function App() {
   const [job, setJob] = useState(''); // verb of the running load/export ("" = none)
   const [progress, setProgress] = useState<Progress | null>(null);
   const [theme, setThemeState] = useState<Theme>('system');
+  const [showNull, setShowNull] = useState(false); // Settings > Show NULL (off: a NULL cell is empty)
   const [openMenu, setOpenMenu] = useState<MenuName | null>(null);
   const [about, setAbout] = useState<AppInfo | null>(null);
   const [search, setSearch] = useState('');
   const [tableSearch, setTableSearch] = useState(''); // search applied in the database (Data tab), after a pause
+  const [scope, setScope] = useState<Scope>('table'); // where the Data tab searches now
+  const [defaultScope, setDefaultScope] = useState<Scope>('table'); // Settings > Default search scope
+  const [hits, setHits] = useState<TableHits[] | null>(null); // "All tables" result (null = not yet)
   const [sel, setSel] = useState<{ row: Row; col: string } | null>(null); // selected cell
   // open context menu: of the selected cell, of a column header (header = column name) or of the status bar
   const [menu, setMenu] = useState<{ x: number; y: number; header?: string; status?: boolean } | null>(null);
   const [filters, setFilters] = useState<Filter[]>([]); // of the current table, applied by Go in the query
   const [totalCount, setTotalCount] = useState(0); // rows of the table without filters and search
   const [hidden, setHidden] = useState<Set<string>>(new Set()); // hidden columns of the current table
+  const [widths, setWidths] = useState<Record<string, number>>({}); // Data columns resized by hand (current table)
   const [colsOpen, setColsOpen] = useState(false); // "Columns..." dialog
   const [copied, setCopied] = useState('');
   const [sql, setSql] = useState('');
@@ -207,6 +234,7 @@ function App() {
   // request numbers: an answer that is not the latest one (another table, query or file since) is dropped
   const tableReq = useRef(0);
   const sqlReq = useRef(0);
+  const searchReq = useRef(0);
   const loadedFind = useRef(''); // search of the last table request
   const [shownFind, setShownFind] = useState(''); // search of the rows shown in the Data tab
   const [shownTable, setShownTable] = useState(''); // table of the rows shown (the counts below belong to it)
@@ -288,6 +316,21 @@ function App() {
     window.addEventListener('mouseup', up);
   }
 
+  // dragging the right edge of a Data header sets the column width (header menu > Size column to fit undoes it)
+  function startColResize(e: React.MouseEvent<HTMLElement>, col: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = e.currentTarget.parentElement!.getBoundingClientRect().width;
+    const move = (ev: MouseEvent) => setWidths((old) => ({ ...old, [col]: Math.max(24, Math.round(startW + ev.clientX - startX)) }));
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }
+
   // startup: saved theme and language, then the file from the command line or MDB2SQL_DB_PATH
   useEffect(() => {
     if (started.current) return; // StrictMode runs effects twice in development
@@ -295,9 +338,19 @@ function App() {
     const bridge = window.go?.main?.App;
     bridge?.GetLogOpen?.().then((open) => open && setLogOpen(true)).catch(() => {});
     bridge?.GetTheme?.().then((th) => th && setThemeState(th)).catch(() => {});
-    bridge?.GetLanguage?.()
+    bridge?.GetShowNull?.().then((show) => setShowNull(show === true)).catch(() => {});
+    bridge?.GetSearchScope?.()
+      .then((s) => {
+        if (SCOPES.includes(s)) {
+          setDefaultScope(s);
+          setScope(s);
+        }
+      })
+      .catch(() => {});
+    const langLoaded = Promise.resolve(bridge?.GetLanguage?.())
       .then((l) => {
         if (l && LANGS.includes(l)) {
+          langRef.current = l; // before the re-render: the startup file below already speaks it
           setLang(l);
           setStatusText(translate(l, 'status.none'));
         }
@@ -312,7 +365,10 @@ function App() {
         }
       })
       .catch(() => {});
-    bridge?.StartupPath?.().then((p) => p && openPath(p)).catch(fail);
+    langLoaded
+      .then(() => bridge?.StartupPath?.())
+      .then((p) => p && openPath(p))
+      .catch(fail);
   }, []);
 
   useEffect(() => {
@@ -331,14 +387,31 @@ function App() {
 
   // the Data tab searches the whole table in the database: wait for a pause in typing, then query
   useEffect(() => {
-    const id = setTimeout(() => setTableSearch(search.trim()), 300);
+    const id = setTimeout(() => setTableSearch(search.trim()), TYPING_PAUSE);
     return () => clearTimeout(id);
   }, [search]);
 
+  useEffect(() => {
+    const id = setTimeout(() => setTableFilter(filter), TYPING_PAUSE);
+    return () => clearTimeout(id);
+  }, [filter]);
+
+  // "All tables": Go counts the matching rows of every table; the list replaces the grid
+  const searchAll = scope === 'all' && view === 'data' && tableSearch !== '' && tables.length > 0;
+  useEffect(() => {
+    if (!searchAll) return;
+    const req = ++searchReq.current;
+    setHits(null);
+    setProgress(null); // Go sends one progress event per table counted
+    Promise.resolve(window.go?.main?.App?.SearchAllTables?.(tableSearch))
+      .then((found) => req === searchReq.current && setHits(found ?? []))
+      .catch((err) => req === searchReq.current && fail(err));
+  }, [searchAll, tableSearch, tables]);
+
   // (a search typed in the SQL tab reaches the table when the Data or Schema tab comes back)
   useEffect(() => {
-    if (selectedTable && view !== 'sql' && loadedFind.current !== tableSearch) loadTable(selectedTable, limit, filters, tableSearch);
-  }, [tableSearch, view]);
+    if (selectedTable && view !== 'sql' && !searchAll && loadedFind.current !== tableSearch) loadTable(selectedTable, limit, filters, tableSearch);
+  }, [tableSearch, view, searchAll]);
 
   async function copyText(text: string, done: string) {
     try {
@@ -362,6 +435,24 @@ function App() {
     window.go?.main?.App?.SetLanguage?.(l)?.catch(fail);
   }
 
+  function chooseShowNull(show: boolean) {
+    setShowNull(show);
+    window.go?.main?.App?.SetShowNull?.(show)?.catch(fail);
+  }
+
+  // the default also applies now; the selector beside the search changes only the current session
+  function chooseDefaultScope(s: Scope) {
+    setDefaultScope(s);
+    setScope(s);
+    window.go?.main?.App?.SetSearchScope?.(s)?.catch(fail);
+  }
+
+  // a table of the "All tables" list opens in the Data tab with the same search
+  function openHit(table: string) {
+    setScope('table');
+    loadTable(table, limit, undefined, tableSearch);
+  }
+
   async function openAbout() {
     try {
       const bridge = getWailsBridge();
@@ -381,6 +472,7 @@ function App() {
   function clearDatabase() {
     tableReq.current++;
     sqlReq.current++;
+    searchReq.current++;
     setQuerying(false);
     setTables([]);
     setSelectedTable('');
@@ -485,6 +577,7 @@ function App() {
       setDbName(name);
       setTables(tableList);
       setFilter('');
+      setTableFilter('');
       setStatus(t('status.loaded', name, tableList.length));
       if (tableList.length > 0) {
         await loadTable(tableList[0], limit, undefined, tableSearch);
@@ -511,7 +604,10 @@ function App() {
       setSel(null);
       setCopied('');
       setFilters(tableFilters);
-      if (!keep) setHidden(new Set());
+      if (!keep) {
+        setHidden(new Set());
+        setWidths({});
+      }
       if (view === 'sql') setView('data');
       const bridge = getWailsBridge();
       const narrowed = tableFilters.length > 0 || find !== '';
@@ -604,9 +700,9 @@ function App() {
   ];
 
   const visibleTables = useMemo(() => {
-    const words = searchWords(filter);
+    const words = searchWords(tableFilter);
     return words.length ? tables.filter((tb) => hasAllWords(normalizeText(tb), words)) : tables;
-  }, [tables, filter]);
+  }, [tables, tableFilter]);
 
   // schema order = database column order (Go maps reach JS sorted by key); also gives empty tables a header
   // memoized so the search index below is built once per load, not on every keystroke
@@ -625,12 +721,18 @@ function App() {
   // numeric columns are right-aligned, header included (cells: by their value type)
   const numericCols = useMemo(() => new Set(gridColumns.filter((c) => gridRows.some((r) => typeof r[c] === 'number'))), [gridColumns, gridRows]);
   const hiddenCount = gridColumns.length - shownColumns.length;
+  // a column resized by hand keeps its width and cuts its cells (no "..."); the others fit their content
+  const colStyle = (col: string): React.CSSProperties | undefined => {
+    const w = view === 'data' ? widths[col] : undefined;
+    return w ? { width: w, minWidth: w, maxWidth: w, overflow: 'hidden' } : undefined;
+  };
   // the search of the rows on screen, not of the one being typed: the counts below belong to those rows
   const narrowed = filters.length > 0 || shownFind !== '';
   const copyCell = () => sel && copyText(cellText(sel.row[sel.col]), t('copied.value'));
   const copyRow = (withHeader: boolean) =>
     sel && copyText(rowToTsv(gridColumns, sel.row, withHeader), t(withHeader ? 'copied.rowHeader' : 'copied.row'));
   const busy = job !== '';
+  const nullText = showNull ? t('cell.null') : '';
   // log collapsed: the most important unread line (error, then warning) takes the status bar
   const shownStatus = logOpen ? { text: error || status, level: error ? 'error' : 'info', unread: 0 } : statusLine(logLines, readMark, status, error);
   const viewName = (v: View) => (v === 'data' ? t('tab.data') : v === 'schema' ? t('tab.schema', schema.length) : t('tab.sql'));
@@ -656,6 +758,7 @@ function App() {
               key={col}
               scope="col"
               className={numericCols.has(col) ? 'num' : undefined}
+              style={colStyle(col)}
               title={col}
               onContextMenu={
                 view === 'data'
@@ -668,6 +771,7 @@ function App() {
               }
             >
               {col}
+              {view === 'data' && <span className="col-resize" onMouseDown={(e) => startColResize(e, col)} />}
             </th>
           ))}
         </tr>
@@ -679,6 +783,7 @@ function App() {
               <td
                 key={col}
                 className={typeof row[col] === 'number' ? 'num' : undefined}
+                style={colStyle(col)}
                 aria-selected={sel?.row === row && sel.col === col ? 'true' : undefined}
                 tabIndex={-1} // focusable: keyboard and UI Automation can select a cell and open its menu (menu key)
                 onFocus={() => setSel({ row, col })}
@@ -692,7 +797,7 @@ function App() {
                   setMenu(e.clientX || e.clientY ? { x: e.clientX, y: e.clientY } : { x: r.left + 8, y: r.bottom });
                 }}
               >
-                {cellText(row[col])}
+                {gridText(row[col], nullText)}
               </td>
             ))}
           </tr>
@@ -771,6 +876,19 @@ function App() {
                     {t(`lang.${l}`)}
                   </button>
                 ))}
+                <hr />
+                <p className="menu-title">{t('menu.searchScope')}</p>
+                {SCOPES.map((s) => (
+                  <button key={s} role="menuitemradio" aria-checked={defaultScope === s} onClick={() => chooseDefaultScope(s)}>
+                    <span className="check">{defaultScope === s ? '✓' : ''}</span>
+                    {t(`scope.${s}`)}
+                  </button>
+                ))}
+                <hr />
+                <button role="menuitemcheckbox" aria-checked={showNull} onClick={() => chooseShowNull(!showNull)}>
+                  <span className="check">{showNull ? '✓' : ''}</span>
+                  {t('menu.showNull')}
+                </button>
               </div>
             )}
           </div>
@@ -795,6 +913,7 @@ function App() {
           title={t('search.tip')}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && setTableFilter(filter)}
           disabled={tables.length === 0}
         />
         <ul>
@@ -836,7 +955,17 @@ function App() {
                 title={t('search.tip')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && setTableSearch(search.trim())}
               />
+              {view === 'data' && (
+                <div className="tabs" role="radiogroup" aria-label={t('scope.label')}>
+                  {SCOPES.map((s) => (
+                    <button key={s} role="radio" aria-checked={scope === s} onClick={() => setScope(s)}>
+                      {t(`scope.${s}`)}
+                    </button>
+                  ))}
+                </div>
+              )}
               <label className="field">
                 {t('rows.label')}
                 <select value={limit} onChange={(e) => changeLimit(Number(e.target.value))}>
@@ -908,8 +1037,36 @@ function App() {
                 }
               }}
             >
-              {view === 'schema' ? (
-                <table>
+              {searchAll ? (
+                hits &&
+                (hits.length > 0 ? (
+                  <table className="hits">
+                    <thead>
+                      <tr>
+                        <th scope="col">{t('hits.table')}</th>
+                        <th scope="col" className="num">
+                          {t('hits.rows')}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {hits.map((h) => (
+                        <tr key={h.table}>
+                          <td>
+                            <button className="table-item" onClick={() => openHit(h.table)}>
+                              {h.table}
+                            </button>
+                          </td>
+                          <td className="num">{h.rows}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="empty">{t('sidebar.noMatch')}</p>
+                ))
+              ) : view === 'schema' ? (
+                <table className="schema">
                   <thead>
                     <tr>
                       <th scope="col">{t('schema.column')}</th>
@@ -930,14 +1087,18 @@ function App() {
               ) : (
                 grid
               )}
-              {view === 'data' && visibleRows.length === 0 && <p className="empty">{narrowed ? t('empty.noFilterMatch') : t('empty.noRows')}</p>}
-              {view === 'data' && visibleRows.length > 0 && shownColumns.length === 0 && <p className="empty">{t('empty.noColumns')}</p>}
+              {view === 'data' && !searchAll && visibleRows.length === 0 && <p className="empty">{narrowed ? t('empty.noFilterMatch') : t('empty.noRows')}</p>}
+              {view === 'data' && !searchAll && visibleRows.length > 0 && shownColumns.length === 0 && <p className="empty">{t('empty.noColumns')}</p>}
             </div>
 
             <footer className="info">
               {view === 'sql'
                 ? result && t('info.sql', result.rows.length) + (result.more ? t('info.sqlLimit', limit) : '')
-                : t('info.showing', shownTable, rows.length, rowCount) + (narrowed ? t('info.filtered', totalCount) : '')}
+                : searchAll
+                  ? hits
+                    ? t('info.searchAll', hits.length, tableSearch)
+                    : progressText(t('job.searching'), progress, t)
+                  : t('info.showing', shownTable, rows.length, rowCount) + (narrowed ? t('info.filtered', totalCount) : '')}
               {sqlSearching && t('info.searchSql', visibleRows.length, search.trim())}
               {copied && ` - ${copied}`}
             </footer>
@@ -1010,19 +1171,50 @@ function App() {
         </div>
       )}
 
+      {/* header menu as in the Dear ImGui table of the Zig version: fit, the columns with a check mark, show all;
+          the last visible column cannot be hidden here (its header is what opens this menu) */}
       {menu?.header !== undefined && (
         <div
+          key={`${menu.x},${menu.y}`}
+          ref={keepInWindow}
           className="menu"
           role="menu"
           aria-label={t('colmenu.label')}
-          style={{ left: Math.min(menu.x, window.innerWidth - 220), top: Math.min(menu.y, window.innerHeight - 120) }}
+          style={{ left: Math.min(menu.x, window.innerWidth - 220), top: menu.y }}
         >
-          <button role="menuitem" autoFocus onClick={() => setColumnHidden(menu.header!, true)}>
+          <button
+            role="menuitem"
+            autoFocus
+            onClick={() =>
+              setWidths((old) => {
+                const { [menu.header!]: _, ...rest } = old;
+                return rest;
+              })
+            }
+          >
+            {t('colmenu.fit')}
+          </button>
+          <button role="menuitem" onClick={() => setWidths({})}>
+            {t('colmenu.fitAll')}
+          </button>
+          <hr />
+          <button role="menuitem" disabled={shownColumns.length < 2} onClick={() => setColumnHidden(menu.header!, true)}>
             {t('colmenu.hide')}
           </button>
           <button role="menuitem" onClick={() => setColsOpen(true)}>
             {t('colmenu.columns')}
           </button>
+          <hr />
+          {gridColumns.map((col) => {
+            const shown = !hidden.has(col);
+            return (
+              <button key={col} role="menuitemcheckbox" aria-checked={shown} disabled={shown && shownColumns.length < 2} onClick={() => setColumnHidden(col, shown)}>
+                <span className="check">{shown ? '✓' : ''}</span>
+                {col}
+              </button>
+            );
+          })}
+          <hr />
           <button role="menuitem" disabled={hiddenCount === 0} onClick={() => setHidden(new Set())}>
             {t('colmenu.showAll')}
           </button>
