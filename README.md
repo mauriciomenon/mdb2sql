@@ -14,8 +14,8 @@ At the repo root, everything committed, one fresh `pwsh` per command. Products l
 | Stack | Command | Needs on the machine | Last run |
 | --- | --- | --- | --- |
 | python_pyqt6 | `pwsh -NoProfile -File python_pyqt6\build_w11_amd64.ps1` | uv | 2026-11-24, 5 min 33 s |
-| go_wails_react | `pwsh -NoProfile -File go_wails_react\build_w11_amd64.ps1` | Node.js 22+ and pnpm on PATH, WebView2 | 2026-11-24: stopped, pnpm not on PATH |
-| rust_tauri_svelte | `pwsh -NoProfile -File rust_tauri_svelte\build_w11_amd64.ps1` | rustup, VS Build Tools, Node.js and pnpm, WebView2 | 2026-11-24: stopped, pnpm not on PATH |
+| go_wails_react | `pwsh -NoProfile -File go_wails_react\build_w11_amd64.ps1` | Node.js 22+, WebView2 | 2026-11-24, 4 min 42 s |
+| rust_tauri_svelte | `pwsh -NoProfile -File rust_tauri_svelte\build_w11_amd64.ps1` | rustup, VS Build Tools, Node.js, WebView2 | 2026-11-24, 41 min 20 s (4 other builds running at the same time) |
 | zig_imgui | `pwsh -NoProfile -File zig_imgui\build_w11_amd64.ps1` | PowerShell 7 and tar.exe | 2026-11-24, 6 min 51 s |
 
 Debian amd64 from Windows (WSL): `pwsh -NoProfile -File <stack>\build_debian_amd64_wsl.ps1` (table below).
