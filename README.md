@@ -6,6 +6,21 @@ copy values or rows (TAB-separated) and export to SQLite, Excel, CSV or DuckDB. 
 SQLite; on close the program asks to save or delete that file. The same app is written in four stacks; each folder
 is a self-contained subproject with its own README.md, README-BUILD.txt and build commands.
 
+## Quick build (Windows 11 amd64)
+
+At the repo root, everything committed, one fresh `pwsh` per command. Products land in
+`<stack>\dist\w11\amd64\` (single exe, zip, installer).
+
+| Stack | Command | Needs on the machine | Last run |
+| --- | --- | --- | --- |
+| python_pyqt6 | `pwsh -NoProfile -File python_pyqt6\build_w11_amd64.ps1` | uv | 2026-11-24, 5 min 33 s |
+| go_wails_react | `pwsh -NoProfile -File go_wails_react\build_w11_amd64.ps1` | Node.js 22+ and pnpm on PATH, WebView2 | 2026-11-24: stopped, pnpm not on PATH |
+| rust_tauri_svelte | `pwsh -NoProfile -File rust_tauri_svelte\build_w11_amd64.ps1` | rustup, VS Build Tools, Node.js and pnpm, WebView2 | 2026-11-24: stopped, pnpm not on PATH |
+| zig_imgui | `pwsh -NoProfile -File zig_imgui\build_w11_amd64.ps1` | PowerShell 7, tar.exe and internet access to the DuckDB extensions | 2026-11-24: stopped, the network proxy blocked the sqlite_scanner download |
+
+Debian amd64 from Windows (WSL): `pwsh -NoProfile -File <stack>\build_debian_amd64_wsl.ps1` (table below).
+Setup guides: docs\SetupWindows11.md, docs\SetupDebian.md. Details: README-BUILD.txt.
+
 ## Subprojects
 
 | Folder | Language | Technology | Version | Products | Build (Windows 11 amd64 / Debian amd64 from WSL) |
