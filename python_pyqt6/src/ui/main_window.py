@@ -305,9 +305,9 @@ class MainWindow(QMainWindow):
             self.default_scope_group.addAction(default)
             self.default_scope_actions[name] = default
 
-        # Configuracoes > Exibir NULL (padrao ligado, gravado entre execucoes)
+        # Configuracoes > Exibir NULL (padrao desligado = celula vazia, como antes; gravado entre execucoes)
         self.show_null_action = QAction(tr("settings.show_null"), self, checkable=True)
-        self.show_null_action.setChecked(self.settings.value("show_null", True, type=bool))
+        self.show_null_action.setChecked(self.settings.value("show_null", False, type=bool))
         self.show_null_action.toggled.connect(self.set_show_null)
 
     def _create_central(self) -> None:
@@ -674,7 +674,7 @@ class MainWindow(QMainWindow):
         self._search_now()
 
     def set_show_null(self, show: bool) -> None:
-        # desligado, a celula NULL fica vazia; copiar, filtrar e exportar continuam com o valor real
+        # so a grade: ligado mostra o texto NULL, desligado a celula fica vazia; copiar, filtrar e exportar nao mudam
         self.settings.setValue("show_null", bool(show))
         for model in (self.table_model, self.schema_model, self.sql_model):
             model.set_null_text(tr("grid.null") if show else "")

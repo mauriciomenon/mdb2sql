@@ -194,20 +194,24 @@ def test_search_all_tables_and_open_one(qtbot, window: MainWindow) -> None:
 
 
 def test_show_null_setting(qtbot, window: MainWindow) -> None:
-    # Configuracoes > Exibir NULL: ligado por padrao; desligado, a celula NULL fica vazia; gravado
+    # Configuracoes > Exibir NULL: desligado por padrao (sem a chave gravada = celula vazia, como antes); ligado
+    # mostra o texto NULL so na grade; gravado
     _select_table(qtbot, window, "people")
     settings_menu = _menu(window, "&Settings")
-    assert window.show_null_action in settings_menu.actions() and window.show_null_action.isChecked()
-    assert _column(window, 2) == ["9.5", "NULL", "7.25"]
+    assert window.show_null_action in settings_menu.actions() and not window.show_null_action.isChecked()
+    assert _column(window, 2) == ["9.5", "", "7.25"]
 
     window.show_null_action.trigger()
-    assert _column(window, 2) == ["9.5", "", "7.25"]
-    assert QSettings().value("show_null") in (False, "false")
-    again = MainWindow()  # proxima abertura: desligado
-    qtbot.addWidget(again)
-    assert not again.show_null_action.isChecked() and again.table_model.null_text == ""
-    window.show_null_action.trigger()
     assert _column(window, 2) == ["9.5", "NULL", "7.25"]
+    assert QSettings().value("show_null") in (True, "true")
+    window.data_table.setCurrentIndex(window.data_proxy.index(1, 2))
+    window.copy_selection()
+    assert QApplication.clipboard().text() == ""  # copiar continua com o valor real
+    again = MainWindow()  # proxima abertura: ligado
+    qtbot.addWidget(again)
+    assert again.show_null_action.isChecked() and again.table_model.null_text == "NULL"
+    window.show_null_action.trigger()
+    assert _column(window, 2) == ["9.5", "", "7.25"]
 
 
 def test_sql_tab_runs_query_and_copies(qtbot, window: MainWindow) -> None:
