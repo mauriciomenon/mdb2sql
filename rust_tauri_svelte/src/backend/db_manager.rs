@@ -520,7 +520,8 @@ impl DBManager {
     // lower(strip_accents()) of every text cell (one UNION ALL of all the COUNTs measured the same). All columns as text
     // (the per-table rule) measured 7-8x slower on DB4 (18-21 s vs 2.2-2.4 s for 3 words), so text columns only
     // shortcut: a term made of digits counts here only text cells; the opened table also matches numbers and dates
-    pub fn search_tables(&self, search: &str) -> Result<Vec<Found>, String> {
+    // stop() true (outra pesquisa comecou): para antes da proxima tabela com [[err.searchCancelled]]
+    pub fn search_tables(&self, search: &str, stop: &dyn Fn() -> bool) -> Result<Vec<Found>, String> {
         self.with_conn(|conn| {
             let mut text: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
             let mut stmt = conn
@@ -536,13 +537,16 @@ impl DBManager {
             }
             let mut found = Vec::new();
             for table in list_tables(conn)? {
+                if stop() {
+                    return Err("[[err.searchCancelled]]".to_string());
+                }
                 let Some((cond, params)) = text.get(&table).and_then(|cols| search_condition(cols, search)) else {
                     continue;
                 };
                 let query = format!("SELECT COUNT(*) FROM {} WHERE {cond}", ident(&table));
                 let count: i64 = conn
                     .query_row(&query, duckdb::params_from_iter(params), |row| row.get(0))
-                    .map_err(|e| format!("{table}: Failed to count rows: {e}"))?;
+                    .map_err(|e| format!("[[err.countRows]] {table}: {e}"))?;
                 if count > 0 {
                     found.push(Found { table, count });
                 }

@@ -118,6 +118,23 @@ test('switching scope with an empty field keeps the pending table reload', () =>
   assert.match(appFunction('setScope'), /if \(!search\.trim\(\)\) return;\s*clearTimeout\(searchTimer\);\s*runSearch\(\);/);
 });
 
+// decisao 4 (igual nas 4 versoes): resposta velha de Todas as tabelas nunca aparece (outro termo, escopo, tabela ou
+// arquivo); a pesquisa nova para a antiga no backend (src/backend/tests.rs); falha tira o "Pesquisando" e mostra o erro
+test('All tables search: stale answers are dropped and a failure ends the searching state', () => {
+  assert.match(appFunction('dropFound'), /searchRun\+\+;\s*found = null;/);
+  const all = appFunction('searchAll');
+  assert.match(all, /dropFound\(\);\s*const run = searchRun;/);
+  assert.equal(count(all, 'if (run === searchRun)'), 2); // resposta e erro
+  assert.match(all, /found = \{ tables: null \};\s*showError\(err\);/);
+  assert.match(appFunction('onSearch'), /search = event\.currentTarget\.value;\s*dropFound\(\);/);
+  assert.match(appFunction('setScope'), /scope = next;\s*dropFound\(\);/);
+  assert.match(appFunction('openTable'), /if \(tableName !== selectedTable\) \{[^}]*dropFound\(\);\s*\}/);
+  assert.match(appFunction('resetTable'), /dropFound\(\);/);
+  const ui = markup('./App.svelte');
+  assert.match(ui, /\{!found \? t\('found\.searching'\) : found\.tables \? t\('found\.summary'/);
+  assert.match(ui, /\{#if found\?\.tables\}\s*\{#each found\.tables as f/);
+});
+
 // decisao 3: nenhum caminho deixa a tabela sem coluna visivel (Ocultar todas e a caixa da ultima visivel)
 test('the Columns dialog never hides the last visible column', () => {
   const dialog = markup('./App.svelte').match(/<dialog\s+bind:this=\{columnsDialog\}[\s\S]*?<\/dialog>/)[0];

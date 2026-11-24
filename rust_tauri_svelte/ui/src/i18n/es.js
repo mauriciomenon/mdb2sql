@@ -187,4 +187,6 @@ export default {
   'err.exists': 'El archivo ya existe:',
   'err.noConverted': 'No hay SQLite convertido',
   'err.exportCancelled': 'Exportación cancelada',
+  'err.searchCancelled': 'Búsqueda cancelada',
+  'err.countRows': 'No se pudieron contar las filas de',
 };

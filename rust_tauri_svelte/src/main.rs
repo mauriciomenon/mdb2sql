@@ -17,7 +17,7 @@ use backend::export::{self, Source, Summary};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 // NIVEL BASICO: Estado global: banco aberto, pedido de cancelar a exportacao e o SQLite convertido do Access
@@ -28,6 +28,8 @@ struct AppState {
     cancel_export: AtomicBool,
     converted: Mutex<Option<Converted>>,
     exiting: AtomicBool,
+    // numero da pesquisa em todas as tabelas mais nova: a anterior ve o numero mudar e para entre uma tabela e outra
+    search_run: AtomicU64,
     // Linux sem X11: aviso de que a janela esta no Wayland (reserva); None no resto
     display_warning: Option<DisplayWarning>,
 }
@@ -162,10 +164,13 @@ fn get_row_count(table_name: String, filters: Vec<Filter>, search: String, state
     state.db_manager.lock().unwrap().get_row_count(&table_name, &filters, &search)
 }
 
-// NIVEL BASICO: Pesquisa da aba Data em todas as tabelas: cada tabela com linhas achadas e quantas
+// NIVEL BASICO: Pesquisa da aba Data em todas as tabelas: cada tabela com linhas achadas e quantas. Uma pesquisa
+// nova faz a anterior parar na proxima tabela (digitar t, te, ten nao enfileira tres pesquisas inteiras no lock)
 #[tauri::command(async)]
 fn search_all_tables(search: String, state: State<'_, AppState>) -> Result<Vec<Found>, String> {
-    state.db_manager.lock().unwrap().search_tables(&search)
+    let run = state.search_run.fetch_add(1, Ordering::SeqCst) + 1;
+    let stop = || state.search_run.load(Ordering::SeqCst) != run;
+    state.db_manager.lock().unwrap().search_tables(&search, &stop)
 }
 
 // NIVEL BASICO: GetTableSchema retorna schema da tabela
@@ -308,6 +313,7 @@ fn main() {
             cancel_export: AtomicBool::new(false),
             converted: Mutex::new(None),
             exiting: AtomicBool::new(false),
+            search_run: AtomicU64::new(0),
             display_warning: x11_warning,
         })
         .invoke_handler(tauri::generate_handler![

@@ -464,7 +464,7 @@ mod tests {
                 // "Todas as tabelas" acha as mesmas tabelas com as mesmas contagens (o termo so existe em texto)
                 let started = std::time::Instant::now();
                 let mut everywhere: Vec<(String, i64)> =
-                    manager.search_tables("tension de campo").unwrap().into_iter().map(|f| (f.table, f.count)).collect();
+                    manager.search_tables("tension de campo", &|| false).unwrap().into_iter().map(|f| (f.table, f.count)).collect();
                 eprintln!("search in all {} tables: {:?}", tables.len(), started.elapsed());
                 everywhere.sort();
                 let mut expected: Vec<(String, i64)> = found.iter().map(|(t, n, _)| (t.clone(), *n)).collect();
@@ -840,10 +840,10 @@ mod tests {
             )
             .unwrap();
         let manager = DBManager::new();
-        assert!(manager.search_tables("x").unwrap_err().contains("[[err.noDatabase]]"));
+        assert!(manager.search_tables("x", &|| false).unwrap_err().contains("[[err.noDatabase]]"));
         manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
         let found = |s: &str| -> Vec<(String, i64)> {
-            manager.search_tables(s).unwrap().into_iter().map(|f| (f.table, f.count)).collect()
+            manager.search_tables(s, &|| false).unwrap().into_iter().map(|f| (f.table, f.count)).collect()
         };
         assert_eq!(found("TENSAO"), [("a_codes".to_string(), 1), ("b_points".to_string(), 2)]);
         assert_eq!(found("campo tensão"), [("b_points".to_string(), 1)]);
@@ -858,6 +858,35 @@ mod tests {
         drop(conn);
         manager.connect(lite.to_str().unwrap(), &mut no_progress()).unwrap();
         assert_eq!(found("tensao"), [("t".to_string(), 1)]);
+    }
+
+    // decisao 4 (4 versoes): uma pesquisa nova para a antiga entre uma tabela e outra; falha ao contar sai com a frase
+    // do catalogo ([[chave]], traduzida na tela) e o nome da tabela
+    #[test]
+    fn search_in_all_tables_stops_between_tables_and_reports_failures() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stop.duckdb");
+        duckdb::Connection::open(&path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE a (s VARCHAR); INSERT INTO a VALUES ('foo');
+                 CREATE TABLE b (s VARCHAR); INSERT INTO b VALUES ('foo');
+                 CREATE VIEW z AS SELECT CAST(error('test') AS VARCHAR) AS s;",
+            )
+            .unwrap();
+        let manager = DBManager::new();
+        manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+        // a pesquisa nova chega enquanto a tabela a e contada: b nao e contada
+        let asked = std::cell::Cell::new(0);
+        let stop = || {
+            asked.set(asked.get() + 1);
+            asked.get() > 1
+        };
+        assert_eq!(manager.search_tables("foo", &stop).unwrap_err(), "[[err.searchCancelled]]");
+        assert_eq!(asked.get(), 2);
+        let err = manager.search_tables("foo", &|| false).unwrap_err();
+        assert!(err.starts_with("[[err.countRows]] z: ") && err.contains("test"), "{err}");
+        assert!(!err.contains("Failed"), "{err}");
     }
 
     // auditoria externa 2: arquivo do usuario com o nome do temporario ("out.csv.partial") nao pode sumir, e o
