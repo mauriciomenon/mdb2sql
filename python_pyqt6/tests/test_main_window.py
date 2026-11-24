@@ -75,6 +75,10 @@ def test_select_sort_search_and_copy(qtbot, window: MainWindow) -> None:
     assert window.info_label.text() == "people: Showing 3 of 3 rows"
     assert _column(window, 0) == ["1", "2", "10"]
     assert window.schema_model.rowCount() == 3
+    # Schema: titulos traduzidos (nao as chaves do backend; o terceiro saia "null"), valores como o backend da
+    schema = window.schema_model
+    assert [schema.headerData(c, Qt.Orientation.Horizontal) for c in range(3)] == ["Column", "Type", "Nullable"]
+    assert [schema.index(r, 2).data() for r in range(3)] == ["NO", "YES", "YES"]
 
     # numeros ordenam como numeros (10 > 2), nao como texto
     window.data_table.sortByColumn(0, Qt.SortOrder.DescendingOrder)

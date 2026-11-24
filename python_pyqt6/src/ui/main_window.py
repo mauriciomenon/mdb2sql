@@ -1041,7 +1041,10 @@ class MainWindow(QMainWindow):
             [column["column_name"] for column in schema],
             [f"{column['column_name']}: {column['column_type']}" for column in schema],
         )
-        self.schema_model.set_rows(schema)
+        # titulos do Schema traduzidos: as chaves do backend (column_name, column_type, null) nao vao para a tela
+        titles = {"column_name": tr("schema.column"), "column_type": tr("schema.type"), "null": tr("schema.nullable")}
+        self.schema_model.set_rows([{titles[k]: v for k, v in column.items()} for column in schema],
+                                   list(titles.values()))
         self.loaded_table = (payload["table_name"], payload["total_rows"])
         self.matched_rows = payload["matched_rows"]
         self.loaded_search = payload["search"]
