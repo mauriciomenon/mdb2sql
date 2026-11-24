@@ -106,7 +106,8 @@ Open a file with File > Open database (the dialog lists Access, SQLite and DuckD
     database: `tension de campo` finds "EXCITACION TENSION DE CAMPO" even beyond the first rows; there is no
     fuzzy match (`tensao` does not find "TENSION"). It runs after a 300 ms pause in typing (Enter: at once).
     Beside it, This table | All tables: All tables lists the tables with matching rows (same rule) and how many;
-    a click opens that table with the same search. The default is in Settings > Default search scope.
+    a click opens that table with the same search and no value filters. The default is in Settings > Default
+    search scope. Opening another file empties the search and the table list filter and returns to that default.
   - Schema: column names, types and nullability.
   - SQL: any DuckDB SQL over the open database; Run or Ctrl+Enter; the search field filters its loaded result.
 - Click a cell; Ctrl+C copies the value. Right-click a cell: Filter by this value, Clear filters, Copy value,
@@ -116,7 +117,7 @@ Open a file with File > Open database (the dialog lists Access, SQLite and DuckD
 - Filter by a value: a `WHERE column = value` (`IS NULL` for a NULL cell) in the database query; filters on
   several columns add up (AND) and show as removable chips. Exports ignore filters and search.
 - Columns...: one checkbox per column, a field to filter the list; "Show all" and "Hide all" act on the
-  listed columns only. Right-click a Data column header: Size column to fit, Size all columns to fit, Hide this
+  listed columns only, and one column always stays visible. Right-click a Data column header: Size column to fit, Size all columns to fit, Hide this
   column, Columns..., the columns with a check mark (a click shows or hides one; the last visible one stays) and
   Show all columns. Dragging the right edge of a header resizes the column; fit returns it to its content.
   Hidden columns and widths last while the table is open.
