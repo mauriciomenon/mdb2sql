@@ -637,6 +637,9 @@ fn setClipboard(s: []const u8) void {
 
 const Tab = enum { data, schema, sql };
 
+// Busca em todas as tabelas: o termo buscado e as tabelas com linhas (hits do gpa)
+const Global = struct { term: [256:0]u8, hits: []worker.Hit };
+
 // O que fazer depois de responder sobre o SQLite convertido
 const Leave = enum { open, close, exit };
 const Choice = enum { save, delete };
@@ -658,6 +661,8 @@ const App = struct {
     source: ?dbm.Source = null,
     counts: []u64 = &.{}, // linhas por tabela, mesma ordem de db.table_names
     table_filter: [128:0]u8 = @splat(0),
+    table_filter_applied: [128:0]u8 = @splat(0), // o que filtra a lista: o texto da caixa 300 ms depois da ultima tecla
+    table_filter_wait: dbm.gridtools.Debounce = .{},
     filter_scratch: std.ArrayList(u8) = .empty, // nome de tabela em forma de busca (reaproveitado a cada quadro)
     tables_w: f32 = 0, // largura inicial do painel das tabelas (0 = calcular)
     opened: u32 = 0, // arquivos abertos na sessao (ID do painel das tabelas)
@@ -681,6 +686,10 @@ const App = struct {
     col_names: []const []const u8 = &.{}, // vive na arena de schema
     data: ?dbm.Grid = null,
     search: [256:0]u8 = @splat(0),
+    search_wait: dbm.gridtools.Debounce = .{}, // a busca roda 300 ms depois da ultima tecla (Enter: na hora)
+    scope: settings.SearchScope = .table, // escopo atual da busca (o padrao vem das configuracoes)
+    global: ?Global = null, // resultado da busca em todas as tabelas
+    select_search: bool = false, // o proximo select abre a tabela com a busca da caixa (escolha na busca global)
     sort_col: ?usize = null,
     sort_desc: bool = false,
     page: u64 = 0,
@@ -711,6 +720,7 @@ const App = struct {
     want_select: ?usize = null,
     want_reload: bool = false,
     want_run: bool = false,
+    want_global: bool = false,
     want_browse: bool = false,
     want_export: ?ExportKind = null, // abre o dialogo de salvar e dispara a exportacao
     want_theme: ?settings.Theme = null,
@@ -739,6 +749,7 @@ const App = struct {
         }
         app.clearTable();
         app.clearResult();
+        app.clearGlobal();
         app.gpa.free(app.counts);
         app.filter_scratch.deinit(app.gpa);
         app.filters.deinit(app.gpa);
@@ -779,6 +790,47 @@ const App = struct {
         app.selected = null;
         app.data_sel = .{};
         app.schema_sel = .{};
+    }
+
+    fn clearGlobal(app: *App) void {
+        if (app.global) |g| app.gpa.free(g.hits);
+        app.global = null;
+    }
+
+    // Busca da caixa da aba Data no escopo atual (Enter ou 300 ms depois da ultima tecla)
+    fn runSearch(app: *App) void {
+        app.search_wait.due = null;
+        if (app.scope == .table) {
+            app.page = 0;
+            app.want_reload = true;
+        } else if (std.mem.indexOfNone(u8, zstr(&app.search), &std.ascii.whitespace) == null) {
+            app.clearGlobal();
+        } else app.want_global = true;
+    }
+
+    // Seletor da aba Data ou Configuracoes: o texto da caixa ainda nao aplicado neste escopo e buscado agora
+    fn setScope(app: *App, s: settings.SearchScope) void {
+        if (app.scope == s) return;
+        app.scope = s;
+        const done = if (s == .all)
+            (if (app.global) |g| std.mem.eql(u8, zstr(&g.term), zstr(&app.search)) else false)
+        else
+            std.mem.eql(u8, zstr(&app.applied_search), zstr(&app.search));
+        if (!done) app.runSearch();
+    }
+
+    // Tabela escolhida no resultado da busca global: abre na aba Data com a mesma busca
+    fn pickGlobal(app: *App, table: usize, term: *const [256:0]u8) void {
+        app.scope = .table;
+        app.search = term.*;
+        app.search_wait.due = null;
+        if (app.selected == table) {
+            app.page = 0;
+            app.want_reload = true;
+        } else {
+            app.want_select = table;
+            app.select_search = true;
+        }
     }
 
     fn clearResult(app: *App) void {
@@ -828,7 +880,12 @@ const App = struct {
                 r.table_name = app.start_table;
                 app.start_table = "";
             },
-            .select => r.table = app.want_select orelse return,
+            .select => {
+                r.table = app.want_select orelse return;
+                r.search = if (app.select_search) app.search else @splat(0);
+                app.select_search = false;
+            },
+            .search_all => r.search = app.search,
             .reload => {
                 r.table = app.selected orelse return;
                 r.columns = app.col_names;
@@ -853,6 +910,7 @@ const App = struct {
             .open => {
                 app.clearTable();
                 app.clearResult();
+                app.clearGlobal();
                 app.sql_msg.len = 0;
                 app.tables_w = 0;
                 app.opened +%= 1;
@@ -876,11 +934,16 @@ const App = struct {
                     }
                 }
                 app.start_sql = false;
-                if (out.err == null) app.takeTable(&out);
+                if (out.err == null) app.takeTable(&out, "");
             },
             .select => if (out.err == null) {
                 app.clearTable();
-                app.takeTable(&out);
+                app.takeTable(&out, zstr(&app.slot.req.search));
+            },
+            .search_all => if (out.err == null) {
+                app.clearGlobal();
+                app.global = .{ .term = app.slot.req.search, .hits = out.hits };
+                out.hits = &.{};
             },
             .reload => if (out.err == null) {
                 if (app.data) |*old| old.deinit();
@@ -946,8 +1009,9 @@ const App = struct {
         app.status.loaded = true;
     }
 
-    // Tabela recem-carregada (schema + primeira pagina): comeca sem busca nem ordenacao
-    fn takeTable(app: *App, out: *worker.Out) void {
+    // Tabela recem-carregada (schema + primeira pagina): comeca sem ordenacao, com a busca do pedido (vazia ou a
+    // da busca global)
+    fn takeTable(app: *App, out: *worker.Out, search: []const u8) void {
         app.selected = out.table orelse return;
         app.reveal_selected = true;
         app.schema = out.schema;
@@ -957,8 +1021,9 @@ const App = struct {
         out.data = null;
         app.total = out.total;
         app.page = out.page;
-        app.search[0] = 0;
-        app.applied_search[0] = 0;
+        copyZ(&app.search, search);
+        copyZ(&app.applied_search, search);
+        app.search_wait.due = null; // tecla pendente da tabela anterior nao busca nesta
         app.sort_col = null;
         app.sort_desc = false;
     }
@@ -1000,6 +1065,7 @@ const App = struct {
         @memcpy(shown, name[0..shown.len]);
         app.clearTable();
         app.clearResult();
+        app.clearGlobal();
         app.sql_msg.len = 0;
         app.db.closeSource();
         app.gpa.free(app.counts);
@@ -1068,6 +1134,13 @@ const App = struct {
 
     fn update(app: *App) void {
         if (app.slot.poll()) |out| app.apply(out);
+        const now = ig.igGetTime();
+        if (app.search_wait.fire(now)) app.runSearch();
+        if (app.table_filter_wait.fire(now)) app.table_filter_applied = app.table_filter;
+        if (prefs_dirty) {
+            prefs_dirty = false;
+            app.savePrefs();
+        }
 
         if (app.want_theme) |theme| {
             app.prefs.theme = theme;
@@ -1077,6 +1150,7 @@ const App = struct {
         app.want_theme = null;
         if (app.want_lang) |l| {
             i18n.lang = l;
+            localizeImGui();
             app.prefs.lang = l;
             app.savePrefs();
             if (app.status.loaded) app.setLoadedStatus(false);
@@ -1126,6 +1200,9 @@ const App = struct {
         } else if (app.want_run) {
             app.want_run = false;
             app.start(.sql);
+        } else if (app.want_global) {
+            app.want_global = false;
+            app.start(.search_all);
         }
     }
 
@@ -1387,6 +1464,29 @@ const App = struct {
                     if (ig.igMenuItem_Bool(n, null, i18n.lang == l, true)) app.want_lang = l;
                 }
             }
+            // as opcoes da tela, com o padrao gravado: escopo da busca, NULL e cabecalho na copia
+            ig.igSeparator();
+            var sb: [96]u8 = undefined;
+            if (ig.igBeginMenu(idLabel(&sb, "menu_search_scope", "scope"), true)) {
+                defer ig.igEndMenu();
+                const cur = app.prefs.search_scope;
+                const pick: ?settings.SearchScope = if (ig.igMenuItem_Bool(tr("scope_table"), null, cur == .table, true))
+                    .table
+                else if (ig.igMenuItem_Bool(tr("scope_all"), null, cur == .all, true)) .all else null;
+                if (pick) |s| {
+                    app.prefs.search_scope = s;
+                    app.savePrefs();
+                    app.setScope(s);
+                }
+            }
+            if (ig.igMenuItem_Bool(tr("menu_show_null"), null, app.prefs.show_null, true)) {
+                app.prefs.show_null = !app.prefs.show_null;
+                app.savePrefs();
+            }
+            if (ig.igMenuItem_Bool(tr("copy_header"), null, app.prefs.copy_header, true)) {
+                app.prefs.copy_header = !app.prefs.copy_header;
+                app.savePrefs();
+            }
         }
         if (ig.igBeginMenu(help_l, true)) {
             defer ig.igEndMenu();
@@ -1617,12 +1717,13 @@ const App = struct {
                 .select, .reload => tr("busy_loading"),
                 .sql => tr("busy_running"),
                 .export_ => tr("busy_exporting"),
+                .search_all => tr("busy_searching"),
             };
             textT("busy_elapsed", .{ what, elapsed });
-            if (total > 0 and (r.kind == .open or r.kind == .export_)) {
+            if (total > 0 and (r.kind == .open or r.kind == .export_ or r.kind == .search_all)) {
                 ig.igSameLine(0, -1);
                 var buf: [64]u8 = undefined;
-                const unit = if (r.kind == .open or r.export_kind.countsTables()) tr("unit_tables") else tr("unit_rows");
+                const unit = if (r.kind != .export_ or r.export_kind.countsTables()) tr("unit_tables") else tr("unit_rows");
                 const overlay = i18n.fmtZ(&buf, "progress_overlay", .{ done, total, unit });
                 const frac: f32 = @floatCast(@as(f64, @floatFromInt(@min(done, total))) / @as(f64, @floatFromInt(total)));
                 ig.igProgressBar(frac, .{ .x = 240, .y = 0 }, overlay);
@@ -1661,7 +1762,11 @@ const App = struct {
 
     fn drawTables(app: *App) void {
         ig.igSetNextItemWidth(-1);
-        _ = ig.igInputTextWithHint("##filter", tr("filter_tables"), &app.table_filter, app.table_filter.len + 1, 0, null, null);
+        // filtra 300 ms depois da ultima tecla; Enter filtra na hora
+        if (ig.igInputTextWithHint("##filter", tr("filter_tables"), &app.table_filter, app.table_filter.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) {
+            app.table_filter_wait.due = null;
+            app.table_filter_applied = app.table_filter;
+        } else if (ig.igIsItemEdited()) app.table_filter_wait.edited(ig.igGetTime());
         itemTooltip(tr("search_rule"));
         // colunas na largura do conteudo: o nome inteiro aparece (rolagem horizontal se o painel for estreito)
         const flags = ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_ScrollY | ig.ImGuiTableFlags_ScrollX | ig.ImGuiTableFlags_BordersInnerV;
@@ -1677,7 +1782,7 @@ const App = struct {
             _ = rightHeader(tr("col_rows"), 0);
         }
         var fbuf: [app.table_filter.len]u8 = undefined;
-        const words = dbm.gridtools.fold(&fbuf, zstr(&app.table_filter));
+        const words = dbm.gridtools.fold(&fbuf, zstr(&app.table_filter_applied));
         for (app.db.table_names, 0..) |name, i| {
             const row = [_]?[]const u8{name};
             if (!(dbm.gridtools.rowMatches(app.gpa, &app.filter_scratch, &row, words) catch true)) continue;
@@ -1685,8 +1790,10 @@ const App = struct {
             _ = ig.igTableNextColumn();
             ig.igPushID_Int(@intCast(i));
             // "##" + PushID: o rotulo fica vazio e o nome (que nao termina em 0) vai por textSlice
-            if (ig.igSelectable_Bool("##t", app.selected == i, ig.ImGuiSelectableFlags_SpanAllColumns, .{ .x = 0, .y = 0 }))
+            if (ig.igSelectable_Bool("##t", app.selected == i, ig.ImGuiSelectableFlags_SpanAllColumns, .{ .x = 0, .y = 0 })) {
                 app.want_select = i;
+                app.scope = .table; // a aba Data mostra a tabela escolhida
+            }
             const hovered = ig.igIsItemHovered(0);
             ig.igPopID();
             if (app.selected == i and app.reveal_selected) {
@@ -1725,7 +1832,11 @@ const App = struct {
                 const cols = [_][:0]const u8{ tr("schema_column"), tr("schema_type"), tr("schema_null") };
                 var shown = g.*;
                 shown.columns = &cols;
-                _ = drawGrid("##schema", &shown, null, &app.schema_sel, null, .plain);
+                // um pouco mais de espaco entre as colunas (so o horizontal das celulas, +6 px de cada lado)
+                const pad = ig.igGetStyle().*.CellPadding;
+                ig.igPushStyleVar_Vec2(ig.ImGuiStyleVar_CellPadding, .{ .x = pad.x * 2, .y = pad.y });
+                _ = drawGrid("##schema", &shown, null, &app.schema_sel, null, .plain, &app.prefs);
+                ig.igPopStyleVar(1);
             }
         }
         if (ig.igBeginTabItem(idLabel(&lb[2], "tab_sql", "sql"), null, if (app.focus_sql) ig.ImGuiTabItemFlags_SetSelected else 0)) {
@@ -1744,11 +1855,14 @@ const App = struct {
         defer ig.igPopID();
 
         ig.igSetNextItemWidth(264);
+        // busca 300 ms depois da ultima tecla; Enter busca na hora
         if (ig.igInputTextWithHint("##search", tr("search"), &app.search, app.search.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) {
-            app.page = 0;
-            app.want_reload = true;
-        }
+            app.runSearch();
+        } else if (ig.igIsItemEdited()) app.search_wait.edited(ig.igGetTime());
         itemTooltip(tr("search_rule"));
+        ig.igSameLine(0, -1);
+        app.scopeSelector();
+        if (app.scope == .all) return app.drawGlobal();
         const prev_l = tr("prev");
         const next_l = tr("next");
         sameLineIfFits(buttonWidth(prev_l), -1); // janela estreita: os botoes descem em vez de serem cortados
@@ -1804,7 +1918,7 @@ const App = struct {
         }
 
         app.data_sel.has_filters = app.filters.items.len > 0;
-        if (app.data) |*g| if (drawGrid("##data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null, .filter)) |s| {
+        if (app.data) |*g| if (drawGrid("##data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null, .filter, &app.prefs)) |s| {
             app.sort_col = s.col;
             app.sort_desc = s.desc;
             app.page = 0;
@@ -1848,7 +1962,61 @@ const App = struct {
             ig.igSameLine(0, -1);
             textSlice(hidden[3..]); // sem o " | " do comeco
         }
-        _ = drawGrid("##result", g, null, &app.result_sel, app.result_rows, .hide);
+        _ = drawGrid("##result", g, null, &app.result_sel, app.result_rows, .hide, &app.prefs);
+    }
+
+    // Escopo da busca ao lado da caixa: "Esta tabela" | "Todas as tabelas", dois segmentos colados; o escolhido com
+    // a cor de botao do tema, o outro com a cor das caixas de texto
+    fn scopeSelector(app: *App) void {
+        const st = ig.igGetStyle();
+        const dl = ig.igGetWindowDrawList();
+        const labels = [_][:0]const u8{ tr("scope_table"), tr("scope_all") };
+        for (labels, 0..) |label, i| {
+            const s: settings.SearchScope = if (i == 0) .table else .all;
+            if (i > 0) ig.igSameLine(0, 0);
+            ig.igPushID_Int(@intCast(i));
+            if (ig.igInvisibleButton("##scope", .{ .x = textWidth(label) + 2 * st.*.FramePadding.x, .y = ig.igGetFrameHeight() }, 0)) app.setScope(s);
+            ig.igPopID();
+            const col: c_int = if (app.scope == s) ig.ImGuiCol_Button else if (ig.igIsItemHovered(0)) ig.ImGuiCol_FrameBgHovered else ig.ImGuiCol_FrameBg;
+            const corners: c_int = if (i == 0) ig.ImDrawFlags_RoundLeft else ig.ImDrawFlags_RoundRight;
+            const min = ig.igGetItemRectMin();
+            const max = ig.igGetItemRectMax();
+            ig.ImDrawList_AddRectFilled(dl, min, max, ig.igGetColorU32_Col(col, 1), st.*.FrameRounding, corners);
+            ig.ImDrawList_AddRect(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_Border, 1), st.*.FrameRounding, st.*.FrameBorderSize, corners);
+            ig.ImDrawList_AddText_Vec2(dl, .{ .x = min.x + st.*.FramePadding.x, .y = min.y + st.*.FramePadding.y }, ig.igGetColorU32_Col(ig.ImGuiCol_Text, 1), label.ptr, label.ptr + label.len);
+        }
+    }
+
+    // Busca em todas as tabelas: as tabelas com linhas encontradas; clicar abre a tabela com a mesma busca
+    fn drawGlobal(app: *App) void {
+        const g = if (app.global) |*x| x else return;
+        ig.igAlignTextToFramePadding();
+        textT("global_found", .{ zstr(&g.term), g.hits.len });
+        if (g.hits.len == 0) return;
+        const flags = ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_ScrollY | ig.ImGuiTableFlags_BordersInnerV | ig.ImGuiTableFlags_SizingFixedFit;
+        if (!ig.igBeginTable("##global", 2, flags, .{ .x = 0, .y = 0 }, 0)) return;
+        defer ig.igEndTable();
+        ig.igTableSetupScrollFreeze(0, 1);
+        ig.igTableSetupColumn(tr("col_table"), 0, 0, 0);
+        ig.igTableSetupColumn(tr("col_rows"), 0, 0, 0);
+        ig.igTableNextRow(ig.ImGuiTableRowFlags_Headers, ig.igTableGetHeaderRowHeight());
+        if (ig.igTableSetColumnIndex(0)) ig.igTableHeader(tr("col_table"));
+        if (ig.igTableSetColumnIndex(1)) _ = rightHeader(tr("col_rows"), 0);
+        for (g.hits, 0..) |h, i| {
+            if (h.table >= app.db.table_names.len) continue;
+            ig.igTableNextRow(0, 0);
+            _ = ig.igTableNextColumn();
+            ig.igPushID_Int(@intCast(i));
+            if (ig.igSelectable_Bool("##g", false, ig.ImGuiSelectableFlags_SpanAllColumns, .{ .x = 0, .y = 0 })) app.pickGlobal(h.table, &g.term);
+            ig.igPopID();
+            ig.igSameLine(0, 0);
+            textSlice(app.db.table_names[h.table]);
+            _ = ig.igTableNextColumn();
+            var nb: [24]u8 = undefined;
+            const n = std.fmt.bufPrint(&nb, "{d}", .{h.rows}) catch "";
+            rightAlign(textWidth(n), 0);
+            textSlice(n);
+        }
     }
 };
 
@@ -1896,16 +2064,17 @@ const max_grid_cols = 512;
 // plain: so copia; hide: tambem ocultar colunas; filter: tambem "Filtrar por este valor" (aba Dados)
 const GridMode = enum { plain, hide, filter };
 
-var copy_header = false; // "Copiar linha" tambem copia a linha de nomes das colunas
+var prefs_dirty = false; // opcao mudada dentro de uma grade (menu da celula): update() grava as configuracoes
 
-// Poe na area de transferencia o valor da celula selecionada ou a linha dela separada por TAB (NULL = vazio)
-fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool) void {
+// Poe na area de transferencia o valor da celula selecionada ou a linha dela separada por TAB (NULL = vazio);
+// `header`: a linha de nomes das colunas vem antes
+fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool, header: bool) void {
     const r = sel.row orelse return;
     if (r >= g.rows.len or sel.col >= g.columns.len) return;
     var out: std.Io.Writer.Allocating = .init(std.heap.page_allocator);
     defer out.deinit();
     const w = &out.writer;
-    (if (whole_row) dbm.gridtools.writeRow(w, g.columns, g.rows[r], copy_header) else w.writeAll(g.rows[r][sel.col] orelse "")) catch return;
+    (if (whole_row) dbm.gridtools.writeRow(w, g.columns, g.rows[r], header) else w.writeAll(g.rows[r][sel.col] orelse "")) catch return;
     w.writeByte(0) catch return;
     ig.igSetClipboardText(out.written().ptr);
 }
@@ -1913,9 +2082,9 @@ fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool) void 
 // Desenha um Grid; com `sort` os cabecalhos ordenam e a nova ordenacao pedida e devolvida.
 // `rows` limita e ordena as linhas mostradas (filtro); null = todas.
 // Clique seleciona a celula; Ctrl+C copia o valor; o clique direito abre o menu da celula (copiar, filtrar).
-// Com `mode` != .plain o clique direito no cabecalho oculta colunas e abre o popup "Colunas...".
-// NULL aparece como celula vazia (igual as outras stacks).
-fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, rows: ?[]const usize, mode: GridMode) ?Sort {
+// Com `mode` != .plain o clique direito no cabecalho abre o menu do cabecalho: ajustar a largura, ocultar e mostrar
+// colunas. NULL aparece como "NULL" ou como celula vazia (Configuracoes > Exibir NULL).
+fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, rows: ?[]const usize, mode: GridMode, prefs: *settings.Settings) ?Sort {
     const n_cols: usize = @min(g.columns.len, max_grid_cols);
     if (n_cols == 0) return null;
     const can_hide = mode != .plain;
@@ -1925,6 +2094,7 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
     if (can_hide) flags |= ig.ImGuiTableFlags_Hideable;
     if (!ig.igBeginTable(id, @intCast(n_cols), flags, .{ .x = 0, .y = 0 }, 0)) return null;
     defer ig.igEndTable();
+    const table = ig.igGetCurrentTable(); // "Ajustar coluna" do menu do cabecalho
 
     ig.igTableSetupScrollFreeze(0, 1);
     for (g.columns[0..n_cols]) |name| ig.igTableSetupColumn(name.ptr, 0, 0, 0);
@@ -1997,9 +2167,11 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
                 ig.igPopID();
                 // DOUBLE inteiro sem ".0" so na tela; a celula (copia, filtro) segue com o texto original
                 const float = c < g.float_cols.len and g.float_cols[c];
-                if (cell) |s| {
+                const disp: ?[]const u8 = if (cell) |s|
+                    (if (float) dbm.gridtools.wholeFloatText(s) else s)
+                else if (prefs.show_null) tr("null_text") else null;
+                if (disp) |txt| {
                     ig.igSameLine(0, 0);
-                    const txt = if (float) dbm.gridtools.wholeFloatText(s) else s;
                     // numero alinhado a direita (o cabecalho tambem); texto a esquerda
                     if (c < g.num_cols.len and g.num_cols[c]) rightAlign(textWidth(txt), 0);
                     textSlice(txt);
@@ -2008,7 +2180,7 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         }
     }
 
-    if (ig.igIsWindowFocused(0) and ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_C)) copySelection(g, sel, false);
+    if (ig.igIsWindowFocused(0) and ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_C)) copySelection(g, sel, false, prefs.copy_header);
     if (open_menu) _ = ig.igOpenPopup_Str("##copy", 0);
     if (ig.igBeginPopup("##copy", 0)) {
         defer ig.igEndPopup();
@@ -2017,20 +2189,36 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
             if (ig.igMenuItem_Bool(tr("clear_filters"), null, false, sel.has_filters)) sel.want_clear = true;
             ig.igSeparator();
         }
-        if (ig.igMenuItem_Bool(tr("copy_value"), "Ctrl+C", false, true)) copySelection(g, sel, false);
-        if (ig.igMenuItem_Bool(tr("copy_row"), null, false, true)) copySelection(g, sel, true);
+        if (ig.igMenuItem_Bool(tr("copy_value"), "Ctrl+C", false, true)) copySelection(g, sel, false, prefs.copy_header);
+        if (ig.igMenuItem_Bool(tr("copy_row"), null, false, true)) copySelection(g, sel, true, prefs.copy_header);
         ig.igSeparator();
-        _ = ig.igCheckbox(tr("copy_header"), &copy_header);
+        // a mesma opcao de Configuracoes, gravada
+        if (ig.igCheckbox(tr("copy_header"), &prefs.copy_header)) prefs_dirty = true;
     }
     if (!can_hide) return changed;
 
-    // Cabecalho: este menu abre depois do menu padrao do ImGui (TableHeader) no mesmo quadro e toma o lugar dele
+    // Cabecalho: este menu abre depois do menu padrao do ImGui (TableHeader) no mesmo quadro e toma o lugar dele.
+    // Ajustar a largura (como o menu padrao), ocultar e mostrar; a ultima coluna visivel nao pode ser ocultada.
     if (open_header) _ = ig.igOpenPopup_Str("##header", 0);
     if (ig.igBeginPopup("##header", 0)) {
         defer ig.igEndPopup();
-        if (ig.igMenuItem_Bool(tr("hide_column"), null, false, true)) sel.hidden.set(sel.header_col);
+        const visible = n_cols - sel.hiddenCount(n_cols);
+        if (ig.igMenuItem_Bool(tr("fit_column"), null, false, true)) ig.igTableSetColumnWidthAutoSingle(table, @intCast(sel.header_col));
+        if (ig.igMenuItem_Bool(tr("fit_all_columns"), null, false, true)) ig.igTableSetColumnWidthAutoAll(table);
+        ig.igSeparator();
+        if (ig.igMenuItem_Bool(tr("hide_column"), null, false, visible > 1)) sel.hidden.set(sel.header_col);
+        if (ig.igMenuItem_Bool(tr("show_all_columns"), null, false, visible < n_cols)) sel.hidden = .empty;
         if (ig.igMenuItem_Bool(tr("columns_button"), null, false, true)) sel.open_columns = true;
-        if (ig.igMenuItem_Bool(tr("show_all"), null, false, sel.hiddenCount(n_cols) > 0)) sel.hidden = .empty;
+        ig.igSeparator();
+        // uma linha por coluna, marcada se visivel: clicar alterna e o menu continua aberto (varias de uma vez)
+        ig.igPushItemFlag(ig.ImGuiItemFlags_AutoClosePopups, false);
+        defer ig.igPopItemFlag();
+        for (g.columns[0..n_cols], 0..) |name, c| {
+            const on = !sel.hidden.isSet(c);
+            ig.igPushID_Int(@intCast(c));
+            if (ig.igMenuItem_Bool(name.ptr, null, on, !on or visible > 1)) sel.hidden.setValue(c, on);
+            ig.igPopID();
+        }
     }
 
     // "Colunas": dialogo no centro da janela, uma caixa por coluna; marcar e desmarcar varias e fechar
@@ -2078,12 +2266,15 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
             const per_row = dbm.gridtools.checkboxGridColumns(ig.igGetContentRegionAvail().x, cell_w);
             if (ig.igBeginTable("##grid", @intCast(per_row), ig.ImGuiTableFlags_SizingStretchSame, .{ .x = 0, .y = 0 }, 0)) {
                 defer ig.igEndTable();
+                const last = n_cols - sel.hiddenCount(n_cols) == 1; // a ultima visivel nao pode ser desmarcada
                 for (g.columns[0..n_cols], 0..) |name, c| {
                     if (!dbm.gridtools.columnListed(name, needle)) continue;
                     _ = ig.igTableNextColumn();
                     var shown = !sel.hidden.isSet(c);
                     ig.igPushID_Int(@intCast(c));
+                    ig.igBeginDisabled(shown and last);
                     if (ig.igCheckbox(name.ptr, &shown)) sel.hidden.setValue(c, !shown);
+                    ig.igEndDisabled();
                     ig.igPopID();
                 }
             }
@@ -2107,6 +2298,23 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         if (ig.igButton(close_l, .{ .x = bw, .y = 0 }) or dialogKeyClose()) ig.igCloseCurrentPopup();
     }
     return changed;
+}
+
+// Menu padrao do cabecalho do Dear ImGui (grade do Esquema): os textos do nosso menu, no idioma da tela
+fn localizeImGui() void {
+    switch (i18n.lang) {
+        inline else => |l| {
+            const C = i18n.catalogs[@backingInt(l)];
+            const entries = struct {
+                const list = [_]ig.ImGuiLocEntry{
+                    .{ .Key = ig.ImGuiLocKey_TableSizeOne, .Text = C.fit_column ++ "###SizeOne" },
+                    .{ .Key = ig.ImGuiLocKey_TableSizeAllFit, .Text = C.fit_all_columns ++ "###SizeAll" },
+                    .{ .Key = ig.ImGuiLocKey_TableSizeAllDefault, .Text = C.fit_all_columns ++ "###SizeAll" },
+                };
+            };
+            ig.igLocalizeRegisterEntries(&entries.list, entries.list.len);
+        },
+    }
 }
 
 var dropped: [1024:0]u8 = @splat(0); // caminho solto na janela (callback do GLFW)
@@ -2214,6 +2422,7 @@ fn run(init: std.process.Init) !void {
         app.prefs = settings.Settings.load(init.io, app.prefs_path);
     };
     i18n.lang = app.prefs.lang;
+    app.scope = app.prefs.search_scope;
     var theme = app.prefs.theme;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -2282,6 +2491,7 @@ fn run(init: std.process.Init) !void {
     _ = ig.igCreateContext(null);
     defer ig.igDestroyContext(null);
     shim_io_setup();
+    localizeImGui();
     const scale = window.getContentScale()[0];
     setupSizes(scale);
     applyTheme(settings.isLight(theme, app.gtk_theme), app.hwnd);
