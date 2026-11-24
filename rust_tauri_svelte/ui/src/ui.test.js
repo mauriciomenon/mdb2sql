@@ -154,7 +154,9 @@ test('grid text uses the 14 px app font', () => {
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
   assert.match(app, /:global\(body\) \{[^}]*font: 14px\/1\.4 'Segoe UI'/);
   const css = readFileSync(new URL('./Grid.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
-  assert.doesNotMatch(css, /font-size|font:\s*\d/);
+  assert.doesNotMatch(css, /font(-size)?:\s*[\d.]/);
+  // o tipo sob o nome da coluna e um <small>: sem inherit o navegador o reduz
+  assert.match(css, /th small \{[^}]*font-size: inherit;/);
 });
 
 // dono: o filtro de tabelas e a pesquisa da aba Data esperam a digitacao parar (300 ms, igual nas 4 versoes);

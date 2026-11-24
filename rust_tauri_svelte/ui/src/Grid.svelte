@@ -251,9 +251,11 @@
     cursor: col-resize;
   }
 
+  /* inherit: sem isso o navegador poe <small> em "smaller" (11,67 px) */
   th small {
     display: block;
     color: var(--muted);
+    font-size: inherit;
     font-weight: 500;
     letter-spacing: 0.04em;
   }
