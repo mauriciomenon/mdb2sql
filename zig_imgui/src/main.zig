@@ -1081,6 +1081,7 @@ const App = struct {
         app.want_theme = null;
         if (app.want_lang) |l| {
             i18n.lang = l;
+            localizeImGui();
             app.prefs.lang = l;
             app.savePrefs();
             if (app.status.loaded) app.setLoadedStatus(false);
@@ -1932,8 +1933,8 @@ fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool, heade
 // Desenha um Grid; com `sort` os cabecalhos ordenam e a nova ordenacao pedida e devolvida.
 // `rows` limita e ordena as linhas mostradas (filtro); null = todas.
 // Clique seleciona a celula; Ctrl+C copia o valor; o clique direito abre o menu da celula (copiar, filtrar).
-// Com `mode` != .plain o clique direito no cabecalho oculta colunas e abre o popup "Colunas...".
-// NULL aparece como celula vazia ou como "NULL" (Configuracoes > Exibir NULL).
+// Com `mode` != .plain o clique direito no cabecalho abre o menu do cabecalho: ajustar a largura, ocultar e mostrar
+// colunas. NULL aparece como "NULL" ou como celula vazia (Configuracoes > Exibir NULL).
 fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, rows: ?[]const usize, mode: GridMode, prefs: *settings.Settings) ?Sort {
     const n_cols: usize = @min(g.columns.len, max_grid_cols);
     if (n_cols == 0) return null;
@@ -1944,6 +1945,7 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
     if (can_hide) flags |= ig.ImGuiTableFlags_Hideable;
     if (!ig.igBeginTable(id, @intCast(n_cols), flags, .{ .x = 0, .y = 0 }, 0)) return null;
     defer ig.igEndTable();
+    const table = ig.igGetCurrentTable(); // "Ajustar coluna" do menu do cabecalho
 
     ig.igTableSetupScrollFreeze(0, 1);
     for (g.columns[0..n_cols]) |name| ig.igTableSetupColumn(name.ptr, 0, 0, 0);
@@ -2046,13 +2048,28 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
     }
     if (!can_hide) return changed;
 
-    // Cabecalho: este menu abre depois do menu padrao do ImGui (TableHeader) no mesmo quadro e toma o lugar dele
+    // Cabecalho: este menu abre depois do menu padrao do ImGui (TableHeader) no mesmo quadro e toma o lugar dele.
+    // Ajustar a largura (como o menu padrao), ocultar e mostrar; a ultima coluna visivel nao pode ser ocultada.
     if (open_header) _ = ig.igOpenPopup_Str("##header", 0);
     if (ig.igBeginPopup("##header", 0)) {
         defer ig.igEndPopup();
-        if (ig.igMenuItem_Bool(tr("hide_column"), null, false, true)) sel.hidden.set(sel.header_col);
+        const visible = n_cols - sel.hiddenCount(n_cols);
+        if (ig.igMenuItem_Bool(tr("fit_column"), null, false, true)) ig.igTableSetColumnWidthAutoSingle(table, @intCast(sel.header_col));
+        if (ig.igMenuItem_Bool(tr("fit_all_columns"), null, false, true)) ig.igTableSetColumnWidthAutoAll(table);
+        ig.igSeparator();
+        if (ig.igMenuItem_Bool(tr("hide_column"), null, false, visible > 1)) sel.hidden.set(sel.header_col);
+        if (ig.igMenuItem_Bool(tr("show_all_columns"), null, false, visible < n_cols)) sel.hidden = .empty;
         if (ig.igMenuItem_Bool(tr("columns_button"), null, false, true)) sel.open_columns = true;
-        if (ig.igMenuItem_Bool(tr("show_all"), null, false, sel.hiddenCount(n_cols) > 0)) sel.hidden = .empty;
+        ig.igSeparator();
+        // uma linha por coluna, marcada se visivel: clicar alterna e o menu continua aberto (varias de uma vez)
+        ig.igPushItemFlag(ig.ImGuiItemFlags_AutoClosePopups, false);
+        defer ig.igPopItemFlag();
+        for (g.columns[0..n_cols], 0..) |name, c| {
+            const on = !sel.hidden.isSet(c);
+            ig.igPushID_Int(@intCast(c));
+            if (ig.igMenuItem_Bool(name.ptr, null, on, !on or visible > 1)) sel.hidden.setValue(c, on);
+            ig.igPopID();
+        }
     }
 
     // "Colunas": dialogo no centro da janela, uma caixa por coluna; marcar e desmarcar varias e fechar
@@ -2100,12 +2117,15 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
             const per_row = dbm.gridtools.checkboxGridColumns(ig.igGetContentRegionAvail().x, cell_w);
             if (ig.igBeginTable("##grid", @intCast(per_row), ig.ImGuiTableFlags_SizingStretchSame, .{ .x = 0, .y = 0 }, 0)) {
                 defer ig.igEndTable();
+                const last = n_cols - sel.hiddenCount(n_cols) == 1; // a ultima visivel nao pode ser desmarcada
                 for (g.columns[0..n_cols], 0..) |name, c| {
                     if (!dbm.gridtools.columnListed(name, needle)) continue;
                     _ = ig.igTableNextColumn();
                     var shown = !sel.hidden.isSet(c);
                     ig.igPushID_Int(@intCast(c));
+                    ig.igBeginDisabled(shown and last);
                     if (ig.igCheckbox(name.ptr, &shown)) sel.hidden.setValue(c, !shown);
+                    ig.igEndDisabled();
                     ig.igPopID();
                 }
             }
@@ -2129,6 +2149,23 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         if (ig.igButton(close_l, .{ .x = bw, .y = 0 }) or dialogKeyClose()) ig.igCloseCurrentPopup();
     }
     return changed;
+}
+
+// Menu padrao do cabecalho do Dear ImGui (grade do Esquema): os textos do nosso menu, no idioma da tela
+fn localizeImGui() void {
+    switch (i18n.lang) {
+        inline else => |l| {
+            const C = i18n.catalogs[@backingInt(l)];
+            const entries = struct {
+                const list = [_]ig.ImGuiLocEntry{
+                    .{ .Key = ig.ImGuiLocKey_TableSizeOne, .Text = C.fit_column ++ "###SizeOne" },
+                    .{ .Key = ig.ImGuiLocKey_TableSizeAllFit, .Text = C.fit_all_columns ++ "###SizeAll" },
+                    .{ .Key = ig.ImGuiLocKey_TableSizeAllDefault, .Text = C.fit_all_columns ++ "###SizeAll" },
+                };
+            };
+            ig.igLocalizeRegisterEntries(&entries.list, entries.list.len);
+        },
+    }
 }
 
 var dropped: [1024:0]u8 = @splat(0); // caminho solto na janela (callback do GLFW)
@@ -2304,6 +2341,7 @@ fn run(init: std.process.Init) !void {
     _ = ig.igCreateContext(null);
     defer ig.igDestroyContext(null);
     shim_io_setup();
+    localizeImGui();
     const scale = window.getContentScale()[0];
     setupSizes(scale);
     applyTheme(settings.isLight(theme, app.gtk_theme), app.hwnd);

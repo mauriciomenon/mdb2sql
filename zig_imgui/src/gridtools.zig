@@ -164,9 +164,14 @@ pub fn columnListed(name: []const u8, needle: []const u8) bool {
     return needle.len == 0 or std.ascii.findIgnoreCase(name, needle) != null;
 }
 
-// Mostrar todas / Ocultar todas: so as colunas listadas pela busca do dialogo mudam
+// Mostrar todas / Ocultar todas: so as colunas listadas pela busca do dialogo mudam. A ultima coluna visivel nunca
+// some: com todas ocultas, a primeira listada volta.
 pub fn setListed(hidden: anytype, names: []const [:0]const u8, needle: []const u8, hide: bool) void {
     for (names, 0..) |name, c| if (columnListed(name, needle)) hidden.setValue(c, hide);
+    if (hide and hidden.count() >= names.len) for (names, 0..) |name, c| if (columnListed(name, needle)) {
+        hidden.unset(c);
+        break;
+    };
 }
 
 // Dialogo Columns: ~65% da largura da janela principal, entre 420 e 900 px, e nunca maior que a propria janela
@@ -202,8 +207,14 @@ test "Columns dialog: Show all / Hide all act only on the columns the search lis
     try t.expect(!hidden.isSet(0) and hidden.isSet(4) and hidden.count() == 3);
     setListed(&hidden, &names, "", false); // sem busca: todas
     try t.expectEqual(0, hidden.count());
+    // Ocultar todas deixa uma visivel: a primeira listada
     setListed(&hidden, &names, "", true);
-    try t.expectEqual(5, hidden.count());
+    try t.expect(hidden.count() == 4 and !hidden.isSet(0));
+    setListed(&hidden, &names, "", false);
+    setListed(&hidden, &names, "pnt", true);
+    setListed(&hidden, &names, "sub", true);
+    setListed(&hidden, &names, "rtu", true); // so RTUNO e rtu_alias sobravam: RTUNO volta
+    try t.expect(hidden.count() == 4 and !hidden.isSet(0));
 }
 
 test "Columns dialog: width follows the main window within 420..900, grid of 1 to 6 columns" {
