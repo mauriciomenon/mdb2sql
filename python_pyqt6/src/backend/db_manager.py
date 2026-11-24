@@ -10,7 +10,7 @@ import tempfile
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence
 
 import duckdb
 
@@ -320,6 +320,26 @@ class DBManager:
                 columns.append(unique)
             rows = cursor.fetchmany(limit + 1)
         return columns, [dict(zip(columns, row)) for row in rows[:limit]], len(rows) > limit
+
+    def search_tables(self, search: str, stop: Callable[[], bool] = lambda: False) -> List[tuple[str, int]]:
+        """(tabela, linhas encontradas) de cada tabela com a pesquisa nas colunas de texto; so as que tem alguma.
+
+        !T: Same rule as the table search (search_where: every word in one cell, no case or accents), over the
+        !T: VARCHAR columns only. `stop` is checked between tables so a newer search ends this one
+        """
+        found = []
+        for table in self.list_tables():
+            if stop():
+                break
+            text = [c["column_name"] for c in self.get_table_schema(table) if c["column_type"] == "VARCHAR"]
+            where, params = search_where(text, search)
+            if not where:  # sem coluna de texto (ou pesquisa vazia): a tabela nao entra
+                continue
+            with self.cursor() as cursor:
+                count = cursor.execute(f"SELECT COUNT(*) FROM {quote(table)} WHERE {where}", params).fetchone()[0]
+            if count:
+                found.append((table, count))
+        return found
 
     def get_row_count(self, table_name: str, filters: Filters = (), search: str = "") -> int:
         """

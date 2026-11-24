@@ -160,6 +160,39 @@ def test_theme_is_saved(qtbot, window: MainWindow, monkeypatch) -> None:
     assert QSettings().value("theme") == "system"
 
 
+def test_search_all_tables_and_open_one(qtbot, window: MainWindow) -> None:
+    # controle de duas opcoes junto ao campo; padrao: esta tabela
+    scope_texts = ("This table", "All tables")
+    buttons = [b for b in window.findChildren(QAbstractButton) if b.isVisible() and b.text() in scope_texts]
+    assert sorted(b.text() for b in buttons) == ["All tables", "This table"] and all(b.isCheckable() for b in buttons)
+    assert window.scope_actions["table"].isChecked() and window.data_stack.currentWidget() is window.data_table
+
+    window.scope_actions["all"].trigger()
+    window.search_edit.setText("ANA")  # 300 ms depois: lista das tabelas com linhas encontradas no lugar da grade
+    qtbot.waitUntil(lambda: window.found_list.count() == 1, timeout=30000)
+    assert window.data_stack.currentWidget() is window.found_list
+    assert window.found_list.item(0).text() == "people (1)"
+    assert window.info_label.text() == "All tables: 1 with matching rows"
+
+    # escolher uma abre a tabela na aba Data com a mesma pesquisa; o escopo volta para esta tabela
+    window.found_list.itemClicked.emit(window.found_list.item(0))
+    qtbot.waitUntil(lambda: window.loaded_table is not None and window.loaded_table[0] == "people"
+                    and window._busy == 0, timeout=30000)
+    assert window.scope_actions["table"].isChecked() and window.data_stack.currentWidget() is window.data_table
+    assert _column(window, 1) == ["Ana"]
+    assert window.info_label.text() == "people: Showing 1 of 1 matching rows (3 rows in table)"
+
+    # sem resultado: lista vazia; escopo padrao em Configuracoes, gravado e ja valendo na tela
+    window.default_scope_actions["all"].trigger()
+    assert QSettings().value("search_scope") == "all" and window.scope_actions["all"].isChecked()
+    window.search_edit.setText("zzz")
+    qtbot.waitUntil(lambda: window.info_label.text() == "All tables: 0 with matching rows", timeout=30000)
+    assert window.found_list.count() == 0
+    again = MainWindow()
+    qtbot.addWidget(again)
+    assert again.scope_actions["all"].isChecked() and again.default_scope_actions["all"].isChecked()
+
+
 def test_show_null_setting(qtbot, window: MainWindow) -> None:
     # Configuracoes > Exibir NULL: ligado por padrao; desligado, a celula NULL fica vazia; gravado
     _select_table(qtbot, window, "people")

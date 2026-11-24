@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -73,6 +74,8 @@ LOG_LINES = 5000
 SEARCH_DELAY_MS = 300
 # grade do Schema: 12 px a mais em cada coluna (texto e cabecalho continuam alinhados a esquerda, juntos)
 SCHEMA_GAP = 12
+# onde a pesquisa da aba Data procura (valor gravado em QSettings "search_scope" -> texto)
+SCOPES = {"table": "scope.table", "all": "scope.all"}
 # Configuracoes > Tema: valor gravado em QSettings -> esquema de cores do Qt
 THEMES = {"system": Qt.ColorScheme.Unknown, "light": Qt.ColorScheme.Light, "dark": Qt.ColorScheme.Dark}
 # resposta da pergunta sobre o SQLite convertido do Access
@@ -168,6 +171,7 @@ class MainWindow(QMainWindow):
         self._table_request = 0
         self._sql_request = 0
         self._db_request = 0
+        self._found_request = 0  # pesquisa em todas as tabelas
         self._busy = 0
         self.thread_pool: QThreadPool = QThreadPool.globalInstance() or QThreadPool(self)
         # pasta temporaria da sessao (SQLite convertidos); apaga a de uma sessao anterior que caiu
@@ -183,7 +187,7 @@ class MainWindow(QMainWindow):
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
         self.search_timer.setInterval(SEARCH_DELAY_MS)
-        self.search_timer.timeout.connect(self.reload_table)  # a pesquisa vai na consulta: tabela inteira
+        self.search_timer.timeout.connect(self._search_now)
         self.table_filter_timer = QTimer(self)
         self.table_filter_timer.setSingleShot(True)
         self.table_filter_timer.setInterval(SEARCH_DELAY_MS)
@@ -281,6 +285,26 @@ class MainWindow(QMainWindow):
             self.language_group.addAction(action)
             self.language_actions[code] = action
 
+        # pesquisa da aba Data: Esta tabela | Todas as tabelas junto ao campo; o escopo inicial vem de
+        # Configuracoes > Escopo padrao da busca (gravado entre execucoes)
+        scope = str(self.settings.value("search_scope", "table"))
+        scope = scope if scope in SCOPES else "table"
+        self.scope_group = QActionGroup(self)
+        self.scope_actions: dict[str, QAction] = {}
+        self.default_scope_group = QActionGroup(self)
+        self.default_scope_actions: dict[str, QAction] = {}
+        for name, key in SCOPES.items():
+            action = QAction(tr(key), self, checkable=True)
+            action.setChecked(name == scope)
+            action.triggered.connect(lambda _checked=False: self._search_now())
+            self.scope_group.addAction(action)
+            self.scope_actions[name] = action
+            default = QAction(tr(key), self, checkable=True)
+            default.setChecked(name == scope)
+            default.triggered.connect(lambda _checked=False, n=name: self.set_default_scope(n))
+            self.default_scope_group.addAction(default)
+            self.default_scope_actions[name] = default
+
         # Configuracoes > Exibir NULL (padrao ligado, gravado entre execucoes)
         self.show_null_action = QAction(tr("settings.show_null"), self, checkable=True)
         self.show_null_action.setChecked(self.settings.value("show_null", True, type=bool))
@@ -362,12 +386,22 @@ class MainWindow(QMainWindow):
         bar.addStretch(1)
         bar.addWidget(self.clear_filters_button)
 
+        # pesquisa em todas as tabelas: lista "TABELA (linhas encontradas)" no lugar da grade; escolher uma abre
+        # essa tabela com a mesma pesquisa
+        self.found_list = QListWidget()
+        self.found_list.setAccessibleName(tr("search.found_name"))
+        self.found_list.itemClicked.connect(self.open_found_table)
+        self.found_list.itemActivated.connect(self.open_found_table)  # Enter
+        self.data_stack = QStackedWidget()
+        self.data_stack.addWidget(self.data_table)
+        self.data_stack.addWidget(self.found_list)
+
         self.data_page = QWidget()
         layout = QVBoxLayout(self.data_page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         layout.addLayout(bar)
-        layout.addWidget(self.data_table)
+        layout.addWidget(self.data_stack)
         return self.data_page
 
     def _create_table_view(self, model: TableModel, name: str) -> tuple[QSortFilterProxyModel, QTableView]:
@@ -586,6 +620,7 @@ class MainWindow(QMainWindow):
         self.search_edit.setMinimumWidth(280)
         self.search_edit.setMaximumWidth(420)
         self.search_edit.textChanged.connect(lambda _text: self.search_timer.start())
+        toolbar.addActions(list(self.scope_actions.values()))  # dois botoes de alternar, um marcado
         toolbar.addWidget(self.search_edit)
 
     def _create_menus(self) -> None:
@@ -613,6 +648,7 @@ class MainWindow(QMainWindow):
         self.settings_menu = menu_bar.addMenu(tr("menu.settings"))
         self.settings_menu.addMenu(tr("menu.theme")).addActions(list(self.theme_actions.values()))
         self.settings_menu.addMenu(tr("menu.language")).addActions(list(self.language_actions.values()))
+        self.settings_menu.addMenu(tr("menu.search_scope")).addActions(list(self.default_scope_actions.values()))
         self.settings_menu.addAction(self.show_null_action)
 
         help_menu = menu_bar.addMenu(tr("menu.help"))
@@ -628,6 +664,13 @@ class MainWindow(QMainWindow):
         self.settings.setValue("theme", name)
         self.theme_actions[name].setChecked(True)
         apply_theme(name)
+
+    def set_default_scope(self, name: str) -> None:
+        # grava o padrao e ja vale na tela
+        self.settings.setValue("search_scope", name)
+        self.default_scope_actions[name].setChecked(True)
+        self.scope_actions[name].setChecked(True)
+        self._search_now()
 
     def set_show_null(self, show: bool) -> None:
         # desligado, a celula NULL fica vazia; copiar, filtrar e exportar continuam com o valor real
@@ -879,6 +922,8 @@ class MainWindow(QMainWindow):
             self.table_model.set_rows([])
             self.schema_model.set_rows([])
             self._set_message(self.info_label, tr("status.no_tables"))
+        if self.data_stack.currentWidget() is self.found_list:
+            self._search_now()  # lista de todas as tabelas: refeita no banco aberto agora
 
     def _on_database_error(self, request_id: int, message: str) -> None:
         if request_id != self._db_request:
@@ -953,6 +998,8 @@ class MainWindow(QMainWindow):
         self._db_request += 1
         self._table_request += 1
         self._sql_request += 1
+        self._found_request += 1
+        self.found_list.clear()
         self.table_load_timer.stop()
         self.manager = None
         self.current_db_path = None
@@ -990,6 +1037,53 @@ class MainWindow(QMainWindow):
         item = self.table_list.currentItem()
         if item is not None:
             self.on_table_selected(item.text())
+
+    def _search_now(self) -> None:
+        """Pesquisa da aba Data (300 ms depois da ultima tecla, ou ao trocar o escopo): na tabela aberta, no banco
+        (tabela inteira), ou em todas as tabelas (lista no lugar da grade)."""
+        self.search_timer.stop()
+        self._found_request += 1  # pesquisa em todas as tabelas ainda rodando: o resultado dela e descartado
+        self.found_list.clear()
+        everywhere = self.scope_actions["all"].isChecked() and bool(self.search_edit.text().split())
+        self.data_stack.setCurrentWidget(self.found_list if everywhere else self.data_table)
+        if everywhere:
+            self._search_all_tables()
+        else:
+            self.reload_table()
+
+    def _search_all_tables(self) -> None:
+        if self.manager is None:
+            return
+        manager, search, request = self.manager, self.search_edit.text(), self._found_request
+        self._set_message(self.info_label, tr("status.found_running"), log=False)
+        self._run(
+            request,
+            lambda _report: manager.search_tables(search, lambda: request != self._found_request),
+            self._on_found,
+            self._on_found_error,
+        )
+
+    def _on_found(self, request_id: int, result: object) -> None:
+        if request_id != self._found_request:
+            return  # pesquisa antiga (outra tecla, outro escopo, outro banco)
+        found: list[tuple[str, int]] = result  # type: ignore[assignment]
+        for table, count in found:
+            item = QListWidgetItem(tr("search.found_item", table=table, count=num(count)))
+            item.setData(Qt.ItemDataRole.UserRole, table)
+            self.found_list.addItem(item)
+        self._set_message(self.info_label, tr("status.found", count=num(len(found))), log=False)
+
+    def _on_found_error(self, request_id: int, message: str) -> None:
+        if request_id == self._found_request:
+            self._set_message(self.info_label, tr("status.error", message=message), error=True)
+
+    def open_found_table(self, item: QListWidgetItem) -> None:
+        # a tabela escolhida abre na aba Data com a mesma pesquisa; o escopo volta para esta tabela
+        self.scope_actions["table"].setChecked(True)
+        found = self.table_list.findItems(item.data(Qt.ItemDataRole.UserRole), Qt.MatchFlag.MatchExactly)
+        if found:
+            self.table_list.setCurrentItem(found[0])
+        self._search_now()
 
     def on_table_selected(self, table_name: str):
         # Chamado quando usuario seleciona tabela na lista

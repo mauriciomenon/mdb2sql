@@ -56,6 +56,28 @@ def test_search_runs_over_the_whole_table(manager: DBManager) -> None:
     assert payload["matched_rows"] == payload["total_rows"] == 300 and len(payload["rows"]) == 100
 
 
+def test_search_all_tables_looks_at_text_columns_only(manager: DBManager) -> None:
+    # mesma regra da pesquisa da tabela (DuckDB e SQLite), so nas colunas de texto: o id 203 nao conta
+    assert manager.search_tables("tensao") == [("t", 25)]
+    assert manager.search_tables("CAMPO tensión") == [("t", 25)]
+    assert manager.search_tables("203") == []
+
+
+def test_search_all_tables_lists_only_tables_with_rows(tmp_path: Path) -> None:
+    db_file = tmp_path / "g.duckdb"
+    with duckdb.connect(str(db_file)) as conn:
+        conn.execute(
+            "CREATE TABLE a AS SELECT * FROM (VALUES (1, 'U9A'), (2, 'u9a x'), (3, 'U18A'), (9, NULL)) v(id, sigla)"
+        )
+        conn.execute("CREATE TABLE b AS SELECT 9 AS n")  # sem coluna de texto: nunca entra (nem com COUNT(*) inteiro)
+        conn.execute("CREATE TABLE c AS SELECT 'Tensão U9A' AS obs")
+    with DBManager(str(db_file)) as opened:
+        assert opened.search_tables("u9a") == [("a", 2), ("c", 1)]
+        assert opened.search_tables("9") == [("a", 2), ("c", 1)]
+        assert opened.search_tables("nada") == [] and opened.search_tables("  ") == []
+        assert opened.search_tables("u9a", stop=lambda: True) == []  # pesquisa mais nova: esta para
+
+
 def test_search_and_value_filter_add_up(manager: DBManager) -> None:
     payload = load_table_payload(manager, "t", limit=100, filters=[("unit", "kV")], search="campo")
     assert payload["matched_rows"] == 50 and payload["total_rows"] == 300

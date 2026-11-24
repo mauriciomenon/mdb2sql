@@ -247,6 +247,7 @@ def test_catalogs_have_the_same_keys_and_placeholders() -> None:
                                                                                              "xlsx", "csv")),
                           ("export.done_", ("tables", "rows"))):
         assert {prefix + name for name in names} <= keys
+    assert set(mw.SCOPES.values()) <= keys
     assert json.loads((SRC / "resources" / "i18n" / "en.json").read_text(encoding="utf-8")) == catalogs["en"]
 
 
