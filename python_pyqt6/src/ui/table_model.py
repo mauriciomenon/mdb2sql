@@ -18,13 +18,8 @@ _INT64_MAX = 2**63 - 1
 
 
 def is_missing(value: Any) -> bool:
-    # !T: pandas turns SQL NULL into None, NaN, NaT or NA depending on the column type
-    return (
-        value is None
-        or value is pd.NaT
-        or value is pd.NA
-        or (isinstance(value, float) and value != value)
-    )
+    # !T: SQL NULL only: the rows are plain Python values (NULL is None); a DOUBLE NaN is a value and shows as nan
+    return value is None or value is pd.NaT or value is pd.NA
 
 
 def is_number(value: Any) -> bool:
@@ -46,8 +41,8 @@ def grid_text(value: Any, null_text: str = "") -> str:
 
 
 def sort_key(value: Any) -> int | float | str | None:
-    if is_missing(value):
-        return None
+    if is_missing(value) or (isinstance(value, float) and value != value):
+        return None  # !T: NaN has no order (every comparison is false): it sorts with the NULLs
     if is_number(value):
         # !T: Qt variants hold 64-bit ints and doubles only
         if isinstance(value, Decimal) or (isinstance(value, int) and abs(value) > _INT64_MAX):
