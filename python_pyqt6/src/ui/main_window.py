@@ -293,8 +293,7 @@ class MainWindow(QMainWindow):
 
         # pesquisa da aba Data: Esta tabela | Todas as tabelas junto ao campo; o escopo inicial vem de
         # Configuracoes > Escopo padrao da busca (gravado entre execucoes)
-        scope = str(self.settings.value("search_scope", "table"))
-        scope = scope if scope in SCOPES else "table"
+        scope = self.default_scope()
         self.scope_group = QActionGroup(self)
         self.scope_actions: dict[str, QAction] = {}
         self.default_scope_group = QActionGroup(self)
@@ -672,6 +671,10 @@ class MainWindow(QMainWindow):
         self.theme_actions[name].setChecked(True)
         apply_theme(name)
 
+    def default_scope(self) -> str:
+        scope = str(self.settings.value("search_scope", "table"))
+        return scope if scope in SCOPES else "table"
+
     def set_default_scope(self, name: str) -> None:
         # grava o padrao e ja vale na tela
         self.settings.setValue("search_scope", name)
@@ -888,6 +891,12 @@ class MainWindow(QMainWindow):
         previous = self.table_list.currentItem().text() if self.table_list.currentItem() else None
         if db_path != self.current_db_path:
             self._reset_view(None)  # outro arquivo: filtros e colunas ocultas nao valem mais
+            # nem a pesquisa da aba Data e o filtro da lista; o escopo volta ao padrao de Configuracoes (4 versoes)
+            self.search_edit.clear()
+            self.table_filter.clear()
+            self.search_timer.stop()
+            self.table_filter_timer.stop()
+            self.scope_actions[self.default_scope()].setChecked(True)
             self.loaded_table = None
             self.table_model.set_rows([])
             self.schema_model.set_rows([])

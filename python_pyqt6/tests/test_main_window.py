@@ -360,6 +360,25 @@ def test_results_of_the_previous_database_are_dropped(qtbot, window: MainWindow,
     assert window.current_db_path == other and window.windowTitle().startswith("other.duckdb")
 
 
+def test_another_file_starts_without_search_and_with_the_default_scope(qtbot, window: MainWindow, tmp_path: Path):
+    # igual nas 4 versoes: a pesquisa "Ana" de A nao roda em B e o filtro "empty" da lista nao esconde a tabela de B
+    import duckdb
+
+    other = tmp_path / "other.duckdb"
+    with duckdb.connect(str(other)) as conn:
+        conn.execute("CREATE TABLE People (name VARCHAR)")
+    window.scope_actions["all"].trigger()
+    window.search_edit.setText("Ana")
+    window.table_filter.setText("empty")
+    window.open_database(other)
+    qtbot.waitUntil(lambda: window.current_db_path == other and window.loaded_table is not None
+                    and window._busy == 0, timeout=30000)
+
+    assert window.search_edit.text() == "" and window.table_filter.text() == ""
+    assert window.scope_actions["table"].isChecked() and window.data_stack.currentWidget() is window.data_table
+    assert not window.table_list.item(0).isHidden() and window.loaded_search == ""
+
+
 def test_nothing_duplicated(qtbot, points_window: MainWindow) -> None:
     # estado mais cheio da tela: tabela, filtro ativo (botao do filtro + Limpar filtros) e coluna oculta
     win = points_window
