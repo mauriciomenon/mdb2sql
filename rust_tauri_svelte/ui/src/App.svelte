@@ -587,9 +587,11 @@
     if (search.trim()) runSearch();
   }
 
-  // escolher uma tabela achada abre ela na aba Data com a mesma pesquisa (o escopo volta para Esta tabela)
+  // escolher uma tabela achada abre ela na aba Data com a mesma pesquisa (o escopo volta para Esta tabela) e sem os
+  // filtros por valor: a grade mostra o numero da lista
   function openFound(name) {
     scope = 'table';
+    filters = [];
     openTable(name, search);
   }
 

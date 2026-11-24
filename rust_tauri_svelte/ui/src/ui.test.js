@@ -102,7 +102,8 @@ test('Data search scope: two-option selector next to the field and its default i
   assert.match(app, /saveSetting\(SCOPE_KEY, next === 'all' \? 'all' : null\);/);
   assert.match(app, /invoke\('search_all_tables', \{ search: words \}\)/);
   assert.match(ui, /onclick=\{\(\) => openFound\(f\.table\)\}>\{t\('found\.item', \{ table: f\.table, count: fmt\(f\.count\) \}\)\}/);
-  assert.match(app, /function openFound\(name\) \{\s*scope = 'table';\s*openTable\(name, search\);/);
+  // decisao 1: a tabela achada abre sem os filtros por valor (a grade mostra o numero da lista)
+  assert.match(app, /function openFound\(name\) \{\s*scope = 'table';\s*filters = \[\];\s*openTable\(name, search\);/);
 });
 
 // decisao 3: nenhum caminho deixa a tabela sem coluna visivel (Ocultar todas e a caixa da ultima visivel)
