@@ -546,8 +546,8 @@ function App() {
     const name = dbName;
     if (!(await settleConversion())) return;
     try {
+      clearDatabase(); // first: Go stops the running search or query, and their "cancelled" answers must be dropped
       await window.go?.main?.App?.CloseDatabase?.();
-      clearDatabase();
       setStatus(t('status.closed', name));
     } catch (err) {
       fail(err);

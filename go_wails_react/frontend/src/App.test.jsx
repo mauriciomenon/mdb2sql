@@ -368,6 +368,27 @@ describe('App IPC flow', () => {
     expect(screen.getByText('Could not count the rows: boom')).toBeInTheDocument();
   });
 
+  // Go stops a running search when the file closes, and its "cancelled" answer arrives before Close returns
+  it('closes the file during an All tables search without showing the cancelled search as an error', async () => {
+    let cancelSearch;
+    const SearchAllTables = vi.fn(() => new Promise((_, reject) => (cancelSearch = reject)));
+    const CloseDatabase = vi.fn(async () => {
+      cancelSearch(new Error('Could not count the rows: context canceled'));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables, CloseDatabase, GetSearchScope: vi.fn(async () => 'all') } } } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+    fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'ana' } });
+    fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
+    await waitFor(() => expect(SearchAllTables).toHaveBeenCalledWith('ana'));
+    menu('File', 'Close database');
+    await waitFor(() => expect(CloseDatabase).toHaveBeenCalled());
+    expect(await screen.findByText('Closed sample.duckdb')).toBeInTheDocument();
+    expect(screen.queryByText(/context canceled/)).not.toBeInTheDocument();
+  });
+
   // audit 2026-11-24: the search of the previous file ran again on the next one
   it('opens another file with no Data search, no table list filter and the search scope of Settings', async () => {
     const SearchAllTables = vi.fn(async () => [{ table: 'RANGER_SOGEN', rows: 1 }]);
