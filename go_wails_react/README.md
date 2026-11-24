@@ -142,7 +142,8 @@ Files the program creates (nothing else):
 - `%LOCALAPPDATA%\mdb2sql\converted-go-wails-react\<process id>\`: the SQLite converted from an Access file,
   until you save or delete it (deleted on exit; left-overs of a crash are deleted at the next start).
 - `%LOCALAPPDATA%\mdb2sql\go-wails-react-webview\`: WebView2 data (Windows).
-- `%APPDATA%\mdb2sql\go-wails-react.json` (Linux: `~/.config/mdb2sql/`): theme, language and last folder.
+- `%APPDATA%\mdb2sql\go-wails-react.json` (Linux: `~/.config/mdb2sql/`): theme, language, last folder, Log panel
+  state, Show NULL and default search scope.
 
 ## Tested
 

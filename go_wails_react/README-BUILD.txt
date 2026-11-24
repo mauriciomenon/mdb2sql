@@ -79,7 +79,8 @@ Dependencias de execucao do .deb (Depends gerado pelo dpkg-shlibdeps do binario 
                                                              ou apagar (apagado ao sair; sobra de queda e apagada
                                                              na proxima abertura)
     %LOCALAPPDATA%\mdb2sql\go-wails-react-webview\           dados do WebView2
-    %APPDATA%\mdb2sql\go-wails-react.json                    tema, idioma e ultima pasta usada
+    %APPDATA%\mdb2sql\go-wails-react.json                    tema, idioma, ultima pasta, Log, Exibir NULL e
+                                                             escopo padrao da busca
   Linux: ~/.cache/mdb2sql/ e ~/.config/mdb2sql/ no lugar de %LOCALAPPDATA% e %APPDATA%.
 
 
