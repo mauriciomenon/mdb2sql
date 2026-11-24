@@ -449,8 +449,9 @@ td[aria-selected='true'] {
   outline-offset: -2px;
 }
 
+/* basis 160 px: with the scope selector beside it the bar still fits one line at the default 1280 px window */
 .search {
-  flex: 1 1 240px;
+  flex: 1 1 160px;
   min-width: 160px;
   padding: 4px 8px;
 }
