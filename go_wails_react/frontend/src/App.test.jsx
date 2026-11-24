@@ -363,6 +363,29 @@ describe('App IPC flow', () => {
     expect(screen.getByText('Could not count the rows: boom')).toBeInTheDocument();
   });
 
+  // audit 2026-11-24: the search of the previous file ran again on the next one
+  it('opens another file with no Data search, no table list filter and the search scope of Settings', async () => {
+    const SearchAllTables = vi.fn(async () => [{ table: 'RANGER_SOGEN', rows: 1 }]);
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables, GetSearchScope: vi.fn(async () => 'all') } } } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+    fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'ana' } });
+    fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
+    await screen.findByRole('row', { name: 'RANGER_SOGEN 1' });
+    fireEvent.click(screen.getByRole('radio', { name: 'This table' }));
+    fireEvent.change(screen.getByLabelText('Filter 2 tables'), { target: { value: 'gen' } });
+
+    menu('File', 'Open sample data');
+    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], ''));
+    expect(screen.getByLabelText('Search the table')).toHaveValue('');
+    expect(screen.getByLabelText('Filter 2 tables')).toHaveValue('');
+    expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true');
+    expect(await screen.findByText('Alpha')).toBeInTheDocument();
+    expect(SearchAllTables).toHaveBeenCalledTimes(1);
+  });
+
   it('filters by the right-clicked value in the database query and shows removable chips', async () => {
     const GetRowCount = vi.fn(async (_table, filters) => (filters.length ? 1 : 2));
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetRowCount } } } });

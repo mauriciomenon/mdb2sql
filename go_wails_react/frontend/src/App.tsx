@@ -210,6 +210,7 @@ function App() {
   const [tableSearch, setTableSearch] = useState(''); // search applied in the database (Data tab), after a pause
   const [scope, setScope] = useState<Scope>('table'); // where the Data tab searches now
   const [defaultScope, setDefaultScope] = useState<Scope>('table'); // Settings > Default search scope
+  const defaultScopeRef = useRef<Scope>('table'); // the same, for openPath started by an older render (startup file)
   // "All tables" result and the search it answers (null = searching or failed)
   const [hits, setHits] = useState<{ search: string; tables: TableHits[] } | null>(null);
   const [searching, setSearching] = useState(false);
@@ -344,6 +345,7 @@ function App() {
     bridge?.GetSearchScope?.()
       .then((s) => {
         if (SCOPES.includes(s)) {
+          defaultScopeRef.current = s;
           setDefaultScope(s);
           setScope(s);
         }
@@ -449,6 +451,7 @@ function App() {
 
   // the default also applies now; the selector beside the search changes only the current session
   function chooseDefaultScope(s: Scope) {
+    defaultScopeRef.current = s;
     setDefaultScope(s);
     setScope(s);
     window.go?.main?.App?.SetSearchScope?.(s)?.catch(fail);
@@ -583,11 +586,15 @@ function App() {
       setConverted(!!(await bridge.PendingConversion?.()));
       setDbName(name);
       setTables(tableList);
+      // another file starts clean: no table list filter, no Data search, the search scope of Settings
       setFilter('');
       setTableFilter('');
+      setSearch('');
+      setTableSearch('');
+      setScope(defaultScopeRef.current);
       setStatus(t('status.loaded', name, tableList.length));
       if (tableList.length > 0) {
-        await loadTable(tableList[0], limit, undefined, tableSearch);
+        await loadTable(tableList[0], limit, undefined, '');
         setSql(`SELECT * FROM "${tableList[0].replace(/"/g, '""')}" LIMIT 100`);
       }
     } catch (err) {
