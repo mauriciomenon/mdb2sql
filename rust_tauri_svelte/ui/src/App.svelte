@@ -19,6 +19,7 @@
     setListed,
     statusLine,
     toggleHidden,
+    toggleShown,
     visibleColumns,
     withFilter,
   } from './grid.js';
@@ -549,9 +550,9 @@
     if (error && filters === next) filters = before;
   }
 
-  // acoes do menu de clique direito da grade da aba Data (cabecalho e celula)
+  // acoes do menu de clique direito da grade da aba Data (cabecalho e celula); o menu nao oculta a ultima visivel
   const gridActions = {
-    hide: (name) => (hidden = toggleHidden(hidden, name)),
+    hide: (name) => (hidden = toggleShown(hidden, name, columns.length)),
     columns: () => columnsDialog.showModal(),
     showAll: () => (hidden = new Set()),
     filter: (column, value) => setFilters(withFilter(filters, column, value)),
@@ -910,13 +911,16 @@
           </div>
         </div>
         {#if sqlResult?.columns.length}
-          <Grid columns={sqlResult.columns} rows={sqlResult.rows} label={t('sql.result')} emptyText={t('sql.noRows')} {t} {nullText} onstatus={showStatus} onerror={showError} />
+          {#key sqlResult}
+            <Grid columns={sqlResult.columns} rows={sqlResult.rows} label={t('sql.result')} emptyText={t('sql.noRows')} {t} {nullText} onstatus={showStatus} onerror={showError} />
+          {/key}
         {/if}
       {:else if !selectedTable}
         <p class="empty">{t('data.noTable')}</p>
       {:else if tab === 'schema'}
         <div class="table-bar"><h2>{selectedTable}</h2><span>{t('schema.columns', { count: columns.length })}</span></div>
         <!-- Schema: 6 px a mais de cada lado da celula (as colunas ficavam apertadas) -->
+        {#key selectedTable}
         <Grid
           --cell-x="16px"
           columns={schemaColumns}
@@ -928,6 +932,7 @@
           onstatus={showStatus}
           onerror={showError}
         />
+        {/key}
       {:else}
         <div class="table-bar">
           <h2>{selectedTable}</h2>
@@ -964,6 +969,8 @@
             <button type="button" class="secondary" onclick={() => setFilters([])}>{t('filters.clear')}</button>
           </div>
         {/if}
+        <!-- key: larguras arrastadas a mao valem ate trocar de tabela (de resultado, na aba SQL) -->
+        {#key selectedTable}
         <Grid
           columns={shownColumns}
           rows={shownColumns.length ? rows : []}
@@ -973,8 +980,9 @@
           {nullText}
           onstatus={showStatus}
           onerror={showError}
-          actions={{ ...gridActions, anyHidden: hidden.size > 0, filtered: filters.length > 0 }}
+          actions={{ ...gridActions, all: columns, hidden, filtered: filters.length > 0 }}
         />
+        {/key}
       {/if}
     </main>
   </div>

@@ -14,6 +14,7 @@ import {
   setListed,
   statusLine,
   toggleHidden,
+  toggleShown,
   tsvField,
   visibleColumns,
   withFilter,
@@ -30,6 +31,16 @@ test('several columns are hidden at once and shown again, order kept', () => {
   hidden = toggleHidden(hidden, 'id');
   assert.deepEqual(visibleColumns(columns, hidden).map((c) => c.name), ['id', 'SIGLA']);
   assert.deepEqual(visibleColumns(columns, new Set(['id', 'SIGLA', 'note'])), []);
+});
+
+// menu do cabecalho: a lista alterna as colunas, uma ou varias, mas a ultima visivel nunca sai
+test('the header menu hides several columns but never the last visible one', () => {
+  let hidden = toggleShown(toggleShown(new Set(), 'a', 3), 'b', 3);
+  assert.deepEqual([...hidden], ['a', 'b']);
+  assert.equal(toggleShown(hidden, 'c', 3), hidden); // c e a ultima visivel: fica
+  hidden = toggleShown(hidden, 'a', 3); // mostrar de novo continua valendo
+  assert.deepEqual([...hidden], ['b']);
+  assert.equal(toggleShown(new Set(), 'x', 1).size, 0); // tabela de uma coluna so
 });
 
 // Colunas... com busca: Mostrar/Ocultar todas valem so para as colunas listadas; as outras ficam como estavam

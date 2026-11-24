@@ -39,6 +39,11 @@ export function toggleHidden(hidden, name) {
   return next;
 }
 
+// menu do cabecalho: como toggleHidden, menos para a ultima coluna visivel (total = colunas da tabela), que fica
+export function toggleShown(hidden, name, total) {
+  return !hidden.has(name) && total - hidden.size <= 1 ? hidden : toggleHidden(hidden, name);
+}
+
 // Mostrar todas (hide = false) / Ocultar todas (hide = true) so nas colunas listadas no dialogo Colunas...
 // (com busca, so as que aparecem); devolve um Set novo
 export function setListed(hidden, names, hide) {

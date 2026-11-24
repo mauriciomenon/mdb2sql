@@ -67,10 +67,14 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
   (`tension de campo` acha `EXCITACION TENSION DE CAMPO`, RTUNO 50 / PNTNO 9 de RANGER_SOANLG no DB4, fora das 100
   primeiras linhas; `tensao` acha `TENSÃO` mas nao `TENSION`: nao ha busca aproximada). A contagem vira
   "Showing N of M matching rows (T in the table)".
-- **Columns...** (ou botao direito no cabecalho > **Hide this column** / **Columns...** / **Show all**): marque e
-  desmarque colunas (busca por nome no topo, caixas em grade que acompanha a janela). **Show all** e **Hide all**
-  agem nas colunas listadas (com busca, so nelas). A barra de status mostra "N columns hidden". A pesquisa olha
-  todas as colunas e a exportacao sai com todas.
+- **Columns...**: marque e desmarque colunas (busca por nome no topo, caixas em grade que acompanha a janela).
+  **Show all** e **Hide all** agem nas colunas listadas (com busca, so nelas). A barra de status mostra "N columns
+  hidden". A pesquisa olha todas as colunas e a exportacao sai com todas.
+- **Botao direito no cabecalho** (como o menu do Dear ImGui da versao Zig): **Size column to fit** / **Size all
+  columns to fit** em toda grade (arrastar a borda direita do cabecalho muda a largura; ajustar volta a caber nome e
+  valores). Na aba Data tambem **Hide this column**, **Columns...**, **Show all columns** e a lista das colunas com
+  marca: o clique alterna (o menu fica aberto para trocar varias) e a ultima visivel nao sai. Ocultas e larguras
+  valem para a tabela aberta enquanto ela estiver aberta.
 - **Filter by this value** (botao direito numa celula da aba Data): coluna = valor exato na consulta ao banco
   (`WHERE "coluna" = ?`; celula vazia de NULL vira `IS NULL`). Varios filtros somam (E); os ativos aparecem acima
   da grade (`Filter: SIGLA = 'U9A' x`) com **Clear filters**. Filtros e pesquisa valem juntos.

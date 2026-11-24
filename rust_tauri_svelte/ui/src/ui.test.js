@@ -77,7 +77,8 @@ test('grid cells, NULL included, keep full contrast', () => {
   // o cabecalho fixo fica por cima das celulas que rolam por baixo dele
   const th = rules.find(([sel]) => sel === 'th')[1];
   assert.match(th, /z-index:\s*1/);
-  // cabecalho inteiro: a coluna cresce ate caber nome e valores, sem limite nem reticencias
+  // cabecalho inteiro: a coluna cresce ate caber nome e valores, sem limite nem reticencias (largura fixa so na
+  // coluna que o usuario arrasta, em style; Ajustar coluna volta a caber tudo)
   assert.match(th, /white-space:\s*nowrap/);
   for (const [sel, body] of rules.filter(([sel]) => /^(th|td)\b/.test(sel))) {
     assert.doesNotMatch(body, /max-width|text-overflow|overflow:\s*hidden/, sel);
@@ -144,8 +145,26 @@ test('the table name above the grid is never squeezed', () => {
 test('each grid context menu lists an action once', () => {
   const grid = markup('./Grid.svelte');
   const [header, cell] = grid.split('{:else if menu}');
-  assert.deepEqual(buttonLabels(header), ['Hide this column', 'Columns...', 'Show all']);
+  assert.deepEqual(buttonLabels(header), ['Size column to fit', 'Size all columns to fit', 'Hide this column', 'Columns...', 'Show all columns']);
   assert.deepEqual(buttonLabels(cell), ['Copy value', 'Copy row', 'Copy row with header', 'Filter by this value', 'Clear filters']);
+});
+
+// item 11 do dono, como o menu do cabecalho do ImGui: Ajustar coluna/todas em toda grade (a borda do cabecalho
+// arrasta a largura); na aba Data a lista das colunas com marca (clique alterna, menu aberto), sem ocultar a ultima
+test('header menu sizes columns in every grid and lists the Data columns to show or hide', () => {
+  const code = readFileSync(new URL('./Grid.svelte', import.meta.url), 'utf8');
+  assert.match(code, /const th = event\.target\.closest\('th\[data-c\]'\);/); // cabecalho de qualquer grade
+  const header = markup('./Grid.svelte').split('{:else if menu}')[0];
+  assert.ok(header.indexOf("t('grid.fitAll')") < header.indexOf('{#if actions}'), 'ajustar fora do if actions');
+  assert.match(header, /\{#each actions\.all as col \(col\.name\)\}/);
+  assert.match(header, /role="menuitemcheckbox"\s+aria-checked=\{shown\}\s+disabled=\{shown && last\}/);
+  assert.match(header, /e\.stopPropagation\(\);[^}]*actions\.hide\(col\.name\);/);
+  assert.match(header, /disabled=\{last\} onclick=\{\(\) => act\('hide', menu\.header\)\}/);
+  assert.match(code, /onpointerdown=\{\(e\) => startResize\(e, col\.name\)\}/);
+  assert.equal(count(code, 'style={sized(col.name)}'), 2); // cabecalho e celulas da coluna
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  assert.match(app, /hide: \(name\) => \(hidden = toggleShown\(hidden, name, columns\.length\)\)/);
+  assert.match(app, /actions=\{\{ \.\.\.gridActions, all: columns, hidden, filtered: filters\.length > 0 \}\}/);
 });
 
 // log copiavel: View > Log abre o painel (texto selecionavel, Ctrl+C), Copiar tudo; barra de status: botao direito > Copiar
