@@ -900,14 +900,14 @@ const App = struct {
         if (!done) app.runSearch();
     }
 
-    // Tabela escolhida no resultado da busca global: abre na aba Data com a mesma busca
+    // Tabela escolhida no resultado da busca global: abre na aba Data com a mesma busca e sem filtros por valor, para
+    // mostrar o numero listado (outra tabela ja abre sem eles)
     fn pickGlobal(app: *App, table: usize, term: *const [256:0]u8) void {
         app.scope = .table;
         app.search = term.*;
         app.search_wait.due = null;
         if (app.selected == table) {
-            app.page = 0;
-            app.want_reload = true;
+            app.want_clear_filters = true; // update() limpa e recarrega da pagina 1
         } else {
             app.want_select = table;
             app.select_search = true;
