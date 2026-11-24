@@ -31,7 +31,7 @@ pub const search_rows = "search the rows shown";
 pub const rows_match = "{d} of {d} rows match{s}";
 pub const schema_column = "Column";
 pub const schema_type = "Type";
-pub const schema_null = "Null";
+pub const schema_null = "Nullable";
 
 // grid menus and Columns dialog
 pub const filter_by_value = "Filter by this value";

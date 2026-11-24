@@ -31,7 +31,7 @@ pub const search_rows = "buscar en las filas mostradas";
 pub const rows_match = "{d} de {d} filas coinciden{s}";
 pub const schema_column = "Columna";
 pub const schema_type = "Tipo";
-pub const schema_null = "Nulo";
+pub const schema_null = "Admite nulo";
 
 // menus de la grilla y dialogo Columnas
 pub const filter_by_value = "Filtrar por este valor";

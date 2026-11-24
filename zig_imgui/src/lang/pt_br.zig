@@ -31,7 +31,7 @@ pub const search_rows = "pesquisar nas linhas exibidas";
 pub const rows_match = "{d} de {d} linhas encontradas{s}";
 pub const schema_column = "Coluna";
 pub const schema_type = "Tipo";
-pub const schema_null = "Nulo";
+pub const schema_null = "Aceita nulo";
 
 // menus da grade e dialogo Colunas
 pub const filter_by_value = "Filtrar por este valor";
