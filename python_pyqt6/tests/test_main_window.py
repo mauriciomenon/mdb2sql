@@ -160,6 +160,23 @@ def test_theme_is_saved(qtbot, window: MainWindow, monkeypatch) -> None:
     assert QSettings().value("theme") == "system"
 
 
+def test_show_null_setting(qtbot, window: MainWindow) -> None:
+    # Configuracoes > Exibir NULL: ligado por padrao; desligado, a celula NULL fica vazia; gravado
+    _select_table(qtbot, window, "people")
+    settings_menu = _menu(window, "&Settings")
+    assert window.show_null_action in settings_menu.actions() and window.show_null_action.isChecked()
+    assert _column(window, 2) == ["9.5", "NULL", "7.25"]
+
+    window.show_null_action.trigger()
+    assert _column(window, 2) == ["9.5", "", "7.25"]
+    assert QSettings().value("show_null") in (False, "false")
+    again = MainWindow()  # proxima abertura: desligado
+    qtbot.addWidget(again)
+    assert not again.show_null_action.isChecked() and again.table_model.null_text == ""
+    window.show_null_action.trigger()
+    assert _column(window, 2) == ["9.5", "NULL", "7.25"]
+
+
 def test_sql_tab_runs_query_and_copies(qtbot, window: MainWindow) -> None:
     window.sql_edit.setPlainText("SELECT id, name AS n, name AS n FROM people ORDER BY id DESC")
     window.run_sql()

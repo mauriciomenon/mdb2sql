@@ -11,6 +11,8 @@
   "menu.export": "E&xportar",
   "menu.theme": "&Tema",
   "menu.language": "&Idioma",
+  "settings.show_null": "Exibir &NULL",
+  "grid.null": "NULL",
   "menu.about": "&Sobre",
   "menu.tables_panel": "Painel de &Tabelas",
   "menu.log": "&Log",

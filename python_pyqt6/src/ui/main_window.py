@@ -281,6 +281,11 @@ class MainWindow(QMainWindow):
             self.language_group.addAction(action)
             self.language_actions[code] = action
 
+        # Configuracoes > Exibir NULL (padrao ligado, gravado entre execucoes)
+        self.show_null_action = QAction(tr("settings.show_null"), self, checkable=True)
+        self.show_null_action.setChecked(self.settings.value("show_null", True, type=bool))
+        self.show_null_action.toggled.connect(self.set_show_null)
+
     def _create_central(self) -> None:
         self.table_model = TableModel(self)
         self.data_proxy, self.data_table = self._create_table_view(self.table_model, tr("a11y.data"))
@@ -288,6 +293,7 @@ class MainWindow(QMainWindow):
         self.schema_proxy, self.schema_table = self._create_table_view(self.schema_model, tr("a11y.schema"))
         self.sql_model = TableModel(self)
         self.sql_proxy, self.sql_table = self._create_table_view(self.sql_model, tr("a11y.sql_result"))
+        self.set_show_null(self.show_null_action.isChecked())
 
         self.sql_edit = QPlainTextEdit()
         self.sql_edit.setAccessibleName("SQL")
@@ -606,6 +612,7 @@ class MainWindow(QMainWindow):
         self.settings_menu = menu_bar.addMenu(tr("menu.settings"))
         self.settings_menu.addMenu(tr("menu.theme")).addActions(list(self.theme_actions.values()))
         self.settings_menu.addMenu(tr("menu.language")).addActions(list(self.language_actions.values()))
+        self.settings_menu.addAction(self.show_null_action)
 
         help_menu = menu_bar.addMenu(tr("menu.help"))
         help_menu.addAction(tr("menu.about"), self.show_about)
@@ -620,6 +627,12 @@ class MainWindow(QMainWindow):
         self.settings.setValue("theme", name)
         self.theme_actions[name].setChecked(True)
         apply_theme(name)
+
+    def set_show_null(self, show: bool) -> None:
+        # desligado, a celula NULL fica vazia; copiar, filtrar e exportar continuam com o valor real
+        self.settings.setValue("show_null", bool(show))
+        for model in (self.table_model, self.schema_model, self.sql_model):
+            model.set_null_text(tr("grid.null") if show else "")
 
     def set_language(self, code: str) -> None:
         self.settings.setValue("language", code)
