@@ -105,6 +105,14 @@ test('Data search scope: two-option selector next to the field and its default i
   assert.match(app, /function openFound\(name\) \{\s*scope = 'table';\s*openTable\(name, search\);/);
 });
 
+// decisao 5: a grade (Data, Schema e SQL) usa a fonte do app, Segoe UI 14 px como o Go/Wails; nada menor na grade
+test('grid text uses the 14 px app font', () => {
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  assert.match(app, /:global\(body\) \{[^}]*font: 14px\/1\.4 'Segoe UI'/);
+  const css = readFileSync(new URL('./Grid.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
+  assert.doesNotMatch(css, /font-size|font:\s*\d/);
+});
+
 // dono: o filtro de tabelas e a pesquisa da aba Data esperam a digitacao parar (300 ms, igual nas 4 versoes);
 // Enter vale na hora; a lista de tabelas usa o texto que ja valeu, nao o que esta sendo digitado
 test('table filter and Data search wait 300 ms, Enter runs at once', () => {

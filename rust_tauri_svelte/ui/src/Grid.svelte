@@ -220,10 +220,10 @@
     outline-offset: 1px;
   }
 
+  /* texto da grade na fonte do app (Segoe UI 14 px, a do Go/Wails), cabecalho, tipo e menus tambem */
   table {
     border-collapse: separate;
     border-spacing: 0;
-    font-size: 12px;
     font-variant-numeric: tabular-nums;
   }
 
@@ -254,7 +254,6 @@
   th small {
     display: block;
     color: var(--muted);
-    font-size: 11px;
     font-weight: 500;
     letter-spacing: 0.04em;
   }
@@ -361,6 +360,5 @@
   .menu kbd {
     color: var(--muted);
     font: inherit;
-    font-size: 11px;
   }
 </style>
