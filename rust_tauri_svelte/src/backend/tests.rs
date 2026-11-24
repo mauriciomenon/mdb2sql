@@ -461,6 +461,15 @@ mod tests {
                 }
                 eprintln!("search \"tension de campo\": {found:?}");
                 assert!(found.iter().any(|(_, _, first)| !first), "a hit beyond the first 100 rows");
+                // "Todas as tabelas" acha as mesmas tabelas com as mesmas contagens (o termo so existe em texto)
+                let started = std::time::Instant::now();
+                let mut everywhere: Vec<(String, i64)> =
+                    manager.search_tables("tension de campo").unwrap().into_iter().map(|f| (f.table, f.count)).collect();
+                eprintln!("search in all {} tables: {:?}", tables.len(), started.elapsed());
+                everywhere.sort();
+                let mut expected: Vec<(String, i64)> = found.iter().map(|(t, n, _)| (t.clone(), *n)).collect();
+                expected.sort();
+                assert_eq!(everywhere, expected);
                 // adendo: o ponto RTUNO 50 / PNTNO 9 (texto em espanhol) e achado por "tension de campo" e nao por
                 // "tensao de campo" (portugues; sem busca aproximada). Outras linhas do DB4 tem TENSÃO em portugues.
                 if tables.iter().any(|t| t == "RANGER_SOANLG") {
@@ -811,6 +820,44 @@ mod tests {
         assert_eq!(manager.get_row_count("t", &[], "50").unwrap(), 20, "numbers match as text: 50, 150..950, 500..509");
         assert_eq!(manager.get_row_count("t", &[filter("label", json!("outro"))], "campo").unwrap(), 1);
         assert_eq!(manager.get_row_count("t", &[], "zzz").unwrap(), 0);
+    }
+
+    // "Todas as tabelas": mesma regra da pesquisa de uma tabela (todas as palavras numa celula, sem maiusculas nem
+    // acentos), so nas colunas de texto, na ordem da lista; DuckDB anexado e SQLite copiado para a memoria
+    #[test]
+    fn search_in_all_tables_counts_matching_rows_per_table() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("all.duckdb");
+        duckdb::Connection::open(&path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE b_points (id INTEGER, label VARCHAR, note VARCHAR);
+                 INSERT INTO b_points VALUES (1, 'EXCITAÇÃO TENSÃO', NULL), (2, 'outro', 'tensao de campo'), (3, 'nada', NULL);
+                 CREATE TABLE a_codes (code INTEGER, name VARCHAR);
+                 INSERT INTO a_codes VALUES (7, 'Tensão'), (8, 'x');
+                 CREATE TABLE c_numbers (tensao INTEGER, n INTEGER);
+                 INSERT INTO c_numbers VALUES (1, 7);",
+            )
+            .unwrap();
+        let manager = DBManager::new();
+        assert!(manager.search_tables("x").unwrap_err().contains("[[err.noDatabase]]"));
+        manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+        let found = |s: &str| -> Vec<(String, i64)> {
+            manager.search_tables(s).unwrap().into_iter().map(|f| (f.table, f.count)).collect()
+        };
+        assert_eq!(found("TENSAO"), [("a_codes".to_string(), 1), ("b_points".to_string(), 2)]);
+        assert_eq!(found("campo tensão"), [("b_points".to_string(), 1)]);
+        assert_eq!(found("  "), []);
+        assert_eq!(found("7"), [], "numbers are not text columns");
+        // abrir a tabela achada com a mesma pesquisa da a mesma contagem
+        assert_eq!(manager.get_row_count("b_points", &[], "TENSAO").unwrap(), 2);
+
+        let lite = dir.path().join("all.sqlite");
+        let conn = rusqlite::Connection::open(&lite).unwrap();
+        conn.execute_batch("CREATE TABLE t (id INTEGER, s TEXT); INSERT INTO t VALUES (1, 'Tensão'), (2, NULL);").unwrap();
+        drop(conn);
+        manager.connect(lite.to_str().unwrap(), &mut no_progress()).unwrap();
+        assert_eq!(found("tensao"), [("t".to_string(), 1)]);
     }
 
     // auditoria externa 2: arquivo do usuario com o nome do temporario ("out.csv.partial") nao pode sumir, e o

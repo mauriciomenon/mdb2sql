@@ -31,6 +31,13 @@ pub struct SqlResult {
     pub truncated: bool,
 }
 
+// NIVEL BASICO: Tabela achada pela pesquisa em todas as tabelas e quantas linhas dela tem o termo
+#[derive(Debug, PartialEq, Serialize)]
+pub struct Found {
+    pub table: String,
+    pub count: i64,
+}
+
 // NIVEL BASICO: Formato do arquivo, decidido pela extensao
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Format {
@@ -503,6 +510,42 @@ impl DBManager {
             };
             let (rows, truncated) = rows_to_json(&mut rows, &names, limit)?;
             Ok(SqlResult { columns, rows, truncated })
+        })
+    }
+
+    // NIVEL BASICO: Pesquisa da aba Data em "Todas as tabelas": as tabelas (na ordem da lista) com linhas que tem o termo
+    // e quantas. Mesma regra da pesquisa de uma tabela (search_condition), so nas colunas de texto.
+    // NIVEL TECNICO: the text columns of every table come from one information_schema query (no PRAGMA per table),
+    // then one COUNT per table with text columns. DB4 (287 tables, 114 k rows): ~1 s per search word; the time is the
+    // lower(strip_accents()) of every text cell (one UNION ALL of all the COUNTs measured the same)
+    pub fn search_tables(&self, search: &str) -> Result<Vec<Found>, String> {
+        self.with_conn(|conn| {
+            let mut text: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT table_name, column_name FROM information_schema.columns WHERE table_catalog = current_database() \
+                     AND table_schema = current_schema() AND data_type = 'VARCHAR' ORDER BY ordinal_position",
+                )
+                .map_err(|e| format!("Failed to list text columns: {e}"))?;
+            let mut rows = stmt.query([]).map_err(|e| format!("Failed to list text columns: {e}"))?;
+            while let Some(row) = rows.next().map_err(|e| format!("Failed to read column: {e}"))? {
+                let table: String = row.get(0).map_err(|e| format!("Failed to read column: {e}"))?;
+                text.entry(table).or_default().push(row.get(1).map_err(|e| format!("Failed to read column: {e}"))?);
+            }
+            let mut found = Vec::new();
+            for table in list_tables(conn)? {
+                let Some((cond, params)) = text.get(&table).and_then(|cols| search_condition(cols, search)) else {
+                    continue;
+                };
+                let query = format!("SELECT COUNT(*) FROM {} WHERE {cond}", ident(&table));
+                let count: i64 = conn
+                    .query_row(&query, duckdb::params_from_iter(params), |row| row.get(0))
+                    .map_err(|e| format!("{table}: Failed to count rows: {e}"))?;
+                if count > 0 {
+                    found.push(Found { table, count });
+                }
+            }
+            Ok(found)
         })
     }
 

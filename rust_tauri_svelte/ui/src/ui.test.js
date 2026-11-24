@@ -85,6 +85,26 @@ test('grid cells, NULL included, keep full contrast', () => {
   }
 });
 
+// item 5 do dono: seletor de duas opcoes (nada de checkbox) junto a pesquisa da aba Data, o mesmo par em Settings
+// (escopo padrao, gravado); Todas as tabelas lista as achadas e escolher uma abre com a mesma pesquisa
+test('Data search scope: two-option selector next to the field and its default in Settings', () => {
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  assert.match(app, /const SCOPES = \[\s*\['table', 'scope\.table'\],\s*\['all', 'scope\.all'\],\s*\];/);
+  assert.deepEqual([en['scope.table'], en['scope.all']], ['This table', 'All tables']);
+  const ui = markup('./App.svelte');
+  const bar = ui.slice(ui.indexOf('{#if everywhere}'), ui.indexOf('class="search"'));
+  assert.match(bar, /<div class="scope" role="radiogroup" aria-label=\{t\('scope\.label'\)\}>\s*\{#each SCOPES as \[id, key\]\}/);
+  assert.match(bar, /role="radio" aria-checked=\{scope === id\}[^>]*onclick=\{\(\) => setScope\(id\)\}/);
+  assert.doesNotMatch(bar, /checkbox/);
+  const settings = ui.slice(ui.indexOf("openMenu === 'settings'"), ui.indexOf("openMenu === 'help'"));
+  assert.match(settings, /\{t\('settings\.searchScope'\)\}[\s\S]*\{#each SCOPES as \[id, key\]\}[\s\S]*onclick=\{\(\) => setDefaultScope\(id\)\}/);
+  assert.match(app, /let defaultScope = \$state\(loadSetting\(SCOPE_KEY\) === 'all' \? 'all' : 'table'\);/);
+  assert.match(app, /saveSetting\(SCOPE_KEY, next === 'all' \? 'all' : null\);/);
+  assert.match(app, /invoke\('search_all_tables', \{ search: words \}\)/);
+  assert.match(ui, /onclick=\{\(\) => openFound\(f\.table\)\}>\{t\('found\.item', \{ table: f\.table, count: fmt\(f\.count\) \}\)\}/);
+  assert.match(app, /function openFound\(name\) \{\s*scope = 'table';\s*openTable\(name, search\);/);
+});
+
 // dono: o filtro de tabelas e a pesquisa da aba Data esperam a digitacao parar (300 ms, igual nas 4 versoes);
 // Enter vale na hora; a lista de tabelas usa o texto que ja valeu, nao o que esta sendo digitado
 test('table filter and Data search wait 300 ms, Enter runs at once', () => {
@@ -92,7 +112,7 @@ test('table filter and Data search wait 300 ms, Enter runs at once', () => {
   assert.match(app, /const SEARCH_DELAY_MS = 300;/);
   assert.match(app, /const delayOf = \(event\) => \(event\.key === 'Enter' \? 0 : SEARCH_DELAY_MS\);/);
   assert.match(app, /tableTimer = setTimeout\(\(\) => \(tableFilter = text\), delayOf\(event\)\);/);
-  assert.match(app, /searchTimer = setTimeout\(\(\) => openTable\(selectedTable\), delayOf\(event\)\);/);
+  assert.match(app, /searchTimer = setTimeout\(runSearch, delayOf\(event\)\);/);
   assert.match(app, /const words = searchWords\(tableFilter\);/);
   const ui = markup('./App.svelte');
   assert.match(ui, /bind:value=\{tableText\}\s+oninput=\{onTableFilter\}\s+onkeydown=\{\(e\) => e\.key === 'Enter' && onTableFilter\(e\)\}/);

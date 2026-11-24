@@ -62,6 +62,12 @@
   const LANG_KEY = 'mdb2sql.lang';
   const LOG_KEY = 'mdb2sql.log'; // 'open' = painel de log aberto (padrao: recolhido)
   const NULL_KEY = 'mdb2sql.showNull'; // 'off' = celula NULL vazia (padrao: mostra "NULL")
+  const SCOPE_KEY = 'mdb2sql.searchScope'; // 'all' = a pesquisa comeca em Todas as tabelas (padrao: Esta tabela)
+  // escopo da pesquisa da aba Data: seletor junto ao campo e Settings > Escopo padrao da busca
+  const SCOPES = [
+    ['table', 'scope.table'],
+    ['all', 'scope.all'],
+  ];
   // a pesquisa vai ao banco quando a digitacao para por este tempo
   const SEARCH_DELAY_MS = 300;
 
@@ -122,6 +128,10 @@
   let filters = $state.raw([]); // [{ column, value }] aplicados na consulta ao banco (AND)
   let search = $state(''); // pesquisa na tabela inteira, no banco
   let searchTimer;
+  let defaultScope = $state(loadSetting(SCOPE_KEY) === 'all' ? 'all' : 'table');
+  let scope = $state(defaultScope); // 'table' (tabela aberta) | 'all' (todas as tabelas)
+  let found = $state.raw(null); // { words, tables: [{ table, count }] } da ultima pesquisa em todas as tabelas
+  let everywhere = $derived(scope === 'all' && search.trim() !== '');
   let limit = $state(LIMITS[0]);
   let busy = $state(false);
 
@@ -359,6 +369,7 @@
     hidden = new Set();
     filters = [];
     search = '';
+    found = null;
     columns = [];
     rows = [];
     rowCount = 0;
@@ -453,6 +464,14 @@
     saveSetting(LANG_KEY, code);
   }
 
+  // Settings > Escopo padrao da busca: gravado, e passa a valer tambem na pesquisa aberta
+  function setDefaultScope(next) {
+    openMenu = null;
+    defaultScope = next;
+    saveSetting(SCOPE_KEY, next === 'all' ? 'all' : null);
+    setScope(next);
+  }
+
   function setShowNull(show) {
     openMenu = null;
     showNull = show;
@@ -479,11 +498,12 @@
     invoke('plugin:opener|open_url', { url }).catch((err) => showError(err));
   }
 
-  // NIVEL BASICO: Busca schema, linhas e contagens da tabela em paralelo; filtros e pesquisa vao na consulta
-  async function openTable(tableName) {
+  // NIVEL BASICO: Busca schema, linhas e contagens da tabela em paralelo; filtros e pesquisa vao na consulta.
+  // Outra tabela comeca sem filtros e com a pesquisa `keep` (a de Todas as tabelas, ao escolher uma achada)
+  async function openTable(tableName, keep = '') {
     if (!tableName) return;
     if (tableName !== selectedTable) {
-      search = '';
+      search = keep;
       hidden = new Set();
       filters = [];
     }
@@ -537,7 +557,40 @@
   function onSearch(event) {
     search = event.currentTarget.value;
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => openTable(selectedTable), delayOf(event));
+    searchTimer = setTimeout(runSearch, delayOf(event));
+  }
+
+  // a pesquisa vale para a tabela aberta; em Todas as tabelas (com termo) procura em todas
+  function runSearch() {
+    if (everywhere) searchAll();
+    else openTable(selectedTable);
+  }
+
+  // NIVEL BASICO: Todas as tabelas: lista as tabelas com linhas que tem o termo e quantas (backend: mesma regra da
+  // pesquisa da tabela, nas colunas de texto). Resposta de um termo que ja mudou e ignorada
+  async function searchAll() {
+    const words = search.trim();
+    busy = true;
+    try {
+      const tables = await invoke('search_all_tables', { search: words });
+      if (words === search.trim()) found = { words, tables };
+    } catch (err) {
+      showError(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  function setScope(next) {
+    scope = next;
+    clearTimeout(searchTimer);
+    if (search.trim()) runSearch();
+  }
+
+  // escolher uma tabela achada abre ela na aba Data com a mesma pesquisa (o escopo volta para Esta tabela)
+  function openFound(name) {
+    scope = 'table';
+    openTable(name, search);
   }
 
   // NIVEL BASICO: Troca os filtros e refaz a consulta da tabela aberta (as linhas vem do banco ja filtradas)
@@ -700,6 +753,13 @@
           <button type="button" role="menuitemcheckbox" aria-checked={showNull} onclick={() => setShowNull(!showNull)}>
             <span class="check">{showNull ? '✓' : ''}</span>{t('settings.showNull')}
           </button>
+          <div class="separator" role="separator"></div>
+          <span class="group">{t('settings.searchScope')}</span>
+          {#each SCOPES as [id, key]}
+            <button type="button" role="menuitemradio" aria-checked={defaultScope === id} onclick={() => setDefaultScope(id)}>
+              <span class="check">{defaultScope === id ? '●' : ''}</span>{t(key)}
+            </button>
+          {/each}
         </div>
       {/if}
     </div>
@@ -935,13 +995,23 @@
         {/key}
       {:else}
         <div class="table-bar">
-          <h2>{selectedTable}</h2>
-          <span>
-            {search.trim() || filters.length
-              ? t('data.showingMatches', { shown: fmt(rows.length), matching: fmt(matchCount), total: fmt(rowCount), columns: columns.length })
-              : t('data.showing', { shown: fmt(rows.length), total: fmt(rowCount), columns: columns.length })}
-          </span>
-          <button type="button" class="secondary columns-button" title={t('columns.tip')} onclick={() => columnsDialog.showModal()}>{t('columns.button')}</button>
+          {#if everywhere}
+            <span>{found?.words === search.trim() ? t('found.summary', { count: fmt(found.tables.length) }) : t('found.searching')}</span>
+          {:else}
+            <h2>{selectedTable}</h2>
+            <span>
+              {search.trim() || filters.length
+                ? t('data.showingMatches', { shown: fmt(rows.length), matching: fmt(matchCount), total: fmt(rowCount), columns: columns.length })
+                : t('data.showing', { shown: fmt(rows.length), total: fmt(rowCount), columns: columns.length })}
+            </span>
+            <button type="button" class="secondary columns-button" title={t('columns.tip')} onclick={() => columnsDialog.showModal()}>{t('columns.button')}</button>
+          {/if}
+          <!-- escopo da pesquisa: controle segmentado de duas opcoes (o padrao vem de Settings) -->
+          <div class="scope" role="radiogroup" aria-label={t('scope.label')}>
+            {#each SCOPES as [id, key]}
+              <button type="button" role="radio" aria-checked={scope === id} class:active={scope === id} onclick={() => setScope(id)}>{t(key)}</button>
+            {/each}
+          </div>
           <input
             class="search"
             type="search"
@@ -952,6 +1022,18 @@
             placeholder={t('search.placeholder')}
           />
         </div>
+        {#if everywhere}
+          <!-- Todas as tabelas: as tabelas com linhas achadas; escolher uma abre ela com a mesma pesquisa -->
+          <div class="found" role="group" aria-label={t('found.list')}>
+            {#if found?.words === search.trim()}
+              {#each found.tables as f (f.table)}
+                <button type="button" onclick={() => openFound(f.table)}>{t('found.item', { table: f.table, count: fmt(f.count) })}</button>
+              {:else}
+                <p>{t('data.noMatch')}</p>
+              {/each}
+            {/if}
+          </div>
+        {:else}
         {#if filters.length}
           <div class="filters" role="group" aria-label={t('filters.label')}>
             <span>{t('filters.prefix')}</span>
@@ -983,6 +1065,7 @@
           actions={{ ...gridActions, all: columns, hidden, filtered: filters.length > 0 }}
         />
         {/key}
+        {/if}
       {/if}
     </main>
   </div>
@@ -1691,6 +1774,73 @@
     margin-left: auto;
     padding: 3px 10px;
     font-weight: 400;
+  }
+
+  /* escopo da pesquisa: dois botoes colados numa caixa so; o escolhido como a tabela escolhida na lista */
+  .table-bar .scope {
+    display: inline-flex;
+    flex-shrink: 0;
+    margin-left: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .table-bar .columns-button + .scope {
+    margin-left: 0;
+  }
+
+  .scope button {
+    padding: 3px 10px;
+    border: none;
+    border-radius: 0;
+    background: var(--surface);
+    color: var(--text);
+    font-weight: 400;
+  }
+
+  .scope button + button {
+    border-left: 1px solid var(--border);
+  }
+
+  .scope button.active {
+    background: var(--accent);
+    color: var(--accent-text);
+  }
+
+  /* Todas as tabelas: lista das tabelas achadas, como a lista de tabelas (nome inteiro, rola so na vertical) */
+  .found {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    padding: 4px;
+    overflow: hidden auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .found button {
+    flex-shrink: 0;
+    padding: 4px 6px;
+    border: none;
+    border-radius: 4px;
+    background: none;
+    color: var(--text);
+    font-weight: 400;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .found button:hover {
+    background: var(--row-hover);
+  }
+
+  .found p {
+    margin: 4px 6px;
+    color: var(--muted);
   }
 
   /* a busca encolhe antes de empurrar o botao ou quebrar a barra */

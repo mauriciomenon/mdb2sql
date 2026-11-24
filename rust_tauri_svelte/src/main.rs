@@ -11,7 +11,7 @@
 mod backend;
 
 use backend::converted::{self, Converted};
-use backend::db_manager::{ColumnSchema, DBManager, Filter, SqlResult, Step};
+use backend::db_manager::{ColumnSchema, DBManager, Filter, Found, SqlResult, Step};
 use backend::display::DisplayWarning;
 use backend::export::{self, Source, Summary};
 use serde::Serialize;
@@ -160,6 +160,12 @@ fn get_table_data(
 #[tauri::command(async)]
 fn get_row_count(table_name: String, filters: Vec<Filter>, search: String, state: State<'_, AppState>) -> Result<i64, String> {
     state.db_manager.lock().unwrap().get_row_count(&table_name, &filters, &search)
+}
+
+// NIVEL BASICO: Pesquisa da aba Data em todas as tabelas: cada tabela com linhas achadas e quantas
+#[tauri::command(async)]
+fn search_all_tables(search: String, state: State<'_, AppState>) -> Result<Vec<Found>, String> {
+    state.db_manager.lock().unwrap().search_tables(&search)
 }
 
 // NIVEL BASICO: GetTableSchema retorna schema da tabela
@@ -314,6 +320,7 @@ fn main() {
             display_warning,
             get_table_data,
             get_row_count,
+            search_all_tables,
             get_table_schema,
             run_sql,
             export,

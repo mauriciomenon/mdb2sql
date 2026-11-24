@@ -60,13 +60,18 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
 
 **Tela**:
 - **Tables** (esquerda): lista de tabelas com o nome inteiro (nome longo quebra a linha); **Filter tables** filtra
-  por nome. Clique ou setas (Home/End) abrem a tabela.
+  por nome (300 ms depois da ultima tecla, como a pesquisa da aba Data; Enter filtra na hora). Clique ou setas
+  (Home/End) abrem a tabela.
 - Aba **Data**: as primeiras linhas (quantas: **Row limit**, 100/500/1000) e o total. A **pesquisa** (**Search
   table**) roda no banco, na **tabela inteira** (todas as linhas e colunas, nao so as carregadas): a linha aparece
   quando uma mesma celula tem todas as palavras, em qualquer ordem, sem diferenciar maiusculas nem acentos
   (`tension de campo` acha `EXCITACION TENSION DE CAMPO`, RTUNO 50 / PNTNO 9 de RANGER_SOANLG no DB4, fora das 100
   primeiras linhas; `tensao` acha `TENSÃO` mas nao `TENSION`: nao ha busca aproximada). A contagem vira
-  "Showing N of M matching rows (T in the table)".
+  "Showing N of M matching rows (T in the table)". A pesquisa roda 300 ms depois da ultima tecla (Enter: na hora).
+- Ao lado da pesquisa, **This table | All tables**: em **All tables** o termo e procurado em todas as tabelas (mesma
+  regra, nas colunas de texto) e aparece a lista das tabelas com o numero de linhas achadas; escolher uma abre essa
+  tabela com a mesma pesquisa. O escopo padrao fica em **Settings > Default search scope** (DB4, 287 tabelas: ~1 s
+  por palavra).
 - **Columns...**: marque e desmarque colunas (busca por nome no topo, caixas em grade que acompanha a janela).
   **Show all** e **Hide all** agem nas colunas listadas (com busca, so nelas). A barra de status mostra "N columns
   hidden". A pesquisa olha todas as colunas e a exportacao sai com todas.
@@ -107,8 +112,9 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
 **Menu View > Log**: painel com as mensagens da sessao (hora e texto), selecionavel (`Ctrl+C`) e **Copy all**.
 O texto da barra de status tambem pode ser copiado: botao direito > **Copy**.
 
-**Menu Settings**: **Theme** (System, Light, Dark), **Language** (English, Português (Brasil), Español) e **Show
-NULL** (ligado por padrao; desligado, a celula NULL fica vazia); as escolhas ficam gravadas e valem na hora.
+**Menu Settings**: **Theme** (System, Light, Dark), **Language** (English, Português (Brasil), Español), **Show
+NULL** (ligado por padrao; desligado, a celula NULL fica vazia) e **Default search scope** (This table, All tables);
+as escolhas ficam gravadas e valem na hora.
 
 **Menu Help > About MDB2SQL**: versao, build, stack (Rust + Tauri + Svelte), janela (WebView2/WebKitGTK), SQLite e
 DuckDB, leitor do Access, autor, licenca e os links do codigo no GitHub e no GitLab (o app so pode abrir esses dois
