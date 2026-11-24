@@ -10,7 +10,7 @@ import tempfile
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence
 
 import duckdb
 
@@ -320,6 +320,35 @@ class DBManager:
                 columns.append(unique)
             rows = cursor.fetchmany(limit + 1)
         return columns, [dict(zip(columns, row)) for row in rows[:limit]], len(rows) > limit
+
+    def search_tables(self, search: str, stop: Callable[[], bool] = lambda: False) -> List[tuple[str, int]]:
+        """(tabela, linhas encontradas) de cada tabela com a pesquisa; so as que tem alguma.
+
+        !T: Exactly the table search rule (search_where over every column as text: every word in one cell, no case or
+        !T: accents), so the count listed is the count the opened table shows. `stop` is checked between tables so
+        !T: a newer search ends this one
+        """
+        # colunas de todas as tabelas numa consulta so (PRAGMA por tabela: ~2.5 s nas 287 do DB4)
+        with self.cursor() as cursor:
+            columns = cursor.execute(
+                "SELECT table_name, column_name FROM information_schema.columns WHERE table_catalog = current_database()"
+                " AND table_schema = current_schema() ORDER BY ordinal_position"
+            ).fetchall()
+        by_table: dict[str, list[str]] = {}
+        for table, column in columns:
+            by_table.setdefault(table, []).append(column)
+        found = []
+        for table in self.list_tables():
+            if stop():
+                break
+            where, params = search_where(by_table.get(table, []), search)
+            if not where:  # pesquisa vazia: nenhuma tabela entra
+                continue
+            with self.cursor() as cursor:
+                count = cursor.execute(f"SELECT COUNT(*) FROM {quote(table)} WHERE {where}", params).fetchone()[0]
+            if count:
+                found.append((table, count))
+        return found
 
     def get_row_count(self, table_name: str, filters: Filters = (), search: str = "") -> int:
         """

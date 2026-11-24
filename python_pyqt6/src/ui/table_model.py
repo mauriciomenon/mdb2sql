@@ -35,14 +35,14 @@ def display_text(value: Any) -> str:
     return "" if is_missing(value) else str(value)
 
 
-def grid_text(value: Any) -> str:
-    """Texto da grade: DOUBLE inteiro sem '.0' (2316.0 -> 2316), igual as outras stacks; o resto como display_text.
+def grid_text(value: Any, null_text: str = "") -> str:
+    """Texto da grade: DOUBLE inteiro sem '.0' (2316.0 -> 2316), igual as outras stacks; NULL vira null_text.
 
     !T: Display only: copy (COPY_ROLE), the value filter (typed value) and exports keep the real value
     """
     if isinstance(value, float) and value.is_integer() and abs(value) < 1e16:
         return str(int(value))
-    return display_text(value)
+    return null_text if is_missing(value) else str(value)
 
 
 def sort_key(value: Any) -> int | float | str | None:
@@ -75,14 +75,21 @@ class TableModel(QAbstractTableModel):
         self.columns: list[str] = []
         self.column_tips: list[str] = []
         self.numeric: list[bool] = []
+        self.null_text = ""  # texto da celula NULL na grade: "NULL" ou vazio (Configuracoes > Exibir NULL)
         self._fixed_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
 
+    def set_null_text(self, text: str) -> None:
+        self.null_text = text
+        if self.rows and self.columns:
+            last = self.index(len(self.rows) - 1, len(self.columns) - 1)
+            self.dataChanged.emit(self.index(0, 0), last, [Qt.ItemDataRole.DisplayRole])
+
     def longest_texts(self, column: int, count: int = 3) -> list[str]:
-        """Os textos mais longos (em caracteres) da coluna: candidatos para medir a largura em pixels."""
+        """Os textos mais longos (em caracteres) da coluna, como aparecem na grade: candidatos para medir a largura."""
         # shortcut: runs in the UI thread, ~1.4 s for 10,000 rows x 123 columns (instant at the default 100 rows);
         # move it to the table worker if larger "Rows" limits are added
         name = self.columns[column]
-        return heapq.nlargest(count, (display_text(row.get(name)) for row in self.rows), key=len)
+        return heapq.nlargest(count, (grid_text(row.get(name), self.null_text) for row in self.rows), key=len)
 
     def cell_font(self, column: int, base: QFont) -> QFont:
         return self._fixed_font if self.numeric[column] else base
@@ -112,7 +119,7 @@ class TableModel(QAbstractTableModel):
 
         value = self.rows[index.row()].get(self.columns[column])
         if role == Qt.ItemDataRole.DisplayRole:
-            return grid_text(value)
+            return grid_text(value, self.null_text)
         return display_text(value) if role == COPY_ROLE else sort_key(value)
 
     def headerData(

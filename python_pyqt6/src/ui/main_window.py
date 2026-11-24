@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -70,6 +71,11 @@ from ui.table_model import COPY_ROLE, SORT_ROLE, TableModel, fold, search_words
 ROW_LIMITS = (100, 1_000, 10_000)
 MAX_COLUMN_WIDTH = 1200  # trava de seguranca: abaixo disso nenhum valor nem nome de coluna e cortado
 LOG_LINES = 5000
+SEARCH_DELAY_MS = 300
+# grade do Schema: 12 px a mais em cada coluna (texto e cabecalho continuam alinhados a esquerda, juntos)
+SCHEMA_GAP = 12
+# onde a pesquisa da aba Data procura (valor gravado em QSettings "search_scope" -> texto)
+SCOPES = {"table": "scope.table", "all": "scope.all"}
 # Configuracoes > Tema: valor gravado em QSettings -> esquema de cores do Qt
 THEMES = {"system": Qt.ColorScheme.Unknown, "light": Qt.ColorScheme.Light, "dark": Qt.ColorScheme.Dark}
 # resposta da pergunta sobre o SQLite convertido do Access
@@ -165,6 +171,7 @@ class MainWindow(QMainWindow):
         self._table_request = 0
         self._sql_request = 0
         self._db_request = 0
+        self._found_request = 0  # pesquisa em todas as tabelas
         self._busy = 0
         self.thread_pool: QThreadPool = QThreadPool.globalInstance() or QThreadPool(self)
         # pasta temporaria da sessao (SQLite convertidos); apaga a de uma sessao anterior que caiu
@@ -176,10 +183,15 @@ class MainWindow(QMainWindow):
         self.table_load_timer.setInterval(150)
         self.table_load_timer.timeout.connect(self._start_table_worker)
 
+        # pesquisa da aba Data e filtro da lista de tabelas: 300 ms depois da ultima tecla (igual nas 4 versoes)
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
-        self.search_timer.setInterval(200)
-        self.search_timer.timeout.connect(self.reload_table)  # a pesquisa vai na consulta: tabela inteira
+        self.search_timer.setInterval(SEARCH_DELAY_MS)
+        self.search_timer.timeout.connect(self._search_now)
+        self.table_filter_timer = QTimer(self)
+        self.table_filter_timer.setSingleShot(True)
+        self.table_filter_timer.setInterval(SEARCH_DELAY_MS)
+        self.table_filter_timer.timeout.connect(lambda: self._filter_tables(self.table_filter.text()))
 
         self.init_ui()
         if self.session.removed:
@@ -273,6 +285,31 @@ class MainWindow(QMainWindow):
             self.language_group.addAction(action)
             self.language_actions[code] = action
 
+        # pesquisa da aba Data: Esta tabela | Todas as tabelas junto ao campo; o escopo inicial vem de
+        # Configuracoes > Escopo padrao da busca (gravado entre execucoes)
+        scope = str(self.settings.value("search_scope", "table"))
+        scope = scope if scope in SCOPES else "table"
+        self.scope_group = QActionGroup(self)
+        self.scope_actions: dict[str, QAction] = {}
+        self.default_scope_group = QActionGroup(self)
+        self.default_scope_actions: dict[str, QAction] = {}
+        for name, key in SCOPES.items():
+            action = QAction(tr(key), self, checkable=True)
+            action.setChecked(name == scope)
+            action.triggered.connect(lambda _checked=False: self._search_now())
+            self.scope_group.addAction(action)
+            self.scope_actions[name] = action
+            default = QAction(tr(key), self, checkable=True)
+            default.setChecked(name == scope)
+            default.triggered.connect(lambda _checked=False, n=name: self.set_default_scope(n))
+            self.default_scope_group.addAction(default)
+            self.default_scope_actions[name] = default
+
+        # Configuracoes > Exibir NULL (padrao desligado = celula vazia, como antes; gravado entre execucoes)
+        self.show_null_action = QAction(tr("settings.show_null"), self, checkable=True)
+        self.show_null_action.setChecked(self.settings.value("show_null", False, type=bool))
+        self.show_null_action.toggled.connect(self.set_show_null)
+
     def _create_central(self) -> None:
         self.table_model = TableModel(self)
         self.data_proxy, self.data_table = self._create_table_view(self.table_model, tr("a11y.data"))
@@ -280,6 +317,7 @@ class MainWindow(QMainWindow):
         self.schema_proxy, self.schema_table = self._create_table_view(self.schema_model, tr("a11y.schema"))
         self.sql_model = TableModel(self)
         self.sql_proxy, self.sql_table = self._create_table_view(self.sql_model, tr("a11y.sql_result"))
+        self.set_show_null(self.show_null_action.isChecked())
 
         self.sql_edit = QPlainTextEdit()
         self.sql_edit.setAccessibleName("SQL")
@@ -317,11 +355,13 @@ class MainWindow(QMainWindow):
         separator = QAction(self)
         separator.setSeparator(True)
         self.data_table.addActions([separator, self.filter_value_action, self.clear_filters_action])
-        header = self.data_table.horizontalHeader()
-        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        header.customContextMenuRequested.connect(
-            lambda pos: self.header_menu(header.logicalIndexAt(pos)).popup(header.mapToGlobal(pos))
-        )
+        for view in (self.data_table, self.sql_table):
+            view.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            # !T: The slot must not hold the header itself: header wrapper <-> slot is a cycle only the GC sees, and
+            # !T: after a gc.collect() the slot was gone (no menu) or freed (crash on right-click, 1.3.0)
+            view.horizontalHeader().customContextMenuRequested.connect(
+                lambda pos, v=view: self._popup_header_menu(v, pos)
+            )
 
         self.empty_label = QLabel(tr("status.empty"))
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -347,12 +387,22 @@ class MainWindow(QMainWindow):
         bar.addStretch(1)
         bar.addWidget(self.clear_filters_button)
 
+        # pesquisa em todas as tabelas: lista "TABELA (linhas encontradas)" no lugar da grade; escolher uma abre
+        # essa tabela com a mesma pesquisa
+        self.found_list = QListWidget()
+        self.found_list.setAccessibleName(tr("search.found_name"))
+        self.found_list.itemClicked.connect(self.open_found_table)
+        self.found_list.itemActivated.connect(self.open_found_table)  # Enter
+        self.data_stack = QStackedWidget()
+        self.data_stack.addWidget(self.data_table)
+        self.data_stack.addWidget(self.found_list)
+
         self.data_page = QWidget()
         layout = QVBoxLayout(self.data_page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         layout.addLayout(bar)
-        layout.addWidget(self.data_table)
+        layout.addWidget(self.data_stack)
         return self.data_page
 
     def _create_table_view(self, model: TableModel, name: str) -> tuple[QSortFilterProxyModel, QTableView]:
@@ -387,7 +437,7 @@ class MainWindow(QMainWindow):
         self.table_filter.setClearButtonEnabled(True)
         self.table_filter.setAccessibleName(tr("tables.filter"))
         self.table_filter.setToolTip(tr("tip.words"))
-        self.table_filter.textChanged.connect(self._filter_tables)
+        self.table_filter.textChanged.connect(lambda _text: self.table_filter_timer.start())
 
         self.table_list = QListWidget()
         self.table_list.setAccessibleName(tr("tables.title"))
@@ -571,6 +621,7 @@ class MainWindow(QMainWindow):
         self.search_edit.setMinimumWidth(280)
         self.search_edit.setMaximumWidth(420)
         self.search_edit.textChanged.connect(lambda _text: self.search_timer.start())
+        toolbar.addActions(list(self.scope_actions.values()))  # dois botoes de alternar, um marcado
         toolbar.addWidget(self.search_edit)
 
     def _create_menus(self) -> None:
@@ -598,6 +649,8 @@ class MainWindow(QMainWindow):
         self.settings_menu = menu_bar.addMenu(tr("menu.settings"))
         self.settings_menu.addMenu(tr("menu.theme")).addActions(list(self.theme_actions.values()))
         self.settings_menu.addMenu(tr("menu.language")).addActions(list(self.language_actions.values()))
+        self.settings_menu.addMenu(tr("menu.search_scope")).addActions(list(self.default_scope_actions.values()))
+        self.settings_menu.addAction(self.show_null_action)
 
         help_menu = menu_bar.addMenu(tr("menu.help"))
         help_menu.addAction(tr("menu.about"), self.show_about)
@@ -612,6 +665,19 @@ class MainWindow(QMainWindow):
         self.settings.setValue("theme", name)
         self.theme_actions[name].setChecked(True)
         apply_theme(name)
+
+    def set_default_scope(self, name: str) -> None:
+        # grava o padrao e ja vale na tela
+        self.settings.setValue("search_scope", name)
+        self.default_scope_actions[name].setChecked(True)
+        self.scope_actions[name].setChecked(True)
+        self._search_now()
+
+    def set_show_null(self, show: bool) -> None:
+        # so a grade: ligado mostra o texto NULL, desligado a celula fica vazia; copiar, filtrar e exportar nao mudam
+        self.settings.setValue("show_null", bool(show))
+        for model in (self.table_model, self.schema_model, self.sql_model):
+            model.set_null_text(tr("grid.null") if show else "")
 
     def set_language(self, code: str) -> None:
         self.settings.setValue("language", code)
@@ -857,6 +923,8 @@ class MainWindow(QMainWindow):
             self.table_model.set_rows([])
             self.schema_model.set_rows([])
             self._set_message(self.info_label, tr("status.no_tables"))
+        if self.data_stack.currentWidget() is self.found_list:
+            self._search_now()  # lista de todas as tabelas: refeita no banco aberto agora
 
     def _on_database_error(self, request_id: int, message: str) -> None:
         if request_id != self._db_request:
@@ -931,6 +999,8 @@ class MainWindow(QMainWindow):
         self._db_request += 1
         self._table_request += 1
         self._sql_request += 1
+        self._found_request += 1
+        self.found_list.clear()
         self.table_load_timer.stop()
         self.manager = None
         self.current_db_path = None
@@ -968,6 +1038,53 @@ class MainWindow(QMainWindow):
         item = self.table_list.currentItem()
         if item is not None:
             self.on_table_selected(item.text())
+
+    def _search_now(self) -> None:
+        """Pesquisa da aba Data (300 ms depois da ultima tecla, ou ao trocar o escopo): na tabela aberta, no banco
+        (tabela inteira), ou em todas as tabelas (lista no lugar da grade)."""
+        self.search_timer.stop()
+        self._found_request += 1  # pesquisa em todas as tabelas ainda rodando: o resultado dela e descartado
+        self.found_list.clear()
+        everywhere = self.scope_actions["all"].isChecked() and bool(self.search_edit.text().split())
+        self.data_stack.setCurrentWidget(self.found_list if everywhere else self.data_table)
+        if everywhere:
+            self._search_all_tables()
+        else:
+            self.reload_table()
+
+    def _search_all_tables(self) -> None:
+        if self.manager is None:
+            return
+        manager, search, request = self.manager, self.search_edit.text(), self._found_request
+        self._set_message(self.info_label, tr("status.found_running"), log=False)
+        self._run(
+            request,
+            lambda _report: manager.search_tables(search, lambda: request != self._found_request),
+            self._on_found,
+            self._on_found_error,
+        )
+
+    def _on_found(self, request_id: int, result: object) -> None:
+        if request_id != self._found_request:
+            return  # pesquisa antiga (outra tecla, outro escopo, outro banco)
+        found: list[tuple[str, int]] = result  # type: ignore[assignment]
+        for table, count in found:
+            item = QListWidgetItem(tr("search.found_item", table=table, count=num(count)))
+            item.setData(Qt.ItemDataRole.UserRole, table)
+            self.found_list.addItem(item)
+        self._set_message(self.info_label, tr("status.found", count=num(len(found))), log=False)
+
+    def _on_found_error(self, request_id: int, message: str) -> None:
+        if request_id == self._found_request:
+            self._set_message(self.info_label, tr("status.error", message=message), error=True)
+
+    def open_found_table(self, item: QListWidgetItem) -> None:
+        # a tabela escolhida abre na aba Data com a mesma pesquisa; o escopo volta para esta tabela
+        self.scope_actions["table"].setChecked(True)
+        found = self.table_list.findItems(item.data(Qt.ItemDataRole.UserRole), Qt.MatchFlag.MatchExactly)
+        if found:
+            self.table_list.setCurrentItem(found[0])
+        self._search_now()
 
     def on_table_selected(self, table_name: str):
         # Chamado quando usuario seleciona tabela na lista
@@ -1011,18 +1128,19 @@ class MainWindow(QMainWindow):
         # o separador do painel continua arrastavel; so ajusta na abertura do arquivo
         self.resizeDocks([self.tables_dock], [self.tables_panel_width(tables)], Qt.Orientation.Horizontal)
 
-    def _fit_columns(self, view: QTableView) -> None:
-        view.sortByColumn(-1, Qt.SortOrder.AscendingOrder)  # volta para a ordem do backend
-        view.resizeColumnsToContents()  # !T: Qt takes the larger of the header text and the content
-        # !T: Qt measures only the first rows (resize precision); the longest texts of all loaded rows are measured
-        # !T: here so no value is cut with "..."; only above MAX_COLUMN_WIDTH (tooltip has the full text)
+    def _fit_columns(self, view: QTableView, columns: list[int] | None = None) -> None:
+        """Largura das colunas (todas sem `columns`) pelo texto mais longo: cabecalho ou valor de qualquer linha."""
         model: TableModel = view.model().sourceModel()
         padding = 2 * (view.style().pixelMetric(QStyle.PixelMetric.PM_FocusFrameHMargin, None, view) + 1) + 8
-        for column in range(model.columnCount()):
+        gap = SCHEMA_GAP if view is self.schema_table else 0
+        for column in range(model.columnCount()) if columns is None else columns:
+            view.resizeColumnToContents(column)  # !T: Qt takes the larger of the header text and the content
+            # !T: Qt measures only the first rows (resize precision); the longest texts of all loaded rows are
+            # !T: measured here so no value is cut with "..."; only above MAX_COLUMN_WIDTH (tooltip has the full text)
             metrics = QFontMetrics(model.cell_font(column, view.font()))
             longest = max((metrics.horizontalAdvance(text) for text in model.longest_texts(column)), default=0)
             width = max(view.columnWidth(column), longest + padding)
-            view.setColumnWidth(column, min(width, MAX_COLUMN_WIDTH))
+            view.setColumnWidth(column, min(width + gap, MAX_COLUMN_WIDTH))
 
     def _on_table_loaded(self, request_id: int, result: object) -> None:
         if request_id != self._table_request:
@@ -1035,12 +1153,16 @@ class MainWindow(QMainWindow):
             [column["column_name"] for column in schema],
             [f"{column['column_name']}: {column['column_type']}" for column in schema],
         )
-        self.schema_model.set_rows(schema)
+        # titulos do Schema traduzidos: as chaves do backend (column_name, column_type, null) nao vao para a tela
+        titles = {"column_name": tr("schema.column"), "column_type": tr("schema.type"), "null": tr("schema.nullable")}
+        self.schema_model.set_rows([{titles[k]: v for k, v in column.items()} for column in schema],
+                                   list(titles.values()))
         self.loaded_table = (payload["table_name"], payload["total_rows"])
         self.matched_rows = payload["matched_rows"]
         self.loaded_search = payload["search"]
 
         for view in (self.data_table, self.schema_table):
+            view.sortByColumn(-1, Qt.SortOrder.AscendingOrder)  # volta para a ordem do backend
             self._fit_columns(view)
         self._apply_hidden_columns()  # o reset do modelo mostra todas: oculta de novo as escolhidas
         self._apply_search()
@@ -1130,8 +1252,12 @@ class MainWindow(QMainWindow):
         self._apply_hidden_columns()
         self._apply_search()  # atualiza "N colunas ocultas" na barra de status
 
-    def hide_column(self, name: str) -> None:
-        self.set_hidden_columns(self.hidden_columns | {name})
+    def _set_hidden(self, view: QTableView, names: set[str]) -> None:
+        if view is self.data_table:
+            self.set_hidden_columns(names)  # aba Data: vale ate trocar de tabela, contada na barra de status
+            return
+        for column, name in enumerate(view.model().sourceModel().columns):  # resultado SQL: ate a proxima consulta
+            view.setColumnHidden(column, name in names)
 
     def choose_columns(self) -> None:
         for open_dialog in self.findChildren(ColumnsDialog):
@@ -1143,15 +1269,35 @@ class MainWindow(QMainWindow):
         dialog.hiddenChanged.connect(self.set_hidden_columns)  # vale na hora; Fechar so fecha
         dialog.open()
 
-    def header_menu(self, column: int) -> QMenu:
-        """Menu do clique direito no cabecalho da aba Data (column = -1 fora de uma coluna)."""
+    def _popup_header_menu(self, view: QTableView, pos) -> None:
+        header = view.horizontalHeader()
+        self.header_menu(header.logicalIndexAt(pos), view).popup(header.mapToGlobal(pos))
+
+    def header_menu(self, column: int, view: QTableView | None = None) -> QMenu:
+        """Clique direito no cabecalho das grades Data e SQL (column = -1 fora de uma coluna): ajustar a largura e
+        ocultar/mostrar colunas; a lista marca as visiveis (clique alterna) e a ultima visivel nao sai."""
+        view = view or self.data_table
+        names = view.model().sourceModel().columns
+        hidden = {name for c, name in enumerate(names) if view.isColumnHidden(c)}
+        last = len(names) - len(hidden) <= 1
+        on_column = 0 <= column < len(names)
         menu = QMenu(self)
         menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        hide = menu.addAction(tr("columns.hide_this"))
-        hide.setEnabled(0 <= column < len(self.table_model.columns))
-        hide.triggered.connect(lambda: self.hide_column(self.table_model.columns[column]))
-        menu.addAction(self.columns_action)
-        menu.addAction(tr("columns.show_all"), lambda: self.set_hidden_columns(set()))
+        menu.addAction(tr("columns.fit"), lambda: self._fit_columns(view, [column])).setEnabled(on_column)
+        menu.addAction(tr("columns.fit_all"), lambda: self._fit_columns(view))
+        menu.addSeparator()
+        hide = menu.addAction(tr("columns.hide_this"), lambda: self._set_hidden(view, hidden | {names[column]}))
+        hide.setEnabled(on_column and not last)
+        if view is self.data_table:
+            menu.addAction(self.columns_action)
+        menu.addAction(tr("columns.show_all_columns"), lambda: self._set_hidden(view, set()))
+        menu.addSeparator()
+        for name in names:
+            # "&" no nome da coluna e texto, nao atalho
+            toggle = menu.addAction(name.replace("&", "&&"), lambda _c=False, n=name: self._set_hidden(view, hidden ^ {n}))
+            toggle.setCheckable(True)
+            toggle.setChecked(name not in hidden)
+            toggle.setEnabled(name in hidden or not last)
         return menu
 
     # ----------------------------------------------------------------- SQL
@@ -1177,6 +1323,9 @@ class MainWindow(QMainWindow):
             return
         query, columns, rows, more = result  # type: ignore[misc]
         self.sql_model.set_rows(rows, columns)
+        for column in range(len(columns)):
+            self.sql_table.setColumnHidden(column, False)  # o cabecalho guarda as ocultas por posicao: outro resultado
+        self.sql_table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)  # volta para a ordem do backend
         self._fit_columns(self.sql_table)
         self.sql_query = query if columns else None
         if not columns:

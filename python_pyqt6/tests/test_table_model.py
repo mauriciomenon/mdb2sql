@@ -46,6 +46,20 @@ def test_whole_doubles_show_without_decimal_part_but_copy_the_real_value(qtbot) 
     assert model.rows[1]["v"] == 2316.0  # o filtro por valor usa o valor tipado da linha
 
 
+def test_null_text_is_display_only(qtbot) -> None:
+    # Configuracoes > Exibir NULL: a grade mostra "NULL"; texto vazio continua vazio; copiar continua vazio
+    model = TableModel()
+    model.set_rows([{"v": None}, {"v": float("nan")}, {"v": ""}, {"v": 2.0}])
+    changed = []
+    model.dataChanged.connect(lambda first, last, _roles: changed.append((first.row(), last.row())))
+    model.set_null_text("NULL")
+    assert [model.data(model.index(r, 0)) for r in range(4)] == ["NULL", "NULL", "", "2"]
+    assert model.data(model.index(0, 0), COPY_ROLE) == "" and changed == [(0, 3)]  # a vista redesenha na hora
+    assert model.longest_texts(0, 1) == ["NULL"]  # a largura da coluna conta o texto que aparece
+    model.set_null_text("")
+    assert model.data(model.index(0, 0)) == ""
+
+
 def test_model_roles(qtbot) -> None:
     model = TableModel()
     model.set_rows([{"id": 1, "name": "Ana"}, {"id": 10, "name": None}])

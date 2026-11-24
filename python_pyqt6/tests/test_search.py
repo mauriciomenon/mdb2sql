@@ -56,6 +56,28 @@ def test_search_runs_over_the_whole_table(manager: DBManager) -> None:
     assert payload["matched_rows"] == payload["total_rows"] == 300 and len(payload["rows"]) == 100
 
 
+def test_search_all_tables_counts_what_the_opened_table_shows(manager: DBManager) -> None:
+    # mesma regra da pesquisa da tabela (DuckDB e SQLite), todas as colunas: o numero da lista e o da tabela aberta
+    for query in ("tensao", "CAMPO tensión", "203", "excitac", "50% off_x"):
+        assert manager.search_tables(query) == [("t", _found(manager, query)[0])], query
+    assert manager.search_tables("203") == [("t", 1)]  # numeros tambem (id)
+
+
+def test_search_all_tables_lists_only_tables_with_rows(tmp_path: Path) -> None:
+    db_file = tmp_path / "g.duckdb"
+    with duckdb.connect(str(db_file)) as conn:
+        conn.execute(
+            "CREATE TABLE a AS SELECT * FROM (VALUES (1, 'U9A'), (2, 'u9a x'), (3, 'U18A'), (9, NULL)) v(id, sigla)"
+        )
+        conn.execute("CREATE TABLE b AS SELECT 9 AS n")
+        conn.execute("CREATE TABLE c AS SELECT 'Tensão U9A' AS obs")
+    with DBManager(str(db_file)) as opened:
+        assert opened.search_tables("u9a") == [("a", 2), ("c", 1)]
+        assert opened.search_tables("9") == [("a", 3), ("b", 1), ("c", 1)]  # o id 9 e o n 9 contam
+        assert opened.search_tables("nada") == [] and opened.search_tables("  ") == []
+        assert opened.search_tables("u9a", stop=lambda: True) == []  # pesquisa mais nova: esta para
+
+
 def test_search_and_value_filter_add_up(manager: DBManager) -> None:
     payload = load_table_payload(manager, "t", limit=100, filters=[("unit", "kV")], search="campo")
     assert payload["matched_rows"] == 50 and payload["total_rows"] == 300
