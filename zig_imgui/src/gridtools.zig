@@ -211,7 +211,7 @@ test "Columns dialog: width follows the main window within 420..900, grid of 1 t
     try t.expectEqual(@as(f32, 900), columnsDialogWidth(1920)); // maximizada
     try t.expectEqual(@as(f32, 420), columnsDialogWidth(600));
     try t.expectEqual(@as(f32, 384), columnsDialogWidth(400)); // janela menor que o minimo: cabe nela
-    // celula minima de 11 em (176 px com a fonte de 16 px): ~4 colunas no tamanho padrao
+    // celula minima de 11 em (205 px com a fonte de 18.6 px): ~4 colunas no tamanho padrao
     try t.expectEqual(4, checkboxGridColumns(832 - 2 * 10 - 2 * 10 - 14, 176));
     try t.expectEqual(4, checkboxGridColumns(900 - 54, 176));
     try t.expectEqual(2, checkboxGridColumns(420 - 54, 176));

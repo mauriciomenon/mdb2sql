@@ -2286,11 +2286,12 @@ fn run(init: std.process.Init) !void {
     setupSizes(scale);
     applyTheme(settings.isLight(theme, app.gtk_theme), app.hwnd);
     // Segoe UI (Windows) ou DejaVu/Noto Sans (Linux) quando existe (acentos legiveis); senao fica a fonte embutida
-    // do ImGui. 16 px; titulos seguem proporcionais (FontSizeBase)
+    // do ImGui. O ImGui mede a altura da linha (no Segoe UI, 1.33x a letra): 18.6 = letra de 14 px, a do Go/Wails
+    // (com 16 ficava em 12 px, pequena); titulos seguem proporcionais (FontSizeBase)
     // Os glifos (acentos, setas U+2190-21FF) entram no atlas sob demanda (fontes dinamicas do Dear ImGui 1.92+)
     const ui_font = for (platform.fonts) |font| {
         if (std.Io.Dir.cwd().access(init.io, font, .{})) |_| {
-            _ = shim_add_font(font, 16 * scale);
+            _ = shim_add_font(font, 18.6 * scale);
             break true;
         } else |_| {}
     } else blk: {
