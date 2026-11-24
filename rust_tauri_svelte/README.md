@@ -87,9 +87,9 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
 - Aba **SQL**: SQL livre do DuckDB sobre as tabelas abertas (ex.: `SELECT * FROM "RANGER_SOSTAT" WHERE RTUNO = 2`);
   **Run SQL** ou `Ctrl+Enter`. A grade mostra ate o Row limit; a exportacao do resultado leva todas as linhas.
 - **Grade**: clique seleciona a celula; `Ctrl+C` copia o valor; botao direito (ou a tecla de menu) abre **Copy
-  value**, **Copy row**, **Copy row with header** (TAB, pronto para colar no Excel). NULL aparece como `NULL`
-  (ou celula vazia com **Settings > Show NULL** desligado; copiar sempre da vazio) e numero inteiro sem ".0", como
-  nas outras stacks. As colunas se ajustam ao conteudo; nada e cortado.
+  value**, **Copy row**, **Copy row with header** (TAB, pronto para colar no Excel). NULL aparece como celula vazia
+  (ou `NULL` com **Settings > Show NULL** ligado; so a tela: copiar, pesquisar e exportar nao mudam) e numero inteiro
+  sem ".0", como nas outras stacks. As colunas se ajustam ao conteudo; nada e cortado.
 
 **Menu File**: **Export** (abaixo) e **Close database**.
   - **Database to SQLite (.sqlite)** / **Database to DuckDB (.duckdb)**: todas as tabelas, com os tipos. No SQLite
@@ -113,7 +113,7 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
 O texto da barra de status tambem pode ser copiado: botao direito > **Copy**.
 
 **Menu Settings**: **Theme** (System, Light, Dark), **Language** (English, Português (Brasil), Español), **Show
-NULL** (ligado por padrao; desligado, a celula NULL fica vazia) e **Default search scope** (This table, All tables);
+NULL** (desligado por padrao: a celula NULL fica vazia; ligado, mostra `NULL`) e **Default search scope** (This table, All tables);
 as escolhas ficam gravadas e valem na hora.
 
 **Menu Help > About MDB2SQL**: versao, build, stack (Rust + Tauri + Svelte), janela (WebView2/WebKitGTK), SQLite e

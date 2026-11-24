@@ -517,7 +517,9 @@ impl DBManager {
     // e quantas. Mesma regra da pesquisa de uma tabela (search_condition), so nas colunas de texto.
     // NIVEL TECNICO: the text columns of every table come from one information_schema query (no PRAGMA per table),
     // then one COUNT per table with text columns. DB4 (287 tables, 114 k rows): ~1 s per search word; the time is the
-    // lower(strip_accents()) of every text cell (one UNION ALL of all the COUNTs measured the same)
+    // lower(strip_accents()) of every text cell (one UNION ALL of all the COUNTs measured the same). All columns as text
+    // (the per-table rule) measured 7-8x slower on DB4 (18-21 s vs 2.2-2.4 s for 3 words), so text columns only
+    // shortcut: a term made of digits counts here only text cells; the opened table also matches numbers and dates
     pub fn search_tables(&self, search: &str) -> Result<Vec<Found>, String> {
         self.with_conn(|conn| {
             let mut text: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();

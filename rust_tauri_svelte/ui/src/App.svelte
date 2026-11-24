@@ -61,7 +61,7 @@
   const LAST_DIR_KEY = 'mdb2sql.lastDir';
   const LANG_KEY = 'mdb2sql.lang';
   const LOG_KEY = 'mdb2sql.log'; // 'open' = painel de log aberto (padrao: recolhido)
-  const NULL_KEY = 'mdb2sql.showNull'; // 'off' = celula NULL vazia (padrao: mostra "NULL")
+  const NULL_KEY = 'mdb2sql.showNull'; // 'on' = celula NULL mostra "NULL" (padrao, sem valor gravado: vazia)
   const SCOPE_KEY = 'mdb2sql.searchScope'; // 'all' = a pesquisa comeca em Todas as tabelas (padrao: Esta tabela)
   // escopo da pesquisa da aba Data: seletor junto ao campo e Settings > Escopo padrao da busca
   const SCOPES = [
@@ -93,8 +93,9 @@
   let lang = $state(LANGS.some(([code]) => code === storedLang) ? storedLang : LANGS[0][0]);
   let t = $derived(translator(lang));
   const fmt = (n) => Number(n).toLocaleString(lang);
-  // Settings > Exibir NULL: ligado, a celula NULL das grades mostra "NULL"; desligado, fica vazia
-  let showNull = $state(loadSetting(NULL_KEY) !== 'off');
+  // Settings > Exibir NULL (so a tela, a gosto do usuario): desligado por padrao, a celula NULL fica vazia; ligado,
+  // mostra "NULL". Copiar, pesquisar e exportar nao mudam
+  let showNull = $state(loadSetting(NULL_KEY) === 'on');
   let nullText = $derived(showNull ? t('grid.null') : '');
 
   let openMenu = $state(null); // 'file' | 'view' | 'settings' | 'help'

@@ -56,7 +56,7 @@ test('Show all / Hide all act only on the listed (searched) columns', () => {
 });
 
 // a grade mostra cellText: igual as outras stacks, DOUBLE inteiro sem ".0"; NULL e o texto de Settings > Exibir NULL
-// ("NULL" ligado, vazio desligado); texto vazio continua vazio e copiar continua com NULL vazio
+// (desligado por padrao: vazio; ligado: "NULL"); texto vazio continua vazio e copiar continua com NULL vazio
 test('grid shows whole doubles without .0 and NULL as the Show NULL setting says', () => {
   const row = JSON.parse('{"RTUNO": 2.0, "PNTNO": 2316.0, "x": 0.1, "big": "9007199254740993", "n": null, "e": ""}');
   const shown = (nullText) => Object.values(row).map((v) => cellText(v, nullText));
@@ -67,7 +67,7 @@ test('grid shows whole doubles without .0 and NULL as the Show NULL setting says
   assert.match(grid, /<td data-c=\{c\}[^>]*>\{cellText\(value, nullText\)\}<\/td>/);
   assert.doesNotMatch(grid, />NULL</);
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
-  assert.match(app, /let showNull = \$state\(loadSetting\(NULL_KEY\) !== 'off'\);/); // ligado por padrao, gravado
+  assert.match(app, /let showNull = \$state\(loadSetting\(NULL_KEY\) === 'on'\);/); // desligado por padrao (sem valor), gravado
   assert.match(app, /saveSetting\(NULL_KEY, show \? 'on' : 'off'\);/);
   assert.equal(app.split('{nullText}').length - 1, 3); // Data, Schema e SQL
 });
