@@ -180,7 +180,8 @@
     z-index: 1;
     background: var(--surface);
     border-bottom: 2px solid var(--border);
-    padding: 6px 10px;
+    /* --cell-x: espaco de cada lado da celula; a grade do Schema passa um pouco mais */
+    padding: 6px var(--cell-x, 10px);
     text-align: left;
     font-weight: 600;
     white-space: nowrap;
@@ -196,7 +197,7 @@
 
   /* sem largura maxima: a coluna cresce ate caber o valor inteiro (nenhum campo cortado) */
   td {
-    padding: 4px 10px;
+    padding: 4px var(--cell-x, 10px);
     border-bottom: 1px solid var(--border);
     white-space: nowrap;
   }

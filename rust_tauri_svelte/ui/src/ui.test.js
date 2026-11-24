@@ -84,6 +84,16 @@ test('grid cells, NULL included, keep full contrast', () => {
   }
 });
 
+// dono: colunas do Schema apertadas; so ela ganha 6 px de cada lado da celula (Data e SQL seguem com 10 px)
+test('only the Schema grid gets wider cell spacing', () => {
+  const app = markup('./App.svelte');
+  assert.equal(count(app, '--cell-x='), 1);
+  assert.match(app, /<Grid\s+--cell-x="16px"\s+columns=\{schemaColumns\}/);
+  const css = readFileSync(new URL('./Grid.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
+  assert.match(css, /\n {2}th \{[^}]*padding: 6px var\(--cell-x, 10px\);/);
+  assert.match(css, /\n {2}td \{[^}]*padding: 4px var\(--cell-x, 10px\);/);
+});
+
 // regra do dono: ~65% da janela entre 420 e 900 px, ate 70% da altura, grade de 1 a 6 colunas, so rola na vertical,
 // fonte base na lista, busca no topo
 test('Columns... dialog is proportional to the window', () => {

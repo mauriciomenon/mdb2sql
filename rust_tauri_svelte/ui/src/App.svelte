@@ -882,7 +882,9 @@
         <p class="empty">{t('data.noTable')}</p>
       {:else if tab === 'schema'}
         <div class="table-bar"><h2>{selectedTable}</h2><span>{t('schema.columns', { count: columns.length })}</span></div>
+        <!-- Schema: 6 px a mais de cada lado da celula (as colunas ficavam apertadas) -->
         <Grid
+          --cell-x="16px"
           columns={schemaColumns}
           rows={columns.map((c, i) => Object.fromEntries([i + 1, c.name, c.type, c.null].map((v, k) => [schemaColumns[k].name, v])))}
           label={t('schema.label', { table: selectedTable })}
