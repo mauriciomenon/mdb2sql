@@ -66,7 +66,7 @@ else {
     New-Item -ItemType Directory -Force $extDir | Out-Null
     $gz = "$ext.gz"
     "Baixando sqlite_scanner $DuckDbVersion..."
-    Invoke-WebRequest "http://extensions.duckdb.org/$DuckDbVersion/windows_amd64/sqlite_scanner.duckdb_extension.gz" -OutFile $gz
+    Invoke-WebRequest "https://extensions.duckdb.org/$DuckDbVersion/windows_amd64/sqlite_scanner.duckdb_extension.gz" -OutFile $gz
     Assert-Sha256 $gz $SqliteExtSha256
     $in = [IO.File]::OpenRead($gz)
     $out = [IO.File]::Create($ext)

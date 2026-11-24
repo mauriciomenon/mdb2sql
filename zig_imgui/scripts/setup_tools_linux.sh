@@ -34,7 +34,7 @@ fi
 ext_dir=$tools/duckdb-ext-$duckdb_version-linux
 if [ -f "$ext_dir/.sha256-$sqlite_ext_sha256" ]; then echo "extensao sqlite $duckdb_version ja esta em $ext_dir"; else
     mkdir -p "$ext_dir"
-    fetch "http://extensions.duckdb.org/$duckdb_version/linux_amd64/sqlite_scanner.duckdb_extension.gz" "$ext_dir/ext.gz" "$sqlite_ext_sha256"
+    fetch "https://extensions.duckdb.org/$duckdb_version/linux_amd64/sqlite_scanner.duckdb_extension.gz" "$ext_dir/ext.gz" "$sqlite_ext_sha256"
     gunzip -c "$ext_dir/ext.gz" >"$ext_dir/sqlite_scanner.duckdb_extension"
     rm -f "$ext_dir/ext.gz"
     touch "$ext_dir/.sha256-$sqlite_ext_sha256"
