@@ -18,7 +18,6 @@
     searchWords,
     setListed,
     statusLine,
-    toggleHidden,
     toggleShown,
     visibleColumns,
     withFilter,
@@ -131,7 +130,10 @@
   let searchTimer;
   let defaultScope = $state(loadSetting(SCOPE_KEY) === 'all' ? 'all' : 'table');
   let scope = $state(defaultScope); // 'table' (tabela aberta) | 'all' (todas as tabelas)
-  let found = $state.raw(null); // { words, tables: [{ table, count }] } da ultima pesquisa em todas as tabelas
+  // { tables: [{ table, count }] } da pesquisa em todas as tabelas do termo, escopo, tabela e arquivo de agora; null =
+  // pesquisando; tables null = falhou (erro na barra de status)
+  let found = $state.raw(null);
+  let searchRun = 0; // numero da pesquisa em todas as tabelas que vale; a resposta de uma anterior e descartada
   let everywhere = $derived(scope === 'all' && search.trim() !== '');
   let limit = $state(LIMITS[0]);
   let busy = $state(false);
@@ -365,12 +367,14 @@
     return path;
   }
 
+  // outro arquivo (ou nenhum): tabela, pesquisa e filtros zerados, escopo de volta ao padrao de Settings
   function resetTable() {
     selectedTable = '';
     hidden = new Set();
     filters = [];
     search = '';
-    found = null;
+    scope = defaultScope;
+    dropFound();
     columns = [];
     rows = [];
     rowCount = 0;
@@ -507,6 +511,7 @@
       search = keep;
       hidden = new Set();
       filters = [];
+      dropFound();
     }
     selectedTable = tableName;
     busy = true;
@@ -557,6 +562,7 @@
 
   function onSearch(event) {
     search = event.currentTarget.value;
+    dropFound();
     clearTimeout(searchTimer);
     searchTimer = setTimeout(runSearch, delayOf(event));
   }
@@ -567,16 +573,29 @@
     else openTable(selectedTable);
   }
 
+  // esquece o resultado de Todas as tabelas (outro termo, escopo, tabela ou arquivo): a resposta da pesquisa que ainda
+  // estiver em andamento e descartada
+  function dropFound() {
+    searchRun++;
+    found = null;
+  }
+
   // NIVEL BASICO: Todas as tabelas: lista as tabelas com linhas que tem o termo e quantas (backend: mesma regra da
-  // pesquisa da tabela, nas colunas de texto). Resposta de um termo que ja mudou e ignorada
+  // pesquisa da tabela, nas colunas de texto). Resposta velha nunca aparece; a pesquisa nova para a antiga no backend.
+  // Falha: sai o "Pesquisando" e o erro vai para a barra de status
   async function searchAll() {
+    dropFound();
+    const run = searchRun;
     const words = search.trim();
     busy = true;
     try {
       const tables = await invoke('search_all_tables', { search: words });
-      if (words === search.trim()) found = { words, tables };
+      if (run === searchRun) found = { tables };
     } catch (err) {
-      showError(err);
+      if (run === searchRun) {
+        found = { tables: null };
+        showError(err);
+      }
     } finally {
       busy = false;
     }
@@ -584,13 +603,18 @@
 
   function setScope(next) {
     scope = next;
+    dropFound();
+    // campo vazio: o recarregamento que a digitacao agendou continua (senao a grade ficava filtrada sob o campo vazio)
+    if (!search.trim()) return;
     clearTimeout(searchTimer);
-    if (search.trim()) runSearch();
+    runSearch();
   }
 
-  // escolher uma tabela achada abre ela na aba Data com a mesma pesquisa (o escopo volta para Esta tabela)
+  // escolher uma tabela achada abre ela na aba Data com a mesma pesquisa (o escopo volta para Esta tabela) e sem os
+  // filtros por valor: a grade mostra o numero da lista
   function openFound(name) {
     scope = 'table';
+    filters = [];
     openTable(name, search);
   }
 
@@ -873,7 +897,12 @@
     <div class="column-list" role="group" aria-label={t('columns.list')}>
       {#each listedColumns as col (col.name)}
         <label title="{col.name} ({col.type})">
-          <input type="checkbox" checked={!hidden.has(col.name)} onchange={() => (hidden = toggleHidden(hidden, col.name))} />
+          <input
+            type="checkbox"
+            checked={!hidden.has(col.name)}
+            disabled={!hidden.has(col.name) && shownColumns.length === 1}
+            onchange={() => (hidden = toggleShown(hidden, col.name, columns.length))}
+          />
           <span>{col.name}</span>
           <small>{col.type}</small>
         </label>
@@ -883,7 +912,7 @@
     </div>
     <div class="actions">
       <button type="button" class="secondary" onclick={() => (hidden = setListed(hidden, listedColumns.map((c) => c.name), false))}>{t('columns.showAll')}</button>
-      <button type="button" class="secondary" onclick={() => (hidden = setListed(hidden, listedColumns.map((c) => c.name), true))}>{t('columns.hideAll')}</button>
+      <button type="button" class="secondary" onclick={() => (hidden = setListed(hidden, listedColumns.map((c) => c.name), true, columns.length))}>{t('columns.hideAll')}</button>
       <span>{t('columns.count', { shown: shownColumns.length, total: columns.length })}</span>
       <button type="button" class="close default" onclick={() => columnsDialog.close()}>{t('common.close')}</button>
     </div>
@@ -997,7 +1026,7 @@
       {:else}
         <div class="table-bar">
           {#if everywhere}
-            <span>{found?.words === search.trim() ? t('found.summary', { count: fmt(found.tables.length) }) : t('found.searching')}</span>
+            <span>{!found ? t('found.searching') : found.tables ? t('found.summary', { count: fmt(found.tables.length) }) : ''}</span>
           {:else}
             <h2>{selectedTable}</h2>
             <span>
@@ -1026,7 +1055,7 @@
         {#if everywhere}
           <!-- Todas as tabelas: as tabelas com linhas achadas; escolher uma abre ela com a mesma pesquisa -->
           <div class="found" role="group" aria-label={t('found.list')}>
-            {#if found?.words === search.trim()}
+            {#if found?.tables}
               {#each found.tables as f (f.table)}
                 <button type="button" onclick={() => openFound(f.table)}>{t('found.item', { table: f.table, count: fmt(f.count) })}</button>
               {:else}

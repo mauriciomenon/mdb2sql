@@ -45,13 +45,15 @@ export function toggleShown(hidden, name, total) {
 }
 
 // Mostrar todas (hide = false) / Ocultar todas (hide = true) so nas colunas listadas no dialogo Colunas...
-// (com busca, so as que aparecem); devolve um Set novo
-export function setListed(hidden, names, hide) {
+// (com busca, so as que aparecem); devolve um Set novo. Ocultar nunca deixa a tabela (total colunas) sem coluna
+// visivel: com todas ocultas, a primeira listada volta (como no Zig)
+export function setListed(hidden, names, hide, total = Infinity) {
   const next = new Set(hidden);
   for (const name of names) {
     if (hide) next.add(name);
     else next.delete(name);
   }
+  if (hide && next.size >= total) next.delete(names[0]);
   return next;
 }
 

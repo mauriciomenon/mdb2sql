@@ -89,5 +89,7 @@ test('translator fills {values}, falls back to English, describes backend keys',
   assert.equal(pt('missing.key'), 'missing.key');
   assert.equal(describe(pt, '[[err.unsupported]] .txt'), 'Tipo de arquivo não suportado: .txt');
   assert.equal(describe(translator('es'), 'T1: [[err.exportCancelled]]'), 'T1: Exportación cancelada');
+  // falha da pesquisa em todas as tabelas: frase no idioma da tela, detalhe do motor igual
+  assert.equal(describe(pt, '[[err.countRows]] z: Invalid Input Error: test'), 'Não foi possível contar as linhas de z: Invalid Input Error: test');
   assert.equal(describe(pt, 'Binder Error: x'), 'Binder Error: x');
 });

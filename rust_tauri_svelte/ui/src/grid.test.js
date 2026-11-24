@@ -53,6 +53,12 @@ test('Show all / Hide all act only on the listed (searched) columns', () => {
   const before = hidden;
   assert.notEqual(setListed(before, [], true), before); // sempre um Set novo
   assert.deepEqual([...before].sort(), ['RTUNAM', 'note']);
+  // decisao 3: Ocultar todas deixa uma visivel, a primeira listada (tabela de 4 colunas)
+  const all = ['RTUNO', 'RTUNAM', 'note', 'id'];
+  assert.deepEqual([...setListed(new Set(), all, true, 4)].sort(), ['RTUNAM', 'id', 'note']);
+  assert.deepEqual([...setListed(new Set(['RTUNO', 'id']), ['RTUNAM', 'note'], true, 4)].sort(), ['RTUNO', 'id', 'note']);
+  assert.deepEqual([...setListed(new Set(), ['note'], true, 4)], ['note']); // sobram outras visiveis: oculta
+  assert.equal(setListed(new Set(), ['x'], true, 1).size, 0); // tabela de uma coluna so
 });
 
 // a grade mostra cellText: igual as outras stacks, DOUBLE inteiro sem ".0"; NULL e o texto de Settings > Exibir NULL

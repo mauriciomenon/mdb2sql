@@ -102,7 +102,61 @@ test('Data search scope: two-option selector next to the field and its default i
   assert.match(app, /saveSetting\(SCOPE_KEY, next === 'all' \? 'all' : null\);/);
   assert.match(app, /invoke\('search_all_tables', \{ search: words \}\)/);
   assert.match(ui, /onclick=\{\(\) => openFound\(f\.table\)\}>\{t\('found\.item', \{ table: f\.table, count: fmt\(f\.count\) \}\)\}/);
-  assert.match(app, /function openFound\(name\) \{\s*scope = 'table';\s*openTable\(name, search\);/);
+  // decisao 1: a tabela achada abre sem os filtros por valor (a grade mostra o numero da lista)
+  assert.match(app, /function openFound\(name\) \{\s*scope = 'table';\s*filters = \[\];\s*openTable\(name, search\);/);
+});
+
+// corpo de uma funcao do App.svelte (do nome ate a chave que fecha, com dois espacos de recuo)
+const appFunction = (name) =>
+  readFileSync(new URL('./App.svelte', import.meta.url), 'utf8').match(
+    new RegExp(`\\n  (?:async )?function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}`)
+  )[0];
+
+// apagar o termo e trocar o escopo antes de 300 ms: o recarregamento agendado continua (a grade ficava filtrada sob o
+// campo vazio)
+test('switching scope with an empty field keeps the pending table reload', () => {
+  assert.match(appFunction('setScope'), /if \(!search\.trim\(\)\) return;\s*clearTimeout\(searchTimer\);\s*runSearch\(\);/);
+});
+
+// decisao 4 (igual nas 4 versoes): resposta velha de Todas as tabelas nunca aparece (outro termo, escopo, tabela ou
+// arquivo); a pesquisa nova para a antiga no backend (src/backend/tests.rs); falha tira o "Pesquisando" e mostra o erro
+test('All tables search: stale answers are dropped and a failure ends the searching state', () => {
+  assert.match(appFunction('dropFound'), /searchRun\+\+;\s*found = null;/);
+  const all = appFunction('searchAll');
+  assert.match(all, /dropFound\(\);\s*const run = searchRun;/);
+  assert.equal(count(all, 'if (run === searchRun)'), 2); // resposta e erro
+  assert.match(all, /found = \{ tables: null \};\s*showError\(err\);/);
+  assert.match(appFunction('onSearch'), /search = event\.currentTarget\.value;\s*dropFound\(\);/);
+  assert.match(appFunction('setScope'), /scope = next;\s*dropFound\(\);/);
+  assert.match(appFunction('openTable'), /if \(tableName !== selectedTable\) \{[^}]*dropFound\(\);\s*\}/);
+  assert.match(appFunction('resetTable'), /dropFound\(\);/);
+  const ui = markup('./App.svelte');
+  assert.match(ui, /\{!found \? t\('found\.searching'\) : found\.tables \? t\('found\.summary'/);
+  assert.match(ui, /\{#if found\?\.tables\}\s*\{#each found\.tables as f/);
+});
+
+// decisao 2 (igual nas 4 versoes): outro arquivo limpa a pesquisa e o filtro de tabelas e volta ao escopo de Settings
+test('opening another file clears the searches and goes back to the default scope', () => {
+  assert.match(appFunction('resetTable'), /search = '';\s*scope = defaultScope;/);
+  assert.match(appFunction('openDatabase'), /tableText = tableFilter = '';[^]*resetTable\(\);/);
+});
+
+// decisao 3: nenhum caminho deixa a tabela sem coluna visivel (Ocultar todas e a caixa da ultima visivel)
+test('the Columns dialog never hides the last visible column', () => {
+  const dialog = markup('./App.svelte').match(/<dialog\s+bind:this=\{columnsDialog\}[\s\S]*?<\/dialog>/)[0];
+  assert.match(dialog, /disabled=\{!hidden\.has\(col\.name\) && shownColumns\.length === 1\}/);
+  assert.match(dialog, /onchange=\{\(\) => \(hidden = toggleShown\(hidden, col\.name, columns\.length\)\)\}/);
+  assert.match(dialog, /setListed\(hidden, listedColumns\.map\(\(c\) => c\.name\), true, columns\.length\)/);
+});
+
+// decisao 5: a grade (Data, Schema e SQL) usa a fonte do app, Segoe UI 14 px como o Go/Wails; nada menor na grade
+test('grid text uses the 14 px app font', () => {
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  assert.match(app, /:global\(body\) \{[^}]*font: 14px\/1\.4 'Segoe UI'/);
+  const css = readFileSync(new URL('./Grid.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
+  assert.doesNotMatch(css, /font(-size)?:\s*[\d.]/);
+  // o tipo sob o nome da coluna e um <small>: sem inherit o navegador o reduz
+  assert.match(css, /th small \{[^}]*font-size: inherit;/);
 });
 
 // dono: o filtro de tabelas e a pesquisa da aba Data esperam a digitacao parar (300 ms, igual nas 4 versoes);
