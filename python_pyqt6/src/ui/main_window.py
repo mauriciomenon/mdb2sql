@@ -71,6 +71,8 @@ ROW_LIMITS = (100, 1_000, 10_000)
 MAX_COLUMN_WIDTH = 1200  # trava de seguranca: abaixo disso nenhum valor nem nome de coluna e cortado
 LOG_LINES = 5000
 SEARCH_DELAY_MS = 300
+# grade do Schema: 12 px a mais em cada coluna (texto e cabecalho continuam alinhados a esquerda, juntos)
+SCHEMA_GAP = 12
 # Configuracoes > Tema: valor gravado em QSettings -> esquema de cores do Qt
 THEMES = {"system": Qt.ColorScheme.Unknown, "light": Qt.ColorScheme.Light, "dark": Qt.ColorScheme.Dark}
 # resposta da pergunta sobre o SQLite convertido do Access
@@ -1024,11 +1026,12 @@ class MainWindow(QMainWindow):
         # !T: here so no value is cut with "..."; only above MAX_COLUMN_WIDTH (tooltip has the full text)
         model: TableModel = view.model().sourceModel()
         padding = 2 * (view.style().pixelMetric(QStyle.PixelMetric.PM_FocusFrameHMargin, None, view) + 1) + 8
+        gap = SCHEMA_GAP if view is self.schema_table else 0
         for column in range(model.columnCount()):
             metrics = QFontMetrics(model.cell_font(column, view.font()))
             longest = max((metrics.horizontalAdvance(text) for text in model.longest_texts(column)), default=0)
             width = max(view.columnWidth(column), longest + padding)
-            view.setColumnWidth(column, min(width, MAX_COLUMN_WIDTH))
+            view.setColumnWidth(column, min(width + gap, MAX_COLUMN_WIDTH))
 
     def _on_table_loaded(self, request_id: int, result: object) -> None:
         if request_id != self._table_request:
