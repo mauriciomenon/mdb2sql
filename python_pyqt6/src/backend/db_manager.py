@@ -327,12 +327,20 @@ class DBManager:
         !T: Same rule as the table search (search_where: every word in one cell, no case or accents), over the
         !T: VARCHAR columns only. `stop` is checked between tables so a newer search ends this one
         """
+        # colunas de texto de todas as tabelas numa consulta so (PRAGMA por tabela: ~2.5 s nas 287 do DB4)
+        with self.cursor() as cursor:
+            columns = cursor.execute(
+                "SELECT table_name, column_name FROM information_schema.columns WHERE table_catalog = current_database()"
+                " AND table_schema = current_schema() AND data_type = 'VARCHAR' ORDER BY ordinal_position"
+            ).fetchall()
+        text: dict[str, list[str]] = {}
+        for table, column in columns:
+            text.setdefault(table, []).append(column)
         found = []
         for table in self.list_tables():
             if stop():
                 break
-            text = [c["column_name"] for c in self.get_table_schema(table) if c["column_type"] == "VARCHAR"]
-            where, params = search_where(text, search)
+            where, params = search_where(text.get(table, []), search)
             if not where:  # sem coluna de texto (ou pesquisa vazia): a tabela nao entra
                 continue
             with self.cursor() as cursor:
