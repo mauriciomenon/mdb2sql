@@ -625,7 +625,7 @@ class MainWindow(QMainWindow):
         self.search_edit.setAccessibleName(tr("search.name"))
         self.search_edit.setMinimumWidth(280)
         self.search_edit.setMaximumWidth(420)
-        self.search_edit.textChanged.connect(lambda _text: self.search_timer.start())
+        self.search_edit.textChanged.connect(self._search_edited)
         toolbar.addActions(list(self.scope_actions.values()))  # dois botoes de alternar, um marcado
         toolbar.addWidget(self.search_edit)
 
@@ -1056,6 +1056,12 @@ class MainWindow(QMainWindow):
         if item is not None:
             self.on_table_selected(item.text())
             self._start_table_worker()
+
+    def _search_edited(self) -> None:
+        # o termo mudou: a busca em todas as tabelas ainda rodando para na proxima tabela e o resultado dela nao
+        # aparece (chegaria antes dos 300 ms); a nova sai 300 ms depois da ultima tecla
+        self._found_request += 1
+        self.search_timer.start()
 
     def _search_now(self) -> None:
         """Pesquisa da aba Data (300 ms depois da ultima tecla, ou ao trocar o escopo): na tabela aberta, no banco

@@ -195,6 +195,32 @@ def test_search_all_tables_and_open_one(qtbot, window: MainWindow) -> None:
     assert again.scope_actions["all"].isChecked() and again.default_scope_actions["all"].isChecked()
 
 
+def test_search_all_tables_never_shows_an_old_result_and_reports_failure(qtbot, window: MainWindow, tmp_path: Path):
+    # igual nas 4 versoes: apagar o termo descarta a busca que ainda roda (o resultado dela chegaria antes dos 300 ms)
+    window.scope_actions["all"].trigger()
+    window.search_edit.setText("ANA")
+    window.search_timer.timeout.emit()  # a busca de "ANA" sai agora
+    window.search_edit.clear()
+    qtbot.waitUntil(lambda: window._busy == 0, timeout=30000)
+    assert window.found_list.count() == 0
+
+    # falha (view que da erro ao ler): o erro vai para a barra e o "Searching" sai
+    import duckdb
+
+    bad = tmp_path / "bad.duckdb"
+    with duckdb.connect(str(bad)) as conn:
+        conn.execute("CREATE TABLE a (s VARCHAR)")
+        conn.execute("CREATE VIEW z AS SELECT CAST(error('broken view') AS VARCHAR) AS s")
+    window.open_database(bad)
+    qtbot.waitUntil(lambda: window.current_db_path == bad and window.loaded_table is not None
+                    and window._busy == 0, timeout=30000)
+    window.scope_actions["all"].trigger()
+    window.search_edit.setText("foo")
+    qtbot.waitUntil(lambda: "broken view" in window.status_label.text() and window._busy == 0, timeout=30000)
+    assert window.status_label.text() == "Error: broken view"
+    assert window.info_label.text() == "a: 0 rows" and not window.progress.isVisible()
+
+
 def test_opening_a_found_table_clears_its_value_filters(qtbot, window: MainWindow) -> None:
     # igual nas 4 versoes: a lista diz "people (1)" e a grade mostra 1, mesmo com o filtro id = 2 (Bruno) antes
     _select_table(qtbot, window, "people")
