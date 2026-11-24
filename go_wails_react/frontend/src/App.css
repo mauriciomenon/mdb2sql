@@ -401,6 +401,12 @@ th {
   border-bottom: 2px solid var(--border);
 }
 
+/* Schema grid: 6 px more on each side between its three columns */
+.schema th,
+.schema td {
+  padding: 5px 16px;
+}
+
 /* numbers to the right, the header of a numeric column too */
 td.num,
 th.num {

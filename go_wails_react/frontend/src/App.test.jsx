@@ -74,6 +74,11 @@ describe('App IPC flow', () => {
 
     fireEvent.click(await screen.findByRole('tab', { name: /Schema \(2\)/ }));
     expect(screen.getByText('INTEGER')).toBeInTheDocument();
+    // titles from the catalog (never a value or "null"); the nullability values as Go sends them
+    const schemaTable = screen.getByRole('columnheader', { name: 'Nullable' }).closest('table');
+    expect([...schemaTable.querySelectorAll('th')].map((th) => th.textContent)).toEqual(['Column', 'Type', 'Nullable']);
+    expect([...schemaTable.querySelectorAll('tbody tr')].map((tr) => tr.lastChild.textContent)).toEqual(['NO', 'YES']);
+    expect(schemaTable.className).toBe('schema'); // wider cell padding than the data grid (App.css)
   });
 
   it('does nothing when the dialog is cancelled', async () => {

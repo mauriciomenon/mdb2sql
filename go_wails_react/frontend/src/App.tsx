@@ -937,7 +937,7 @@ function App() {
               }}
             >
               {view === 'schema' ? (
-                <table>
+                <table className="schema">
                   <thead>
                     <tr>
                       <th scope="col">{t('schema.column')}</th>
