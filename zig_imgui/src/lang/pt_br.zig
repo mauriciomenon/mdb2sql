@@ -33,6 +33,9 @@ pub const schema_column = "Coluna";
 pub const schema_type = "Tipo";
 pub const schema_null = "Aceita nulo";
 pub const null_text = "NULL";
+pub const scope_table = "Esta tabela";
+pub const scope_all = "Todas as tabelas";
+pub const global_found = "\"{s}\" encontrado em {d} tabelas";
 
 // menus da grade e dialogo Colunas
 pub const filter_by_value = "Filtrar por este valor";
@@ -63,6 +66,7 @@ pub const theme_system = "Sistema";
 pub const theme_light = "Claro";
 pub const theme_dark = "Escuro";
 pub const menu_language = "Idioma";
+pub const menu_search_scope = "Escopo padrão da busca";
 pub const menu_show_null = "Exibir NULL";
 pub const menu_help = "Ajuda";
 pub const menu_about = "Sobre o mdb2sql";
@@ -118,6 +122,7 @@ pub const busy_converting = "Convertendo o banco Access";
 pub const busy_opening = "Abrindo o banco";
 pub const busy_loading = "Carregando a tabela";
 pub const busy_running = "Executando a consulta";
+pub const busy_searching = "Pesquisando em todas as tabelas";
 pub const busy_exporting = "Exportando";
 pub const busy_elapsed = "{s} {d:.1} s";
 pub const progress_overlay = "{d} / {d} {s}";

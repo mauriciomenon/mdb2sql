@@ -174,6 +174,43 @@ pub fn setListed(hidden: anytype, names: []const [:0]const u8, needle: []const u
     };
 }
 
+// !T: Search debounce: the search runs `delay` seconds after the last edit (Enter runs it at once, in the caller)
+pub const Debounce = struct {
+    due: ?f64 = null,
+
+    pub const delay = 0.3;
+
+    pub fn edited(d: *Debounce, now: f64) void {
+        d.due = now + delay;
+    }
+
+    // true uma vez, quando o prazo passou
+    pub fn fire(d: *Debounce, now: f64) bool {
+        const due = d.due orelse return false;
+        if (now < due) return false;
+        d.due = null;
+        return true;
+    }
+};
+
+test "search debounce: 300 ms after the last edit, once" {
+    var d: Debounce = .{};
+    try t.expect(!d.fire(10));
+    d.edited(1.0);
+    try t.expect(!d.fire(1.29));
+    try t.expect(d.fire(1.3));
+    try t.expect(!d.fire(1.4)); // uma vez so
+    // cada tecla adia o prazo
+    d.edited(2.0);
+    d.edited(2.2);
+    try t.expect(!d.fire(2.4));
+    try t.expect(d.fire(2.5));
+    // Enter: o chamador cancela o prazo e busca na hora
+    d.edited(3.0);
+    d.due = null;
+    try t.expect(!d.fire(3.5));
+}
+
 // Dialogo Columns: ~65% da largura da janela principal, entre 420 e 900 px, e nunca maior que a propria janela
 pub fn columnsDialogWidth(main_w: f32) f32 {
     return @max(0, @min(std.math.clamp(main_w * 0.65, 420, 900), main_w - 16));

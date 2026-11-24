@@ -637,6 +637,9 @@ fn setClipboard(s: []const u8) void {
 
 const Tab = enum { data, schema, sql };
 
+// Busca em todas as tabelas: o termo buscado e as tabelas com linhas (hits do gpa)
+const Global = struct { term: [256:0]u8, hits: []worker.Hit };
+
 // O que fazer depois de responder sobre o SQLite convertido
 const Leave = enum { open, close, exit };
 const Choice = enum { save, delete };
@@ -658,6 +661,8 @@ const App = struct {
     source: ?dbm.Source = null,
     counts: []u64 = &.{}, // linhas por tabela, mesma ordem de db.table_names
     table_filter: [128:0]u8 = @splat(0),
+    table_filter_applied: [128:0]u8 = @splat(0), // o que filtra a lista: o texto da caixa 300 ms depois da ultima tecla
+    table_filter_wait: dbm.gridtools.Debounce = .{},
     filter_scratch: std.ArrayList(u8) = .empty, // nome de tabela em forma de busca (reaproveitado a cada quadro)
     tables_w: f32 = 0, // largura inicial do painel das tabelas (0 = calcular)
     opened: u32 = 0, // arquivos abertos na sessao (ID do painel das tabelas)
@@ -681,6 +686,10 @@ const App = struct {
     col_names: []const []const u8 = &.{}, // vive na arena de schema
     data: ?dbm.Grid = null,
     search: [256:0]u8 = @splat(0),
+    search_wait: dbm.gridtools.Debounce = .{}, // a busca roda 300 ms depois da ultima tecla (Enter: na hora)
+    scope: settings.SearchScope = .table, // escopo atual da busca (o padrao vem das configuracoes)
+    global: ?Global = null, // resultado da busca em todas as tabelas
+    select_search: bool = false, // o proximo select abre a tabela com a busca da caixa (escolha na busca global)
     sort_col: ?usize = null,
     sort_desc: bool = false,
     page: u64 = 0,
@@ -711,6 +720,7 @@ const App = struct {
     want_select: ?usize = null,
     want_reload: bool = false,
     want_run: bool = false,
+    want_global: bool = false,
     want_browse: bool = false,
     want_export: ?ExportKind = null, // abre o dialogo de salvar e dispara a exportacao
     want_theme: ?settings.Theme = null,
@@ -739,6 +749,7 @@ const App = struct {
         }
         app.clearTable();
         app.clearResult();
+        app.clearGlobal();
         app.gpa.free(app.counts);
         app.filter_scratch.deinit(app.gpa);
         app.filters.deinit(app.gpa);
@@ -779,6 +790,47 @@ const App = struct {
         app.selected = null;
         app.data_sel = .{};
         app.schema_sel = .{};
+    }
+
+    fn clearGlobal(app: *App) void {
+        if (app.global) |g| app.gpa.free(g.hits);
+        app.global = null;
+    }
+
+    // Busca da caixa da aba Data no escopo atual (Enter ou 300 ms depois da ultima tecla)
+    fn runSearch(app: *App) void {
+        app.search_wait.due = null;
+        if (app.scope == .table) {
+            app.page = 0;
+            app.want_reload = true;
+        } else if (std.mem.indexOfNone(u8, zstr(&app.search), &std.ascii.whitespace) == null) {
+            app.clearGlobal();
+        } else app.want_global = true;
+    }
+
+    // Seletor da aba Data ou Configuracoes: o texto da caixa ainda nao aplicado neste escopo e buscado agora
+    fn setScope(app: *App, s: settings.SearchScope) void {
+        if (app.scope == s) return;
+        app.scope = s;
+        const done = if (s == .all)
+            (if (app.global) |g| std.mem.eql(u8, zstr(&g.term), zstr(&app.search)) else false)
+        else
+            std.mem.eql(u8, zstr(&app.applied_search), zstr(&app.search));
+        if (!done) app.runSearch();
+    }
+
+    // Tabela escolhida no resultado da busca global: abre na aba Data com a mesma busca
+    fn pickGlobal(app: *App, table: usize, term: *const [256:0]u8) void {
+        app.scope = .table;
+        app.search = term.*;
+        app.search_wait.due = null;
+        if (app.selected == table) {
+            app.page = 0;
+            app.want_reload = true;
+        } else {
+            app.want_select = table;
+            app.select_search = true;
+        }
     }
 
     fn clearResult(app: *App) void {
@@ -828,7 +880,12 @@ const App = struct {
                 r.table_name = app.start_table;
                 app.start_table = "";
             },
-            .select => r.table = app.want_select orelse return,
+            .select => {
+                r.table = app.want_select orelse return;
+                r.search = if (app.select_search) app.search else @splat(0);
+                app.select_search = false;
+            },
+            .search_all => r.search = app.search,
             .reload => {
                 r.table = app.selected orelse return;
                 r.columns = app.col_names;
@@ -853,6 +910,7 @@ const App = struct {
             .open => {
                 app.clearTable();
                 app.clearResult();
+                app.clearGlobal();
                 app.sql_msg.len = 0;
                 app.tables_w = 0;
                 app.opened +%= 1;
@@ -876,11 +934,16 @@ const App = struct {
                     }
                 }
                 app.start_sql = false;
-                if (out.err == null) app.takeTable(&out);
+                if (out.err == null) app.takeTable(&out, "");
             },
             .select => if (out.err == null) {
                 app.clearTable();
-                app.takeTable(&out);
+                app.takeTable(&out, zstr(&app.slot.req.search));
+            },
+            .search_all => if (out.err == null) {
+                app.clearGlobal();
+                app.global = .{ .term = app.slot.req.search, .hits = out.hits };
+                out.hits = &.{};
             },
             .reload => if (out.err == null) {
                 if (app.data) |*old| old.deinit();
@@ -946,8 +1009,9 @@ const App = struct {
         app.status.loaded = true;
     }
 
-    // Tabela recem-carregada (schema + primeira pagina): comeca sem busca nem ordenacao
-    fn takeTable(app: *App, out: *worker.Out) void {
+    // Tabela recem-carregada (schema + primeira pagina): comeca sem ordenacao, com a busca do pedido (vazia ou a
+    // da busca global)
+    fn takeTable(app: *App, out: *worker.Out, search: []const u8) void {
         app.selected = out.table orelse return;
         app.reveal_selected = true;
         app.schema = out.schema;
@@ -957,8 +1021,9 @@ const App = struct {
         out.data = null;
         app.total = out.total;
         app.page = out.page;
-        app.search[0] = 0;
-        app.applied_search[0] = 0;
+        copyZ(&app.search, search);
+        copyZ(&app.applied_search, search);
+        app.search_wait.due = null; // tecla pendente da tabela anterior nao busca nesta
         app.sort_col = null;
         app.sort_desc = false;
     }
@@ -1000,6 +1065,7 @@ const App = struct {
         @memcpy(shown, name[0..shown.len]);
         app.clearTable();
         app.clearResult();
+        app.clearGlobal();
         app.sql_msg.len = 0;
         app.db.closeSource();
         app.gpa.free(app.counts);
@@ -1068,6 +1134,9 @@ const App = struct {
 
     fn update(app: *App) void {
         if (app.slot.poll()) |out| app.apply(out);
+        const now = ig.igGetTime();
+        if (app.search_wait.fire(now)) app.runSearch();
+        if (app.table_filter_wait.fire(now)) app.table_filter_applied = app.table_filter;
         if (prefs_dirty) {
             prefs_dirty = false;
             app.savePrefs();
@@ -1131,6 +1200,9 @@ const App = struct {
         } else if (app.want_run) {
             app.want_run = false;
             app.start(.sql);
+        } else if (app.want_global) {
+            app.want_global = false;
+            app.start(.search_all);
         }
     }
 
@@ -1392,8 +1464,21 @@ const App = struct {
                     if (ig.igMenuItem_Bool(n, null, i18n.lang == l, true)) app.want_lang = l;
                 }
             }
-            // as opcoes da tela, com o padrao gravado: NULL e cabecalho na copia
+            // as opcoes da tela, com o padrao gravado: escopo da busca, NULL e cabecalho na copia
             ig.igSeparator();
+            var sb: [96]u8 = undefined;
+            if (ig.igBeginMenu(idLabel(&sb, "menu_search_scope", "scope"), true)) {
+                defer ig.igEndMenu();
+                const cur = app.prefs.search_scope;
+                const pick: ?settings.SearchScope = if (ig.igMenuItem_Bool(tr("scope_table"), null, cur == .table, true))
+                    .table
+                else if (ig.igMenuItem_Bool(tr("scope_all"), null, cur == .all, true)) .all else null;
+                if (pick) |s| {
+                    app.prefs.search_scope = s;
+                    app.savePrefs();
+                    app.setScope(s);
+                }
+            }
             if (ig.igMenuItem_Bool(tr("menu_show_null"), null, app.prefs.show_null, true)) {
                 app.prefs.show_null = !app.prefs.show_null;
                 app.savePrefs();
@@ -1632,12 +1717,13 @@ const App = struct {
                 .select, .reload => tr("busy_loading"),
                 .sql => tr("busy_running"),
                 .export_ => tr("busy_exporting"),
+                .search_all => tr("busy_searching"),
             };
             textT("busy_elapsed", .{ what, elapsed });
-            if (total > 0 and (r.kind == .open or r.kind == .export_)) {
+            if (total > 0 and (r.kind == .open or r.kind == .export_ or r.kind == .search_all)) {
                 ig.igSameLine(0, -1);
                 var buf: [64]u8 = undefined;
-                const unit = if (r.kind == .open or r.export_kind.countsTables()) tr("unit_tables") else tr("unit_rows");
+                const unit = if (r.kind != .export_ or r.export_kind.countsTables()) tr("unit_tables") else tr("unit_rows");
                 const overlay = i18n.fmtZ(&buf, "progress_overlay", .{ done, total, unit });
                 const frac: f32 = @floatCast(@as(f64, @floatFromInt(@min(done, total))) / @as(f64, @floatFromInt(total)));
                 ig.igProgressBar(frac, .{ .x = 240, .y = 0 }, overlay);
@@ -1676,7 +1762,11 @@ const App = struct {
 
     fn drawTables(app: *App) void {
         ig.igSetNextItemWidth(-1);
-        _ = ig.igInputTextWithHint("##filter", tr("filter_tables"), &app.table_filter, app.table_filter.len + 1, 0, null, null);
+        // filtra 300 ms depois da ultima tecla; Enter filtra na hora
+        if (ig.igInputTextWithHint("##filter", tr("filter_tables"), &app.table_filter, app.table_filter.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) {
+            app.table_filter_wait.due = null;
+            app.table_filter_applied = app.table_filter;
+        } else if (ig.igIsItemEdited()) app.table_filter_wait.edited(ig.igGetTime());
         itemTooltip(tr("search_rule"));
         // colunas na largura do conteudo: o nome inteiro aparece (rolagem horizontal se o painel for estreito)
         const flags = ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_ScrollY | ig.ImGuiTableFlags_ScrollX | ig.ImGuiTableFlags_BordersInnerV;
@@ -1692,7 +1782,7 @@ const App = struct {
             _ = rightHeader(tr("col_rows"), 0);
         }
         var fbuf: [app.table_filter.len]u8 = undefined;
-        const words = dbm.gridtools.fold(&fbuf, zstr(&app.table_filter));
+        const words = dbm.gridtools.fold(&fbuf, zstr(&app.table_filter_applied));
         for (app.db.table_names, 0..) |name, i| {
             const row = [_]?[]const u8{name};
             if (!(dbm.gridtools.rowMatches(app.gpa, &app.filter_scratch, &row, words) catch true)) continue;
@@ -1700,8 +1790,10 @@ const App = struct {
             _ = ig.igTableNextColumn();
             ig.igPushID_Int(@intCast(i));
             // "##" + PushID: o rotulo fica vazio e o nome (que nao termina em 0) vai por textSlice
-            if (ig.igSelectable_Bool("##t", app.selected == i, ig.ImGuiSelectableFlags_SpanAllColumns, .{ .x = 0, .y = 0 }))
+            if (ig.igSelectable_Bool("##t", app.selected == i, ig.ImGuiSelectableFlags_SpanAllColumns, .{ .x = 0, .y = 0 })) {
                 app.want_select = i;
+                app.scope = .table; // a aba Data mostra a tabela escolhida
+            }
             const hovered = ig.igIsItemHovered(0);
             ig.igPopID();
             if (app.selected == i and app.reveal_selected) {
@@ -1763,11 +1855,14 @@ const App = struct {
         defer ig.igPopID();
 
         ig.igSetNextItemWidth(264);
+        // busca 300 ms depois da ultima tecla; Enter busca na hora
         if (ig.igInputTextWithHint("##search", tr("search"), &app.search, app.search.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) {
-            app.page = 0;
-            app.want_reload = true;
-        }
+            app.runSearch();
+        } else if (ig.igIsItemEdited()) app.search_wait.edited(ig.igGetTime());
         itemTooltip(tr("search_rule"));
+        ig.igSameLine(0, -1);
+        app.scopeSelector();
+        if (app.scope == .all) return app.drawGlobal();
         const prev_l = tr("prev");
         const next_l = tr("next");
         sameLineIfFits(buttonWidth(prev_l), -1); // janela estreita: os botoes descem em vez de serem cortados
@@ -1868,6 +1963,60 @@ const App = struct {
             textSlice(hidden[3..]); // sem o " | " do comeco
         }
         _ = drawGrid("##result", g, null, &app.result_sel, app.result_rows, .hide, &app.prefs);
+    }
+
+    // Escopo da busca ao lado da caixa: "Esta tabela" | "Todas as tabelas", dois segmentos colados; o escolhido com
+    // a cor de botao do tema, o outro com a cor das caixas de texto
+    fn scopeSelector(app: *App) void {
+        const st = ig.igGetStyle();
+        const dl = ig.igGetWindowDrawList();
+        const labels = [_][:0]const u8{ tr("scope_table"), tr("scope_all") };
+        for (labels, 0..) |label, i| {
+            const s: settings.SearchScope = if (i == 0) .table else .all;
+            if (i > 0) ig.igSameLine(0, 0);
+            ig.igPushID_Int(@intCast(i));
+            if (ig.igInvisibleButton("##scope", .{ .x = textWidth(label) + 2 * st.*.FramePadding.x, .y = ig.igGetFrameHeight() }, 0)) app.setScope(s);
+            ig.igPopID();
+            const col: c_int = if (app.scope == s) ig.ImGuiCol_Button else if (ig.igIsItemHovered(0)) ig.ImGuiCol_FrameBgHovered else ig.ImGuiCol_FrameBg;
+            const corners: c_int = if (i == 0) ig.ImDrawFlags_RoundLeft else ig.ImDrawFlags_RoundRight;
+            const min = ig.igGetItemRectMin();
+            const max = ig.igGetItemRectMax();
+            ig.ImDrawList_AddRectFilled(dl, min, max, ig.igGetColorU32_Col(col, 1), st.*.FrameRounding, corners);
+            ig.ImDrawList_AddRect(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_Border, 1), st.*.FrameRounding, st.*.FrameBorderSize, corners);
+            ig.ImDrawList_AddText_Vec2(dl, .{ .x = min.x + st.*.FramePadding.x, .y = min.y + st.*.FramePadding.y }, ig.igGetColorU32_Col(ig.ImGuiCol_Text, 1), label.ptr, label.ptr + label.len);
+        }
+    }
+
+    // Busca em todas as tabelas: as tabelas com linhas encontradas; clicar abre a tabela com a mesma busca
+    fn drawGlobal(app: *App) void {
+        const g = if (app.global) |*x| x else return;
+        ig.igAlignTextToFramePadding();
+        textT("global_found", .{ zstr(&g.term), g.hits.len });
+        if (g.hits.len == 0) return;
+        const flags = ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_ScrollY | ig.ImGuiTableFlags_BordersInnerV | ig.ImGuiTableFlags_SizingFixedFit;
+        if (!ig.igBeginTable("##global", 2, flags, .{ .x = 0, .y = 0 }, 0)) return;
+        defer ig.igEndTable();
+        ig.igTableSetupScrollFreeze(0, 1);
+        ig.igTableSetupColumn(tr("col_table"), 0, 0, 0);
+        ig.igTableSetupColumn(tr("col_rows"), 0, 0, 0);
+        ig.igTableNextRow(ig.ImGuiTableRowFlags_Headers, ig.igTableGetHeaderRowHeight());
+        if (ig.igTableSetColumnIndex(0)) ig.igTableHeader(tr("col_table"));
+        if (ig.igTableSetColumnIndex(1)) _ = rightHeader(tr("col_rows"), 0);
+        for (g.hits, 0..) |h, i| {
+            if (h.table >= app.db.table_names.len) continue;
+            ig.igTableNextRow(0, 0);
+            _ = ig.igTableNextColumn();
+            ig.igPushID_Int(@intCast(i));
+            if (ig.igSelectable_Bool("##g", false, ig.ImGuiSelectableFlags_SpanAllColumns, .{ .x = 0, .y = 0 })) app.pickGlobal(h.table, &g.term);
+            ig.igPopID();
+            ig.igSameLine(0, 0);
+            textSlice(app.db.table_names[h.table]);
+            _ = ig.igTableNextColumn();
+            var nb: [24]u8 = undefined;
+            const n = std.fmt.bufPrint(&nb, "{d}", .{h.rows}) catch "";
+            rightAlign(textWidth(n), 0);
+            textSlice(n);
+        }
     }
 };
 
@@ -2273,6 +2422,7 @@ fn run(init: std.process.Init) !void {
         app.prefs = settings.Settings.load(init.io, app.prefs_path);
     };
     i18n.lang = app.prefs.lang;
+    app.scope = app.prefs.search_scope;
     var theme = app.prefs.theme;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {

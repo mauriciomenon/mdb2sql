@@ -8,7 +8,10 @@ const exporter = @import("exporter.zig");
 const access = @import("access.zig");
 const Allocator = std.mem.Allocator;
 
-pub const Kind = enum { open, select, reload, sql, export_ };
+pub const Kind = enum { open, select, reload, sql, export_, search_all };
+
+// Busca em todas as tabelas: tabela (indice em db.table_names) e linhas encontradas
+pub const Hit = struct { table: usize, rows: u64 };
 
 pub const ExportKind = enum {
     db_duckdb,
@@ -41,7 +44,7 @@ pub const Req = struct {
     table_name: []const u8 = "", // open: tabela inicial (sem diferenciar caixa); vazio = a primeira
     table: usize = 0, // select, reload, export de tabela
     columns: []const []const u8 = &.{}, // reload/export: colunas da tabela (do schema ja carregado)
-    search: [256:0]u8 = @splat(0),
+    search: [256:0]u8 = @splat(0), // select (vazio = sem busca), reload, export, search_all
     filters: []const query.Criterion = &.{}, // reload/export: filtros coluna = valor exato (a UI so muda a lista sem trabalho rodando)
     sort_col: ?usize = null,
     sort_desc: bool = false,
@@ -77,9 +80,11 @@ pub const Out = struct {
     result: ?dbm.Grid = null, // sql
     exported: u64 = 0, // export: tabelas ou linhas gravadas
     converted: access.TempPath = .{}, // open de Access: o SQLite temporario (len 0 = nenhum)
+    hits: []Hit = &.{}, // search_all: tabelas com linhas encontradas
 
     pub fn deinit(out: *Out, gpa: Allocator) void {
         gpa.free(out.counts);
+        gpa.free(out.hits);
         if (out.schema) |*g| g.deinit();
         if (out.data) |*g| g.deinit();
         if (out.result) |*g| g.deinit();
@@ -128,16 +133,73 @@ fn exec(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *expor
             for (names, 0..) |n, i| {
                 if (std.ascii.eqlIgnoreCase(n, req.table_name)) index = i;
             }
-            try loadTable(db, index, out);
+            try loadTable(db, index, "", out);
         },
-        .select => try loadTable(db, req.table, out),
+        .select => try loadTable(db, req.table, std.mem.sliceTo(&req.search, 0), out),
         .reload => {
             out.table = req.table;
             try loadPage(db, try tableSpec(db, req), req.page, out);
         },
         .sql => out.result = try db.run(std.mem.sliceTo(&req.sql, 0), &.{}),
         .export_ => out.exported = try exportJob(db, gpa, env, req, progress),
+        .search_all => out.hits = try searchAll(db, gpa, std.mem.sliceTo(&req.search, 0), progress),
     }
+}
+
+// !T: Search in every table with the rule and the query of the Data tab search (query.buildCount: every column as
+// text, every word in one cell, ignoring case and accents), so the count listed is the row count the table shows
+// when opened with the same search. The columns of all tables come from one query and the counts go in UNION ALL
+// batches (a DESCRIBE + COUNT per table took ~0.2 s each on a SQLite file). Returns the tables with at least one
+// row, in table order.
+pub fn searchAll(db: *dbm.Db, gpa: Allocator, term: []const u8, progress: *exporter.Progress) ![]Hit {
+    var hits: std.ArrayList(Hit) = .empty;
+    errdefer hits.deinit(gpa);
+    if (std.mem.indexOfNone(u8, term, &std.ascii.whitespace) == null) return hits.toOwnedSlice(gpa);
+    const names = db.table_names;
+    var cols = try db.run("SELECT table_name, column_name FROM duckdb_columns() WHERE database_name = current_database() " ++
+        "AND schema_name = current_schema() ORDER BY table_name, column_index", &.{});
+    defer cols.deinit();
+    var text: std.ArrayList([]const u8) = .empty; // colunas da tabela
+    defer text.deinit(gpa);
+    var sql: std.ArrayList(u8) = .empty;
+    defer sql.deinit(gpa);
+    var params: std.ArrayList([]const u8) = .empty; // fatias de `term`
+    defer params.deinit(gpa);
+    progress.begin(names.len);
+    var first: usize = 0;
+    while (first < names.len) : (first += 32) {
+        try progress.check();
+        const end = @min(first + 32, names.len);
+        sql.clearRetainingCapacity();
+        params.clearRetainingCapacity();
+        for (first..end) |i| {
+            text.clearRetainingCapacity();
+            for (cols.rows) |row| if (std.mem.eql(u8, row[0] orelse "", names[i])) try text.append(gpa, row[1] orelse "");
+            if (text.items.len == 0) continue;
+            if (sql.items.len > 0) try sql.appendSlice(gpa, " UNION ALL ");
+            const built = try query.buildCount(gpa, .{ .table = names[i], .tables = names, .columns = text.items, .search = term });
+            defer built.deinit(gpa);
+            try sql.print(gpa, "SELECT {d}, ({s})", .{ i, built.sql });
+            try params.appendSlice(gpa, built.params);
+        }
+        if (sql.items.len > 0) {
+            try sql.append(gpa, 0);
+            var g = try db.run(sql.items[0 .. sql.items.len - 1 :0], params.items);
+            defer g.deinit();
+            for (g.rows) |row| {
+                const i = std.fmt.parseInt(usize, row[0] orelse continue, 10) catch continue;
+                const n = std.fmt.parseInt(u64, row[1] orelse "0", 10) catch 0;
+                if (n > 0) try hits.append(gpa, .{ .table = i, .rows = n });
+            }
+        }
+        progress.add(end - first);
+    }
+    std.mem.sort(Hit, hits.items, {}, struct {
+        fn less(_: void, a: Hit, b: Hit) bool {
+            return a.table < b.table;
+        }
+    }.less);
+    return hits.toOwnedSlice(gpa);
 }
 
 // Tabela atual com a busca e a ordenacao da tela (sem pagina)
@@ -180,8 +242,8 @@ fn exportJob(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *
     }
 }
 
-// Schema + primeira pagina, sem busca nem ordenacao
-fn loadTable(db: *dbm.Db, index: usize, out: *Out) dbm.Error!void {
+// Schema + primeira pagina, sem ordenacao; com a busca pedida (vazia = nenhuma)
+fn loadTable(db: *dbm.Db, index: usize, search: []const u8, out: *Out) dbm.Error!void {
     if (index >= db.table_names.len) return error.TableNotFound;
     out.table = index;
     out.schema = try db.schema(db.table_names[index]);
@@ -189,7 +251,7 @@ fn loadTable(db: *dbm.Db, index: usize, out: *Out) dbm.Error!void {
     const cols = try sch.arena.allocator().alloc([]const u8, sch.rows.len);
     for (cols, sch.rows) |*n, row| n.* = row[0] orelse "";
     out.columns = cols;
-    try loadPage(db, .{ .table = db.table_names[index], .tables = db.table_names, .columns = cols }, 0, out);
+    try loadPage(db, .{ .table = db.table_names[index], .tables = db.table_names, .columns = cols, .search = search }, 0, out);
 }
 
 fn loadPage(db: *dbm.Db, spec_in: query.Spec, page: u64, out: *Out) dbm.Error!void {
@@ -340,6 +402,32 @@ test "jobs run on a worker thread: open, select, reload, sql, export, errors" {
     try t.expectEqual(2, out.exported);
     out.deinit(t.allocator);
 
+    // busca em todas as tabelas; a tabela escolhida abre com a mesma busca e mostra a mesma contagem
+    slot.req = .{ .kind = .search_all };
+    setZ(&slot.req.search, "ACAO");
+    try slot.start();
+    out = slot.wait().?;
+    try t.expect(out.err == null);
+    try t.expectEqual(1, out.hits.len);
+    try t.expectEqual(people, out.hits[0].table);
+    try t.expectEqual(2, out.hits[0].rows); // "Ação" e "acao"
+    out.deinit(t.allocator);
+    slot.req = .{ .kind = .select, .table = people };
+    setZ(&slot.req.search, "acao");
+    try slot.start();
+    out = slot.wait().?;
+    try t.expect(out.err == null);
+    try t.expectEqual(2, out.total);
+    out.deinit(t.allocator);
+    // colunas de numero tambem, como texto (a mesma regra da aba Data): 149 so em big.n; termo em branco nao busca
+    var p: exporter.Progress = .{};
+    const n149 = try searchAll(&db, t.allocator, "149", &p);
+    defer t.allocator.free(n149);
+    try t.expect(n149.len == 1 and n149[0].rows == 1 and std.mem.eql(u8, db.table_names[n149[0].table], "big"));
+    const blank = try searchAll(&db, t.allocator, "  ", &p);
+    defer t.allocator.free(blank);
+    try t.expectEqual(0, blank.len);
+
     // select de outra tabela
     for (db.table_names, 0..) |n, i| {
         if (std.mem.eql(u8, n, "big")) slot.req = .{ .kind = .select, .table = i };
@@ -465,6 +553,35 @@ test "long session: reopen, errors, huge result, export and cancel in a loop" {
         out = slot.wait().?;
         if (out.err) |e| try t.expectEqual(error.Canceled, e);
         out.deinit(t.allocator);
+    }
+}
+
+test "search in every table: a SQLite file finds what the DuckDB file finds" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var b1: [256]u8 = undefined;
+    const duck = dbm.tmpPath(&b1, &tmp, "g.duckdb");
+    try dbm.makeSample(duck);
+    var b2: [256]u8 = undefined;
+    const lite = dbm.tmpPath(&b2, &tmp, "g.sqlite");
+    var db = dbm.testDb();
+    defer db.close();
+    try db.start();
+    try db.openReadOnly(duck);
+    var p: exporter.Progress = .{};
+    try exporter.database(&db, t.io, .sqlite, lite, &p);
+    for ([_][:0]const u8{ duck, lite }) |path| {
+        try db.openReadOnly(path);
+        const people = out_table(&db, "people");
+        // caixa e acentos dos dois lados, palavras em qualquer ordem na mesma celula; numero tambem ("10.5" so em
+        // people.score)
+        for ([_]struct { []const u8, u64 }{ .{ "ACAO", 2 }, .{ "ação", 2 }, .{ "zé", 1 }, .{ "uno br", 1 }, .{ "bru zz", 0 }, .{ "10.5", 1 } }) |c| {
+            const hits = try searchAll(&db, t.allocator, c[0], &p);
+            defer t.allocator.free(hits);
+            try t.expect(hits.len <= 1);
+            if (hits.len == 1) try t.expectEqual(people, hits[0].table);
+            try t.expectEqual(c[1], if (hits.len == 1) hits[0].rows else 0);
+        }
     }
 }
 
