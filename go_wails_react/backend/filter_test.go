@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 // nome de coluna citado (aspas dobradas), valor sempre em parametro, NULL vira IS NULL
@@ -174,11 +175,94 @@ func TestSearchTables(t *testing.T) {
 	if hits, err := m.SearchTables(context.Background(), "nada assim", progress); err != nil || hits == nil || len(hits) != 0 {
 		t.Errorf("no match: %v %v (want an empty list, not null)", hits, err)
 	}
+	// cancelled while the last table is counted (audit 2026-11-24: this one returned success)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := m.SearchTables(ctx, "tensao", progress); err == nil {
-		t.Error("cancelled search must stop")
+	defer cancel()
+	lastCancels := func(done, total int, _ string) {
+		if done == total {
+			cancel()
+		}
 	}
+	if hits, err := m.SearchTables(ctx, "tensao", lastCancels); err == nil {
+		t.Errorf("cancelled search must fail, got %v", hits)
+	}
+}
+
+// audit 2026-11-24: Close (and Open of another file) ran while a search counted on the same connection; the next
+// count met a nil or closed connection (nil pointer panic). Close now waits for the search, so a result is whole and
+// of one file only; go test -race checks the concurrent part.
+func TestSearchWhileFileChanges(t *testing.T) {
+	files := make([]string, 2)
+	for i := range files {
+		files[i] = filepath.Join(t.TempDir(), fmt.Sprintf("f%d.duckdb", i))
+		db, err := sql.Open("duckdb", files[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		// the same tables in both files, with i+1 matching rows each: a mixed result has both counts
+		for j := 0; j < 20 && err == nil; j++ {
+			_, err = db.Exec(fmt.Sprintf("CREATE TABLE t%02d AS SELECT 'tensao' AS s FROM range(%d)", j, i+1))
+		}
+		db.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := NewDBManager()
+	defer m.Close()
+	whole := func(hits []TableHits) bool {
+		for _, h := range hits {
+			if h.Rows != hits[0].Rows {
+				return false
+			}
+		}
+		return len(hits) == 20
+	}
+
+	stop := make(chan struct{})
+	changed := make(chan struct{})
+	go func() {
+		defer close(changed)
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if i%3 == 2 {
+				m.Close()
+			} else {
+				m.Connect(files[i%2])
+			}
+		}
+	}()
+	for i := 0; i < 50; i++ {
+		hits, err := m.SearchTables(context.Background(), "tensao", func(int, int, string) {})
+		if err == nil && !whole(hits) {
+			t.Errorf("search %d: %v, want 20 tables of one file", i, hits)
+		}
+	}
+	close(stop)
+	<-changed
+
+	// Close between two tables: it waits, the search ends with every table
+	if err := m.Connect(files[0]); err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan struct{})
+	closeAtSecond := func(done, _ int, _ string) {
+		if done == 2 {
+			go func() { m.Close(); close(closed) }()
+			select { // before the fix Close was done at once
+			case <-closed:
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+	}
+	if hits, err := m.SearchTables(context.Background(), "tensao", closeAtSecond); err != nil || !whole(hits) {
+		t.Errorf("close during the search: %v %v, want 20 tables", hits, err)
+	}
+	<-closed
 }
 
 // audit item 12: 9007199254740993 reached the UI as 9007199254740992 (JS Number); big values go as text,

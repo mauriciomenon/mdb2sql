@@ -98,6 +98,49 @@ func TestRunQueryOneAtATime(t *testing.T) {
 	})
 }
 
+// audit 2026-11-24: an "All tables" search kept counting on the connection while another file opened or the file
+// closed. Now both stop the search first: its slow count is interrupted and it returns an error.
+func TestSearchStopsWhenFileChanges(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "s.duckdb")
+	db, err := sql.Open("duckdb", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// minutes to count if not stopped
+	if _, err := db.Exec("CREATE VIEW slow AS SELECT a.range * b.range AS n FROM range(1000000000) a, range(1000) b"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	app := NewApp()
+	t.Cleanup(func() { _ = app.dbManager.Close() })
+	reopen := func() error { _, err := app.LoadDatabase(dbPath); return err }
+	if err := reopen(); err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]func() error{"open": reopen, "close": app.CloseDatabase} {
+		if app.dbName == "" {
+			if err := reopen(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		searched, changed := make(chan error, 1), make(chan error, 1)
+		go func() { _, err := app.SearchAllTables("x"); searched <- err }()
+		time.Sleep(300 * time.Millisecond)
+		go func() { changed <- change() }()
+		select {
+		case err := <-searched:
+			if err == nil {
+				t.Errorf("%s: the search must stop with an error", name)
+			}
+		case <-time.After(20 * time.Second):
+			t.Fatalf("%s: the search was not stopped", name)
+		}
+		if err := <-changed; err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
 // "Sample data" com MDB2SQL_DB_PATH deve informar o nome real do arquivo, nao "sample.duckdb"
 func TestLoadDatabase_ReportsRealFileNameFromEnv(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "other name.duckdb")

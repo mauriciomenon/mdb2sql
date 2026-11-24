@@ -85,6 +85,8 @@ func tableItems(tables []string) []exportItem {
 
 // ExportDatabase writes every table to out; format is "duckdb", "sqlite" or "xlsx"
 func (m *DBManager) ExportDatabase(ctx context.Context, format, out string, progress Progress) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.conn == nil {
 		return fmt.Errorf("no database connected")
 	}
@@ -102,13 +104,15 @@ func (m *DBManager) ExportDatabase(ctx context.Context, format, out string, prog
 
 // ExportTable writes one table to out (format "csv" or "xlsx")
 func (m *DBManager) ExportTable(ctx context.Context, table, format, out string, progress Progress) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.conn == nil {
 		return fmt.Errorf("no database connected")
 	}
 	if _, err := m.validateTableName(table); err != nil {
 		return err
 	}
-	total, err := m.GetRowCount(table, "")
+	total, err := m.rowCount(ctx, table, "")
 	if err != nil {
 		return err
 	}
@@ -117,6 +121,8 @@ func (m *DBManager) ExportTable(ctx context.Context, table, format, out string, 
 
 // ExportQuery writes the full result of a SQL query to out (format "csv" or "xlsx"); the sheet is "Result"
 func (m *DBManager) ExportQuery(ctx context.Context, query, format, out string, progress Progress) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.conn == nil {
 		return fmt.Errorf("no database connected")
 	}

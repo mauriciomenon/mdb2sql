@@ -158,8 +158,11 @@ func (a *App) beforeClose(ctx context.Context) bool {
 	return true
 }
 
-// shutdown: never leave the temporary SQLite behind (normally beforeClose already resolved it)
+// shutdown: never leave the temporary SQLite behind (normally beforeClose already resolved it); Close waits for the
+// reads in progress, so a running load, export, query or search is stopped first
 func (a *App) shutdown(context.Context) {
+	a.CancelJob()
+	a.cancelReads()
 	a.dbManager.Close()
 	backend.RemoveConverted(a.converted)
 }
@@ -291,7 +294,7 @@ func (a *App) replaceOK(path string) (bool, error) {
 }
 
 func (a *App) closeDatabase() {
-	a.cancelQuery()
+	a.cancelReads()
 	a.dbManager.Close()
 	a.dbName, a.dbPath = "", ""
 }
@@ -412,12 +415,16 @@ func (a *App) CancelJob() {
 	}
 }
 
-// cancelQuery stops the running SQL tab query, if any (a new query or another file replaces it)
-func (a *App) cancelQuery() {
+// cancelReads stops the running SQL tab query and "All tables" search, if any: another file or Close replaces the
+// connection they read, and Close waits for them
+func (a *App) cancelReads() {
 	a.jobMu.Lock()
 	defer a.jobMu.Unlock()
 	if a.queryCancel != nil {
 		a.queryCancel()
+	}
+	if a.searchCancel != nil {
+		a.searchCancel()
 	}
 }
 
@@ -456,7 +463,7 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 			return nil, err
 		}
 	}
-	a.cancelQuery() // a query on the previous file must not outlive it
+	a.cancelReads() // a query or search on the previous file must not outlive it
 	ctx, done := a.startJob()
 	defer done()
 	a.dbName, a.dbPath = "", "" // Open closes the previous database first
