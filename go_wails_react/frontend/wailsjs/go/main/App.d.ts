@@ -25,6 +25,8 @@ export function GetLogOpen():Promise<boolean>;
 
 export function GetRowCount(arg1:string,arg2:Array<backend.Filter>,arg3:string):Promise<number>;
 
+export function GetSearchScope():Promise<string>;
+
 export function GetShowNull():Promise<boolean>;
 
 export function GetTableData(arg1:string,arg2:number,arg3:Array<backend.Filter>,arg4:string):Promise<Array<Record<string, any>>>;
@@ -43,11 +45,15 @@ export function ResolveConversion(arg1:string,arg2:boolean):Promise<main.Convers
 
 export function RunQuery(arg1:string,arg2:number):Promise<backend.QueryResult>;
 
+export function SearchAllTables(arg1:string):Promise<Array<backend.TableHits>>;
+
 export function SelectDatabase():Promise<string>;
 
 export function SetLanguage(arg1:string):Promise<void>;
 
 export function SetLogOpen(arg1:boolean):Promise<void>;
+
+export function SetSearchScope(arg1:string):Promise<void>;
 
 export function SetShowNull(arg1:boolean):Promise<void>;
 

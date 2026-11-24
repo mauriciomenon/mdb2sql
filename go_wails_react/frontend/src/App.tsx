@@ -10,6 +10,8 @@ type Row = Record<string, unknown>;
 type Column = { name: string; type: string; null: string };
 export type Theme = 'system' | 'light' | 'dark';
 type View = 'data' | 'schema' | 'sql';
+type Scope = 'table' | 'all'; // Data tab search: the open table or all tables
+type TableHits = { table: string; rows: number };
 type MenuName = 'file' | 'export' | 'view' | 'settings' | 'help';
 type QueryResult = { columns: string[]; rows: Row[]; more: boolean };
 type Progress = { done: number; total: number; label: string };
@@ -46,6 +48,9 @@ declare global {
           SetLanguage?: (lang: Lang) => Promise<void>;
           GetShowNull?: () => Promise<boolean>;
           SetShowNull?: (show: boolean) => Promise<void>;
+          GetSearchScope?: () => Promise<Scope>;
+          SetSearchScope?: (scope: Scope) => Promise<void>;
+          SearchAllTables?: (search: string) => Promise<TableHits[]>;
           PendingConversion?: () => Promise<string>;
           RememberedChoice?: () => Promise<string>;
           ResolveConversion?: (choice: string, remember: boolean) => Promise<Conversion>;
@@ -66,6 +71,7 @@ declare global {
 const ROW_LIMITS = [100, 500, 1000]; // more would render too many cells (130-column tables)
 const TYPING_PAUSE = 300; // ms without typing before the table list filter and the Data search apply (Enter: at once)
 const THEMES: Theme[] = ['system', 'light', 'dark'];
+const SCOPES: Scope[] = ['table', 'all'];
 
 // Linhas (rotulo, valor) do dialogo Sobre; versao de wails.json, numero/data do build gravados pelo build, runtimes
 // lidos em execucao. Valor que comeca com https:// vira link aberto no navegador padrao.
@@ -193,6 +199,9 @@ function App() {
   const [about, setAbout] = useState<AppInfo | null>(null);
   const [search, setSearch] = useState('');
   const [tableSearch, setTableSearch] = useState(''); // search applied in the database (Data tab), after a pause
+  const [scope, setScope] = useState<Scope>('table'); // where the Data tab searches now
+  const [defaultScope, setDefaultScope] = useState<Scope>('table'); // Settings > Default search scope
+  const [hits, setHits] = useState<TableHits[] | null>(null); // "All tables" result (null = not yet)
   const [sel, setSel] = useState<{ row: Row; col: string } | null>(null); // selected cell
   // open context menu: of the selected cell, of a column header (header = column name) or of the status bar
   const [menu, setMenu] = useState<{ x: number; y: number; header?: string; status?: boolean } | null>(null);
@@ -215,6 +224,7 @@ function App() {
   // request numbers: an answer that is not the latest one (another table, query or file since) is dropped
   const tableReq = useRef(0);
   const sqlReq = useRef(0);
+  const searchReq = useRef(0);
   const loadedFind = useRef(''); // search of the last table request
   const [shownFind, setShownFind] = useState(''); // search of the rows shown in the Data tab
   const [shownTable, setShownTable] = useState(''); // table of the rows shown (the counts below belong to it)
@@ -304,6 +314,14 @@ function App() {
     bridge?.GetLogOpen?.().then((open) => open && setLogOpen(true)).catch(() => {});
     bridge?.GetTheme?.().then((th) => th && setThemeState(th)).catch(() => {});
     bridge?.GetShowNull?.().then((show) => setShowNull(show !== false)).catch(() => {});
+    bridge?.GetSearchScope?.()
+      .then((s) => {
+        if (SCOPES.includes(s)) {
+          setDefaultScope(s);
+          setScope(s);
+        }
+      })
+      .catch(() => {});
     bridge?.GetLanguage?.()
       .then((l) => {
         if (l && LANGS.includes(l)) {
@@ -349,10 +367,21 @@ function App() {
     return () => clearTimeout(id);
   }, [filter]);
 
+  // "All tables": Go counts the matching rows of every table; the list replaces the grid
+  const searchAll = scope === 'all' && view === 'data' && tableSearch !== '' && tables.length > 0;
+  useEffect(() => {
+    if (!searchAll) return;
+    const req = ++searchReq.current;
+    setHits(null);
+    Promise.resolve(window.go?.main?.App?.SearchAllTables?.(tableSearch))
+      .then((found) => req === searchReq.current && setHits(found ?? []))
+      .catch((err) => req === searchReq.current && fail(err));
+  }, [searchAll, tableSearch, tables]);
+
   // (a search typed in the SQL tab reaches the table when the Data or Schema tab comes back)
   useEffect(() => {
-    if (selectedTable && view !== 'sql' && loadedFind.current !== tableSearch) loadTable(selectedTable, limit, filters, tableSearch);
-  }, [tableSearch, view]);
+    if (selectedTable && view !== 'sql' && !searchAll && loadedFind.current !== tableSearch) loadTable(selectedTable, limit, filters, tableSearch);
+  }, [tableSearch, view, searchAll]);
 
   async function copyText(text: string, done: string) {
     try {
@@ -381,6 +410,19 @@ function App() {
     window.go?.main?.App?.SetShowNull?.(show)?.catch(fail);
   }
 
+  // the default also applies now; the selector beside the search changes only the current session
+  function chooseDefaultScope(s: Scope) {
+    setDefaultScope(s);
+    setScope(s);
+    window.go?.main?.App?.SetSearchScope?.(s)?.catch(fail);
+  }
+
+  // a table of the "All tables" list opens in the Data tab with the same search
+  function openHit(table: string) {
+    setScope('table');
+    loadTable(table, limit, undefined, tableSearch);
+  }
+
   async function openAbout() {
     try {
       const bridge = getWailsBridge();
@@ -400,6 +442,7 @@ function App() {
   function clearDatabase() {
     tableReq.current++;
     sqlReq.current++;
+    searchReq.current++;
     setQuerying(false);
     setTables([]);
     setSelectedTable('');
@@ -793,6 +836,14 @@ function App() {
                   </button>
                 ))}
                 <hr />
+                <p className="menu-title">{t('menu.searchScope')}</p>
+                {SCOPES.map((s) => (
+                  <button key={s} role="menuitemradio" aria-checked={defaultScope === s} onClick={() => chooseDefaultScope(s)}>
+                    <span className="check">{defaultScope === s ? '✓' : ''}</span>
+                    {t(`scope.${s}`)}
+                  </button>
+                ))}
+                <hr />
                 <button role="menuitemcheckbox" aria-checked={showNull} onClick={() => chooseShowNull(!showNull)}>
                   <span className="check">{showNull ? '✓' : ''}</span>
                   {t('menu.showNull')}
@@ -865,6 +916,15 @@ function App() {
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && setTableSearch(search.trim())}
               />
+              {view === 'data' && (
+                <div className="tabs" role="radiogroup" aria-label={t('scope.label')}>
+                  {SCOPES.map((s) => (
+                    <button key={s} role="radio" aria-checked={scope === s} onClick={() => setScope(s)}>
+                      {t(`scope.${s}`)}
+                    </button>
+                  ))}
+                </div>
+              )}
               <label className="field">
                 {t('rows.label')}
                 <select value={limit} onChange={(e) => changeLimit(Number(e.target.value))}>
@@ -936,7 +996,35 @@ function App() {
                 }
               }}
             >
-              {view === 'schema' ? (
+              {searchAll ? (
+                hits &&
+                (hits.length > 0 ? (
+                  <table className="hits">
+                    <thead>
+                      <tr>
+                        <th scope="col">{t('hits.table')}</th>
+                        <th scope="col" className="num">
+                          {t('hits.rows')}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {hits.map((h) => (
+                        <tr key={h.table}>
+                          <td>
+                            <button className="table-item" onClick={() => openHit(h.table)}>
+                              {h.table}
+                            </button>
+                          </td>
+                          <td className="num">{h.rows}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="empty">{t('sidebar.noMatch')}</p>
+                ))
+              ) : view === 'schema' ? (
                 <table className="schema">
                   <thead>
                     <tr>
@@ -958,14 +1046,16 @@ function App() {
               ) : (
                 grid
               )}
-              {view === 'data' && visibleRows.length === 0 && <p className="empty">{narrowed ? t('empty.noFilterMatch') : t('empty.noRows')}</p>}
-              {view === 'data' && visibleRows.length > 0 && shownColumns.length === 0 && <p className="empty">{t('empty.noColumns')}</p>}
+              {view === 'data' && !searchAll && visibleRows.length === 0 && <p className="empty">{narrowed ? t('empty.noFilterMatch') : t('empty.noRows')}</p>}
+              {view === 'data' && !searchAll && visibleRows.length > 0 && shownColumns.length === 0 && <p className="empty">{t('empty.noColumns')}</p>}
             </div>
 
             <footer className="info">
               {view === 'sql'
                 ? result && t('info.sql', result.rows.length) + (result.more ? t('info.sqlLimit', limit) : '')
-                : t('info.showing', shownTable, rows.length, rowCount) + (narrowed ? t('info.filtered', totalCount) : '')}
+                : searchAll
+                  ? hits && t('info.searchAll', hits.length, tableSearch)
+                  : t('info.showing', shownTable, rows.length, rowCount) + (narrowed ? t('info.filtered', totalCount) : '')}
               {sqlSearching && t('info.searchSql', visibleRows.length, search.trim())}
               {copied && ` - ${copied}`}
             </footer>

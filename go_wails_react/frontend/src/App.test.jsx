@@ -1,6 +1,6 @@
 import React from 'react';
 import { readFileSync } from 'node:fs';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { vi, beforeEach } from 'vitest';
 import App, { aboutRows, clampLogHeight, columnCellWidth, filterLabel, gridText, LOG_MIN, logLine, progressText, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
 import { CATALOGS, LANGS, translate } from './i18n';
@@ -232,6 +232,56 @@ describe('App IPC flow', () => {
     expect(bridge.GetTableData).not.toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'u9a');
     fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
     expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'u9a');
+  });
+
+  it('searches all tables from the Data tab and opens a table of the list with the same search', async () => {
+    const SearchAllTables = vi.fn(async () => [{ table: 'RANGER_SOGEN', rows: 3 }]);
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables } } } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+    const scope = screen.getByRole('radiogroup', { name: 'Search in' });
+    expect(within(scope).getAllByRole('radio').map((r) => r.textContent)).toEqual(['This table', 'All tables']);
+    expect(within(scope).getByRole('radio', { name: 'This table' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+
+    fireEvent.click(within(scope).getByRole('radio', { name: 'All tables' }));
+    expect(SearchAllTables).not.toHaveBeenCalled(); // nothing to search yet: the table stays
+    expect(screen.getByText('Alpha')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'tensao' } });
+    fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
+    await waitFor(() => expect(SearchAllTables).toHaveBeenCalledWith('tensao'));
+    const hit = await screen.findByRole('row', { name: 'RANGER_SOGEN 3' });
+    expect(screen.getByRole('columnheader', { name: 'Rows found' })).toBeInTheDocument();
+    expect(screen.getByText('1 tables with rows matching "tensao"')).toBeInTheDocument();
+    expect(bridge.GetTableData).not.toHaveBeenCalledWith('RANGER_SOACCU', 100, [], 'tensao'); // the grid is not queried
+
+    fireEvent.click(within(hit).getByRole('button', { name: 'RANGER_SOGEN' }));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'tensao'));
+    expect(within(scope).getByRole('radio', { name: 'This table' })).toHaveAttribute('aria-checked', 'true');
+    expect(await screen.findByText('Alpha')).toBeInTheDocument();
+
+    SearchAllTables.mockResolvedValueOnce([]);
+    fireEvent.click(within(scope).getByRole('radio', { name: 'All tables' }));
+    expect(await screen.findByText('No table matches.')).toBeInTheDocument();
+  });
+
+  it('keeps the default search scope in Settings and applies it', async () => {
+    const SetSearchScope = vi.fn(async () => {});
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SetSearchScope, GetSearchScope: vi.fn(async () => 'all') } } } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByText('Alpha');
+    expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.getByText('Default search scope')).toBeInTheDocument();
+    expect(screen.getByRole('menuitemradio', { name: /All tables/ })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /This table/ }));
+    expect(SetSearchScope).toHaveBeenCalledWith('table');
+    expect(screen.getByRole('radio', { name: 'This table' })).toHaveAttribute('aria-checked', 'true');
+    // the selector beside the search does not change the saved default
+    fireEvent.click(screen.getByRole('radio', { name: 'All tables' }));
+    expect(SetSearchScope).toHaveBeenCalledTimes(1);
   });
 
   it('filters by the right-clicked value in the database query and shows removable chips', async () => {
@@ -861,7 +911,7 @@ describe('language catalogs', () => {
 
   it('hold every key the screen uses', () => {
     const used = [...source.matchAll(/\bt\(\s*'([^']+)'/g)].map((m) => m[1]);
-    used.push(...['system', 'light', 'dark'].map((th) => `theme.${th}`), ...LANGS.map((l) => `lang.${l}`));
+    used.push(...['system', 'light', 'dark'].map((th) => `theme.${th}`), ...LANGS.map((l) => `lang.${l}`), 'scope.table', 'scope.all');
     expect(used.length).toBeGreaterThan(80);
     expect(used.filter((k) => !(k in CATALOGS.en))).toEqual([]);
   });

@@ -17,6 +17,21 @@ type Settings struct {
 	LastDir  string `json:"lastDir"`
 	LogOpen  bool   `json:"logOpen"`  // Log panel expanded (default: collapsed)
 	ShowNull bool   `json:"showNull"` // a NULL cell shows "NULL" (default) or stays empty
+	// Data tab search when the app starts: "table" (the open table, default) or "all" (all tables)
+	SearchScope string `json:"searchScope"`
+}
+
+var searchScopes = map[string]bool{"table": true, "all": true}
+
+// GetSearchScope / SetSearchScope: Settings > Default search scope
+func (a *App) GetSearchScope() string { return a.settings.SearchScope }
+
+func (a *App) SetSearchScope(scope string) error {
+	if !searchScopes[scope] {
+		return fmt.Errorf("unknown search scope %q", scope)
+	}
+	a.settings.SearchScope = scope
+	return a.saveSettings()
 }
 
 // GetShowNull / SetShowNull: Settings > Show NULL
@@ -52,6 +67,9 @@ func loadSettings() Settings {
 	}
 	if !themes[s.Theme] {
 		s.Theme = "system"
+	}
+	if !searchScopes[s.SearchScope] {
+		s.SearchScope = "table"
 	}
 	if !i18n.Valid(s.Language) {
 		s.Language = i18n.Langs[0]

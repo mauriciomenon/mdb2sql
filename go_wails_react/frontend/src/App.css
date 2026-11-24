@@ -362,7 +362,8 @@ button.primary {
   border-radius: 0 6px 6px 0;
 }
 
-.tabs button[aria-selected='true'] {
+.tabs button[aria-selected='true'],
+.tabs button[aria-checked='true'] {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-text);
@@ -399,6 +400,11 @@ th {
   background: var(--surface);
   font-weight: 600;
   border-bottom: 2px solid var(--border);
+}
+
+/* "All tables" search: the table names open the table, with the row height of the grid */
+.hits .table-item {
+  padding: 0;
 }
 
 /* Schema grid: 6 px more on each side between its three columns */

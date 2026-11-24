@@ -46,6 +46,10 @@ export function GetRowCount(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetRowCount'](arg1, arg2, arg3);
 }
 
+export function GetSearchScope() {
+  return window['go']['main']['App']['GetSearchScope']();
+}
+
 export function GetShowNull() {
   return window['go']['main']['App']['GetShowNull']();
 }
@@ -82,6 +86,10 @@ export function RunQuery(arg1, arg2) {
   return window['go']['main']['App']['RunQuery'](arg1, arg2);
 }
 
+export function SearchAllTables(arg1) {
+  return window['go']['main']['App']['SearchAllTables'](arg1);
+}
+
 export function SelectDatabase() {
   return window['go']['main']['App']['SelectDatabase']();
 }
@@ -92,6 +100,10 @@ export function SetLanguage(arg1) {
 
 export function SetLogOpen(arg1) {
   return window['go']['main']['App']['SetLogOpen'](arg1);
+}
+
+export function SetSearchScope(arg1) {
+  return window['go']['main']['App']['SetSearchScope'](arg1);
 }
 
 export function SetShowNull(arg1) {

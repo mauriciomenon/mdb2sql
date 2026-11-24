@@ -329,4 +329,11 @@ func TestSettingsPersist(t *testing.T) {
 	if err := app.SetShowNull(false); err != nil || NewApp().GetShowNull() {
 		t.Fatalf("Show NULL after restart: %v", err)
 	}
+	// default search scope: this table, then what was chosen; an unknown one is refused
+	if app.GetSearchScope() != "table" {
+		t.Fatalf("default search scope %q", app.GetSearchScope())
+	}
+	if err := app.SetSearchScope("all"); err != nil || app.SetSearchScope("everything") == nil || NewApp().GetSearchScope() != "all" {
+		t.Fatalf("search scope after restart: %v", err)
+	}
 }

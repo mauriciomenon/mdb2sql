@@ -46,6 +46,20 @@ export namespace backend {
 	        this.more = source["more"];
 	    }
 	}
+	export class TableHits {
+	    table: string;
+	    rows: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TableHits(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.table = source["table"];
+	        this.rows = source["rows"];
+	    }
+	}
 
 }
 
