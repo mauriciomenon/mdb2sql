@@ -15,7 +15,16 @@ type Settings struct {
 	Theme    string `json:"theme"`    // system, light or dark
 	Language string `json:"language"` // en (default), pt-BR or es
 	LastDir  string `json:"lastDir"`
-	LogOpen  bool   `json:"logOpen"` // Log panel expanded (default: collapsed)
+	LogOpen  bool   `json:"logOpen"`  // Log panel expanded (default: collapsed)
+	ShowNull bool   `json:"showNull"` // a NULL cell shows "NULL" (default) or stays empty
+}
+
+// GetShowNull / SetShowNull: Settings > Show NULL
+func (a *App) GetShowNull() bool { return a.settings.ShowNull }
+
+func (a *App) SetShowNull(show bool) error {
+	a.settings.ShowNull = show
+	return a.saveSettings()
 }
 
 // GetLogOpen / SetLogOpen: the Log panel state, remembered between sessions
@@ -37,7 +46,7 @@ func settingsPath() string {
 }
 
 func loadSettings() Settings {
-	s := Settings{Theme: "system", Language: i18n.Langs[0]}
+	s := Settings{Theme: "system", Language: i18n.Langs[0], ShowNull: true}
 	if data, err := os.ReadFile(settingsPath()); err == nil {
 		_ = json.Unmarshal(data, &s) // a broken file just falls back to the defaults
 	}

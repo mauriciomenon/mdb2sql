@@ -2,7 +2,7 @@ import React from 'react';
 import { readFileSync } from 'node:fs';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, beforeEach } from 'vitest';
-import App, { aboutRows, clampLogHeight, columnCellWidth, filterLabel, LOG_MIN, logLine, progressText, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
+import App, { aboutRows, clampLogHeight, columnCellWidth, filterLabel, gridText, LOG_MIN, logLine, progressText, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
 import { CATALOGS, LANGS, translate } from './i18n';
 
 const tables = ['RANGER_SOACCU', 'RANGER_SOGEN'];
@@ -531,6 +531,36 @@ describe('App IPC flow', () => {
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetLogOpen: vi.fn(async () => true) } } } });
     render(<App />);
     expect(await screen.findByRole('textbox', { name: 'Log' })).toBeInTheDocument();
+  });
+
+  it('shows NULL cells as NULL, or empty with Settings > Show NULL off, and saves the choice', async () => {
+    const SetShowNull = vi.fn(async () => {});
+    const ClipboardSetText = vi.fn(async () => true);
+    const GetTableData = vi.fn(async () => [{ ID: 1, NAME: null }]);
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, SetShowNull } } }, runtime: { ClipboardSetText } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    const cell = await screen.findByText('NULL');
+    fireEvent.contextMenu(cell);
+    fireEvent.click(screen.getByRole('menuitem', { name: /Copy value/ }));
+    await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('')); // copy keeps the real (empty) value
+
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.getByRole('menuitemcheckbox', { name: /Show NULL/ })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /Show NULL/ }));
+    expect(SetShowNull).toHaveBeenCalledWith(false);
+    expect(screen.queryByText('NULL')).not.toBeInTheDocument();
+    expect(gridText(null, '')).toBe('');
+    expect(gridText(0, 'NULL')).toBe('0');
+  });
+
+  it('starts with NULL cells empty when Show NULL was left off', async () => {
+    const GetTableData = vi.fn(async () => [{ ID: 1, NAME: null }]);
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, GetShowNull: vi.fn(async () => false) } } } });
+    render(<App />);
+    menu('File', 'Open sample data');
+    await screen.findByRole('cell', { name: '1' });
+    expect(screen.queryByText('NULL')).not.toBeInTheDocument();
   });
 
   it('right-aligns numeric columns, header included', async () => {

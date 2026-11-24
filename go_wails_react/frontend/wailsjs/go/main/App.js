@@ -46,6 +46,10 @@ export function GetRowCount(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetRowCount'](arg1, arg2, arg3);
 }
 
+export function GetShowNull() {
+  return window['go']['main']['App']['GetShowNull']();
+}
+
 export function GetTableData(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['GetTableData'](arg1, arg2, arg3, arg4);
 }
@@ -88,6 +92,10 @@ export function SetLanguage(arg1) {
 
 export function SetLogOpen(arg1) {
   return window['go']['main']['App']['SetLogOpen'](arg1);
+}
+
+export function SetShowNull(arg1) {
+  return window['go']['main']['App']['SetShowNull'](arg1);
 }
 
 export function SetTheme(arg1) {

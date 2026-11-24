@@ -44,6 +44,8 @@ declare global {
           SetTheme?: (theme: Theme) => Promise<void>;
           GetLanguage?: () => Promise<Lang>;
           SetLanguage?: (lang: Lang) => Promise<void>;
+          GetShowNull?: () => Promise<boolean>;
+          SetShowNull?: (show: boolean) => Promise<void>;
           PendingConversion?: () => Promise<string>;
           RememberedChoice?: () => Promise<string>;
           ResolveConversion?: (choice: string, remember: boolean) => Promise<Conversion>;
@@ -91,6 +93,9 @@ export function filterLabel(f: Filter): string {
 export const withFilter = (filters: Filter[], f: Filter) => [...filters.filter((x) => x.column !== f.column), f];
 
 export const cellText = (v: unknown) => String(v ?? '');
+
+// Text a grid cell shows: NULL as nullText (Settings > Show NULL: "NULL" or empty); copy and search use cellText
+export const gridText = (v: unknown, nullText: string) => (v === null || v === undefined ? nullText : String(v));
 
 // Regra de colagem do Excel/Sheets: campo com TAB, quebra de linha ou aspas vai entre aspas, com aspas dobradas
 // !T: Without the quoting, a TAB or line break inside a value would shift the pasted cells
@@ -181,6 +186,7 @@ function App() {
   const [job, setJob] = useState(''); // verb of the running load/export ("" = none)
   const [progress, setProgress] = useState<Progress | null>(null);
   const [theme, setThemeState] = useState<Theme>('system');
+  const [showNull, setShowNull] = useState(true); // Settings > Show NULL
   const [openMenu, setOpenMenu] = useState<MenuName | null>(null);
   const [about, setAbout] = useState<AppInfo | null>(null);
   const [search, setSearch] = useState('');
@@ -295,6 +301,7 @@ function App() {
     const bridge = window.go?.main?.App;
     bridge?.GetLogOpen?.().then((open) => open && setLogOpen(true)).catch(() => {});
     bridge?.GetTheme?.().then((th) => th && setThemeState(th)).catch(() => {});
+    bridge?.GetShowNull?.().then((show) => setShowNull(show !== false)).catch(() => {});
     bridge?.GetLanguage?.()
       .then((l) => {
         if (l && LANGS.includes(l)) {
@@ -360,6 +367,11 @@ function App() {
   function chooseLang(l: Lang) {
     setLang(l);
     window.go?.main?.App?.SetLanguage?.(l)?.catch(fail);
+  }
+
+  function chooseShowNull(show: boolean) {
+    setShowNull(show);
+    window.go?.main?.App?.SetShowNull?.(show)?.catch(fail);
   }
 
   async function openAbout() {
@@ -631,6 +643,7 @@ function App() {
   const copyRow = (withHeader: boolean) =>
     sel && copyText(rowToTsv(gridColumns, sel.row, withHeader), t(withHeader ? 'copied.rowHeader' : 'copied.row'));
   const busy = job !== '';
+  const nullText = showNull ? t('cell.null') : '';
   // log collapsed: the most important unread line (error, then warning) takes the status bar
   const shownStatus = logOpen ? { text: error || status, level: error ? 'error' : 'info', unread: 0 } : statusLine(logLines, readMark, status, error);
   const viewName = (v: View) => (v === 'data' ? t('tab.data') : v === 'schema' ? t('tab.schema', schema.length) : t('tab.sql'));
@@ -692,7 +705,7 @@ function App() {
                   setMenu(e.clientX || e.clientY ? { x: e.clientX, y: e.clientY } : { x: r.left + 8, y: r.bottom });
                 }}
               >
-                {cellText(row[col])}
+                {gridText(row[col], nullText)}
               </td>
             ))}
           </tr>
@@ -771,6 +784,11 @@ function App() {
                     {t(`lang.${l}`)}
                   </button>
                 ))}
+                <hr />
+                <button role="menuitemcheckbox" aria-checked={showNull} onClick={() => chooseShowNull(!showNull)}>
+                  <span className="check">{showNull ? '✓' : ''}</span>
+                  {t('menu.showNull')}
+                </button>
               </div>
             )}
           </div>

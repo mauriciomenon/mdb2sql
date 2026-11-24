@@ -25,6 +25,8 @@ export function GetLogOpen():Promise<boolean>;
 
 export function GetRowCount(arg1:string,arg2:Array<backend.Filter>,arg3:string):Promise<number>;
 
+export function GetShowNull():Promise<boolean>;
+
 export function GetTableData(arg1:string,arg2:number,arg3:Array<backend.Filter>,arg4:string):Promise<Array<Record<string, any>>>;
 
 export function GetTableSchema(arg1:string):Promise<Array<backend.ColumnSchema>>;
@@ -46,6 +48,8 @@ export function SelectDatabase():Promise<string>;
 export function SetLanguage(arg1:string):Promise<void>;
 
 export function SetLogOpen(arg1:boolean):Promise<void>;
+
+export function SetShowNull(arg1:boolean):Promise<void>;
 
 export function SetTheme(arg1:string):Promise<void>;
 
