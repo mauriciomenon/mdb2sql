@@ -2132,9 +2132,10 @@ const GridSel = struct {
     want_filter: bool = false, // menu da celula: filtrar pelo valor da celula selecionada
     want_clear: bool = false, // menu da celula: limpar filtros
 
-    // Clique (esquerdo ou direito) na celula
+    // Clique (esquerdo ou direito) na celula: so a selecao muda (refazer o GridSel inteiro mostrava as ocultas de novo)
     fn pick(sel: *GridSel, row: usize, col: usize) void {
-        sel.* = .{ .row = row, .col = col };
+        sel.row = row;
+        sel.col = col;
     }
 
     fn hiddenCount(sel: *const GridSel, n_cols: usize) usize {
