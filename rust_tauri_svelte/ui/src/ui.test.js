@@ -105,6 +105,14 @@ test('Data search scope: two-option selector next to the field and its default i
   assert.match(app, /function openFound\(name\) \{\s*scope = 'table';\s*openTable\(name, search\);/);
 });
 
+// decisao 3: nenhum caminho deixa a tabela sem coluna visivel (Ocultar todas e a caixa da ultima visivel)
+test('the Columns dialog never hides the last visible column', () => {
+  const dialog = markup('./App.svelte').match(/<dialog\s+bind:this=\{columnsDialog\}[\s\S]*?<\/dialog>/)[0];
+  assert.match(dialog, /disabled=\{!hidden\.has\(col\.name\) && shownColumns\.length === 1\}/);
+  assert.match(dialog, /onchange=\{\(\) => \(hidden = toggleShown\(hidden, col\.name, columns\.length\)\)\}/);
+  assert.match(dialog, /setListed\(hidden, listedColumns\.map\(\(c\) => c\.name\), true, columns\.length\)/);
+});
+
 // decisao 5: a grade (Data, Schema e SQL) usa a fonte do app, Segoe UI 14 px como o Go/Wails; nada menor na grade
 test('grid text uses the 14 px app font', () => {
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');

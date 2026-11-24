@@ -18,7 +18,6 @@
     searchWords,
     setListed,
     statusLine,
-    toggleHidden,
     toggleShown,
     visibleColumns,
     withFilter,
@@ -873,7 +872,12 @@
     <div class="column-list" role="group" aria-label={t('columns.list')}>
       {#each listedColumns as col (col.name)}
         <label title="{col.name} ({col.type})">
-          <input type="checkbox" checked={!hidden.has(col.name)} onchange={() => (hidden = toggleHidden(hidden, col.name))} />
+          <input
+            type="checkbox"
+            checked={!hidden.has(col.name)}
+            disabled={!hidden.has(col.name) && shownColumns.length === 1}
+            onchange={() => (hidden = toggleShown(hidden, col.name, columns.length))}
+          />
           <span>{col.name}</span>
           <small>{col.type}</small>
         </label>
@@ -883,7 +887,7 @@
     </div>
     <div class="actions">
       <button type="button" class="secondary" onclick={() => (hidden = setListed(hidden, listedColumns.map((c) => c.name), false))}>{t('columns.showAll')}</button>
-      <button type="button" class="secondary" onclick={() => (hidden = setListed(hidden, listedColumns.map((c) => c.name), true))}>{t('columns.hideAll')}</button>
+      <button type="button" class="secondary" onclick={() => (hidden = setListed(hidden, listedColumns.map((c) => c.name), true, columns.length))}>{t('columns.hideAll')}</button>
       <span>{t('columns.count', { shown: shownColumns.length, total: columns.length })}</span>
       <button type="button" class="close default" onclick={() => columnsDialog.close()}>{t('common.close')}</button>
     </div>
