@@ -106,6 +106,18 @@ test('Data search scope: two-option selector next to the field and its default i
   assert.match(app, /function openFound\(name\) \{\s*scope = 'table';\s*filters = \[\];\s*openTable\(name, search\);/);
 });
 
+// corpo de uma funcao do App.svelte (do nome ate a chave que fecha, com dois espacos de recuo)
+const appFunction = (name) =>
+  readFileSync(new URL('./App.svelte', import.meta.url), 'utf8').match(
+    new RegExp(`\\n  (?:async )?function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}`)
+  )[0];
+
+// apagar o termo e trocar o escopo antes de 300 ms: o recarregamento agendado continua (a grade ficava filtrada sob o
+// campo vazio)
+test('switching scope with an empty field keeps the pending table reload', () => {
+  assert.match(appFunction('setScope'), /if \(!search\.trim\(\)\) return;\s*clearTimeout\(searchTimer\);\s*runSearch\(\);/);
+});
+
 // decisao 3: nenhum caminho deixa a tabela sem coluna visivel (Ocultar todas e a caixa da ultima visivel)
 test('the Columns dialog never hides the last visible column', () => {
   const dialog = markup('./App.svelte').match(/<dialog\s+bind:this=\{columnsDialog\}[\s\S]*?<\/dialog>/)[0];

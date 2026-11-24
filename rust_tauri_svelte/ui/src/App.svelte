@@ -583,8 +583,10 @@
 
   function setScope(next) {
     scope = next;
+    // campo vazio: o recarregamento que a digitacao agendou continua (senao a grade ficava filtrada sob o campo vazio)
+    if (!search.trim()) return;
     clearTimeout(searchTimer);
-    if (search.trim()) runSearch();
+    runSearch();
   }
 
   // escolher uma tabela achada abre ela na aba Data com a mesma pesquisa (o escopo volta para Esta tabela) e sem os
