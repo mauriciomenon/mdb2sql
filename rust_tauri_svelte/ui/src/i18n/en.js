@@ -24,6 +24,7 @@ export default {
   'view.log': 'Log',
   'settings.theme': 'Theme',
   'settings.language': 'Language',
+  'settings.showNull': 'Show NULL',
   'theme.system': 'System',
   'theme.light': 'Light',
   'theme.dark': 'Dark',
@@ -128,6 +129,7 @@ export default {
   'grid.copiedRow': 'Copied row ({count} columns)',
   'grid.copiedRowHeader': 'Copied row ({count} columns, with header)',
   'grid.copyFailed': 'Copy failed',
+  'grid.null': 'NULL',
 
   'log.title': 'Log',
   'log.copyAll': 'Copy all',

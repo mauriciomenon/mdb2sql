@@ -5,8 +5,8 @@
 
   // actions (so a grade da aba Data): { hide(nome), columns(), showAll(), filter(nome, valor), clearFilters(),
   // anyHidden, filtered }; sem ele o menu so copia
-  // t: traducao do idioma escolhido (i18n.js)
-  let { columns, rows, label, emptyText, t, onstatus, onerror, actions = null } = $props();
+  // t: traducao do idioma escolhido (i18n.js); nullText: texto da celula NULL na grade (Settings > Exibir NULL)
+  let { columns, rows, label, emptyText, t, onstatus, onerror, actions = null, nullText = '' } = $props();
 
   let selected = $state.raw(null); // { row, col }: celula escolhida para copiar
   let menu = $state.raw(null); // { x, y, header }: menu aberto; header = nome da coluna do cabecalho clicado
@@ -110,8 +110,9 @@
           {#each columns as col, c (c)}
             {@const value = row[col.name]}
             {@const isSelected = selected?.row === row && selected.col === col.name}
-            <!-- como nas outras stacks: NULL e celula vazia, DOUBLE inteiro sem ".0" (o JSON 2.0 chega como 2) -->
-            <td data-c={c} class:num={isNumeric(col.type)} class:selected={isSelected}>{cellText(value)}</td>
+            <!-- como nas outras stacks: NULL mostra nullText ("NULL" ou vazio), DOUBLE inteiro sem ".0" (o JSON 2.0 chega
+                 como 2); copiar continua com o valor real (NULL vazio) -->
+            <td data-c={c} class:num={isNumeric(col.type)} class:selected={isSelected}>{cellText(value, nullText)}</td>
           {/each}
         </tr>
       {:else}

@@ -60,6 +60,7 @@
   const LAST_DIR_KEY = 'mdb2sql.lastDir';
   const LANG_KEY = 'mdb2sql.lang';
   const LOG_KEY = 'mdb2sql.log'; // 'open' = painel de log aberto (padrao: recolhido)
+  const NULL_KEY = 'mdb2sql.showNull'; // 'off' = celula NULL vazia (padrao: mostra "NULL")
   // a pesquisa vai ao banco quando a digitacao para por este tempo
   const SEARCH_DELAY_MS = 300;
 
@@ -85,6 +86,9 @@
   let lang = $state(LANGS.some(([code]) => code === storedLang) ? storedLang : LANGS[0][0]);
   let t = $derived(translator(lang));
   const fmt = (n) => Number(n).toLocaleString(lang);
+  // Settings > Exibir NULL: ligado, a celula NULL das grades mostra "NULL"; desligado, fica vazia
+  let showNull = $state(loadSetting(NULL_KEY) !== 'off');
+  let nullText = $derived(showNull ? t('grid.null') : '');
 
   let openMenu = $state(null); // 'file' | 'view' | 'settings' | 'help'
   let tab = $state('data');
@@ -448,6 +452,12 @@
     saveSetting(LANG_KEY, code);
   }
 
+  function setShowNull(show) {
+    openMenu = null;
+    showNull = show;
+    saveSetting(NULL_KEY, show ? 'on' : 'off');
+  }
+
   // NIVEL TECNICO: __SVELTE_VERSION__ is the bundled Svelte version, injected by vite.config.js
   async function showAbout() {
     openMenu = null;
@@ -685,6 +695,10 @@
               <span class="check">{lang === code ? '●' : ''}</span>{name}
             </button>
           {/each}
+          <div class="separator" role="separator"></div>
+          <button type="button" role="menuitemcheckbox" aria-checked={showNull} onclick={() => setShowNull(!showNull)}>
+            <span class="check">{showNull ? '✓' : ''}</span>{t('settings.showNull')}
+          </button>
         </div>
       {/if}
     </div>
@@ -896,7 +910,7 @@
           </div>
         </div>
         {#if sqlResult?.columns.length}
-          <Grid columns={sqlResult.columns} rows={sqlResult.rows} label={t('sql.result')} emptyText={t('sql.noRows')} {t} onstatus={showStatus} onerror={showError} />
+          <Grid columns={sqlResult.columns} rows={sqlResult.rows} label={t('sql.result')} emptyText={t('sql.noRows')} {t} {nullText} onstatus={showStatus} onerror={showError} />
         {/if}
       {:else if !selectedTable}
         <p class="empty">{t('data.noTable')}</p>
@@ -910,6 +924,7 @@
           label={t('schema.label', { table: selectedTable })}
           emptyText={t('data.empty')}
           {t}
+          {nullText}
           onstatus={showStatus}
           onerror={showError}
         />
@@ -955,6 +970,7 @@
           label={t('data.rows', { table: selectedTable })}
           emptyText={t(!shownColumns.length ? 'data.allHidden' : filters.length || search.trim() ? 'data.noMatch' : 'data.empty')}
           {t}
+          {nullText}
           onstatus={showStatus}
           onerror={showError}
           actions={{ ...gridActions, anyHidden: hidden.size > 0, filtered: filters.length > 0 }}

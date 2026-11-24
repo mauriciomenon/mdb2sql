@@ -1,9 +1,9 @@
 // NIVEL BASICO: Logica da grade sem interface: texto para copiar, colunas ocultas, filtros e busca por palavras
 // NIVEL TECNICO: plain module so `node --test` can run it without a browser
 
-// Valor de uma celula como texto puro (NULL vira vazio)
-export function cellText(value) {
-  return value === null || value === undefined ? '' : String(value);
+// Valor de uma celula como texto puro; NULL vira nullText (vazio para copiar; na grade, "NULL" com Settings > Exibir NULL)
+export function cellText(value, nullText = '') {
+  return value === null || value === undefined ? nullText : String(value);
 }
 
 // Campo no formato que o Excel entende ao colar: TAB, quebra de linha ou aspas dentro do valor

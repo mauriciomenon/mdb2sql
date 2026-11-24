@@ -44,13 +44,21 @@ test('Show all / Hide all act only on the listed (searched) columns', () => {
   assert.deepEqual([...before].sort(), ['RTUNAM', 'note']);
 });
 
-// a grade mostra cellText: igual as outras stacks, DOUBLE inteiro sem ".0" e NULL vazio
-test('grid shows whole doubles without .0 and NULL as an empty cell', () => {
-  const row = JSON.parse('{"RTUNO": 2.0, "PNTNO": 2316.0, "x": 0.1, "big": "9007199254740993", "n": null}');
-  assert.deepEqual(Object.values(row).map(cellText), ['2', '2316', '0.1', '9007199254740993', '']);
+// a grade mostra cellText: igual as outras stacks, DOUBLE inteiro sem ".0"; NULL e o texto de Settings > Exibir NULL
+// ("NULL" ligado, vazio desligado); texto vazio continua vazio e copiar continua com NULL vazio
+test('grid shows whole doubles without .0 and NULL as the Show NULL setting says', () => {
+  const row = JSON.parse('{"RTUNO": 2.0, "PNTNO": 2316.0, "x": 0.1, "big": "9007199254740993", "n": null, "e": ""}');
+  const shown = (nullText) => Object.values(row).map((v) => cellText(v, nullText));
+  assert.deepEqual(shown('NULL'), ['2', '2316', '0.1', '9007199254740993', 'NULL', '']);
+  assert.deepEqual(shown(''), ['2', '2316', '0.1', '9007199254740993', '', '']);
+  assert.equal(rowToTsv(['n', 'x'], row), '\t0.1'); // copiar: NULL vazio
   const grid = readFileSync(new URL('./Grid.svelte', import.meta.url), 'utf8');
-  assert.match(grid, /<td data-c=\{c\}[^>]*>\{cellText\(value\)\}<\/td>/);
+  assert.match(grid, /<td data-c=\{c\}[^>]*>\{cellText\(value, nullText\)\}<\/td>/);
   assert.doesNotMatch(grid, />NULL</);
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  assert.match(app, /let showNull = \$state\(loadSetting\(NULL_KEY\) !== 'off'\);/); // ligado por padrao, gravado
+  assert.match(app, /saveSetting\(NULL_KEY, show \? 'on' : 'off'\);/);
+  assert.equal(app.split('{nullText}').length - 1, 3); // Data, Schema e SQL
 });
 
 test('Columns... cell fits the longest name and type', () => {
