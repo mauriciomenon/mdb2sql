@@ -393,6 +393,12 @@ pub const Db = struct {
 
     // Executa SQL com parametros '?' e devolve tudo como texto (no maximo max_rows linhas)
     pub fn run(self: *Db, sql: [:0]const u8, params: []const []const u8) Error!Grid {
+        return self.runMax(sql, params, max_rows);
+    }
+
+    // run com outro teto: consultas do programa que precisam de todas as linhas (o catalogo de colunas da busca em
+    // todas as tabelas; o DB4 tem 10.900 colunas)
+    pub fn runMax(self: *Db, sql: [:0]const u8, params: []const []const u8, limit: usize) Error!Grid {
         var rows = try self.stream(sql, params, .{ .types = true });
         defer rows.deinit();
 
@@ -411,14 +417,14 @@ pub const Db = struct {
         var list: std.ArrayList([]?[]const u8) = .empty;
         var buf: [64]u8 = undefined;
         while (try rows.next()) {
-            const take = @min(rows.size, max_rows - list.items.len);
+            const take = @min(rows.size, limit - list.items.len);
             for (0..take) |r| {
                 const row = try a.alloc(?[]const u8, rows.n_cols);
                 for (row, 0..) |*cell, col| cell.* = if (rows.cell(col, r, &buf)) |s| try a.dupe(u8, s) else null;
                 try list.append(a, row);
             }
             // Para no teto: o resto nem e calculado (resultado em fluxo)
-            if (list.items.len == max_rows) {
+            if (list.items.len == limit) {
                 grid.truncated = take < rows.size or try rows.next();
                 break;
             }
