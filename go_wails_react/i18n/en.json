@@ -127,7 +127,7 @@
   "log.copyAll": "Copy all",
   "log.expand": "Show the log",
   "log.resize": "Drag to resize the log",
-  "log.reused": "{0}: opened the SQLite saved from it in this session ({1})",
+  "log.reused": "{0}: opened the SQLite saved from it ({1})",
   "log.staleRemoved": "Removed {0} converted file(s) left by a previous session",
   "log.title": "Log",
   "log.unread": "{0} unread errors or warnings",

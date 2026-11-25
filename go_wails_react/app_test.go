@@ -304,7 +304,7 @@ func TestConvertedSQLiteLifecycle(t *testing.T) {
 	}
 
 	// remembered "save" (folder of the first save): types.sqlite, then types (2).sqlite, never over a file; two
-	// copies of the .mdb, since the same file reopened uses the SQLite saved from it (session cache)
+	// copies of the .mdb, since the same file reopened uses the SQLite saved from it (kept in the settings)
 	copyMDB := func(name string) string {
 		data, _ := os.ReadFile(mdb)
 		p := filepath.Join(t.TempDir(), name)
@@ -323,7 +323,7 @@ func TestConvertedSQLiteLifecycle(t *testing.T) {
 			t.Fatalf("%s not saved: %v", c.want, err)
 		}
 	}
-	// session cache: the same .mdb again opens types.sqlite, no new conversion
+	// saved conversion: the same .mdb again opens types.sqlite, no new conversion
 	if _, err := app.LoadDatabase(mdb); err != nil || app.converted != "" || app.dbManager.Source() != backend.SourceSQLite {
 		t.Fatalf("reopen: %v, converted %q, source %q", err, app.converted, app.dbManager.Source())
 	}
@@ -339,6 +339,42 @@ func TestConvertedSQLiteLifecycle(t *testing.T) {
 	app.shutdown(context.Background())
 	if _, err := os.Stat(last); !os.IsNotExist(err) {
 		t.Fatalf("converted file left after exit: %v", err)
+	}
+}
+
+// standard item 22: the SQLite saved from an Access file is kept in the settings between runs; the same unchanged file
+// opens it without converting, and a change in the Access file or in the saved SQLite converts again
+func TestSavedConversionPersists(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())         // Windows
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // Linux
+	dir := t.TempDir()
+	src, dest := filepath.Join(dir, "DB4.accdb"), filepath.Join(dir, "DB4.sqlite")
+	write := func(path, text string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(src, "access")
+	write(dest, "sqlite")
+	NewApp().rememberConversion(src, fileKey(src), dest)
+	if got := NewApp().savedConversion(src); got != dest { // a new run
+		t.Fatalf("saved conversion after restart: %q", got)
+	}
+	write(src, "access, changed") // another size: converted again, and the old entry is dropped
+	if got := NewApp().savedConversion(src); got != "" {
+		t.Fatalf("changed Access file reused %q", got)
+	}
+	if _, ok := NewApp().settings.Converted[strings.ToLower(src)]; ok {
+		t.Fatal("entry of a changed Access file kept")
+	}
+	NewApp().rememberConversion(src, fileKey(src), dest)
+	write(dest, "sqlite, changed")
+	if got := NewApp().savedConversion(src); got != "" {
+		t.Fatalf("changed SQLite reused %q", got)
+	}
+	if got := NewApp().savedConversion(filepath.Join(dir, "DB4.duckdb")); got != "" {
+		t.Fatalf("not an Access file: %q", got)
 	}
 }
 

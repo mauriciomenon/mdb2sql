@@ -42,11 +42,10 @@ type App struct {
 
 	// Access file converted to SQLite: the file (temporary until saved or deleted) and the Access file it came from
 	converted, convertedFrom string
-	convChoice               string               // "save" or "delete" remembered for this session ("" = ask)
-	convDir                  string               // folder of the last "save", used when "save" is remembered
-	convertedFromKey         string               // fileKey of the Access file converted now
-	convCache                map[string]savedConv // session cache: Access fileKey -> SQLite saved from it
-	displayWarn              *DisplayWarning      // Linux: X11 missing, running on Wayland (display.go)
+	convChoice               string          // "save" or "delete" remembered for this session ("" = ask)
+	convDir                  string          // folder of the last "save", used when "save" is remembered
+	convertedFromKey         string          // fileKey of the Access file converted now
+	displayWarn              *DisplayWarning // Linux: X11 missing, running on Wayland (display.go)
 
 	jobMu        sync.Mutex
 	cancel       context.CancelFunc // of the running load or export
@@ -238,7 +237,7 @@ func (a *App) resolveConversion(choice string) (ConversionResult, error) {
 		}
 	}
 	a.closeDatabase()
-	file := a.converted
+	file, from := a.converted, a.convertedFrom
 	a.converted, a.convertedFrom = "", ""
 	if dest == "" {
 		if err := backend.RemoveConverted(file); err != nil {
@@ -252,7 +251,7 @@ func (a *App) resolveConversion(choice string) (ConversionResult, error) {
 		return ConversionResult{Done: true}, fmt.Errorf("%s: %w", dest, err)
 	}
 	a.convDir = filepath.Dir(dest)
-	a.rememberConversion(a.convertedFromKey, dest)
+	a.rememberConversion(from, a.convertedFromKey, dest)
 	a.log("log.convertedSaved", dest)
 	return ConversionResult{Done: true, Saved: dest}, nil
 }
@@ -266,27 +265,35 @@ func fileKey(path string) string {
 	return fmt.Sprintf("%s|%d|%d", strings.ToLower(path), st.Size(), st.ModTime().UnixNano())
 }
 
-// savedConv: a SQLite saved from an Access file in this session, and its own fileKey when saved
-type savedConv struct{ dest, destKey string }
-
-func (a *App) rememberConversion(srcKey, dest string) {
-	if srcKey == "" {
+// rememberConversion keeps in the settings, between runs, the SQLite saved from an Access file: the Access file's
+// fileKey (path, size, date), the saved file and its own fileKey (standard item 22). One entry per Access file.
+func (a *App) rememberConversion(src, srcKey, dest string) {
+	if src == "" || srcKey == "" {
 		return
 	}
-	if a.convCache == nil {
-		a.convCache = map[string]savedConv{}
+	if a.settings.Converted == nil {
+		a.settings.Converted = map[string]SavedConversion{}
 	}
-	a.convCache[srcKey] = savedConv{dest, fileKey(dest)}
+	a.settings.Converted[strings.ToLower(src)] = SavedConversion{Key: srcKey, Dest: dest, DestKey: fileKey(dest)}
+	_ = a.saveSettings() // best effort: unsaved, the next run converts the file again
 }
 
-// savedConversion returns the SQLite saved in this session from this same Access file, if neither changed since
+// savedConversion returns the SQLite saved from this same Access file, in this run or an earlier one, if neither file
+// changed since; a changed one is forgotten, so the file is converted again
 func (a *App) savedConversion(src string) string {
 	if ext := strings.ToLower(filepath.Ext(src)); ext != ".accdb" && ext != ".mdb" {
 		return ""
 	}
-	if s, ok := a.convCache[fileKey(src)]; ok && s.destKey != "" && fileKey(s.dest) == s.destKey {
-		return s.dest
+	id := strings.ToLower(src)
+	s, ok := a.settings.Converted[id]
+	if !ok {
+		return ""
 	}
+	if s.Key != "" && s.Key == fileKey(src) && s.DestKey != "" && fileKey(s.Dest) == s.DestKey {
+		return s.Dest
+	}
+	delete(a.settings.Converted, id)
+	_ = a.saveSettings()
 	return ""
 }
 
@@ -496,7 +503,8 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 	a.dbName, a.dbPath = "", "" // Open closes the previous database first
 	defer a.updateTitle()       // the new file's name, or none if it failed
 	start := time.Now()
-	// the same Access file (path, size, date) saved as SQLite in this session: open that file, no new conversion
+	// the same Access file (path, size, date) saved as SQLite, in this run or an earlier one: open that file, no new
+	// conversion
 	openPath := validatedPath
 	if saved := a.savedConversion(validatedPath); saved != "" {
 		openPath = saved

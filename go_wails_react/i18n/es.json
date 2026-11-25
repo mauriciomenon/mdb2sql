@@ -127,7 +127,7 @@
   "log.copyAll": "Copiar todo",
   "log.expand": "Mostrar el log",
   "log.resize": "Arrastre para cambiar el tamaño del log",
-  "log.reused": "{0}: abierto el SQLite guardado de él en esta sesión ({1})",
+  "log.reused": "{0}: abierto el SQLite guardado de él ({1})",
   "log.staleRemoved": "{0} archivo(s) convertido(s) de una sesión anterior eliminado(s)",
   "log.title": "Log",
   "log.unread": "{0} errores o advertencias sin leer",
