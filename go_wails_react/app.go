@@ -489,6 +489,11 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 	// !T: Prevent path traversal and validate file extension
 	validatedPath, err := a.validateDatabasePath(dbPath)
 	if err != nil {
+		// a wrong path typed in the path bar: the UI has already dropped the open file, so Go closes it too and the
+		// window title loses its name (a converted SQLite still pending stays: it must be saved or deleted first)
+		if a.converted == "" {
+			a.closeDatabase()
+		}
 		return nil, err
 	}
 

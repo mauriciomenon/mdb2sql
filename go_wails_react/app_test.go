@@ -177,6 +177,13 @@ func TestLoadDatabase_ReportsRealFileNameFromEnv(t *testing.T) {
 	if len(tables) != 1 || app.DatabaseName() != "other name.duckdb" {
 		t.Fatalf("got tables %v, name %q", tables, app.DatabaseName())
 	}
+	// a wrong path typed in the path bar: the UI drops the open file, Go closes it too (title without a name)
+	if _, err := app.LoadDatabase(filepath.Join(t.TempDir(), "missing.duckdb")); err == nil {
+		t.Fatal("a missing file opened")
+	}
+	if app.DatabaseName() != "" || app.DatabasePath() != "" || app.dbManager.Source() != "" {
+		t.Fatalf("still open after a failed open: %q %q", app.DatabaseName(), app.dbManager.Source())
+	}
 }
 
 func TestValidateDatabasePath_AllowsSupportedExts(t *testing.T) {
