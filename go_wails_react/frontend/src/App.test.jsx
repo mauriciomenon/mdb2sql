@@ -2,7 +2,7 @@ import React from 'react';
 import { readFileSync } from 'node:fs';
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { vi, beforeEach } from 'vitest';
-import App, { aboutRows, clampLogHeight, columnCellWidth, filterLabel, gridText, LOG_MIN, logLine, progressText, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
+import App, { aboutRows, clampLogHeight, columnCellWidth, filterLabel, gridText, LOG_MIN, logLine, nullableText, progressText, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
 import { CATALOGS, LANGS, translate, translateN } from './i18n';
 
 const tables = ['RANGER_SOACCU', 'RANGER_SOGEN'];
@@ -78,13 +78,18 @@ describe('App IPC flow', () => {
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenCalledWith('C:\\data\\real.duckdb'));
     expect(await screen.findByText(/Loaded: real\.duckdb \(2 tables\)/)).toBeInTheDocument();
 
-    fireEvent.click(await screen.findByRole('tab', { name: /Schema \(2\)/ }));
+    // standard item 15: the tab says "Schema" without the column count; the nullability values are translated
+    fireEvent.click(await screen.findByRole('tab', { name: 'Schema' }));
     expect(screen.getByText('INTEGER')).toBeInTheDocument();
-    // titles from the catalog (never a value or "null"); the nullability values as Go sends them
     const schemaTable = screen.getByRole('columnheader', { name: 'Nullable' }).closest('table');
     expect([...schemaTable.querySelectorAll('th')].map((th) => th.textContent)).toEqual(['Column', 'Type', 'Nullable']);
-    expect([...schemaTable.querySelectorAll('tbody tr')].map((tr) => tr.lastChild.textContent)).toEqual(['NO', 'YES']);
-    expect(schemaTable.className).toBe('schema'); // wider cell padding than the data grid (App.css)
+    expect([...schemaTable.querySelectorAll('tbody tr')].map((tr) => tr.lastChild.textContent)).toEqual(['No', 'Yes']);
+    expect(schemaTable.className).toBe('schema'); // 6 px more on each side than the data grid (App.css)
+    const pt = (key, ...args) => translate('pt-BR', key, ...args);
+    const es = (key, ...args) => translate('es', key, ...args);
+    expect(['YES', 'NO'].map((v) => nullableText(v, pt))).toEqual(['Sim', 'Não']);
+    expect(['YES', 'NO'].map((v) => nullableText(v, es))).toEqual(['Sí', 'No']);
+    expect(pt('tab.schema')).toBe('Esquema');
   });
 
   // standard item 1: the path bar of Zig (field + Browse... Open Export...); a file dropped on the window opens
@@ -1195,7 +1200,7 @@ describe('language catalogs', () => {
 
   it('hold every key the screen uses', () => {
     const used = [...source.matchAll(/\btn?\(\s*'([^']+)'/g)].map((m) => m[1]);
-    used.push(...['system', 'light', 'dark'].map((th) => `theme.${th}`), ...LANGS.map((l) => `lang.${l}`), 'scope.table', 'scope.all');
+    used.push(...['system', 'light', 'dark'].map((th) => `theme.${th}`), ...LANGS.map((l) => `lang.${l}`), 'scope.table', 'scope.all', 'tab.data', 'tab.schema', 'tab.sql');
     expect(used.length).toBeGreaterThan(80);
     expect(used.filter((k) => !(k in CATALOGS.en))).toEqual([]);
   });

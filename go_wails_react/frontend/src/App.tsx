@@ -106,6 +106,9 @@ export const withFilter = (filters: Filter[], f: Filter) => [...filters.filter((
 
 export const cellText = (v: unknown) => String(v ?? '');
 
+// Schema > Nullable: Go sends YES/NO; shown translated (Sim/Nao, Si/No, Yes/No)
+export const nullableText = (v: string, t: T) => (v === 'YES' ? t('schema.yes') : v === 'NO' ? t('schema.no') : v);
+
 // Text a grid cell shows: NULL as nullText (Settings > Show NULL: "NULL" or empty); copy and search use cellText
 export const gridText = (v: unknown, nullText: string) => (v === null || v === undefined ? nullText : String(v));
 
@@ -827,7 +830,7 @@ function App() {
   const nullText = showNull ? t('cell.null') : '';
   // log collapsed: the most important unread line (error, then warning) takes the status bar
   const shownStatus = logOpen ? { text: error || status, level: error ? 'error' : 'info', unread: 0 } : statusLine(logLines, readMark, status, error);
-  const viewName = (v: View) => (v === 'data' ? t('tab.data') : v === 'schema' ? t('tab.schema', schema.length) : t('tab.sql'));
+  const viewName = (v: View) => t(`tab.${v}`); // "Esquema" without the column count (standard item 15)
 
   latest.current = {
     ...{ openPath, loadDatabase, quit },
@@ -1213,7 +1216,7 @@ function App() {
                       <tr key={col.name}>
                         <td>{col.name}</td>
                         <td>{col.type}</td>
-                        <td>{col.null}</td>
+                        <td>{nullableText(col.null, t)}</td>
                       </tr>
                     ))}
                   </tbody>
