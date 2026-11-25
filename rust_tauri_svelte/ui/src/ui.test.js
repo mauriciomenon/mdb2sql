@@ -156,12 +156,15 @@ test('top bar: path field, Browse..., Open, Export... and drag and drop', () => 
   assert.deepEqual(buttonLabels(header), ['Browse...', 'Open', 'Export...']);
   assert.ok(header.indexOf('id="db-path"') < header.indexOf("t('header.browse')"));
   assert.match(header, /aria-label=\{t\('header\.database'\)\}/);
-  assert.match(header, /<span class="path-view" aria-hidden="true"><bdi>\{dbPath\}<\/bdi><\/span>/);
+  assert.match(header, /<span class="path-view" aria-hidden="true"><bdi dir="ltr">\{dbPath\}<\/bdi><\/span>/);
   const code = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
   const view = code.match(/\n {2}\.path-view \{([^}]*)\}/)[1];
   assert.match(view, /direction: rtl;[\s\S]*text-overflow: ellipsis;[\s\S]*white-space: nowrap;/);
   assert.match(code, /\.path input\.elided \{\s*color: transparent;/);
-  assert.match(code, /onDragDropEvent\(\(\{ payload \}\) => \{\s*if \(payload\.type !== 'drop'[^\n]*\n\s*dbPath = payload\.paths\[0\];\s*openDatabase\(\);/);
+  assert.match(code, /onDragDropEvent\(\(\{ payload \}\) => \{\s*if \(payload\.type !== 'drop'[^\n]*\n\s*openDatabase\(null, payload\.paths\[0\]\);/);
+  // arquivo escolhido ou arrastado so vai para o campo depois da pergunta do SQLite convertido (Cancelar nao o mostra)
+  assert.match(appFunction('openDatabase'), /const path = \(chosen \?\? dbPath\)\.trim\(\)[^\n]*\n\s*if \(!\(await settleConverted\(\)\)\) return;\s*dbPath = path;/);
+  assert.match(appFunction('browse'), /await openDatabase\(null, String\(picked\)\);/);
   assert.equal(en['header.open'], 'Open');
 });
 

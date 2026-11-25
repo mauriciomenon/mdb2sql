@@ -305,8 +305,7 @@
       // arquivo arrastado para a janela: abre (o primeiro, se vierem varios); nada com dialogo aberto ou trabalho em curso
       getCurrentWebview().onDragDropEvent(({ payload }) => {
         if (payload.type !== 'drop' || !payload.paths?.length || busy || document.querySelector('dialog[open]')) return;
-        dbPath = payload.paths[0];
-        openDatabase();
+        openDatabase(null, payload.paths[0]);
       }),
     ];
     // Linux sem X11 (janela no Wayland de reserva): aviso a cada abertura, enquanto a condicao existir
@@ -443,11 +442,14 @@
   }
 
   // NIVEL BASICO: Abre o banco; caminho vazio usa MDB2SQL_DB_PATH ou data/sample.duckdb
-  async function openDatabase(event) {
+  // chosen: arquivo do dialogo Abrir ou arrastado para a janela; o campo so passa a mostra-lo depois da pergunta do SQLite
+  // convertido (Cancelar deixa o campo com o arquivo que continua aberto)
+  async function openDatabase(event, chosen) {
     event?.preventDefault();
     // "Copiar como caminho" do Windows cola o caminho entre aspas
-    const path = dbPath.trim().replace(/^"(.*)"$/, '$1');
+    const path = (chosen ?? dbPath).trim().replace(/^"(.*)"$/, '$1');
     if (!(await settleConverted())) return;
+    dbPath = path;
     busy = true;
     showStatus('status.opening');
     try {
@@ -520,8 +522,7 @@
         },
       });
       if (!picked) return; // cancelado
-      dbPath = String(picked);
-      await openDatabase();
+      await openDatabase(null, String(picked));
     } catch (err) {
       showError(err);
     }
@@ -998,7 +999,7 @@
         />
         {#if !pathFocused && dbPath}
           <!-- caminho maior que o campo perde o comeco (com ...), nunca o nome do arquivo (ElideLeft do Zig) -->
-          <span class="path-view" aria-hidden="true"><bdi>{dbPath}</bdi></span>
+          <span class="path-view" aria-hidden="true"><bdi dir="ltr">{dbPath}</bdi></span>
         {/if}
       </div>
       <button type="button" class="secondary" onclick={browse} disabled={busy}>{t('header.browse')}</button>
