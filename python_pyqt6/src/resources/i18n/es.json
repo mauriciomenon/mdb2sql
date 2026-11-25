@@ -118,7 +118,7 @@
   "filters.many": "Filtros:",
   "filters.remove": "Quitar este filtro",
   "filters.remove_name": "Quitar filtro {filter}",
-  "columns.title": "Columnas",
+  "columns.title": "Columnas de {table}",
   "columns.search": "Buscar columna",
   "columns.visible": "Columnas visibles",
   "columns.show_all": "Mostrar todas",

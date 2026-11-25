@@ -68,7 +68,7 @@ def test_version_from_frozen_bundle(tmp_path, monkeypatch) -> None:
 def test_every_dialog_has_an_explicit_default_button_and_esc_closes(qtbot) -> None:
     # REGRA_VISUAL: botao explicito (OK/Fechar), Enter = botao padrao, Esc = fechar; nunca so o X
     _, notice = decide({"WAYLAND_DISPLAY": "wayland-0"}, "ID=debian\n", [])
-    for dialog, label in ((AboutDialog(), "OK"), (ColumnsDialog(["a"], set()), "Close"),
+    for dialog, label in ((AboutDialog(), "OK"), (ColumnsDialog("t", ["a"], set()), "Close"),
                           (DisplayWarning(notice), "OK")):
         qtbot.addWidget(dialog)
         dialog.show()

@@ -474,6 +474,7 @@ def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None
 
     window.columns_button.click()
     dialog = window.findChild(ColumnsDialog)
+    assert dialog.windowTitle() == "Columns of people"  # "Colunas de <tabela>" nas 4 versoes
     assert [dialog.list.item(i).text() for i in range(3)] == ["id", "name", "score"]
     dialog.set_all(False)  # "Ocultar todas": vale na hora; a primeira fica (sempre ao menos uma visivel)
     assert _hidden(window) == [False, True, True]
@@ -504,7 +505,7 @@ def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None
 
 
 def test_columns_dialog_checks_all_selected_rows(qtbot) -> None:
-    dialog = ColumnsDialog(["a", "b", "c", "d"], {"d"})
+    dialog = ColumnsDialog("t", ["a", "b", "c", "d"], {"d"})
     qtbot.addWidget(dialog)
     for row in (0, 1):
         dialog.list.item(row).setSelected(True)
@@ -524,12 +525,12 @@ def test_columns_dialog_checks_all_selected_rows(qtbot) -> None:
 
 def test_columns_dialog_keeps_one_column_visible(qtbot) -> None:
     # igual nas 4 versoes: nenhum caminho deixa a grade sem colunas
-    dialog = ColumnsDialog(["only"], set())
+    dialog = ColumnsDialog("t", ["only"], set())
     qtbot.addWidget(dialog)
     dialog.set_all(False)  # "Ocultar todas" numa tabela de uma coluna
     assert dialog.hidden() == set()
 
-    dialog = ColumnsDialog(["a", "b", "c"], set())
+    dialog = ColumnsDialog("t", ["a", "b", "c"], set())
     qtbot.addWidget(dialog)
     dialog.set_all(False)
     assert dialog.hidden() == {"b", "c"}  # a primeira listada fica
@@ -552,7 +553,7 @@ def test_columns_dialog_grid_is_proportional(qtbot) -> None:
     shown = []
     for size in (QSize(1200, 800), QSize(1920, 1040)):
         parent.resize(size)
-        dialog = ColumnsDialog(names, set(), parent)
+        dialog = ColumnsDialog("t", names, set(), parent)
         dialog.show()
         qtbot.waitExposed(dialog)
         assert 420 <= dialog.width() <= 900 and dialog.width() == min(900, round(size.width() * 0.65))
@@ -565,7 +566,7 @@ def test_columns_dialog_grid_is_proportional(qtbot) -> None:
         dialog.close()
     assert shown[0] <= shown[1]
 
-    dialog = ColumnsDialog(names, set(), parent)
+    dialog = ColumnsDialog("t", names, set(), parent)
     dialog.show()
     dialog.resize(420, 400)  # redimensionar recalcula a grade
     qtbot.waitUntil(lambda: dialog.columns_shown <= 2, timeout=2000)
@@ -586,6 +587,7 @@ def test_header_menu_fits_hides_and_shows_columns(qtbot, window: MainWindow) -> 
     assert all(a.isCheckable() and a.isChecked() for a in menu.actions()[-3:])  # marca = visivel
     assert not _header_action(window, -1, "Size column to fit").isEnabled()  # clique fora de uma coluna
     assert not _header_action(window, -1, "Hide this column").isEnabled()
+    assert not _header_action(window, 2, "Show all columns").isEnabled()  # nenhuma oculta (igual nas 4)
 
     # ajustar uma e todas: largura volta ao texto mais longo; a ordenacao escolhida fica
     table = window.data_table
@@ -607,6 +609,7 @@ def test_header_menu_fits_hides_and_shows_columns(qtbot, window: MainWindow) -> 
     assert _hidden(window) == [True, False, True]
     assert not _header_action(window, 1, "name").isEnabled()
     assert not _header_action(window, 1, "Hide this column").isEnabled()
+    assert _header_action(window, 1, "Show all columns").isEnabled()
     _header_action(window, 1, "id").trigger()  # clicar numa oculta mostra de novo
     assert _hidden(window) == [False, False, True]
     _header_action(window, 0, "Show all columns").trigger()

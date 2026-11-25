@@ -1301,7 +1301,8 @@ class MainWindow(QMainWindow):
             if open_dialog.isVisible():  # um dialogo so, mesmo com pedido repetido
                 open_dialog.raise_()
                 return
-        dialog = ColumnsDialog(self.table_model.columns, self.hidden_columns, self)
+        table = self.loaded_table[0] if self.loaded_table else ""
+        dialog = ColumnsDialog(table, self.table_model.columns, self.hidden_columns, self)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.hiddenChanged.connect(self.set_hidden_columns)  # vale na hora; Fechar so fecha
         dialog.open()
@@ -1327,7 +1328,8 @@ class MainWindow(QMainWindow):
         hide.setEnabled(on_column and not last)
         if view is self.data_table:
             menu.addAction(self.columns_action)
-        menu.addAction(tr("columns.show_all_columns"), lambda: self._set_hidden(view, set()))
+        # sem coluna oculta nao ha o que mostrar (igual nas 4 versoes)
+        menu.addAction(tr("columns.show_all_columns"), lambda: self._set_hidden(view, set())).setEnabled(bool(hidden))
         menu.addSeparator()
         for name in names:
             # "&" no nome da coluna e texto, nao atalho
