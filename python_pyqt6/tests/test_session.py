@@ -186,7 +186,7 @@ def test_log_panel_keeps_the_messages_and_copies(qtbot, people_db: Path) -> None
     win.log_action.trigger()
     assert win.log_dock.isVisible()
     lines = win.log_view.toPlainText().splitlines()
-    assert re.fullmatch(r"\d\d:\d\d:\d\d  Loading: people\.duckdb", lines[0])
+    assert re.fullmatch(r"\d\d:\d\d:\d\d  Opening: people\.duckdb", lines[0])
     assert lines[1].endswith("Loaded: people.duckdb (2 tables)")
     assert win.log_view.isReadOnly()  # selecionavel; Ctrl+C do proprio campo
 
@@ -259,8 +259,8 @@ def test_language_applies_at_once_and_is_saved(qtbot, people_db: Path) -> None:
                                                                "Aj&uda"]
         assert win.open_action.text() == "&Abrir..." and win.browse_button.text() == "Procurar..."
         assert win.tabs.tabText(0) == "Dados" and win.tables_dock.windowTitle() == "Tabelas"
-        assert win.table_list.headerItem().text(1) == "Linhas" and win.limit_label.text() == "&Linhas:"
-        assert win.search_edit.placeholderText() == "Pesquisar na tabela (Ctrl+F)"
+        assert win.table_list.headerItem().text(1) == "Linhas" and win.limit_label.text() == "&Linhas"
+        assert win.search_edit.placeholderText() == "Pesquisar na tabela inteira"
         assert win.info_label.text() == "empty_table: mostrando 0 de 0 linhas"  # a barra da tabela tambem
         assert win.reader_label.text() == "Aberto via DuckDB"
         assert [win.schema_model.headerData(c, Qt.Orientation.Horizontal) for c in range(3)] == [
@@ -277,6 +277,24 @@ def test_language_applies_at_once_and_is_saved(qtbot, people_db: Path) -> None:
     finally:
         win.set_language("en")  # os textos do Qt (qtbase) voltam ao ingles para os outros testes
     assert win.menuBar().actions()[0].text() == "&File" and win.info_label.text() == "empty_table: showing 0 of 0 rows"
+
+
+# nomes proprios e siglas que podem vir com maiuscula no meio da frase
+PROPER = {"SQLite", "DuckDB", "Excel", "CSV", "UTF-8", "Access", "ODBC", "SQL", "NULL", "X11", "Wayland", "DISPLAY",
+          "WAYLAND_DISPLAY", "GPL", "Ctrl+O", "Ctrl+F", "Ctrl+L", "Ctrl+Enter", "Enter", "F5", "Windows", "Brasil",
+          "MDB2SQL_ACCESS_READER", "Log", "X"}
+
+
+def test_texts_have_no_title_case() -> None:
+    # igual nas 4 versoes (redacao do Go): so a primeira palavra com maiuscula ("Abrir banco", nao "Abrir Banco")
+    title_case = []
+    for code in i18n.LANGUAGES:
+        for key, text in i18n.catalog(code).items():
+            words = [w.rstrip(".") for w in re.findall(r"[\w+./-]+", text.replace("&", "")) if w.rstrip(".")]
+            capitals = [w for w in words[1:] if w[0].isupper() and w not in PROPER and not w.isupper()]
+            if capitals and not key.startswith("language."):
+                title_case.append((code, key, text))
+    assert title_case == []
 
 
 def _placeholders(text: str) -> set[str]:

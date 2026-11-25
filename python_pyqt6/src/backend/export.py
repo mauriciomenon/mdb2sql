@@ -233,7 +233,7 @@ def export_result(
             for rows in _chunks(cursor):
                 yield rows
                 written += len(rows)
-                progress(written, 0, tr("export.rows", count=num(written)))
+                progress(written, 0, tr("export.rows_one" if written == 1 else "export.rows", count=num(written)))
 
         if suffix == ".csv":
             # utf-8-sig: BOM para o Excel reconhecer UTF-8

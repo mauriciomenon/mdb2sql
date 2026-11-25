@@ -708,7 +708,7 @@ def _reloaded(qtbot, win: MainWindow, action) -> None:
 
 def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None:
     _select_table(qtbot, window, "people")
-    assert window.columns_button.toolTip() == "Exports always write every column"
+    assert window.columns_button.toolTip() == "Search and export use every column"
 
     window.columns_button.click()
     dialog = window.findChild(ColumnsDialog)

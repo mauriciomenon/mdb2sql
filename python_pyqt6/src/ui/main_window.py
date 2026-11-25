@@ -490,7 +490,7 @@ class MainWindow(QMainWindow):
         # barra da aba Data: pesquisa (Ctrl+F) com Esta tabela | Todas as tabelas junto ao campo e Colunas...
         self.search_edit = QLineEdit()
         self._t(self.search_edit.setPlaceholderText, "search.placeholder")
-        self._t(self.search_edit.setToolTip, "tip.words")
+        self._t(self.search_edit.setToolTip, "tip.search")
         self.search_edit.setClearButtonEnabled(True)
         self._t(self.search_edit.setAccessibleName, "search.name")
         self._fit_search_minimum()
@@ -1853,7 +1853,7 @@ class MainWindow(QMainWindow):
             if count is None:
                 finished(tr("export.cancelled", name=out.name), warning=True)
             else:
-                finished(tr(f"export.done_{unit}", count=num(count), path=out))  # type: ignore[arg-type]
+                finished(counted(f"export.done_{unit}", count, path=out))  # type: ignore[arg-type]
 
         def run(report):
             try:
