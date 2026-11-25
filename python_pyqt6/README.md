@@ -57,8 +57,8 @@ Left panel: list of tables with a filter box (Ctrl+T goes to the list); all word
 Names are never cut: the panel opens as wide as the longest name (up to 35% of the window, then it scrolls).
 Tabs:
 
-- **Data** (Ctrl+1): first rows of the selected table; "Rows" in the toolbar sets how many (100 by default, 1,000,
-  10,000). Click a header to sort the loaded rows (numbers sort as numbers; third click returns to the original
+- **Data** (Ctrl+1): first rows of the selected table; "Rows" in the toolbar sets how many (100 by default, 500,
+  1000). Click a header to sort the loaded rows (numbers sort as numbers; third click returns to the original
   order). Search box (Ctrl+F) searches the **whole table in the database**, not only the loaded rows: a row stays
   when one of its cells has all the words typed, in any order, ignoring case and accents (`tension de campo`
   finds `EXCITACIÓN TENSIÓN DE CAMPO`; words that are only in different cells do not match; `tensao` does not find
@@ -160,7 +160,7 @@ the same files made by another converter as reference.
   Access file must be in the Windows ANSI code page.
 - SQLite stores decimals as REAL: values with more than 15 significant digits lose the last digits (Access Currency
   up to 100 billion with 4 decimals is exact). The program shows them again as DECIMAL(p,s).
-- Sort works on the loaded rows (100 by default, at most 10,000); search and filters run on the whole table.
+- Sort works on the loaded rows (100 by default, at most 1000); search and filters run on the whole table.
 - The SQL tab works on the open copy: on Access, the converted SQLite is read-only and new tables go to memory
   (they are not saved; they do go into an export). DuckDB and SQLite files are opened read-only.
 - Excel limits: text longer than 32,767 characters is cut; dates before 1900 are written as text.

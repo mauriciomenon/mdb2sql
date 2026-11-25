@@ -224,7 +224,7 @@ def test_language_is_saved_and_applies_on_next_start(qtbot) -> None:
         "&Arquivo", "&Editar", "E&xibir", "&Configurações", "Aj&uda"
     ]
     assert again.language_actions["pt_BR"].isChecked() and again.empty_label.text() == "Nenhum banco aberto"
-    assert again.limit_combo.itemText(2) == "10.000"
+    assert [again.limit_combo.itemText(i) for i in range(3)] == ["100", "500", "1000"]  # o mesmo texto nas 4
 
 
 def _placeholders(text: str) -> set[str]:

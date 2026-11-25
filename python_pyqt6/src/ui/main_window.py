@@ -67,9 +67,9 @@ from shared.tsv import rows_to_tsv
 from ui.dialogs import AboutDialog, ColumnsDialog
 from ui.table_model import COPY_ROLE, SORT_ROLE, TableModel, fold, search_words
 
-# shortcut: search and sort run in the UI thread over the loaded rows, so the limit stops at 10 000;
-# move search to SQL in the backend when bigger limits are needed
-ROW_LIMITS = (100, 1_000, 10_000)
+# linhas carregadas da tabela e do resultado SQL: 100 / 500 / 1000 nas 4 versoes (a pesquisa e os filtros vao no
+# banco, alem delas; ordenar e medir as colunas rodam na thread da tela sobre as carregadas)
+ROW_LIMITS = (100, 500, 1000)
 MAX_COLUMN_WIDTH = 1200  # trava de seguranca: abaixo disso nenhum valor nem nome de coluna e cortado
 LOG_LINES = 5000
 SEARCH_DELAY_MS = 300
@@ -609,7 +609,7 @@ class MainWindow(QMainWindow):
         self.limit_combo.setAccessibleName(tr("rows.name"))
         self.limit_combo.setToolTip(tr("tip.rows"))
         for limit in ROW_LIMITS:
-            self.limit_combo.addItem(num(limit), limit)
+            self.limit_combo.addItem(str(limit), limit)  # 100 / 500 / 1000, sem separador (igual nas 4 versoes)
         self.limit_combo.currentIndexChanged.connect(self.reload_table)
         limit_label = QLabel(f" {tr('rows.label')} ")
         limit_label.setBuddy(self.limit_combo)
