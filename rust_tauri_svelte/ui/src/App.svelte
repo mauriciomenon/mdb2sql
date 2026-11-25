@@ -114,6 +114,8 @@
   let progressDialog;
   let progress = $state.raw(null); // { label, done, total, item } da exportacao em andamento
   let convertDialog;
+  let rowsDialog;
+  let rowsAsk = $state.raw(null); // { label, resolve } da pergunta tabela inteira / so as linhas encontradas
   let x11Dialog;
   let x11 = $state.raw(null); // Linux sem X11: { missing, display, distro, command, link } (backend display.rs)
 
@@ -733,12 +735,35 @@
     }
   }
 
+  // NIVEL BASICO: Exportar a tabela com pesquisa ou filtro ativo: 'all' (tabela inteira), 'found' (so as linhas
+  // encontradas) ou null (Cancelar, Esc)
+  function askRows(label) {
+    return new Promise((resolve) => {
+      rowsAsk = { label, resolve };
+      rowsDialog.showModal();
+      rowsDialog.querySelector('button.default').focus();
+    });
+  }
+
+  function rowsReply(choice) {
+    rowsDialog.close();
+    rowsAsk?.resolve(choice);
+    rowsAsk = null;
+  }
+
   // NIVEL BASICO: Pergunta onde salvar (pasta do arquivo aberto, senao a ultima usada) e exporta
   // fora da thread da interface, com barra de progresso e Cancelar
   async function startExport(scope, format, labelKey) {
     openMenu = null;
     if (!canExport(scope)) return;
     const label = t(labelKey).replace(/\.\.\.$/, '');
+    // tabela com pesquisa ou filtro na grade (as 4 versoes): a tabela inteira ou so as linhas encontradas
+    let rows = { filters: [], search: '' };
+    if (scope === 'table' && !everywhere && (search.trim() || filters.length)) {
+      const choice = await askRows(label);
+      if (!choice) return; // Cancelar ou Esc
+      if (choice === 'found') rows = { filters, search: search.trim() };
+    }
     const base = scope === 'database' ? stem(openedPath) : scope === 'table' ? selectedTable : 'query';
     const dir = defaultSaveDir(openedPath, loadSetting(LAST_DIR_KEY));
     try {
@@ -755,7 +780,7 @@
       progressDialog.showModal();
       await tick();
       progressDialog.querySelector('button.default')?.focus();
-      const done = await invoke('export', { scope, format, path, table: selectedTable || null, sql: lastSql || null });
+      const done = await invoke('export', { scope, format, path, table: selectedTable || null, sql: lastSql || null, ...rows });
       // tabelas (banco inteiro) ou linhas (tabela, SQL), com o numero de abas se foi Excel; plural pelo numero
       const unit = scope === 'database' ? 'Tables' : 'Rows';
       const values = { count: fmt(done.count), sheets: fmt(done.sheets ?? 0), path };
@@ -1055,6 +1080,24 @@
       <button type="button" class="save" onclick={() => reply('save')}>{t('convert.save')}</button>
       <button type="button" class="secondary" onclick={() => reply('delete')}>{t('convert.delete')}</button>
       <button type="button" class="secondary close" onclick={() => reply('cancel')}>{t('common.cancel')}</button>
+    </div>
+  </dialog>
+
+  <!-- exportar a tabela com pesquisa ou filtro ativo: a tabela inteira ou so as linhas encontradas (Esc = Cancelar) -->
+  <dialog
+    bind:this={rowsDialog}
+    class="ask"
+    aria-labelledby="rows-title"
+    oncancel={(e) => {
+      e.preventDefault();
+      rowsReply(null);
+    }}
+  >
+    <h2 id="rows-title">{rowsAsk?.label}</h2>
+    <div class="actions">
+      <button type="button" class="default" onclick={() => rowsReply('all')}>{t('export.wholeTable')}</button>
+      <button type="button" class="secondary" onclick={() => rowsReply('found')}>{t('export.foundRows', { count: fmt(matchCount) })}</button>
+      <button type="button" class="secondary close" onclick={() => rowsReply(null)}>{t('common.cancel')}</button>
     </div>
   </dialog>
 
@@ -1951,6 +1994,15 @@
 
   dialog.x11 .actions a {
     color: var(--accent);
+  }
+
+  /* exportar a tabela inteira ou so as linhas encontradas: o nome da exportacao e as escolhas numa linha */
+  dialog.ask {
+    width: 460px;
+  }
+
+  dialog.ask .actions {
+    margin-top: 16px;
   }
 
   /* pergunta do SQLite convertido: titulo, nome do arquivo, lembrar, botoes alinhados */

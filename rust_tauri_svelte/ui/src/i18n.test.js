@@ -105,6 +105,10 @@ test('counts agree in number', () => {
   assert.equal(en('sql.summary', { rows: '100+', columns: 1 }), '100+ rows, 1 column');
   assert.equal(es('found.summary', { count: 1 }), '1 tabla con filas encontradas');
   assert.equal(pt('status.exportedRowsSheets', { count: 1, sheets: 1, path: 'x' }), '1 linha exportada em 1 aba para x');
+  assert.equal(pt('export.foundRows', { count: '1' }), 'Só a 1 linha encontrada');
+  assert.equal(pt('export.foundRows', { count: '1.234' }), 'Só as 1.234 linhas encontradas');
+  assert.equal(es('export.foundRows', { count: 1 }), 'Solo la 1 fila encontrada');
+  assert.equal(en('export.foundRows', { count: 2 }), 'Only the 2 rows found');
   for (const [code, catalog] of Object.entries(CATALOGS)) {
     for (const [key, text] of Object.entries(catalog)) {
       for (const [marker, name] of text.matchAll(/\{(\w+)\|[^}]*\}/g)) {

@@ -31,9 +31,12 @@ pub struct Summary {
     pub sheets: Option<usize>,
 }
 
-// NIVEL BASICO: O que exportar na exportacao de uma fonte so: tabela atual ou resultado do SQL
+// NIVEL BASICO: O que exportar na exportacao de uma fonte so: tabela atual, so as linhas dela que a pesquisa e os
+// filtros da aba Data acharam, ou resultado do SQL
 pub enum Source {
     Table(String),
+    // tabela, " WHERE ..." (de DBManager::rows_where) e os parametros dele: valores e palavras nunca vao no texto do SQL
+    Rows(String, String, Vec<duckdb::types::Value>),
     Sql(String),
 }
 
@@ -41,13 +44,21 @@ impl Source {
     fn select(&self) -> String {
         match self {
             Source::Table(t) => format!("SELECT * FROM {}", ident(t)),
+            Source::Rows(t, filter, _) => format!("SELECT * FROM {}{filter}", ident(t)),
             Source::Sql(s) => s.trim().trim_end_matches(';').to_string(),
+        }
+    }
+
+    fn params(&self) -> &[duckdb::types::Value] {
+        match self {
+            Source::Rows(_, _, params) => params,
+            _ => &[],
         }
     }
 
     fn sheet_base(&self) -> &str {
         match self {
-            Source::Table(t) => t,
+            Source::Table(t) | Source::Rows(t, _, _) => t,
             Source::Sql(_) => "Result",
         }
     }
@@ -154,12 +165,14 @@ fn write_cell(ws: &mut Worksheet, row: u32, col: u16, value: ValueRef, date: &Fo
 
 // NIVEL BASICO: Resultado de um SELECT em abas: cabecalho na 1a linha, nova aba "<nome> (2)" a cada
 // max_rows linhas de dados. Devolve (nome da aba, linhas de dados) de cada aba criada.
+#[allow(clippy::too_many_arguments)] // os parametros do SELECT vao junto com ele
 pub(crate) fn write_sheets(
     wb: &mut Workbook,
     namer: &mut SheetNamer,
     conn: &Connection,
     base: &str,
     select: &str,
+    params: &[duckdb::types::Value],
     max_rows: usize,
     tick: &mut dyn FnMut() -> Result<(), String>,
 ) -> Result<Vec<(String, usize)>, String> {
@@ -167,7 +180,7 @@ pub(crate) fn write_sheets(
     let date = Format::new().set_num_format("yyyy-mm-dd");
     let datetime = Format::new().set_num_format("yyyy-mm-dd hh:mm:ss");
     let mut stmt = conn.prepare(select).map_err(|e| format!("{base}: {e}"))?;
-    let mut rows = stmt.query([]).map_err(|e| format!("{base}: {e}"))?;
+    let mut rows = stmt.query(duckdb::params_from_iter(params)).map_err(|e| format!("{base}: {e}"))?;
     let names = rows.as_ref().map(|s| s.column_names()).unwrap_or_default();
 
     let mut sheets: Vec<(String, usize)> = Vec::new();
@@ -211,12 +224,18 @@ fn csv_field(text: &str) -> String {
 }
 
 // NIVEL BASICO: CSV em UTF-8 com BOM (o Excel reconhece acentos), separador virgula, linhas CRLF
-fn write_csv(conn: &Connection, select: &str, path: &Path, tick: &mut dyn FnMut() -> Result<(), String>) -> Result<usize, String> {
+fn write_csv(
+    conn: &Connection,
+    select: &str,
+    params: &[duckdb::types::Value],
+    path: &Path,
+    tick: &mut dyn FnMut() -> Result<(), String>,
+) -> Result<usize, String> {
     let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
     let mut out = std::io::BufWriter::new(file);
     let io = |e: std::io::Error| e.to_string();
     let mut stmt = conn.prepare(select).map_err(|e| e.to_string())?;
-    let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+    let mut rows = stmt.query(duckdb::params_from_iter(params)).map_err(|e| e.to_string())?;
     let names = rows.as_ref().map(|s| s.column_names()).unwrap_or_default();
     let header: Vec<String> = names.iter().map(|n| csv_field(n)).collect();
     write!(out, "\u{FEFF}{}\r\n", header.join(",")).map_err(io)?;
@@ -286,7 +305,7 @@ pub fn export_database(conn: &Connection, format: &str, path: &Path, progress: P
             for (i, t) in tables.iter().enumerate() {
                 progress(i, n, t)?;
                 let select = format!("SELECT * FROM {}", ident(t));
-                sheets += write_sheets(&mut wb, &mut namer, conn, t, &select, EXCEL_MAX_DATA_ROWS, &mut || progress(i, n, t))?.len();
+                sheets += write_sheets(&mut wb, &mut namer, conn, t, &select, &[], EXCEL_MAX_DATA_ROWS, &mut || progress(i, n, t))?.len();
             }
             progress(n, n, "[[progress.saving]]")?;
             wb.save(partial).map_err(xlsx_err)?;
@@ -302,12 +321,13 @@ pub fn export_source(conn: &Connection, source: &Source, format: &str, path: &Pa
     let select = source.select();
     progress(0, 1, &base)?;
     via_partial(path, |partial| match format {
-        "csv" => write_csv(conn, &select, partial, &mut || progress(0, 1, &base)).map(|rows| Summary { count: rows, sheets: None }),
+        "csv" => write_csv(conn, &select, source.params(), partial, &mut || progress(0, 1, &base))
+            .map(|rows| Summary { count: rows, sheets: None }),
         "xlsx" => {
             let mut wb = Workbook::new();
-            let sheets = write_sheets(&mut wb, &mut SheetNamer::default(), conn, &base, &select, EXCEL_MAX_DATA_ROWS, &mut || {
-                progress(0, 1, &base)
-            })?;
+            let mut tick = || progress(0, 1, &base);
+            let sheets =
+                write_sheets(&mut wb, &mut SheetNamer::default(), conn, &base, &select, source.params(), EXCEL_MAX_DATA_ROWS, &mut tick)?;
             progress(1, 1, "[[progress.saving]]")?;
             wb.save(partial).map_err(xlsx_err)?;
             let rows: usize = sheets.iter().map(|s| s.1).sum();

@@ -111,7 +111,9 @@ e **Exit** (`Ctrl+Q`).
     O mesmo vale para o SQLite convertido do Access.
   - **Database to Excel (.xlsx, one sheet per table)**: uma aba por tabela (nome sem `[ ] : * ? / \`, ate 31
     caracteres, repetidos ganham `~2`); tabela com mais de 1.048.575 linhas continua em `<nome> (2)`...
-  - **Current table to CSV / Excel** (tabela inteira) e **SQL result to CSV / Excel** (roda de novo o ultimo SQL).
+  - **Current table to CSV / Excel** (tabela inteira; com pesquisa ou filtro na aba Data o app pergunta **Whole
+    table** ou **Only the N rows found**) e **SQL result to CSV / Excel** (roda de novo o ultimo SQL; arquivo
+    sugerido `query.csv` / `query.xlsx`).
   - CSV: UTF-8 com BOM, virgula, aspas quando precisa, NULL vazio, datas `AAAA-MM-DD HH:MM:SS`.
   - O dialogo de salvar abre na pasta do banco aberto e nao sugere o proprio arquivo; gravar por cima do banco aberto
     e recusado. A exportacao roda em segundo plano com barra de progresso e **Cancel**; o arquivo e gravado numa

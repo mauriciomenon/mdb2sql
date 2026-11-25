@@ -305,9 +305,9 @@ mod tests {
         let mut wb = rust_xlsxwriter::Workbook::new();
         let mut namer = SheetNamer::default();
         let mut tick = || Ok(());
-        let sheets = export::write_sheets(&mut wb, &mut namer, &conn, "big", "SELECT * FROM big", 2, &mut tick).unwrap();
+        let sheets = export::write_sheets(&mut wb, &mut namer, &conn, "big", "SELECT * FROM big", &[], 2, &mut tick).unwrap();
         assert_eq!(sheets, [("big".to_string(), 2), ("big (2)".to_string(), 2), ("big (3)".to_string(), 1)]);
-        let sheets = export::write_sheets(&mut wb, &mut namer, &conn, "empty", "SELECT * FROM empty", 2, &mut tick).unwrap();
+        let sheets = export::write_sheets(&mut wb, &mut namer, &conn, "empty", "SELECT * FROM empty", &[], 2, &mut tick).unwrap();
         assert_eq!(sheets, [("empty".to_string(), 0)]);
         assert_eq!(EXCEL_MAX_DATA_ROWS, 1_048_575);
         let dir = tempdir().unwrap();
@@ -330,6 +330,23 @@ mod tests {
         assert_eq!(lines.next().unwrap(), "\u{FEFF}id,name,ts,d,t,n,u,ok,x");
         assert_eq!(lines.next().unwrap(), "1,\"a, \"\"b\"\"\",2026-07-14 10:00:00,2024-02-29,23:59:58.5,12.30,7,true,0.1");
         assert_eq!(lines.next().unwrap(), "2,,,,,,,,");
+
+        // padrao item 17: "so as N linhas encontradas" = as linhas da grade com a pesquisa e os filtros (mesma regra da
+        // contagem); CSV e Excel
+        let (cond, params) = manager.rows_where("points", &[], "B").unwrap();
+        assert_eq!(manager.get_row_count("points", &[], "B").unwrap(), 1);
+        let found = Source::Rows("points".into(), cond, params);
+        let found_csv = dir.path().join("found.csv");
+        assert_eq!(export::export_source(&conn, &found, "csv", &found_csv, &mut ok_progress()).unwrap(), Summary { count: 1, sheets: None });
+        let text = std::fs::read_to_string(&found_csv).unwrap();
+        assert_eq!(text.split("\r\n").filter(|l| !l.is_empty()).count(), 2, "header and the one row found: {text}");
+        let found_xlsx = dir.path().join("found.xlsx");
+        assert_eq!(export::export_source(&conn, &found, "xlsx", &found_xlsx, &mut ok_progress()).unwrap(), Summary { count: 1, sheets: Some(1) });
+        let (cond, params) = manager.rows_where("points", &[filter("id", json!(2))], "").unwrap();
+        let by_value = Source::Rows("points".into(), cond, params);
+        assert_eq!(export::export_source(&conn, &by_value, "csv", &found_csv, &mut ok_progress()).unwrap(), Summary { count: 1, sheets: None });
+        assert!(std::fs::read_to_string(&found_csv).unwrap().contains("\r\n2,,,,,,,,\r\n"));
+        assert!(manager.rows_where("missing", &[], "x").is_err());
 
         let sql = Source::Sql("SELECT k FROM \"Other table\" WHERE k > 2;".into());
         let xlsx = dir.path().join("result.xlsx");

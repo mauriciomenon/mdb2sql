@@ -216,9 +216,11 @@ fn same_file(a: &str, b: &Path) -> bool {
     }
 }
 
-// NIVEL BASICO: Exporta. scope = "database" (format sqlite, duckdb ou xlsx), "table" ou "sql" (csv ou xlsx)
+// NIVEL BASICO: Exporta. scope = "database" (format sqlite, duckdb ou xlsx), "table" ou "sql" (csv ou xlsx).
+// Tabela com filtros ou pesquisa: so as linhas que a grade achou (o usuario escolheu "so as N linhas encontradas")
 // NIVEL TECNICO: runs on its own DuckDB connection, so the grid keeps working; progress goes as
 // "export-progress" events and cancel_export stops it at the next table or every 10.000 rows
+#[allow(clippy::too_many_arguments)] // cada campo do pedido da interface e um argumento do comando Tauri
 #[tauri::command(async)]
 fn export(
     app: AppHandle,
@@ -228,6 +230,8 @@ fn export(
     path: String,
     table: Option<String>,
     sql: Option<String>,
+    filters: Option<Vec<Filter>>,
+    search: Option<String>,
 ) -> Result<Summary, String> {
     let (conn, source_path) = {
         let manager = state.db_manager.lock().unwrap();
@@ -248,7 +252,14 @@ fn export(
     match scope.as_str() {
         "database" => export::export_database(&conn, &format, target, &mut progress),
         "table" => {
-            let source = Source::Table(table.ok_or("No table selected")?);
+            let table = table.ok_or("No table selected")?;
+            let (filters, search) = (filters.unwrap_or_default(), search.unwrap_or_default());
+            let source = if filters.is_empty() && search.trim().is_empty() {
+                Source::Table(table)
+            } else {
+                let (filter, params) = state.db_manager.lock().unwrap().rows_where(&table, &filters, &search)?;
+                Source::Rows(table, filter, params)
+            };
             export::export_source(&conn, &source, &format, target, &mut progress)
         }
         "sql" => {

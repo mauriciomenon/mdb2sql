@@ -57,6 +57,22 @@ test('the main window has no repeated button or menu item', () => {
   assert.deepEqual(labels.filter((label) => /^export/i.test(label)), ['Export ▸', 'Export...']);
 });
 
+// padrao item 17: exportar a tabela com pesquisa ou filtro ativo pergunta "tabela inteira" ou "so as N linhas
+// encontradas"; a escolha manda (ou nao) os filtros e a pesquisa ao backend; Cancelar/Esc nao exporta
+test('exporting a searched table asks: whole table or only the rows found', () => {
+  const code = appFunction('startExport');
+  assert.match(code, /if \(scope === 'table' && !everywhere && \(search\.trim\(\) \|\| filters\.length\)\) \{\s*const choice = await askRows\(label\);\s*if \(!choice\) return;[^\n]*\n\s*if \(choice === 'found'\) rows = \{ filters, search: search\.trim\(\) \};/);
+  assert.match(code, /invoke\('export', \{ scope, format, path, table: selectedTable \|\| null, sql: lastSql \|\| null, \.\.\.rows \}\)/);
+  const dialog = markup('./App.svelte').match(/<dialog\s+bind:this=\{rowsDialog\}[\s\S]*?<\/dialog>/)[0];
+  assert.deepEqual(buttonLabels(dialog), ['Whole table', 'Only the', 'Cancel']);
+  assert.match(dialog, /onclick=\{\(\) => rowsReply\('found'\)\}>\{t\('export\.foundRows', \{ count: fmt\(matchCount\) \}\)\}/);
+  assert.match(dialog, /oncancel=\{\(e\) => \{\s*e\.preventDefault\(\);\s*rowsReply\(null\);/);
+  // ordem do menu de exportacao: SQLite, DuckDB, Excel do banco; tabela e SQL com CSV e Excel (textos desta versao)
+  const order = [...readFileSync(new URL('./App.svelte', import.meta.url), 'utf8').match(/const EXPORTS = \[[\s\S]*?\];/)[0].matchAll(/'(export\.\w+)'/g)].map((m) => m[1]);
+  assert.deepEqual(order, ['export.dbSqlite', 'export.dbDuckdb', 'export.dbXlsx', 'export.tableCsv', 'export.tableXlsx', 'export.sqlCsv', 'export.sqlXlsx']);
+  assert.match(code, /: 'query';/); // resultado do SQL sai como query.csv / query.xlsx
+});
+
 // padrao item 6 (= Zig): a lista de tabelas tem as colunas Tabela e Linhas; as linhas vem do backend ao abrir
 test('table list shows the row count of each table', () => {
   const ui = markup('./App.svelte');
@@ -414,10 +430,10 @@ test('converted SQLite question never traps the user', () => {
 test('every dialog has a visible default button, Enter and Esc', () => {
   const app = markup('./App.svelte');
   const dialogs = [...app.matchAll(/<dialog[\s\S]*?<\/dialog>/g)].map((m) => m[0]);
-  assert.equal(dialogs.length, 5); // Sobre, X11, SQLite convertido, Colunas, progresso
+  assert.equal(dialogs.length, 6); // Sobre, X11, SQLite convertido, tabela inteira/linhas encontradas, Colunas, progresso
   for (const d of dialogs) assert.match(d, /<button type="button" class="[^"]*(default|save)[^"]*"/, d.slice(0, 80));
   const code = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
-  for (const name of ['aboutDialog', 'x11Dialog', 'progressDialog']) {
+  for (const name of ['aboutDialog', 'x11Dialog', 'progressDialog', 'rowsDialog']) {
     assert.ok(code.includes(`${name}.querySelector('button.default')`), name); // foco inicial no botao padrao
   }
   assert.match(code, /onkeydown=\{\(e\) => e\.key === 'Enter' && columnsDialog\.close\(\)\}/);

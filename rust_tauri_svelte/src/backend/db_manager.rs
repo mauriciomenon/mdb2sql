@@ -569,6 +569,13 @@ impl DBManager {
         })
     }
 
+    // NIVEL BASICO: WHERE das linhas da tabela que a grade achou (filtros e pesquisa, a mesma regra da grade e da
+    // contagem), para exportar so elas
+    pub fn rows_where(&self, table_name: &str, filters: &[Filter], search: &str) -> Result<(String, Vec<duckdb::types::Value>), String> {
+        self.validate_table_name(table_name)?;
+        where_all(filters, &self.column_names(table_name)?, search)
+    }
+
     // NIVEL BASICO: Retorna numero de linhas da tabela que passam pelos filtros e pela pesquisa (sem nada: todas)
     pub fn get_row_count(&self, table_name: &str, filters: &[Filter], search: &str) -> Result<i64, String> {
         self.validate_table_name(table_name)?;

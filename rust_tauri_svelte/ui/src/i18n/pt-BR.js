@@ -18,6 +18,8 @@ export default {
   'export.tableXlsx': 'Tabela atual para Excel (.xlsx)...',
   'export.sqlCsv': 'Resultado do SQL para CSV...',
   'export.sqlXlsx': 'Resultado do SQL para Excel (.xlsx)...',
+  'export.wholeTable': 'Tabela inteira',
+  'export.foundRows': '{count|Só a|Só as} {count} {count|linha encontrada|linhas encontradas}',
   'save.sqlite': 'Banco SQLite',
   'save.duckdb': 'Banco DuckDB',
   'save.xlsx': 'Pasta de trabalho do Excel',
