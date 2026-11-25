@@ -1422,8 +1422,11 @@ const App = struct {
         app.drawConverted();
         app.drawDisplayWarning();
 
-        // Barra superior: caminho + Procurar + Abrir + Exportar + status (tambem aceita arrastar o arquivo para a janela)
-        ig.igSetNextItemWidth(ig.igGetContentRegionAvail().x * 0.40);
+        // Barra superior: caminho + Procurar + Abrir + Exportar (tambem aceita arrastar o arquivo para a janela). O caminho
+        // ocupa a linha toda menos os 3 botoes: o status foi para a barra de baixo, e com 40% cortava caminho longo
+        const buttons = buttonWidth(tr("browse")) + buttonWidth(tr("open")) + buttonWidth(tr("export_button")) +
+            3 * ig.igGetStyle().*.ItemSpacing.x;
+        ig.igSetNextItemWidth(ig.igGetContentRegionAvail().x - buttons);
         const enter = ig.igInputTextWithHint("##path", tr("path_hint"), &app.path, app.path.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null);
         ig.igSameLine(0, -1);
         if (button(tr("browse"))) app.want_browse = true;
