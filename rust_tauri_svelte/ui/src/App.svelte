@@ -680,13 +680,10 @@
       await tick();
       progressDialog.querySelector('button.default')?.focus();
       const done = await invoke('export', { scope, format, path, table: selectedTable || null, sql: lastSql || null });
-      const values = {
-        count: fmt(done.count),
-        unit: t(scope === 'database' ? 'status.unitTables' : 'status.unitRows'),
-        sheets: fmt(done.sheets ?? 0),
-        path,
-      };
-      showStatus(done.sheets == null ? 'status.exported' : 'status.exportedSheets', values);
+      // tabelas (banco inteiro) ou linhas (tabela, SQL), com o numero de abas se foi Excel; plural pelo numero
+      const unit = scope === 'database' ? 'Tables' : 'Rows';
+      const values = { count: fmt(done.count), sheets: fmt(done.sheets ?? 0), path };
+      showStatus(`status.exported${unit}${done.sheets == null ? '' : 'Sheets'}`, values);
     } catch (err) {
       showError(err);
     } finally {

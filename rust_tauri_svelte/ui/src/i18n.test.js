@@ -7,7 +7,8 @@ import { CATALOGS, LANGS, describe, translator } from './i18n.js';
 
 const SOURCES = ['./App.svelte', './Grid.svelte'];
 const read = (file) => readFileSync(new URL(file, import.meta.url), 'utf8');
-const placeholders = (text) => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+// {nome} e {nome|singular|plural}: o nome do valor conta uma vez
+const placeholders = (text) => [...new Set([...text.matchAll(/\{(\w+)(?:\|[^}]*)?\}/g)].map((m) => m[1]))].sort();
 
 test('the three catalogs have the same keys and the same {values}', () => {
   assert.deepEqual(LANGS.map(([code]) => code), ['en', 'pt-BR', 'es']);
@@ -32,6 +33,9 @@ test('every key used in the screens exists in the catalog', () => {
     .join(' ');
   for (const step of ['read', 'convert', 'load']) assert.ok(`status.${step}` in CATALOGS.en);
   for (const format of ['sqlite', 'duckdb', 'xlsx', 'csv']) assert.ok(`save.${format}` in CATALOGS.en);
+  for (const unit of ['Tables', 'Rows']) {
+    for (const sheets of ['', 'Sheets']) assert.ok(`status.exported${unit}${sheets}` in CATALOGS.en, unit + sheets);
+  }
   for (const [, key] of backend.matchAll(/\[\[(\w+\.[\w.]+)\]\]/g)) assert.ok(key in CATALOGS.en, `backend: ${key}`);
 });
 
@@ -80,6 +84,30 @@ test('license line of the About says GPL v2 or later in each language', () => {
   assert.equal(CATALOGS['pt-BR']['about.licenseValue'], 'GPL v2 ou posterior');
   assert.equal(CATALOGS.en['about.licenseValue'], 'GPL v2 or later');
   assert.equal(CATALOGS.es['about.licenseValue'], 'GPL v2 o posterior');
+});
+
+// padrao item 23: plural certo ("1 tabela", "2 tabelas", "0 tabelas") nas 3 linguas; cada forma escolhida pelo numero
+// que o proprio texto mostra
+test('counts agree in number', () => {
+  const pt = translator('pt-BR');
+  const en = translator('en');
+  const es = translator('es');
+  assert.equal(pt('schema.columns', { count: 1 }), '1 coluna');
+  assert.equal(pt('schema.columns', { count: 0 }), '0 colunas');
+  assert.equal(pt('data.showing', { shown: 1, total: 1, columns: 2 }), '1 de 1 linha, 2 colunas');
+  assert.equal(pt('data.showing', { shown: '1', total: '1.234', columns: 1 }), '1 de 1.234 linhas, 1 coluna');
+  assert.equal(en('sql.summary', { rows: '1', columns: 3 }), '1 row, 3 columns');
+  assert.equal(en('sql.summary', { rows: '100+', columns: 1 }), '100+ rows, 1 column');
+  assert.equal(es('found.summary', { count: 1 }), '1 tabla con filas encontradas');
+  assert.equal(pt('status.exportedRowsSheets', { count: 1, sheets: 1, path: 'x' }), '1 linha exportada em 1 aba para x');
+  for (const [code, catalog] of Object.entries(CATALOGS)) {
+    for (const [key, text] of Object.entries(catalog)) {
+      for (const [marker, name] of text.matchAll(/\{(\w+)\|[^}]*\}/g)) {
+        assert.match(marker, /^\{\w+\|[^|}]+\|[^|}]+\}$/, `${code} ${key}: ${marker}`);
+        assert.ok(text.includes(`{${name}}`), `${code} ${key}: ${name} sem o numero`);
+      }
+    }
+  }
 });
 
 test('translator fills {values}, falls back to English, describes backend keys', () => {
