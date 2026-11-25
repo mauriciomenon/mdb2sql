@@ -122,6 +122,36 @@ describe('App IPC flow', () => {
     expect(within(screen.getByRole('menu', { name: 'Export' })).getByRole('menuitem', { name: en('export.dbSqlite') })).toBeEnabled();
   });
 
+  // standard item 20: the shortcuts of the Python version
+  it('has the shortcuts Ctrl+O, Ctrl+F, F5, Ctrl+Q and Ctrl+1/2/3', async () => {
+    const SelectDatabase = vi.fn(async () => '');
+    const DatabasePath = vi.fn(async () => 'C:\\data\\db.duckdb');
+    const Quit = vi.fn();
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SelectDatabase, DatabasePath } } }, runtime: { Quit } });
+    render(<App />);
+    const key = (init) => fireEvent.keyDown(window, init);
+
+    expect(key({ key: 'F5' })).toBe(false); // never the webview's page reload
+    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('')); // nothing open: the default database
+    await screen.findByText('Alpha');
+    key({ key: 'F5' });
+    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('C:\\data\\db.duckdb')); // the open file again
+    await screen.findByText('Alpha');
+
+    key({ key: 'o', ctrlKey: true });
+    await waitFor(() => expect(SelectDatabase).toHaveBeenCalled());
+    key({ key: 'f', ctrlKey: true });
+    expect(screen.getByLabelText('Search the table')).toHaveFocus();
+    key({ key: '2', ctrlKey: true });
+    expect(screen.getByRole('tab', { name: /Schema/ })).toHaveAttribute('aria-selected', 'true');
+    key({ key: '3', ctrlKey: true });
+    await waitFor(() => expect(screen.getByLabelText('SQL')).toHaveFocus());
+    key({ key: '1', ctrlKey: true });
+    expect(screen.getByRole('tab', { name: 'Data' })).toHaveAttribute('aria-selected', 'true');
+    key({ key: 'q', ctrlKey: true });
+    await waitFor(() => expect(Quit).toHaveBeenCalled());
+  });
+
   it('does nothing when the dialog is cancelled', async () => {
     const SelectDatabase = vi.fn(async () => '');
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, SelectDatabase } } } });

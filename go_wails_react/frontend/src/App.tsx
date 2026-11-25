@@ -75,6 +75,7 @@ const ROW_LIMITS = [100, 500, 1000]; // more would render too many cells (130-co
 const TYPING_PAUSE = 300; // ms without typing before the table list filter and the Data search apply (Enter: at once)
 const THEMES: Theme[] = ['system', 'light', 'dark'];
 const SCOPES: Scope[] = ['table', 'all'];
+const VIEWS: View[] = ['data', 'schema', 'sql']; // tab order: Ctrl+1, Ctrl+2, Ctrl+3
 
 // Linhas (rotulo, valor) do dialogo Sobre; versao de wails.json, numero/data do build gravados pelo build, runtimes
 // lidos em execucao. Valor que comeca com https:// vira link aberto no navegador padrao.
@@ -195,6 +196,9 @@ function App() {
   const [pathFocused, setPathFocused] = useState(false);
   const pathRef = useRef<HTMLInputElement>(null);
   const [pathElided, setPathElided] = useState(false); // path longer than the field: its start is hidden
+  const [openedPath, setOpenedPath] = useState(''); // the open file, which F5 opens again
+  const searchRef = useRef<HTMLInputElement>(null); // Ctrl+F
+  const sqlRef = useRef<HTMLTextAreaElement>(null); // Ctrl+3
   const [source, setSource] = useState('');
   const [converted, setConverted] = useState(false);
   const [filter, setFilter] = useState('');
@@ -302,13 +306,25 @@ function App() {
   useEffect(() => window.runtime?.EventsOn?.('progress', setProgress), []);
   useEffect(() => window.runtime?.EventsOn?.('log', (text: string) => addLog(text)), []);
 
-  // Ctrl+L collapses or expands the Log panel
+  // shortcuts of the Python version (standard item 20): Ctrl+O, Ctrl+F, F5, Ctrl+Q, Ctrl+1/2/3, Ctrl+L here; Ctrl+Enter
+  // in the SQL field and Ctrl+C in the grid. The keys are always taken from the webview (F5 would reload the page);
+  // with a dialog open they do nothing
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'l') {
-        e.preventDefault();
-        toggleLog();
-      }
+      const ctrl = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
+      const k = e.key.toLowerCase();
+      const action =
+        e.key === 'F5' && !e.ctrlKey && !e.altKey && !e.shiftKey ? () => latest.current.reload()
+        : !ctrl ? null
+        : k === 'o' ? () => latest.current.loadDatabase(true)
+        : k === 'f' ? () => latest.current.focusSearch()
+        : k === 'q' ? () => latest.current.quit()
+        : k === 'l' ? () => toggleLog()
+        : e.key === '1' || e.key === '2' || e.key === '3' ? () => latest.current.showView(VIEWS[Number(e.key) - 1])
+        : null;
+      if (!action) return;
+      e.preventDefault();
+      if (!latest.current.modal()) action();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -522,6 +538,7 @@ function App() {
     setResult(null);
     setResultSql('');
     setDbName('');
+    setOpenedPath('');
     setSource('');
     setConverted(false);
   }
@@ -615,7 +632,9 @@ function App() {
       const tableList = (await bridge.LoadDatabase(path)) ?? [];
       // Go knows which file an empty path resolved to (MDB2SQL_DB_PATH or the bundled sample)
       const name = (await bridge.DatabaseName?.()) || path.split(/[\\/]/).pop() || 'sample.duckdb';
-      setPathText((await bridge.DatabasePath?.()) || path);
+      const opened = (await bridge.DatabasePath?.()) || path;
+      setPathText(opened);
+      setOpenedPath(opened);
       setSource((await bridge.SourceKind?.()) || '');
       setConverted(!!(await bridge.PendingConversion?.()));
       setDbName(name);
@@ -799,7 +818,20 @@ function App() {
   const shownStatus = logOpen ? { text: error || status, level: error ? 'error' : 'info', unread: 0 } : statusLine(logLines, readMark, status, error);
   const viewName = (v: View) => (v === 'data' ? t('tab.data') : v === 'schema' ? t('tab.schema', schema.length) : t('tab.sql'));
 
-  latest.current = { openPath };
+  latest.current = {
+    ...{ openPath, loadDatabase, quit },
+    reload: () => openPath(openedPath), // nothing open: the default database, as the Python version
+    focusSearch: () => {
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    },
+    showView: (v: View) => {
+      if (tables.length === 0) return;
+      setView(v);
+      if (v === 'sql') setTimeout(() => sqlRef.current?.focus()); // the field exists after this render
+    },
+    modal: () => !!(about || colsOpen || ask || displayWarn || busy),
+  };
 
   const toggleMenu = (name: MenuName) => (e: React.MouseEvent) => {
     e.stopPropagation(); // the window click handler would close it again
@@ -1023,13 +1055,14 @@ function App() {
             <div className="content-bar">
               <h2>{view === 'sql' ? t('tab.sql') : selectedTable}</h2>
               <div className="tabs" role="tablist" aria-label={t('tab.label')}>
-                {(['data', 'schema', 'sql'] as View[]).map((v) => (
+                {VIEWS.map((v) => (
                   <button key={v} role="tab" aria-selected={view === v} onClick={() => setView(v)}>
                     {viewName(v)}
                   </button>
                 ))}
               </div>
               <input
+                ref={searchRef}
                 type="search"
                 className="search"
                 placeholder={view === 'sql' ? t('sql.searchPlaceholder') : t('search.placeholder')}
@@ -1084,6 +1117,7 @@ function App() {
             {view === 'sql' && (
               <div className="sql-bar">
                 <textarea
+                  ref={sqlRef}
                   aria-label={t('sql.label')}
                   spellCheck={false}
                   value={sql}
