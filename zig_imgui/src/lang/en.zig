@@ -85,6 +85,10 @@ pub const export_schema_csv = "Current table schema to CSV...";
 pub const export_schema_xlsx = "Current table schema to Excel (.xlsx)...";
 pub const export_result_csv = "Current SQL result to CSV...";
 pub const export_result_xlsx = "Current SQL result to Excel (.xlsx)...";
+pub const export_scope_text = "The search is active on {s}. Export:";
+pub const export_whole = "Whole table";
+pub const export_found = "Only the {d} rows found";
+pub const export_found_one = "Only the {d} row found";
 
 // About
 pub const about_title = "About mdb2sql";

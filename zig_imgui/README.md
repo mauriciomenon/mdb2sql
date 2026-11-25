@@ -139,9 +139,10 @@ While a file opens, the status line shows the time, a progress bar (tables conve
 
 ### Menus
 
-- **File**: **Open...**, **Export** (also the **Export...** button): **Database to SQLite**, **Database to Excel**
-  (one sheet per table), **Database to DuckDB**, **Current table / schema / SQL result to CSV or Excel**; **Close**;
-  **Exit**. Export to `.accdb`/`.mdb` is not available (no reliable library writes Access files).
+- **File**: **Open...**, **Export** (also the **Export...** button): **Database to SQLite**, **Database to DuckDB**,
+  **Database to Excel** (one sheet per table), **Current table / schema / SQL result to CSV or Excel**; **Close**;
+  **Exit** (Ctrl+Q). Exporting the table while a search or value filter is active asks first: **Whole table** or **Only the
+  <n> rows found**. Export to `.accdb`/`.mdb` is not available (no reliable library writes Access files).
 - **Log** panel at the bottom (**View > Log**, Ctrl+L, or the arrow at the left of the status bar and in the panel
   header): every message of the session with its time, in a monospace font one step smaller; select and Ctrl+C, or
   **Copy all**, **Clear**. About 10% of the window high (at least 3 lines, at most 25%), resized by dragging its top

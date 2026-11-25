@@ -85,6 +85,10 @@ pub const export_schema_csv = "Esquema da tabela atual para CSV...";
 pub const export_schema_xlsx = "Esquema da tabela atual para Excel (.xlsx)...";
 pub const export_result_csv = "Resultado do SQL para CSV...";
 pub const export_result_xlsx = "Resultado do SQL para Excel (.xlsx)...";
+pub const export_scope_text = "A busca está ativa em {s}. Exportar:";
+pub const export_whole = "Tabela inteira";
+pub const export_found = "Só as {d} linhas encontradas";
+pub const export_found_one = "Só a {d} linha encontrada";
 
 // Sobre
 pub const about_title = "Sobre o mdb2sql";

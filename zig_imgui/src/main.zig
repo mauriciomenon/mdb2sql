@@ -738,6 +738,8 @@ const Global = struct { term: [256:0]u8, hits: []worker.Hit };
 // O que fazer depois de responder sobre o SQLite convertido
 const Leave = enum { open, close, exit };
 const Choice = enum { save, delete };
+// Exportar a tabela com busca ou filtro: a tabela inteira ou so as linhas encontradas
+const ExportScope = enum { whole, found };
 
 const App = struct {
     gpa: std.mem.Allocator,
@@ -819,6 +821,8 @@ const App = struct {
     want_global: bool = false,
     want_browse: bool = false,
     want_export: ?ExportKind = null, // abre o dialogo de salvar e dispara a exportacao
+    ask_export: ?ExportKind = null, // pergunta aberta: tabela inteira ou so as linhas encontradas
+    export_scope: ?ExportScope = null, // resposta, usada pelo proximo startExport
     want_theme: ?settings.Theme = null,
     want_lang: ?i18n.Lang = null,
     want_about: bool = false,
@@ -1363,6 +1367,17 @@ const App = struct {
     // Dialogo de salvar (pasta do arquivo aberto; sem arquivo, a ultima usada) e dispara o trabalho
     fn startExport(app: *App, kind_in: ExportKind) void {
         if (!app.db.isOpen()) return;
+        // tabela da aba Dados com busca ou filtro: antes pergunta se vai a tabela inteira ou so as linhas encontradas
+        const narrowed = app.applied_search[0] != 0 or app.filters.items.len > 0;
+        var whole = false;
+        if (worker.asksExportScope(kind_in, app.tab == .data, narrowed)) {
+            const answer = app.export_scope orelse {
+                app.ask_export = kind_in;
+                return;
+            };
+            app.export_scope = null;
+            whole = answer == .whole;
+        }
         var kind = kind_in;
         const r = &app.slot.req;
         const loaded = zstr(&app.loaded_path);
@@ -1417,14 +1432,14 @@ const App = struct {
                 r.sql[sql.len] = 0;
                 kind = if (kind == .table_csv) .result_csv else .result_xlsx;
             } else {
-                // a tabela inteira com a busca e a ordenacao aplicadas na tela
+                // todas as linhas na ordem da tela: so as encontradas (busca e filtros aplicados) ou a tabela inteira
                 r.table = index;
                 r.columns = app.col_names;
-                r.search = app.applied_search;
-                r.filters = app.filters.items;
+                r.search = if (whole) @splat(0) else app.applied_search;
+                r.filters = if (whole) &.{} else app.filters.items;
                 r.sort_col = app.sort_col;
                 r.sort_desc = app.sort_desc;
-                r.total_hint = app.total;
+                r.total_hint = if (whole and index < app.counts.len) app.counts[index] else app.total;
             }
         } else if (kind == .result_csv or kind == .result_xlsx) {
             r.sql = app.result_sql;
@@ -1448,6 +1463,7 @@ const App = struct {
         defer ig.igEnd();
         app.drawAbout();
         app.drawConverted();
+        app.drawExportScope();
         app.drawDisplayWarning();
 
         // Barra superior: caminho + Procurar + Abrir + Exportar (tambem aceita arrastar o arquivo para a janela). O caminho
@@ -1534,9 +1550,10 @@ const App = struct {
     // Itens de exportacao (menu Arquivo > Exportar e botao Exportar...)
     fn exportItems(app: *App) void {
         const can_db = !app.opening() and app.db.isOpen();
+        // ordem do padrao: SQLite, DuckDB, Excel; depois CSV e Excel da tabela, do esquema ou do resultado
         if (ig.igMenuItem_Bool(tr("export_db_sqlite"), null, false, can_db)) app.want_export = .db_sqlite;
+        if (ig.igMenuItem_Bool(tr("export_db_duckdb"), null, false, can_db)) app.want_export = .db_duckdb;
         if (ig.igMenuItem_Bool(tr("export_db_xlsx"), null, false, can_db)) app.want_export = .db_xlsx;
-        if (ig.igMenuItem_Bool(tr("export_db_duckdb"), null, false, can_db)) app.want_export = .db_duckdb; // DuckDB por ultimo
         ig.igSeparator();
         const cur = app.canExportCurrent();
         const csv_key, const xlsx_key = switch (app.tab) {
@@ -1792,6 +1809,63 @@ const App = struct {
         ig.igSameLine(0, -1);
         if (ig.igButton(cancel_l, .{ .x = bw, .y = 0 })) {
             app.leave = null;
+            ig.igCloseCurrentPopup();
+        }
+    }
+
+    // Exportar a tabela com busca ou filtro ativo: "Tabela inteira" / "So as <n> linhas encontradas" / Cancelar
+    // (Esc e o X cancelam); a resposta segue para o dialogo de salvar
+    fn drawExportScope(app: *App) void {
+        var tb: [96]u8 = undefined;
+        const title = idLabel(&tb, "menu_export", "export_scope");
+        const kind = app.ask_export;
+        if (kind != null and !ig.igIsPopupOpen_Str(title, 0)) _ = ig.igOpenPopup_Str(title, 0);
+        centerNext();
+        var open = true;
+        if (!ig.igBeginPopupModal(title, &open, ig.ImGuiWindowFlags_AlwaysAutoResize | ig.ImGuiWindowFlags_NoSavedSettings)) {
+            if (!open) app.ask_export = null;
+            return;
+        }
+        defer ig.igEndPopup();
+        if (kind == null) return ig.igCloseCurrentPopup();
+        if (!open or ig.igIsKeyPressed_Bool(ig.ImGuiKey_Escape, false)) {
+            app.ask_export = null;
+            return ig.igCloseCurrentPopup();
+        }
+        const index = app.selected orelse {
+            app.ask_export = null;
+            return ig.igCloseCurrentPopup();
+        };
+        var mb: [600]u8 = undefined;
+        ig.igPushTextWrapPos(ig.igGetFontSize() * 30);
+        textSlice(i18n.fmt(&mb, "export_scope_text", .{app.db.table_names[index]}));
+        ig.igPopTextWrapPos();
+        ig.igSpacing();
+        var fb: [160]u8 = undefined;
+        const whole_l = tr("export_whole");
+        const found_l = i18n.fmtCountZ(&fb, "export_found", app.total, .{app.total});
+        const cancel_l = tr("cancel");
+        const bw = dialogButtonWidth(&.{ whole_l, found_l, cancel_l });
+        const answer: ?ExportScope = blk: {
+            if (ig.igButton(whole_l, .{ .x = bw, .y = 0 })) break :blk .whole;
+            if (ig.igIsWindowAppearing()) {
+                ig.igSetItemDefaultFocus();
+                ig.igSetKeyboardFocusHere(-1);
+                ig.igSetNavCursorVisible(true);
+            }
+            ig.igSameLine(0, -1);
+            if (ig.igButton(found_l, .{ .x = bw, .y = 0 })) break :blk .found;
+            ig.igSameLine(0, -1);
+            if (ig.igButton(cancel_l, .{ .x = bw, .y = 0 })) {
+                app.ask_export = null;
+                ig.igCloseCurrentPopup();
+            }
+            break :blk null;
+        };
+        if (answer) |a| {
+            app.export_scope = a;
+            app.want_export = kind;
+            app.ask_export = null;
             ig.igCloseCurrentPopup();
         }
     }

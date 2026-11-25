@@ -37,6 +37,21 @@ pub const ExportKind = enum {
     }
 };
 
+// !T: Exporting the table of the Data tab while a search or a value filter narrows it asks first: the whole table or
+// only the rows found (the 4 stacks). The schema, the SQL result and the database are exported as they are.
+pub fn asksExportScope(kind: ExportKind, on_data_tab: bool, narrowed: bool) bool {
+    return (kind == .table_csv or kind == .table_xlsx) and on_data_tab and narrowed;
+}
+
+test "export question only for the Data tab table with a search or filter" {
+    try std.testing.expect(asksExportScope(.table_csv, true, true));
+    try std.testing.expect(asksExportScope(.table_xlsx, true, true));
+    try std.testing.expect(!asksExportScope(.table_csv, true, false)); // sem busca: a tabela inteira, sem pergunta
+    try std.testing.expect(!asksExportScope(.table_csv, false, true)); // aba Esquema
+    try std.testing.expect(!asksExportScope(.result_csv, true, true));
+    try std.testing.expect(!asksExportScope(.db_sqlite, true, true));
+}
+
 // Pedido: copia do estado da UI, para a UI poder continuar editando os campos durante o trabalho
 pub const Req = struct {
     kind: Kind = .open,
@@ -400,6 +415,14 @@ test "jobs run on a worker thread: open, select, reload, sql, export, errors" {
     out = slot.wait().?;
     try t.expect(out.err == null);
     try t.expectEqual(2, out.exported);
+    out.deinit(t.allocator);
+    // resposta "Tabela inteira": o mesmo pedido sem a busca e sem filtros grava as 4 linhas
+    slot.req.search = @splat(0);
+    slot.req.filters = &.{};
+    try slot.start();
+    out = slot.wait().?;
+    try t.expect(out.err == null);
+    try t.expectEqual(4, out.exported);
     out.deinit(t.allocator);
 
     // busca em todas as tabelas; a tabela escolhida abre com a mesma busca e mostra a mesma contagem
