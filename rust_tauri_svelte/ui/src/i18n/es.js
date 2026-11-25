@@ -48,7 +48,7 @@ export default {
 
   'about.description': 'Abre bases de datos Access, SQLite y DuckDB y exporta a SQLite, DuckDB, Excel y CSV.',
   'about.build': 'Compilación',
-  'about.stack': 'Stack',
+  'about.stack': 'Tecnología',
   'about.window': 'Ventana',
   'about.engines': 'Bases de datos',
   'about.access': 'Lectura de Access',

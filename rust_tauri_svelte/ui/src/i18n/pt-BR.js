@@ -48,7 +48,7 @@ export default {
 
   'about.description': 'Abre bancos Access, SQLite e DuckDB e exporta para SQLite, DuckDB, Excel e CSV.',
   'about.build': 'Build',
-  'about.stack': 'Stack',
+  'about.stack': 'Tecnologia',
   'about.window': 'Janela',
   'about.engines': 'Bancos',
   'about.access': 'Leitura do Access',

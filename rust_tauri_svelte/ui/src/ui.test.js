@@ -102,7 +102,9 @@ test('About: title About mdb2sql and the rows of this stack', () => {
   const code = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
   const rows = [...code.match(/let aboutRows = \$derived\.by\(\(\) => \{[\s\S]*?\n {2}\}\);/)[0].matchAll(/\[t\('(about\.\w+)'\)/g)].map((m) => m[1]);
   assert.deepEqual(rows, ['about.build', 'about.stack', 'about.window', 'about.engines', 'about.access', 'about.author', 'about.license']);
-  assert.deepEqual(rows.map(pt), ['Build', 'Stack', 'Janela', 'Bancos', 'Leitura do Access', 'Autor', 'Licença']);
+  // rotulos traduzidos como no Sobre do Zig (Stack = Tecnologia / Tecnologia; Build fica, como no Go e no Zig)
+  assert.deepEqual(rows.map(pt), ['Build', 'Tecnologia', 'Janela', 'Bancos', 'Leitura do Access', 'Autor', 'Licença']);
+  assert.deepEqual([en['about.stack'], CATALOG_ES['about.stack'], CATALOG_ES['about.build']], ['Stack', 'Tecnología', 'Compilación']);
 });
 
 // padrao item 18: Configuracoes = Tema, Idioma, Escopo padrao da busca, Exibir NULL, nesta ordem
