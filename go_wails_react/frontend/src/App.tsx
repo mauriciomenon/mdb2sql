@@ -4,7 +4,7 @@
 
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, version as reactVersion } from 'react';
 import './App.css';
-import { LANGS, translate, type Lang, type T } from './i18n';
+import { LANGS, translate, translateN, type Lang, type T, type TN } from './i18n';
 
 type Row = Record<string, unknown>;
 type Column = { name: string; type: string; null: string };
@@ -190,6 +190,7 @@ function App() {
   const langRef = useRef<Lang>(lang);
   langRef.current = lang;
   const t: T = (key, ...args) => translate(langRef.current, key, ...args);
+  const tn: TN = (key, n, ...args) => translateN(langRef.current, key, n, ...args); // "1 tabela", "2 tabelas"
   const [tables, setTables] = useState<string[]>([]);
   const [dbName, setDbName] = useState('');
   const [pathText, setPathText] = useState(''); // path field of the top bar (Open/Enter opens it)
@@ -645,7 +646,7 @@ function App() {
       setSearch('');
       setTableSearch('');
       setScope(defaultScopeRef.current);
-      setStatus(t('status.loaded', name, tableList.length));
+      setStatus(tn('status.loaded', tableList.length, name, tableList.length));
       if (tableList.length > 0) {
         await loadTable(tableList[0], limit, undefined, '');
         setSql(`SELECT * FROM "${tableList[0].replace(/"/g, '""')}" LIMIT 100`);

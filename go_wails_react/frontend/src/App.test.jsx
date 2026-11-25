@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { vi, beforeEach } from 'vitest';
 import App, { aboutRows, clampLogHeight, columnCellWidth, filterLabel, gridText, LOG_MIN, logLine, progressText, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
-import { CATALOGS, LANGS, translate } from './i18n';
+import { CATALOGS, LANGS, translate, translateN } from './i18n';
 
 const tables = ['RANGER_SOACCU', 'RANGER_SOGEN'];
 const rows = [
@@ -719,7 +719,20 @@ describe('App IPC flow', () => {
     const StartupPath = vi.fn(async () => 'C:\\data\\DB4.sqlite');
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, StartupPath, GetLanguage: vi.fn(async () => 'pt-BR') } } } });
     render(<App />);
-    expect(await screen.findByText('Carregado: DB4.sqlite (2 tabelas)')).toBeInTheDocument();
+    expect(await screen.findByText('Aberto: DB4.sqlite (2 tabelas)')).toBeInTheDocument();
+  });
+
+  // standard item 2: "Aberto: {name} ({n} tabelas)", the verb of Python and Zig, with the right plural
+  it('says Aberto with the file name and the table count, singular for one table', async () => {
+    const LoadDatabase = vi.fn(async () => ['ONLY']);
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, LoadDatabase, GetLanguage: vi.fn(async () => 'pt-BR') } } } });
+    render(<App />);
+    expect(await screen.findByText('Nenhum banco aberto')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Abrir' }));
+    expect(await screen.findByText('Aberto: sample.duckdb (1 tabela)')).toBeInTheDocument();
+    expect(translate('en', 'status.loaded', 'x.mdb', 2)).toBe('Loaded: x.mdb (2 tables)');
+    expect(translateN('es', 'status.loaded', 1, 'x.mdb', 1)).toBe('Abierto: x.mdb (1 tabla)');
+    expect(translateN('es', 'status.loaded', 0, 'x.mdb', 0)).toBe('Abierto: x.mdb (0 tablas)');
   });
 
   it('switches the language from Settings > Language without restarting and saves it', async () => {
@@ -728,7 +741,7 @@ describe('App IPC flow', () => {
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, SetLanguage, GetLanguage } } } });
     render(<App />);
     expect(await screen.findByRole('button', { name: 'Archivo' })).toBeInTheDocument(); // saved language
-    expect(screen.getByText('Ninguna base de datos cargada')).toBeInTheDocument();
+    expect(screen.getByText('Ninguna base de datos abierta')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Configuración' }));
     fireEvent.click(screen.getByRole('menuitemradio', { name: /Português/ }));
@@ -1150,7 +1163,7 @@ describe('language catalogs', () => {
   });
 
   it('hold every key the screen uses', () => {
-    const used = [...source.matchAll(/\bt\(\s*'([^']+)'/g)].map((m) => m[1]);
+    const used = [...source.matchAll(/\btn?\(\s*'([^']+)'/g)].map((m) => m[1]);
     used.push(...['system', 'light', 'dark'].map((th) => `theme.${th}`), ...LANGS.map((l) => `lang.${l}`), 'scope.table', 'scope.all');
     expect(used.length).toBeGreaterThan(80);
     expect(used.filter((k) => !(k in CATALOGS.en))).toEqual([]);
