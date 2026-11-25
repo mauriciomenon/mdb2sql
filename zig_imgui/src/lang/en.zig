@@ -115,9 +115,10 @@ pub const copy_all = "Copy all";
 pub const clear = "Clear";
 
 // converted SQLite
-pub const converted_title = "Converted SQLite";
-pub const converted_text = "{s} was converted to SQLite to be read. Keep the converted file?";
-pub const converted_save_tip = "Saves {s}.sqlite, next to the source file by default";
+pub const converted_title = "Converted SQLite file";
+pub const converted_text = "Save the SQLite file converted from Access ({s})?";
+pub const converted_remember = "Remember for this session";
+pub const converted_reused = "{s}: opened the SQLite saved from it ({s})";
 pub const converted_saved = "SQLite saved: {s}";
 pub const converted_deleted = "Converted SQLite deleted";
 

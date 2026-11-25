@@ -199,7 +199,7 @@ test "no lecturing hints and no copyright line in any catalog" {
     inline for (catalogs) |C| {
         inline for (comptime keys(C)) |d| {
             const s: []const u8 = @field(C, d);
-            for ([_][]const u8{ "Copyright", "(C) 20", "Remember", "Please", "Make sure", "Lembre", "Por favor", "Verifique", "Recuerde", "Asegúrese" }) |bad|
+            for ([_][]const u8{ "Copyright", "(C) 20", "Remember to", "Please", "Make sure", "Lembre", "Por favor", "Verifique", "Recuerde", "Asegúrese" }) |bad|
                 try t.expect(std.ascii.findIgnoreCase(s, bad) == null);
             // setas sao Unicode (→ ←), nunca "->", "< " ou " >"
             try t.expect(std.mem.indexOf(u8, s, "->") == null and !std.mem.startsWith(u8, s, "< ") and !std.mem.endsWith(u8, s, " >"));

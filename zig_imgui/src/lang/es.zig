@@ -116,8 +116,9 @@ pub const clear = "Borrar";
 
 // SQLite convertido
 pub const converted_title = "SQLite convertido";
-pub const converted_text = "{s} se convirtió a SQLite para leerlo. ¿Conservar el archivo convertido?";
-pub const converted_save_tip = "Guarda {s}.sqlite, por defecto junto al archivo de origen";
+pub const converted_text = "¿Guardar el archivo SQLite convertido desde Access ({s})?";
+pub const converted_remember = "Recordar en esta sesión";
+pub const converted_reused = "{s}: abierto el SQLite guardado de él ({s})";
 pub const converted_saved = "SQLite guardado: {s}";
 pub const converted_deleted = "SQLite convertido eliminado";
 

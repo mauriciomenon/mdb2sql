@@ -769,7 +769,11 @@ const App = struct {
     converted: ?struct { tmp: access.TempPath, source: [1024:0]u8 } = null,
     leave: ?Leave = null, // acao esperando a resposta (o dialogo fica aberto enquanto isto existir)
     choice: ?Choice = null, // resposta, executada em update() quando nenhum trabalho roda
-    session_choice: ?Choice = null, // a primeira resposta vale ate o programa fechar
+    session_choice: ?Choice = null, // resposta com "Lembrar nesta sessao": vale ate o programa fechar
+    remember_box: bool = false, // a caixa "Lembrar nesta sessao" do dialogo (desmarcada a cada pergunta)
+    choice_remember: bool = false, // a resposta em `choice` veio com a caixa marcada
+    open_request: [1024:0]u8 = @splat(0), // arquivo pedido no open em andamento (o Access, mesmo abrindo o SQLite salvo)
+    opened_file: [1024:0]u8 = @splat(0), // arquivo que o banco tem aberto (o SQLite salvo, quando reaproveitado)
     save_dir: [1024:0]u8 = @splat(0), // pasta escolhida no primeiro "Salvar" da sessao
     quit: bool = false,
     capture_mode: bool = false, // --capture (auxiliar de teste)
@@ -985,6 +989,15 @@ const App = struct {
         switch (kind) {
             .open => {
                 r.path = app.path;
+                app.open_request = app.path;
+                // Access ja convertido e salvo (chave caminho + tamanho + data, gravada nas configuracoes) e sem mudanca
+                // desde entao: abre o SQLite salvo, sem converter de novo nem perguntar ao fechar
+                const access_file = if (query.sourceKind(zstr(&app.path))) |k| k == .access else |_| false;
+                if (access_file) if (app.prefs.savedFor(app.io, zstr(&app.path))) |dest| {
+                    copyZ(&r.path, dest);
+                    var lb: [2200]u8 = undefined;
+                    logLine(i18n.fmt(&lb, "converted_reused", .{ std.fs.path.basename(zstr(&app.path)), dest }));
+                };
                 r.table_name = app.start_table;
                 app.start_table = "";
             },
@@ -1034,7 +1047,8 @@ const App = struct {
                 app.counts = out.counts;
                 out.counts = &.{};
                 app.source = if (app.db.isOpen()) out.source else null;
-                app.loaded_path = if (app.db.isOpen()) app.slot.req.path else @splat(0);
+                app.loaded_path = if (app.db.isOpen()) app.open_request else @splat(0);
+                app.opened_file = if (app.db.isOpen()) app.slot.req.path else @splat(0);
                 app.updateTitle();
                 // o SQLite convertido existe mesmo se a contagem foi cancelada: a UI fica com ele
                 if (out.converted.len > 0) app.converted = .{ .tmp = out.converted, .source = app.slot.req.path };
@@ -1042,7 +1056,7 @@ const App = struct {
                     app.setLoadedStatus(true);
                     app.rememberDir(zstr(&app.slot.req.path));
                     // capturas de tela: so o nome do arquivo na caixa (a pasta tem o nome do usuario)
-                    if (app.capture_mode) copyZ(&app.path, std.fs.path.basename(zstr(&app.slot.req.path)));
+                    if (app.capture_mode) copyZ(&app.path, std.fs.path.basename(zstr(&app.open_request)));
                     if (app.start_sql) {
                         app.want_run = true;
                         app.focus_sql = true;
@@ -1220,6 +1234,7 @@ const App = struct {
         app.counts = &.{};
         app.source = null;
         app.loaded_path = @splat(0);
+        app.opened_file = @splat(0);
         if (app.converted) |cv| {
             access.deleteQuiet(app.io, cv.tmp.slice());
             app.converted = null;
@@ -1267,8 +1282,12 @@ const App = struct {
             };
             copyZ(&app.save_dir, std.fs.path.dirname(dest.?) orelse "");
             saved = dest;
+            // o mesmo Access, sem mudanca, abre este SQLite da proxima vez (tambem em outra execucao)
+            app.prefs.rememberSaved(app.io, zstr(&cv.source), dest.?);
+            app.savePrefs();
         }
-        app.session_choice = ch;
+        // so com "Lembrar nesta sessao" marcado a resposta vale para as proximas perguntas
+        if (from_prompt and app.choice_remember) app.session_choice = ch;
         const action = app.leave orelse .close;
         app.leave = null;
         app.closeFile();
@@ -1393,7 +1412,7 @@ const App = struct {
         var file_buf: [600]u8 = undefined;
         var file = settings.fileName(&file_buf, base, kind.ext());
         // DB4.duckdb exportado para .duckdb: o nome sugerido nao pode ser o do proprio arquivo aberto
-        if (std.ascii.eqlIgnoreCase(file, std.fs.path.basename(loaded))) {
+        if (std.ascii.eqlIgnoreCase(file, std.fs.path.basename(loaded)) or std.ascii.eqlIgnoreCase(file, std.fs.path.basename(zstr(&app.opened_file)))) {
             var b2: [520]u8 = undefined;
             file = settings.fileName(&file_buf, std.fmt.bufPrint(&b2, "{s}_export", .{base}) catch base, kind.ext());
         }
@@ -1415,7 +1434,8 @@ const App = struct {
             if (dialog.unavailable) app.status.set(true, "err_no_dialog", .{});
             return;
         };
-        if (std.ascii.eqlIgnoreCase(dest, loaded)) return app.status.set(true, "err_choose_other", .{});
+        // nem o arquivo aberto nem o SQLite salvo que o substitui (Access reaproveitado)
+        if (std.ascii.eqlIgnoreCase(dest, loaded) or std.ascii.eqlIgnoreCase(dest, zstr(&app.opened_file))) return app.status.set(true, "err_choose_other", .{});
         if (app.converted) |cv| if (std.ascii.eqlIgnoreCase(dest, cv.tmp.slice())) return app.status.set(true, "err_choose_other", .{});
         app.rememberDir(dest);
 
@@ -1762,7 +1782,8 @@ const App = struct {
         }
     }
 
-    // Pergunta sobre o SQLite convertido do Access: Salvar... / Apagar / Cancelar
+    // Pergunta sobre o SQLite convertido do Access, a do Go: texto, "Lembrar nesta sessao" e Salvar... / Apagar /
+    // Cancelar (o X e o Esc cancelam)
     fn drawConverted(app: *App) void {
         var tb: [96]u8 = undefined;
         const title = idLabel(&tb, "converted_title", "converted");
@@ -1782,11 +1803,16 @@ const App = struct {
             return ig.igCloseCurrentPopup();
         }
         const cv = app.converted.?;
+        if (ig.igIsWindowAppearing()) app.remember_box = false;
         var mb: [600]u8 = undefined;
-        // largura controlada: o nome longo quebra a linha em vez de alargar o dialogo
+        var nb: [600]u8 = undefined;
+        // "<origem>.sqlite", o nome que o Salvar... sugere; largura controlada: o nome longo quebra a linha
+        const file = settings.fileName(&nb, std.fs.path.stem(zstr(&cv.source)), ".sqlite");
         ig.igPushTextWrapPos(ig.igGetFontSize() * 30);
-        textSlice(i18n.fmt(&mb, "converted_text", .{std.fs.path.basename(zstr(&cv.source))}));
+        textSlice(i18n.fmt(&mb, "converted_text", .{file}));
         ig.igPopTextWrapPos();
+        ig.igSpacing();
+        _ = ig.igCheckbox(tr("converted_remember"), &app.remember_box);
         ig.igSpacing();
         const save_l = tr("save");
         const delete_l = tr("delete");
@@ -1802,10 +1828,9 @@ const App = struct {
             ig.igSetKeyboardFocusHere(-1);
             ig.igSetNavCursorVisible(true);
         }
-        var sb: [600]u8 = undefined;
-        itemTooltip(i18n.fmtZ(&sb, "converted_save_tip", .{std.fs.path.stem(zstr(&cv.source))}));
         ig.igSameLine(0, -1);
         if (ig.igButton(delete_l, .{ .x = bw, .y = 0 })) app.choice = .delete;
+        app.choice_remember = app.remember_box;
         ig.igSameLine(0, -1);
         if (ig.igButton(cancel_l, .{ .x = bw, .y = 0 })) {
             app.leave = null;

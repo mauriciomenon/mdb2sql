@@ -21,6 +21,48 @@ pub fn clampLogFrac(f: f32) f32 {
     return @min(f, max_log_frac);
 }
 
+// Versao de um arquivo (a chave do Go: caminho + tamanho + data de modificacao)
+pub const FileKey = struct { size: u64, mtime: i96 };
+
+pub fn fileKey(io: Io, path: []const u8) ?FileKey {
+    const st = Io.Dir.cwd().statFile(io, path, .{}) catch return null;
+    return .{ .size = st.size, .mtime = st.mtime.nanoseconds };
+}
+
+fn samePath(a: []const u8, b: []const u8) bool {
+    return if (builtin.os.tag == .windows) std.ascii.eqlIgnoreCase(a, b) else std.mem.eql(u8, a, b);
+}
+
+// !T: An Access file converted and saved as SQLite: the source and the saved file, each with its key when saved.
+// Kept between runs: the same Access file, unchanged, opens the saved SQLite without converting or asking; if either
+// file changed (or the SQLite is gone), the Access file is converted again.
+pub const Saved = struct {
+    src_buf: [1024]u8 = undefined,
+    src_len: usize = 0,
+    src_key: FileKey = .{ .size = 0, .mtime = 0 },
+    dest_buf: [1024]u8 = undefined,
+    dest_len: usize = 0,
+    dest_key: FileKey = .{ .size = 0, .mtime = 0 },
+
+    pub fn src(e: *const Saved) []const u8 {
+        return e.src_buf[0..e.src_len];
+    }
+
+    pub fn dest(e: *const Saved) []const u8 {
+        return e.dest_buf[0..e.dest_len];
+    }
+
+    fn make(src_path: []const u8, sk: FileKey, dest_path: []const u8, dk: FileKey) ?Saved {
+        // tab e quebra de linha separam os campos no arquivo de configuracoes
+        for ([_][]const u8{ src_path, dest_path }) |p| if (p.len == 0 or p.len > 1024 or std.mem.indexOfAny(u8, p, "\t\r\n") != null) return null;
+        var e: Saved = .{ .src_len = src_path.len, .src_key = sk, .dest_len = dest_path.len, .dest_key = dk };
+        @memcpy(e.src_buf[0..src_path.len], src_path);
+        @memcpy(e.dest_buf[0..dest_path.len], dest_path);
+        return e;
+    }
+};
+pub const max_saved = 8; // os mais recentes
+
 pub const Settings = struct {
     theme: Theme = .system,
     lang: Lang = .en,
@@ -30,6 +72,41 @@ pub const Settings = struct {
     show_null: bool = false, // ligado, NULL aparece como "NULL"; desligado (padrao), celula vazia
     last_dir_buf: [2048]u8 = undefined,
     last_dir_len: usize = 0,
+    saved: [max_saved]Saved = undefined, // Access convertido e salvo, o mais recente primeiro
+    saved_len: usize = 0,
+
+    // Lembra (no comeco da lista) o SQLite salvo de `src_path`, com as chaves dos dois arquivos agora
+    pub fn rememberSaved(s: *Settings, io: Io, src_path: []const u8, dest_path: []const u8) void {
+        const e = Saved.make(src_path, fileKey(io, src_path) orelse return, dest_path, fileKey(io, dest_path) orelse return) orelse return;
+        s.putSaved(e);
+    }
+
+    fn putSaved(s: *Settings, e: Saved) void {
+        // a entrada antiga do mesmo arquivo sai; cheia, a mais antiga sai
+        var n: usize = 0;
+        for (s.saved[0..s.saved_len]) |old| {
+            if (!samePath(old.src(), e.src())) {
+                s.saved[n] = old;
+                n += 1;
+            }
+        }
+        if (n == max_saved) n -= 1;
+        std.mem.copyBackwards(Saved, s.saved[1 .. n + 1], s.saved[0..n]);
+        s.saved[0] = e;
+        s.saved_len = n + 1;
+    }
+
+    // SQLite salvo deste Access, se nenhum dos dois mudou desde que foi salvo; null = converter
+    pub fn savedFor(s: *const Settings, io: Io, src_path: []const u8) ?[]const u8 {
+        for (s.saved[0..s.saved_len]) |*e| {
+            if (!samePath(e.src(), src_path)) continue;
+            const sk = fileKey(io, src_path) orelse return null;
+            const dk = fileKey(io, e.dest()) orelse return null;
+            if (std.meta.eql(sk, e.src_key) and std.meta.eql(dk, e.dest_key)) return e.dest();
+            return null;
+        }
+        return null;
+    }
 
     pub fn lastDir(s: *const Settings) []const u8 {
         return s.last_dir_buf[0..s.last_dir_len];
@@ -56,8 +133,23 @@ pub const Settings = struct {
             if (std.mem.eql(u8, key, "log_frac")) s.log_frac = clampLogFrac(std.fmt.parseFloat(f32, value) catch default_log_frac);
             if (std.mem.eql(u8, key, "search_scope")) s.search_scope = std.meta.stringToEnum(SearchScope, value) orelse .table;
             if (std.mem.eql(u8, key, "show_null")) s.show_null = std.mem.eql(u8, value, "1");
+            // saved=<tamanho>|<data>|<tamanho do sqlite>|<data do sqlite>|<access>TAB<sqlite> (na ordem: mais recente primeiro)
+            if (std.mem.eql(u8, key, "saved") and s.saved_len < max_saved) if (parseSaved(value)) |e| {
+                s.saved[s.saved_len] = e;
+                s.saved_len += 1;
+            };
         }
         return s;
+    }
+
+    fn parseSaved(value: []const u8) ?Saved {
+        var it = std.mem.splitScalar(u8, value, '|');
+        var nums: [4]i128 = undefined;
+        for (&nums) |*n| n.* = std.fmt.parseInt(i128, it.next() orelse return null, 10) catch return null;
+        const paths = it.rest();
+        const tab = std.mem.indexOfScalar(u8, paths, '\t') orelse return null;
+        if (nums[0] < 0 or nums[2] < 0) return null;
+        return Saved.make(paths[0..tab], .{ .size = @intCast(nums[0]), .mtime = std.math.cast(i96, nums[1]) orelse return null }, paths[tab + 1 ..], .{ .size = @intCast(nums[2]), .mtime = std.math.cast(i96, nums[3]) orelse return null });
     }
 
     pub fn write(s: *const Settings, w: *Io.Writer) Io.Writer.Error!void {
@@ -65,10 +157,12 @@ pub const Settings = struct {
             s.theme,        s.lang,                    @intFromBool(s.log_open), s.log_frac,
             s.search_scope, @intFromBool(s.show_null), s.lastDir(),
         });
+        for (s.saved[0..s.saved_len]) |*e|
+            try w.print("saved={d}|{d}|{d}|{d}|{s}\t{s}\r\n", .{ e.src_key.size, e.src_key.mtime, e.dest_key.size, e.dest_key.mtime, e.src(), e.dest() });
     }
 
     pub fn load(io: Io, path: []const u8) Settings {
-        var buf: [4096]u8 = undefined;
+        var buf: [32768]u8 = undefined;
         const text = Io.Dir.cwd().readFile(io, path, &buf) catch return .{};
         return parse(text);
     }
@@ -137,6 +231,47 @@ pub fn isLight(theme: Theme, gtk_theme: []const u8) bool {
 // -------------------------------------------------------------------- tests
 
 const t = std.testing;
+
+test "Access converted and saved: reused while neither file changes, kept between runs, newest first" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var b1: [256]u8 = undefined;
+    var b2: [256]u8 = undefined;
+    var b3: [256]u8 = undefined;
+    const src = try std.fmt.bufPrint(&b1, ".zig-cache/tmp/{s}/DB4.accdb", .{tmp.sub_path});
+    const dest = try std.fmt.bufPrint(&b2, ".zig-cache/tmp/{s}/DB4.sqlite", .{tmp.sub_path});
+    const ini = try std.fmt.bufPrint(&b3, ".zig-cache/tmp/{s}/zig-imgui.ini", .{tmp.sub_path});
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = src, .data = "access v1" });
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = dest, .data = "SQLite format 3\x00" });
+    var s: Settings = .{};
+    try t.expect(s.savedFor(t.io, src) == null); // nada salvo: converte
+    s.rememberSaved(t.io, src, dest);
+    try t.expectEqualStrings(dest, s.savedFor(t.io, src).?);
+    // a resposta vale na proxima execucao (gravada e lida de novo)
+    try s.save(t.io, ini);
+    var back = Settings.load(t.io, ini);
+    try t.expectEqual(1, back.saved_len);
+    try t.expectEqualStrings(dest, back.savedFor(t.io, src).?);
+    // o Access mudou (tamanho): converte de novo
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = src, .data = "access v2, maior" });
+    try t.expect(back.savedFor(t.io, src) == null);
+    // salvo de novo: uma entrada so para o mesmo arquivo; o SQLite apagado: converte de novo
+    back.rememberSaved(t.io, src, dest);
+    try t.expectEqual(1, back.saved_len);
+    try t.expect(back.savedFor(t.io, src) != null);
+    try Io.Dir.cwd().deleteFile(t.io, dest);
+    try t.expect(back.savedFor(t.io, src) == null);
+    // no maximo max_saved, o mais recente primeiro; linha estragada e ignorada
+    var many: Settings = .{};
+    for (0..max_saved + 2) |i| {
+        var nb: [32]u8 = undefined;
+        many.putSaved(Saved.make(try std.fmt.bufPrint(&nb, "C:\\a{d}.accdb", .{i}), .{ .size = i, .mtime = 1 }, "C:\\x.sqlite", .{ .size = 1, .mtime = 1 }).?);
+    }
+    try t.expectEqual(max_saved, many.saved_len);
+    try t.expectEqualStrings("C:\\a9.accdb", many.saved[0].src());
+    try t.expectEqual(0, Settings.parse("saved=1|2|x|4|a\tb\r\nsaved=1|2|3|4|sem tab\r\n").saved_len);
+    try t.expect(Saved.make("a\tb", .{ .size = 1, .mtime = 1 }, "c", .{ .size = 1, .mtime = 1 }) == null);
+}
 
 test "default folder of the save dialog" {
     const s = std.fs.path.sep_str;

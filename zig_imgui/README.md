@@ -81,16 +81,20 @@ digits), dates as ISO text (`2026-07-14 10:30:00`, declared VARCHAR: ISO text so
 Yes/No as 0/1, OLE/binary as BLOB, text as TEXT; NULL stays NULL. Every number has numeric affinity, so a filter
 (`WHERE SCALE > 100`), `ORDER BY` and `SUM` compare numbers, in the program and in any tool that opens the saved file.
 
-When the file is closed (**File > Close**), another file is opened, or the program exits, a short dialog asks what to
-do with that SQLite file:
+When the file is closed (**File > Close**), another file is opened, or the program exits, a short dialog asks
+`Save the SQLite file converted from Access (<source>.sqlite)?`:
 
 - **Save...** - save dialog, by default next to the source file as `<source>.sqlite`;
 - **Delete** - the temporary file is deleted;
-- **Cancel** - nothing is closed (the program stays open).
+- **Cancel** (or Esc, or the dialog's X) - nothing is closed (the program stays open).
 
-The first answer is remembered until the program closes (a remembered **Save** writes into the same folder; if that
-name already exists the save dialog opens). Temporary files are never left behind: they are deleted on **Delete**,
-and if the program crashes, the next start deletes the temporaries of programs that are no longer running.
+With **Remember for this session** checked, the answer is used until the program closes without asking (a remembered
+**Save** writes into the same folder; if that name already exists the save dialog opens). A saved SQLite is kept in
+the settings with the key of the Access file (path, size and modification date): opening the same, unchanged Access
+file again, also in a later run, opens the saved SQLite at once, with no conversion and no question; if the Access
+file (or the saved SQLite) changed, it is converted again. Temporary files are never left behind: they are deleted
+on **Delete**, and if the program crashes, the next start deletes the temporaries of programs that are no longer
+running.
 
 ## How to use
 
@@ -163,7 +167,8 @@ While a file opens, the status line shows the time, a progress bar (tables conve
 ### Saved settings
 
 Windows: `%APPDATA%\mdb2sql\zig-imgui.ini`; Linux: `~/.config/mdb2sql/zig-imgui.ini` (`$XDG_CONFIG_HOME` if set).
-Theme, language, Log panel, default search scope, Show NULL and the last folder used.
+Theme, language, Log panel, default search scope, Show NULL, the last folder used and the last 8 Access files saved
+as SQLite (path, size and date of both files).
 
 ### Command line
 
