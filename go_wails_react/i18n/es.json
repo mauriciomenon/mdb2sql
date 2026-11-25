@@ -160,6 +160,7 @@
   "sql.cancel": "Cancelar",
   "sql.error": "Error en la consulta SQL: {0}",
   "sql.label": "SQL",
+  "sql.placeholder": "SELECT * FROM ...",
   "sql.result": "Resultado SQL",
   "sql.run": "Ejecutar",
   "sql.searchLabel": "Buscar en el resultado",

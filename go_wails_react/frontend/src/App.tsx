@@ -154,7 +154,8 @@ export function progressText(verb: string, p: Progress | null, t: T): string {
 // Linha do painel Log: hora local HH:MM:SS + texto
 export const logLine = (text: string, at = new Date()) => `${at.toTimeString().slice(0, 8)}  ${text}`;
 type LogLevel = 'info' | 'warn' | 'error';
-type LogEntry = { line: string; text: string; level: LogLevel };
+// sql: an error of the SQL tab; cleared: a later query ran fine, so the status bar no longer shows it
+type LogEntry = { line: string; text: string; level: LogLevel; sql?: boolean; cleared?: boolean };
 
 // First line of a message (the status bar shows one line; the log keeps the whole text)
 export const firstLine = (s: string) => s.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? '';
@@ -169,7 +170,7 @@ export const clampLogHeight = (h: number, windowHeight: number) => Math.round(Ma
 
 // Status bar with the log collapsed: the last unread error, else the last unread warning, else the status
 export function statusLine(entries: LogEntry[], readMark: number, status: string, error: string) {
-  const unread = entries.slice(readMark).filter((e) => e.level !== 'info');
+  const unread = entries.slice(readMark).filter((e) => e.level !== 'info' && !e.cleared);
   const pick = unread.findLast((e) => e.level === 'error') ?? unread.findLast((e) => e.level === 'warn');
   return { text: pick?.text ?? (error || status), level: pick?.level ?? (error ? 'error' : 'info'), unread: unread.length };
 }
@@ -266,8 +267,8 @@ function App() {
   const [querying, setQuerying] = useState(false);
 
   // the log keeps the full text; short = the one line the status bar shows for it
-  const addLog = (text: string, level: LogLevel = 'info', short = firstLine(text)) =>
-    setLogLines((old) => [...old, { line: logLine(text), text: short, level }]);
+  const addLog = (text: string, level: LogLevel = 'info', short = firstLine(text), sql = false) =>
+    setLogLines((old) => [...old, { line: logLine(text), text: short, level, sql }]);
   // every status and error also goes to the Log panel
   const setStatus = (text: string) => {
     setStatusText(text);
@@ -660,10 +661,7 @@ function App() {
       setTableSearch('');
       setScope(defaultScopeRef.current);
       setStatus(tn('status.loaded', tableList.length, name, tableList.length));
-      if (tableList.length > 0) {
-        await loadTable(tableList[0], limit, undefined, '');
-        setSql(`SELECT * FROM "${tableList[0].replace(/"/g, '""')}" LIMIT 100`);
-      }
+      if (tableList.length > 0) await loadTable(tableList[0], limit, undefined, '');
     } catch (err) {
       setDbName('');
       setSource('');
@@ -740,13 +738,17 @@ function App() {
       if (req !== sqlReq.current) return;
       setResult({ columns: res.columns ?? [], rows: res.rows ?? [], more: res.more });
       setResultSql(sql);
+      // a query that ran fine takes the earlier SQL error off the status bar (the log keeps it)
+      setLogLines((old) => (old.some((e) => e.sql && !e.cleared) ? old.map((e) => (e.sql ? { ...e, cleared: true } : e)) : old));
     } catch (err) {
       if (req !== sqlReq.current) return;
-      setResult(null);
+      setResult(null); // an error clears the old grid
       setResultSql('');
       // status bar: one translated line; the engine's full text (LINE 1, carets) goes to the log
       const full = err instanceof Error ? err.message : String(err);
-      setError(full, t('sql.error', sqlErrorSummary(full)));
+      const short = t('sql.error', sqlErrorSummary(full));
+      setErrorText(short);
+      addLog(full, 'error', short, true);
     } finally {
       if (req === sqlReq.current) setQuerying(false);
     }
@@ -1152,6 +1154,7 @@ function App() {
                 <textarea
                   ref={sqlRef}
                   aria-label={t('sql.label')}
+                  placeholder={t('sql.placeholder')}
                   spellCheck={false}
                   value={sql}
                   onChange={(e) => setSql(e.target.value)}

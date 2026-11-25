@@ -833,6 +833,7 @@ describe('App IPC flow', () => {
     openDefault();
     await screen.findByText('Alpha');
     fireEvent.click(screen.getByRole('tab', { name: 'SQL' }));
+    fireEvent.change(screen.getByLabelText('SQL'), { target: { value: 'select * from t' } });
     fireEvent.click(screen.getByRole('button', { name: 'Run' }));
     await waitFor(() => expect(screen.getByRole('status').className).toContain('error'));
     // one translated line in the status bar; the engine's full text (LINE 1, caret) only in the log
@@ -866,6 +867,38 @@ describe('App IPC flow', () => {
     expect(statusLine(entries, 0, 'ok', '')).toEqual({ text: 'e', level: 'error', unread: 2 });
     expect(statusLine(entries, 2, 'ok', '')).toEqual({ text: 'ok', level: 'info', unread: 0 });
     expect(statusLine(entries.slice(0, 1), 0, 'ok', '')).toEqual({ text: 'w', level: 'warn', unread: 1 });
+  });
+
+  // standard item 16: the SQL field starts empty with the hint; a query that runs fine takes the earlier error off the
+  // status bar, and an error clears the old grid
+  it('starts the SQL field empty and clears the earlier SQL error after a good query', async () => {
+    const RunQuery = vi.fn(async (q) => {
+      if (q === 'bad') throw new Error(ENGINE_ERROR);
+      return { columns: ['n'], rows: [{ n: 'good' }], more: false };
+    });
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, RunQuery } } } });
+    render(<App />);
+    openDefault();
+    await screen.findByText('Alpha');
+    fireEvent.click(screen.getByRole('tab', { name: 'SQL' }));
+    const field = screen.getByLabelText('SQL');
+    expect(field).toHaveValue('');
+    expect(field).toHaveAttribute('placeholder', 'SELECT * FROM ...');
+    const run = (q) => {
+      fireEvent.change(field, { target: { value: q } });
+      fireEvent.keyDown(field, { key: 'Enter', ctrlKey: true });
+    };
+    run('ok');
+    expect(await screen.findByText('good')).toBeInTheDocument();
+    run('bad');
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('SQL query error: syntax error at or near "selec"'));
+    expect(screen.queryByText('good')).not.toBeInTheDocument(); // the old grid is gone
+    expect(screen.getByTitle('1 unread errors or warnings')).toBeInTheDocument();
+    run('ok');
+    expect(await screen.findByText('good')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('status').className).not.toContain('error'));
+    expect(screen.getByRole('status').textContent).toBe('Loaded: sample.duckdb (2 tables)');
+    expect(screen.queryByTitle(/unread/)).not.toBeInTheDocument();
   });
 
   it('opens with the log expanded when it was left expanded', async () => {
@@ -1148,6 +1181,7 @@ describe('App IPC flow', () => {
 
     // the SQL tab searches its loaded result here (the Data tab asks the database)
     fireEvent.click(screen.getByRole('tab', { name: 'SQL' }));
+    fireEvent.change(screen.getByLabelText('SQL'), { target: { value: 'select * from t' } });
     fireEvent.click(screen.getByRole('button', { name: 'Run' }));
     await screen.findByText('Beta');
     fireEvent.change(screen.getByLabelText('Search the result'), { target: { value: 'alp' } });
