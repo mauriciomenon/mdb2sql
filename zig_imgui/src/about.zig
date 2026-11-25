@@ -13,6 +13,12 @@ pub const zig_version = builtin.zig_version_string;
 pub const name = "mdb2sql";
 // Titulo curto da janela e das caixas de mensagem; os detalhes ficam no Sobre
 pub const window_title = name ++ " " ++ version ++ " - Zig";
+// Titulo com o arquivo aberto (o do Python): "<arquivo> - mdb2sql 1.3.0 - Zig"; sem arquivo, window_title
+pub fn windowTitleFor(buf: []u8, file_name: []const u8) [:0]const u8 {
+    if (file_name.len == 0) return window_title;
+    return std.fmt.bufPrintSentinel(buf, "{s} - " ++ window_title, .{file_name}, 0) catch window_title;
+}
+
 pub const author = "Mauricio Menon";
 pub const mdbtools_version = options.mdbtools_version;
 
@@ -46,6 +52,12 @@ pub fn stackText(buf: []u8, imgui: []const u8) []const u8 {
 test "window title is short and carries the zon version" {
     _ = try std.SemanticVersion.parse(version);
     try std.testing.expectEqualStrings("mdb2sql 1.3.0 - Zig", window_title); // muda junto com build.zig.zon
+    // com arquivo aberto o nome vem antes; sem arquivo, so o titulo
+    var b: [128]u8 = undefined;
+    try std.testing.expectEqualStrings("mdb2sql_test.mdb - mdb2sql 1.3.0 - Zig", windowTitleFor(&b, "mdb2sql_test.mdb"));
+    try std.testing.expectEqualStrings("mdb2sql 1.3.0 - Zig", windowTitleFor(&b, ""));
+    var tiny: [8]u8 = undefined;
+    try std.testing.expectEqualStrings("mdb2sql 1.3.0 - Zig", windowTitleFor(&tiny, "um nome longo demais.accdb"));
 }
 
 test "only the two About links may be opened" {

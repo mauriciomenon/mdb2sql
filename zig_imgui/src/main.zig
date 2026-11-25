@@ -755,6 +755,7 @@ const App = struct {
     slot: worker.Slot, // consultas rodam fora da thread da UI; slot.db aponta para `db`
     busy_since: f64 = 0,
     hwnd: ?*anyopaque = null,
+    window: ?*glfw.Window = null, // titulo com o arquivo aberto
     status: Msg = .{},
     prefs: settings.Settings = .{},
     prefs_path: []const u8 = "",
@@ -1039,6 +1040,7 @@ const App = struct {
                 out.counts = &.{};
                 app.source = if (app.db.isOpen()) out.source else null;
                 app.loaded_path = if (app.db.isOpen()) app.slot.req.path else @splat(0);
+                app.updateTitle();
                 // o SQLite convertido existe mesmo se a contagem foi cancelada: a UI fica com ele
                 if (out.converted.len > 0) app.converted = .{ .tmp = out.converted, .source = app.slot.req.path };
                 if (app.db.isOpen() and out.err == null) {
@@ -1133,6 +1135,13 @@ const App = struct {
         app.status.loaded = true;
     }
 
+    // Titulo da janela: "<arquivo> - mdb2sql 1.3.0 - Zig" com arquivo aberto, senao "mdb2sql 1.3.0 - Zig"
+    fn updateTitle(app: *App) void {
+        const w = app.window orelse return;
+        var tb: [1100]u8 = undefined;
+        w.setTitle(dbm.about.windowTitleFor(&tb, std.fs.path.basename(zstr(&app.loaded_path))));
+    }
+
     // Modo de leitura do arquivo aberto (direita da barra de baixo): "Aberto via Access ODBC, convertido para
     // SQLite", "Aberto via mdbtools, ...", "Aberto via SQLite" ou "Aberto via DuckDB"; vazio sem arquivo
     fn sourceText(app: *const App, buf: []u8) []const u8 {
@@ -1217,6 +1226,7 @@ const App = struct {
             access.deleteQuiet(app.io, cv.tmp.slice());
             app.converted = null;
         }
+        app.updateTitle();
         if (shown.len > 0) app.status.set(false, "status_closed", .{shown});
     }
 
@@ -2670,6 +2680,7 @@ fn run(init: std.process.Init) !void {
     glfw.swapInterval(if (capture_opts != null) 0 else 1);
     _ = glfw.setDropCallback(window, onDrop);
     if (platform.is_windows) app.hwnd = @ptrCast(glfw.getWin32Window(window));
+    app.window = window;
     gl = try Gl.load();
 
     _ = ig.igCreateContext(null);
