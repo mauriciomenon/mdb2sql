@@ -832,7 +832,9 @@ const App = struct {
     want_about: bool = false,
     about_open: bool = false,
     log_seen: usize = 0, // tamanho do log no ultimo quadro (linha nova: rola para o fim)
-    focus_sql: bool = false,
+    want_tab: ?Tab = null, // aba a selecionar no proximo quadro (atalhos, --sql)
+    focus_search: bool = false, // Ctrl+F: foco na busca da aba Dados
+    want_refresh: bool = false, // F5: abre de novo o arquivo aberto
     reveal_selected: bool = false, // rola a lista de tabelas ate a selecionada (ex.: --table)
     start_table: []const u8 = "", // --table: tabela inicial do proximo open
     start_sql: bool = false, // --sql: roda depois do primeiro open
@@ -1059,7 +1061,7 @@ const App = struct {
                     if (app.capture_mode) copyZ(&app.path, std.fs.path.basename(zstr(&app.open_request)));
                     if (app.start_sql) {
                         app.want_run = true;
-                        app.focus_sql = true;
+                        app.want_tab = .sql;
                     }
                 }
                 app.start_sql = false;
@@ -1345,6 +1347,16 @@ const App = struct {
             } else if (app.session_choice) |ch| app.resolve(ch, false);
         }
         if (app.leave != null) return; // esperando a resposta sobre o SQLite convertido
+        // F5 (o do Python): abre de novo o arquivo aberto; o SQLite convertido dele e trocado pelo novo, sem pergunta
+        if (app.want_refresh) {
+            app.want_refresh = false;
+            if (app.loaded_path[0] != 0) {
+                var again: [1024:0]u8 = app.loaded_path;
+                app.closeFile();
+                app.setPath(zstr(&again));
+                app.want_open = true;
+            }
+        }
         if (app.want_filter != null or app.want_unfilter != null or app.want_clear_filters) {
             app.editFilters();
             app.want_reload = true;
@@ -1613,7 +1625,7 @@ const App = struct {
             }
             if (ig.igMenuItem_Bool(tr("menu_close"), null, false, has_db)) app.requestLeave(.close);
             ig.igSeparator();
-            if (ig.igMenuItem_Bool(tr("menu_exit"), null, false, true)) app.requestLeave(.exit);
+            if (ig.igMenuItem_Bool(tr("menu_exit"), "Ctrl+Q", false, true)) app.requestLeave(.exit);
         }
         if (ig.igBeginMenu(view_l, true)) {
             defer ig.igEndMenu();
@@ -1662,8 +1674,27 @@ const App = struct {
             defer ig.igEndMenu();
             if (ig.igMenuItem_Bool(tr("menu_about"), null, false, true)) app.want_about = true;
         }
-        if (ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_O)) app.want_browse = true;
-        if (ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_L)) app.setLogOpen(!app.prefs.log_open);
+        // atalhos do Python (os mesmos nas 4): Ctrl+O, Ctrl+F (busca), F5 (abrir de novo), Ctrl+Q, Ctrl+1/2/3 (abas),
+        // Ctrl+L (Log), Ctrl+Enter (rodar o SQL); Ctrl+C fica na grade
+        const chord = ig.igIsKeyChordPressed_Nil;
+        const ctrl = ig.ImGuiMod_Ctrl;
+        if (chord(ctrl | ig.ImGuiKey_O)) app.want_browse = true;
+        if (chord(ctrl | ig.ImGuiKey_L)) app.setLogOpen(!app.prefs.log_open);
+        if (chord(ctrl | ig.ImGuiKey_Q)) app.requestLeave(.exit);
+        if (has_db) {
+            if (chord(ctrl | ig.ImGuiKey_F)) {
+                app.want_tab = .data;
+                app.focus_search = true;
+            }
+            if (ig.igIsKeyPressed_Bool(ig.ImGuiKey_F5, false)) app.want_refresh = true;
+            if (chord(ctrl | ig.ImGuiKey_1)) app.want_tab = .data;
+            if (chord(ctrl | ig.ImGuiKey_2)) app.want_tab = .schema;
+            if (chord(ctrl | ig.ImGuiKey_3)) app.want_tab = .sql;
+            if ((chord(ctrl | ig.ImGuiKey_Enter) or chord(ctrl | ig.ImGuiKey_KeypadEnter)) and zstr(&app.sql).len > 0) {
+                app.want_tab = .sql;
+                app.want_run = true;
+            }
+        }
     }
 
     // O menu de --menu, uma vez, so depois que o banco abriu e nada esta rodando
@@ -2089,13 +2120,17 @@ const App = struct {
         if (!ig.igBeginTabBar("##tabs", 0)) return;
         defer ig.igEndTabBar();
         var lb: [3][64]u8 = undefined;
+        // aba pedida por atalho (Ctrl+1/2/3, Ctrl+F, Ctrl+Enter) ou pelo --sql
+        const pick = app.want_tab;
+        app.want_tab = null;
+        const sel = ig.ImGuiTabItemFlags_SetSelected;
 
-        if (ig.igBeginTabItem(idLabel(&lb[0], "tab_data", "data"), null, 0)) {
+        if (ig.igBeginTabItem(idLabel(&lb[0], "tab_data", "data"), null, if (pick == .data) sel else 0)) {
             defer ig.igEndTabItem();
             app.tab = .data;
             app.drawData();
         }
-        if (ig.igBeginTabItem(idLabel(&lb[1], "tab_schema", "schema"), null, 0)) {
+        if (ig.igBeginTabItem(idLabel(&lb[1], "tab_schema", "schema"), null, if (pick == .schema) sel else 0)) {
             defer ig.igEndTabItem();
             app.tab = .schema;
             if (app.schema) |*g| {
@@ -2110,12 +2145,11 @@ const App = struct {
                 ig.igPopStyleVar(1);
             }
         }
-        if (ig.igBeginTabItem(idLabel(&lb[2], "tab_sql", "sql"), null, if (app.focus_sql) ig.ImGuiTabItemFlags_SetSelected else 0)) {
+        if (ig.igBeginTabItem(idLabel(&lb[2], "tab_sql", "sql"), null, if (pick == .sql) sel else 0)) {
             defer ig.igEndTabItem();
             app.tab = .sql;
             app.drawSql();
         }
-        app.focus_sql = false;
     }
 
     fn drawData(app: *App) void {
@@ -2135,6 +2169,10 @@ const App = struct {
         const limit_w = textWidth(rows_l) + gap + combo_w;
         // +2 gaps de folga em cada parte: sameLineIfFits mede pela borda da janela, um pouco antes da borda do painel
         const tail_w = if (app.scope == .table) limit_w + buttonWidth(tr("columns_button")) + 4 * gap else 0;
+        if (app.focus_search) { // Ctrl+F
+            app.focus_search = false;
+            ig.igSetKeyboardFocusHere(0);
+        }
         ig.igSetNextItemWidth(dbm.gridtools.searchWidth(ig.igGetContentRegionAvail().x, ig.igGetFontSize() * 8, selector_w + 3 * gap, tail_w));
         // busca 300 ms depois da ultima tecla; Enter busca na hora
         if (ig.igInputTextWithHint("##search", tr("search"), &app.search, app.search.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) {

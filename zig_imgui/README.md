@@ -158,6 +158,8 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   **Copy** (the whole text). Also on the right, always: the hidden columns of the grid on screen and how the open file
   was read (`Opened via Access ODBC, converted to SQLite`, `Opened via mdbtools, ...`, `Opened via SQLite`,
   `Opened via DuckDB`). Opening a file says `Loaded: <file> (<n> tables)`.
+- Shortcuts (the same in the 4 versions): Ctrl+O open, Ctrl+F Data search, F5 open the file again, Ctrl+Q exit,
+  Ctrl+1 / Ctrl+2 / Ctrl+3 Data / Schema / SQL tab, Ctrl+L Log, Ctrl+Enter run the SQL, Ctrl+C copy the cell.
 - Numbers are right-aligned in the grids and in the row counts of the table list (headers too); arrows are `←` `→`.
 - **Settings > Theme**: System, Light, Dark. **Settings > Language**: English, Português (Brasil), Español.
   **Settings > Default search scope**: This table, All tables. **Settings > Show NULL** (off by default). All are
