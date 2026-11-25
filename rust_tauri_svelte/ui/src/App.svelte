@@ -761,6 +761,9 @@
     // tabela com pesquisa ou filtro na grade (as 4 versoes): a tabela inteira ou so as linhas encontradas
     let rows = { filters: [], search: '' };
     if (scope === 'table' && !everywhere && (search.trim() || filters.length)) {
+      // a pesquisa digitada que ainda espera os 300 ms vale agora: o numero da pergunta e o das linhas exportadas
+      clearTimeout(searchTimer);
+      await openTable(selectedTable);
       const choice = await askRows(label);
       if (!choice) return; // Cancelar ou Esc
       if (choice === 'found') rows = { filters, search: search.trim() };

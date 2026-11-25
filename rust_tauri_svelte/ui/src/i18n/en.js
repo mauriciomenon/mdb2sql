@@ -19,7 +19,7 @@ export default {
   'export.sqlCsv': 'SQL result to CSV...',
   'export.sqlXlsx': 'SQL result to Excel (.xlsx)...',
   'export.wholeTable': 'Whole table',
-  'export.foundRows': 'Only the {count} {count|row found|rows found}',
+  'export.foundRows': '{count|Only|Only the} {count} {count|row found|rows found}',
   'save.sqlite': 'SQLite database',
   'save.duckdb': 'DuckDB database',
   'save.xlsx': 'Excel workbook',

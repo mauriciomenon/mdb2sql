@@ -62,10 +62,11 @@ test('the main window has no repeated button or menu item', () => {
 // encontradas"; a escolha manda (ou nao) os filtros e a pesquisa ao backend; Cancelar/Esc nao exporta
 test('exporting a searched table asks: whole table or only the rows found', () => {
   const code = appFunction('startExport');
-  assert.match(code, /if \(scope === 'table' && !everywhere && \(search\.trim\(\) \|\| filters\.length\)\) \{\s*const choice = await askRows\(label\);\s*if \(!choice\) return;[^\n]*\n\s*if \(choice === 'found'\) rows = \{ filters, search: search\.trim\(\) \};/);
+  // a pesquisa que ainda esperava os 300 ms vale antes da pergunta (o numero mostrado e o exportado)
+  assert.match(code, /if \(scope === 'table' && !everywhere && \(search\.trim\(\) \|\| filters\.length\)\) \{[^\n]*\n[^\n]*\n\s*clearTimeout\(searchTimer\);\s*await openTable\(selectedTable\);\s*const choice = await askRows\(label\);\s*if \(!choice\) return;[^\n]*\n\s*if \(choice === 'found'\) rows = \{ filters, search: search\.trim\(\) \};/);
   assert.match(code, /invoke\('export', \{ scope, format, path, table: selectedTable \|\| null, sql: lastSql \|\| null, \.\.\.rows \}\)/);
   const dialog = markup('./App.svelte').match(/<dialog\s+bind:this=\{rowsDialog\}[\s\S]*?<\/dialog>/)[0];
-  assert.deepEqual(buttonLabels(dialog), ['Whole table', 'Only the', 'Cancel']);
+  assert.deepEqual(buttonLabels(dialog), ['Whole table', 'Cancel']); // o do meio e todo texto com numero
   assert.match(dialog, /onclick=\{\(\) => rowsReply\('found'\)\}>\{t\('export\.foundRows', \{ count: fmt\(matchCount\) \}\)\}/);
   assert.match(dialog, /oncancel=\{\(e\) => \{\s*e\.preventDefault\(\);\s*rowsReply\(null\);/);
   // ordem do menu de exportacao: SQLite, DuckDB, Excel do banco; tabela e SQL com CSV e Excel (textos desta versao)
