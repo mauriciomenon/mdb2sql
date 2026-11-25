@@ -35,6 +35,55 @@ pub fn writeRow(w: *Writer, columns: []const [:0]const u8, row: []const ?[]const
     }
 }
 
+// !T: Longest start of `s` whose width fits in `max`, cut on a whole UTF-8 character (`width` measures a text and
+// grows with its length). Used to end a long status line with "..." instead of drawing under the right side.
+pub fn fitPrefix(s: []const u8, max: f32, comptime width: fn ([]const u8) f32) []const u8 {
+    if (width(s) <= max) return s;
+    var lo: usize = 0; // s[0..lo] cabe
+    var hi: usize = s.len; // s[0..hi] nao cabe
+    while (hi - lo > 1) {
+        const mid = lo + (hi - lo) / 2;
+        if (width(s[0..mid]) <= max) lo = mid else hi = mid;
+    }
+    while (lo > 0 and (s[lo] & 0xC0) == 0x80) lo -= 1; // nao corta no meio de um caractere
+    return s[0..lo];
+}
+
+// !T: Width of the Data tab search box. The line is [search][This table | All tables][Rows ...][Columns...]: the box
+// takes what is left, at least `min`. When the tail does not fit beside a box of `min` it goes down a line (the box
+// grows again); when the scope selector does not fit either, it goes down too and the box takes the whole line.
+// `scope_w` and `tail_w` include their gaps. Nothing is cut and there is no sideways scrolling (Go at 720 px).
+pub fn searchWidth(avail: f32, min: f32, scope_w: f32, tail_w: f32) f32 {
+    if (avail - scope_w - tail_w >= min) return avail - scope_w - tail_w;
+    if (avail - scope_w >= min) return avail - scope_w;
+    return avail;
+}
+
+test "Data search box: fills the line; the tail, then the scope selector go down instead of being cut" {
+    // 1280 px: tudo numa linha, a caixa com o resto
+    try std.testing.expectEqual(@as(f32, 500), searchWidth(1000, 186, 260, 240));
+    // ~430 px (janela de 720): Linhas e Colunas descem, a caixa fica com o que sobra ao lado do seletor
+    try std.testing.expectEqual(@as(f32, 190), searchWidth(450, 186, 260, 240));
+    // mais estreito: o seletor desce tambem e a caixa ocupa a linha inteira
+    try std.testing.expectEqual(@as(f32, 300), searchWidth(300, 186, 260, 240));
+    // Todas as tabelas (sem Linhas nem Colunas)
+    try std.testing.expectEqual(@as(f32, 740), searchWidth(1000, 186, 260, 0));
+}
+
+fn byteWidth(s: []const u8) f32 {
+    return @floatFromInt(s.len);
+}
+
+test "status line cut: longest start that fits, never in the middle of a UTF-8 character" {
+    try std.testing.expectEqualStrings("Aberto", fitPrefix("Aberto", 6, byteWidth));
+    try std.testing.expectEqualStrings("Abe", fitPrefix("Aberto", 3, byteWidth));
+    try std.testing.expectEqualStrings("", fitPrefix("Aberto", 0, byteWidth));
+    try std.testing.expectEqualStrings("", fitPrefix("Aberto", -5, byteWidth));
+    // "Medições": o "ç" tem 2 bytes (C3 A7); com 5 bytes de espaco o corte volta para "Medi"
+    try std.testing.expectEqualStrings("Medi", fitPrefix("Medições", 5, byteWidth));
+    try std.testing.expectEqualStrings("Mediç", fitPrefix("Medições", 6, byteWidth));
+}
+
 // Letra base de U+00C0..U+00FF (UTF-8 C3 80..C3 BF); 0 = sem letra base (Æ Ð × Ø Þ ß æ ð ÷ ø þ)
 const latin1_base = "aaaaaa\x00ceeeeiiii\x00nooooo\x00\x00uuuuy\x00\x00" ++ "aaaaaa\x00ceeeeiiii\x00nooooo\x00\x00uuuuy\x00y";
 comptime {

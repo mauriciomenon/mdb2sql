@@ -31,6 +31,33 @@ pub fn fmt(buf: []u8, comptime key: []const u8, args: anytype) []const u8 {
     };
 }
 
+// Texto com contagem e plural certo: a chave `key ++ "_one"` quando n == 1 ("1 tabela"), senao `key` ("2 tabelas");
+// as duas recebem os mesmos argumentos
+pub fn fmtCount(buf: []u8, comptime key: []const u8, n: u64, args: anytype) []const u8 {
+    return if (n == 1) fmt(buf, key ++ "_one", args) else fmt(buf, key, args);
+}
+
+// Palavra de uma contagem com o plural certo ("1 linha", "2 linhas"): `key ++ "_one"` quando n == 1
+pub fn trCount(comptime key: []const u8, n: u64) [:0]const u8 {
+    return if (n == 1) tr(key ++ "_one") else tr(key);
+}
+
+pub fn fmtCountZ(buf: []u8, comptime key: []const u8, n: u64, args: anytype) [:0]const u8 {
+    return if (n == 1) fmtZ(buf, key ++ "_one", args) else fmtZ(buf, key, args);
+}
+
+// Coluna "Aceita nulo" do Esquema: o YES/NO do DuckDB (ou o Sim/Nao de outro idioma, ao trocar o idioma) no idioma
+// atual; outro texto volta como veio
+pub fn yesNo(v: []const u8) []const u8 {
+    if (std.mem.eql(u8, v, "YES")) return tr("yes");
+    if (std.mem.eql(u8, v, "NO")) return tr("no");
+    inline for (catalogs) |C| {
+        if (std.mem.eql(u8, v, C.yes)) return tr("yes");
+        if (std.mem.eql(u8, v, C.no)) return tr("no");
+    }
+    return v;
+}
+
 pub fn fmtZ(buf: []u8, comptime key: []const u8, args: anytype) [:0]const u8 {
     return switch (lang) {
         inline else => |l| std.fmt.bufPrintSentinel(buf, @field(Catalog(l), key), args, 0) catch "",
@@ -46,6 +73,7 @@ fn keys(comptime C: type) []const [:0]const u8 {
 }
 
 test "the three catalogs have the same keys and no empty text" {
+    @setEvalBranchQuota(100_000);
     inline for (catalogs) |C| {
         try t.expectEqual(keys(catalogs[0]).len, keys(C).len);
         inline for (comptime keys(catalogs[0])) |d| {
@@ -55,6 +83,74 @@ test "the three catalogs have the same keys and no empty text" {
             // mesmos marcadores {..} nos tres idiomas e na mesma ordem
             const base: []const u8 = @field(catalogs[0], d);
             try t.expectEqual(std.mem.count(u8, base, "{"), std.mem.count(u8, s, "{"));
+        }
+    }
+}
+
+test "plural: every _one key has its plural key with the same arguments, and fmtCount picks by the count" {
+    @setEvalBranchQuota(100_000);
+    inline for (catalogs) |C| {
+        inline for (comptime keys(C)) |d| {
+            if (comptime std.mem.endsWith(u8, d, "_one")) {
+                const base = d[0 .. d.len - "_one".len];
+                try t.expect(@hasDecl(C, base));
+                try t.expectEqual(std.mem.count(u8, @field(C, base), "{"), std.mem.count(u8, @field(C, d), "{"));
+            }
+        }
+    }
+    defer lang = .en;
+    var b: [128]u8 = undefined;
+    lang = .pt_br;
+    try t.expectEqualStrings("Aberto: a.mdb (1 tabela)", fmtCount(&b, "status_loaded", 1, .{ "a.mdb", 1 }));
+    try t.expectEqualStrings("Aberto: a.mdb (3 tabelas)", fmtCount(&b, "status_loaded", 3, .{ "a.mdb", 3 }));
+    try t.expectEqualStrings("Aberto: a.mdb (0 tabelas)", fmtCount(&b, "status_loaded", 0, .{ "a.mdb", 0 }));
+    lang = .en;
+    try t.expectEqualStrings("1 unread error or warning", fmtCount(&b, "log_unread", 1, .{1}));
+    try t.expectEqualStrings("2 unread errors or warnings", fmtCount(&b, "log_unread", 2, .{2}));
+    // SQL, exportacao e progresso
+    lang = .pt_br;
+    try t.expectEqualStrings("1 linha", fmtCount(&b, "sql_rows", 1, .{1}));
+    try t.expectEqualStrings("1 coluna", fmtCount(&b, "sql_cols", 1, .{1}));
+    try t.expectEqualStrings("1 de 1 linha encontrada", fmtCount(&b, "rows_match", 1, .{ 1, 1 }));
+    try t.expectEqualStrings("Exportada 1 linha para T.csv", fmtCount(&b, "status_exported", 1, .{ 1, trCount("unit_rows", 1), "T.csv", "", "" }));
+    try t.expectEqualStrings("Exportadas 3 tabelas para T.sqlite", fmtCount(&b, "status_exported", 3, .{ 3, trCount("unit_tables", 3), "T.sqlite", "", "" }));
+}
+
+test "Schema nullable column: YES/NO in the screen language, again after a language change" {
+    defer lang = .en;
+    lang = .pt_br;
+    try t.expectEqualStrings("Sim", yesNo("YES"));
+    try t.expectEqualStrings("Não", yesNo("NO"));
+    lang = .es;
+    try t.expectEqualStrings("Sí", yesNo("Sim")); // o texto ja traduzido, refeito no idioma novo
+    try t.expectEqualStrings("No", yesNo("Não"));
+    lang = .en;
+    try t.expectEqualStrings("Yes", yesNo("Sí"));
+    try t.expectEqualStrings("No", yesNo("No"));
+    try t.expectEqualStrings("PRI", yesNo("PRI"));
+}
+
+test "texts as in the Go catalog (the reference wording), in the three languages" {
+    const want = .{
+        .{ "search_rule", "All words, any order, in one cell; ignores case and accents", "Todas as palavras, em qualquer ordem, na mesma célula; ignora maiúsculas e acentos", "Todas las palabras, en cualquier orden, en la misma celda; ignora mayúsculas y acentos" },
+        .{ "columns_tip", "Search and export use every column", "Pesquisa e exportação usam todas as colunas", "La búsqueda y la exportación usan todas las columnas" },
+        .{ "find_column", "Filter columns", "Filtrar colunas", "Filtrar columnas" },
+        .{ "search", "Search the whole table", "Pesquisar na tabela inteira", "Buscar en toda la tabla" },
+        .{ "clear_filters", "Clear filters", "Limpar filtros", "Quitar filtros" },
+        .{ "menu_search_scope", "Default search scope", "Escopo padrão da busca", "Alcance predeterminado de la búsqueda" },
+        .{ "menu_log", "Log", "Log", "Log" },
+        .{ "converted_remember", "Remember for this session", "Lembrar nesta sessão", "Recordar en esta sesión" },
+    };
+    inline for (want) |w| {
+        inline for (0..3) |l| try t.expectEqualStrings(w[l + 1], @field(catalogs[l], w[0]));
+    }
+    // sem Title Case nas frases (so a primeira letra maiuscula)
+    inline for (catalogs) |C| {
+        inline for (.{ "search", "find_column", "menu_search_scope", "copy_row_header", "show_all_columns" }) |k| {
+            const s: []const u8 = @field(C, k);
+            var it = std.mem.tokenizeScalar(u8, s, ' ');
+            _ = it.next();
+            while (it.next()) |word| try t.expect(!std.ascii.isUpper(word[0]) or std.mem.eql(u8, word, "NULL"));
         }
     }
 }
@@ -71,7 +167,7 @@ test "translations differ from English where words are involved" {
 // sem espaco). Excecoes: SQL, nomes de produto, atalhos, variaveis de ambiente e mensagens do --capture.
 fn uiTextOutsideCatalog(src: []const u8) ?[]const u8 {
     const allowed_lines = [_][]const u8{ "c.failed", "c.skip(", "c.note(","sql.appendSlice(", "@import(", "extern ", "\\x00*.", "--file-filter=", "segoeui", "consola.ttf", "copyZ(&app.sql", "SQLite format 3" };
-    const allowed = [_][]const u8{ "GLFW {d}.{d}.{d} + OpenGL 3.3", "DuckDB {s}", "#version 330", "X11 (DISPLAY={s}: {t})", "Ctrl+O", "Ctrl+L", "Ctrl+C" };
+    const allowed = [_][]const u8{ "GLFW {d}.{d}.{d} + OpenGL 3.3", "DuckDB {s}", "#version 330", "X11 (DISPLAY={s}: {t})", "Ctrl+O", "Ctrl+L", "Ctrl+C", "Ctrl+Q" };
     var lines = std.mem.splitScalar(u8, src, '\n');
     while (lines.next()) |full| {
         // sem o comentario do fim da linha (// fora de string)
@@ -149,7 +245,7 @@ test "no lecturing hints and no copyright line in any catalog" {
     inline for (catalogs) |C| {
         inline for (comptime keys(C)) |d| {
             const s: []const u8 = @field(C, d);
-            for ([_][]const u8{ "Copyright", "(C) 20", "Remember", "Please", "Make sure", "Lembre", "Por favor", "Verifique", "Recuerde", "Asegúrese" }) |bad|
+            for ([_][]const u8{ "Copyright", "(C) 20", "Remember to", "Please", "Make sure", "Lembre", "Por favor", "Verifique", "Recuerde", "Asegúrese" }) |bad|
                 try t.expect(std.ascii.findIgnoreCase(s, bad) == null);
             // setas sao Unicode (→ ←), nunca "->", "< " ou " >"
             try t.expect(std.mem.indexOf(u8, s, "->") == null and !std.mem.startsWith(u8, s, "< ") and !std.mem.endsWith(u8, s, " >"));
@@ -158,7 +254,22 @@ test "no lecturing hints and no copyright line in any catalog" {
         inline for (.{ "busy_converting", "busy_opening", "busy_loading", "busy_running", "busy_exporting", "converted_deleted", "status_loaded", "status_closed" }) |k|
             try t.expect(std.mem.indexOf(u8, @field(C, k), "...") == null);
     }
-    try t.expect(std.mem.indexOf(u8, catalogs[0].next, "→") != null and std.mem.indexOf(u8, catalogs[1].prev, "←") != null);
+}
+
+test "Data tab count line under the grid: shown of all rows, or of the rows found; plural by the count" {
+    defer lang = .en;
+    var b: [160]u8 = undefined;
+    lang = .pt_br;
+    try t.expectEqualStrings("Tipos: mostrando 3 de 3 linhas", fmtCount(&b, "rows_showing", 3, .{ "Tipos", 3, 3 }));
+    try t.expectEqualStrings("Tipos: mostrando 1 de 1 linha", fmtCount(&b, "rows_showing", 1, .{ "Tipos", 1, 1 }));
+    try t.expectEqualStrings("Medições: mostrando 1 de 1 linha encontrada", fmtCount(&b, "rows_found", 1, .{ "Medições", 1, 1 }));
+    try t.expectEqualStrings("T: mostrando 100 de 604 linhas encontradas", fmtCount(&b, "rows_found", 604, .{ "T", 100, 604 }));
+    lang = .es;
+    try t.expectEqualStrings("T: mostrando 0 de 0 filas", fmtCount(&b, "rows_showing", 0, .{ "T", 0, 0 }));
+    // Todas as tabelas
+    lang = .pt_br;
+    try t.expectEqualStrings("1 tabela com linhas que contêm \"campo\"", fmtCount(&b, "global_found", 1, .{ 1, "campo" }));
+    try t.expectEqualStrings("3 tabelas com linhas que contêm \"ELSUL\"", fmtCount(&b, "global_found", 3, .{ 3, "ELSUL" }));
 }
 
 test "tr and fmt follow the current language" {
@@ -167,10 +278,13 @@ test "tr and fmt follow the current language" {
     lang = .en;
     try t.expectEqualStrings("File", tr("menu_file"));
     try t.expectEqualStrings("3 of 7 shown", fmt(&b, "columns_shown", .{ 3, 7 }));
+    try t.expectEqualStrings("Columns of Tipos", fmt(&b, "columns_title", .{"Tipos"}));
     lang = .pt_br;
     try t.expectEqualStrings("Arquivo", tr("menu_file"));
     try t.expectEqualStrings("3 de 7 visíveis", fmt(&b, "columns_shown", .{ 3, 7 }));
+    try t.expectEqualStrings("Colunas de Tipos", fmt(&b, "columns_title", .{"Tipos"}));
     lang = .es;
     try t.expectEqualStrings("Archivo", tr("menu_file"));
     try t.expectEqualStrings("3 de 7 visibles", fmt(&b, "columns_shown", .{ 3, 7 }));
+    try t.expectEqualStrings("Columnas de Tipos", fmt(&b, "columns_title", .{"Tipos"}));
 }

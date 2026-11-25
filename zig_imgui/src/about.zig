@@ -13,6 +13,12 @@ pub const zig_version = builtin.zig_version_string;
 pub const name = "mdb2sql";
 // Titulo curto da janela e das caixas de mensagem; os detalhes ficam no Sobre
 pub const window_title = name ++ " " ++ version ++ " - Zig";
+// Titulo com o arquivo aberto (o do Python): "<arquivo> - mdb2sql 1.3.0 - Zig"; sem arquivo, window_title
+pub fn windowTitleFor(buf: []u8, file_name: []const u8) [:0]const u8 {
+    if (file_name.len == 0) return window_title;
+    return std.fmt.bufPrintSentinel(buf, "{s} - " ++ window_title, .{file_name}, 0) catch window_title;
+}
+
 pub const author = "Mauricio Menon";
 pub const mdbtools_version = options.mdbtools_version;
 
@@ -46,6 +52,12 @@ pub fn stackText(buf: []u8, imgui: []const u8) []const u8 {
 test "window title is short and carries the zon version" {
     _ = try std.SemanticVersion.parse(version);
     try std.testing.expectEqualStrings("mdb2sql 1.3.0 - Zig", window_title); // muda junto com build.zig.zon
+    // com arquivo aberto o nome vem antes; sem arquivo, so o titulo
+    var b: [128]u8 = undefined;
+    try std.testing.expectEqualStrings("mdb2sql_test.mdb - mdb2sql 1.3.0 - Zig", windowTitleFor(&b, "mdb2sql_test.mdb"));
+    try std.testing.expectEqualStrings("mdb2sql 1.3.0 - Zig", windowTitleFor(&b, ""));
+    var tiny: [8]u8 = undefined;
+    try std.testing.expectEqualStrings("mdb2sql 1.3.0 - Zig", windowTitleFor(&tiny, "um nome longo demais.accdb"));
 }
 
 test "only the two About links may be opened" {
@@ -80,6 +92,58 @@ test "UI texts: one Export button, no copyright line, no lecturing hints" {
     for ([_][]const u8{ "Copyright", "(C) 20", "read-only\")", "not available\")", "any order, ignores", "Remember", "Please ", "Make sure" }) |bad| {
         try std.testing.expect(std.mem.indexOf(u8, ui, bad) == null);
     }
+}
+
+// Itens de menu (chaves do catalogo) na ordem em que aparecem em main.zig a partir de `start`
+fn expectOrder(comptime start: []const u8, keys: []const []const u8) !void {
+    const ui = @embedFile("main.zig");
+    const from = std.mem.indexOf(u8, ui, start) orelse return error.MenuNotFound;
+    var last: usize = from;
+    for (keys) |k| {
+        const at = std.mem.indexOfPos(u8, ui, last, k) orelse {
+            std.debug.print("{s} not after {s}\n", .{ k, start });
+            return error.WrongOrder;
+        };
+        last = at;
+    }
+}
+
+test "cell menu as in Go: value filters, then copy value, row and row with header; no copy option" {
+    try expectOrder("igBeginPopup(\"##copy\"", &.{ "tr(\"filter_by_value\")", "tr(\"clear_filters\")", "tr(\"copy_value\")", "tr(\"copy_row\")", "tr(\"copy_row_header\")" });
+    // a caixa "Copiar linha com o cabecalho" e a opcao dela em Configuracoes sairam
+    try std.testing.expect(std.mem.indexOf(u8, @embedFile("main.zig"), "copy_header") == null);
+}
+
+test "header menu as in Rust: fit, fit all, hide, Columns..., show all, then the column list" {
+    try expectOrder("igBeginPopup(\"##header\"", &.{ "tr(\"fit_column\")", "tr(\"fit_all_columns\")", "tr(\"hide_column\")", "tr(\"columns_button\")", "tr(\"show_all_columns\")", "for (g.columns[0..n_cols]" });
+}
+
+test "All tables result: the count line and the list \"table (n)\" (Python and Rust), not a 2-column table" {
+    try std.testing.expect(std.mem.indexOf(u8, @embedFile("main.zig"), "igBeginTable(\"##global\"") == null);
+    try expectOrder("fn drawGlobal(", &.{ "\"global_found\"", "\"{s} ({d})\"" });
+}
+
+test "Data tab below the search (standard 24): filters line, grid, then the count line; no pages" {
+    try expectOrder("fn drawData(", &.{ "tr(\"rows_label\")", "tr(\"columns_button\")", "tr(\"filters_label\")", "drawGrid(\"##data\"", "\"rows_showing\"" });
+    const ui = @embedFile("main.zig");
+    for ([_][]const u8{ "tr(\"prev\")", "tr(\"next\")", "page_line" }) |gone| try std.testing.expect(std.mem.indexOf(u8, ui, gone) == null);
+}
+
+test "File menu (Open... Ctrl+O, Export, Close, Exit Ctrl+Q) and the Python shortcuts" {
+    try expectOrder("if (ig.igBeginMenu(file_l", &.{ "tr(\"menu_open\"), \"Ctrl+O\"", "igBeginMenu(export_l", "tr(\"menu_close\")", "tr(\"menu_exit\"), \"Ctrl+Q\"" });
+    try expectOrder("const chord = ig.igIsKeyChordPressed_Nil;", &.{ "ImGuiKey_O)", "ImGuiKey_L)", "ImGuiKey_Q)", "ImGuiKey_F)", "ImGuiKey_F5,", "ImGuiKey_1)", "ImGuiKey_2)", "ImGuiKey_3)", "ImGuiKey_Enter)" });
+}
+
+test "About as in Rust (Build, Stack, Window, Databases, Access reading, Author, License, links), titled About mdb2sql" {
+    const pt = i18n.catalogs[1];
+    try std.testing.expectEqualStrings("Sobre o mdb2sql", pt.about_title);
+    inline for (.{ .{ "about_build", "Build" }, .{ "about_stack", "Stack" }, .{ "about_window", "Janela" }, .{ "about_database", "Bancos" }, .{ "about_access", "Leitura do Access" }, .{ "about_author", "Autor" }, .{ "about_license", "Licença" } }) |p|
+        try std.testing.expectEqualStrings(p[1], @field(pt, p[0]));
+    try expectOrder("fn drawAbout(", &.{ "tr(\"about_build\")", "tr(\"about_stack\")", "tr(\"about_window\")", "tr(\"about_database\")", "tr(\"about_access\")", "tr(\"about_author\")", "tr(\"about_license\")", "about.links" });
+}
+
+test "export menu order: SQLite, DuckDB, Excel, then CSV and Excel of the table, schema or result" {
+    try expectOrder("fn exportItems(", &.{ "tr(\"export_db_sqlite\")", "tr(\"export_db_duckdb\")", "tr(\"export_db_xlsx\")", "tr(\"export_table_csv\")", "tr(\"export_table_xlsx\")" });
 }
 
 test "license: GPL v2 or later in About (three languages), LICENSE file is the GPL v2 text" {

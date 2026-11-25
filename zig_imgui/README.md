@@ -81,16 +81,20 @@ digits), dates as ISO text (`2026-07-14 10:30:00`, declared VARCHAR: ISO text so
 Yes/No as 0/1, OLE/binary as BLOB, text as TEXT; NULL stays NULL. Every number has numeric affinity, so a filter
 (`WHERE SCALE > 100`), `ORDER BY` and `SUM` compare numbers, in the program and in any tool that opens the saved file.
 
-When the file is closed (**File > Close**), another file is opened, or the program exits, a short dialog asks what to
-do with that SQLite file:
+When the file is closed (**File > Close**), another file is opened, or the program exits, a short dialog asks
+`Save the SQLite file converted from Access (<source>.sqlite)?`:
 
 - **Save...** - save dialog, by default next to the source file as `<source>.sqlite`;
 - **Delete** - the temporary file is deleted;
-- **Cancel** - nothing is closed (the program stays open).
+- **Cancel** (or Esc, or the dialog's X) - nothing is closed (the program stays open).
 
-The first answer is remembered until the program closes (a remembered **Save** writes into the same folder; if that
-name already exists the save dialog opens). Temporary files are never left behind: they are deleted on **Delete**,
-and if the program crashes, the next start deletes the temporaries of programs that are no longer running.
+With **Remember for this session** checked, the answer is used until the program closes without asking (a remembered
+**Save** writes into the same folder; if that name already exists the save dialog opens). A saved SQLite is kept in
+the settings with the key of the Access file (path, size and modification date): opening the same, unchanged Access
+file again, also in a later run, opens the saved SQLite at once, with no conversion and no question; if the Access
+file (or the saved SQLite) changed, it is converted again. Temporary files are never left behind: they are deleted
+on **Delete**, and if the program crashes, the next start deletes the temporaries of programs that are no longer
+running.
 
 ## How to use
 
@@ -108,53 +112,65 @@ While a file opens, the status line shows the time, a progress bar (tables conve
 - **Table list** (left): every table with its row count, the whole name shown (the panel starts as wide as the
   longest name, up to 40% of the window, and scrolls sideways beyond that); the box on top filters by name 300 ms
   after the last key (Enter: at once).
-- **Data** tab: 100 rows per page, **< Prev** / **Next >**, search box, click a column header to sort. The search
+- **Data** tab, top to bottom: one line with the search box, **This table** | **All tables**, **Rows** (the first 100,
+  500 or 1000 rows) and **Columns...** (a narrow window wraps it, nothing cut); the value filters line, only when
+  there are filters; the grid (click a column header to sort); under the grid `<table>: showing <n> of <total> rows`
+  (with a search or filter: `... rows found`). The search
   runs 300 ms after the last key (Enter: at once), in the database over the **whole table** (every column), for
-  Access, SQLite and DuckDB alike, before the paging: the row count and pages follow it.
+  Access, SQLite and DuckDB alike, before the row limit: the row count follows it.
 - Next to the search box, **This table** | **All tables**: with **All tables** the text is searched in every table
-  (same rule and same query as the table search) and the Data tab lists the tables with the number of rows found;
-  clicking one opens that table with the same search and without value filters, showing that same number of rows.
+  (same rule and same query as the table search) and the Data tab shows `<n> tables with rows matching "<text>"` and
+  the list `<table> (<rows found>)`; clicking one opens that table with the same search and without value filters, showing that same number of rows.
   Changing the term, the scope, the table or the file stops the running search and its result is dropped. The default
   is in **Settings > Default search scope**; opening a file clears the search and the table filter and goes back to
   it.
-- **Columns...** (Data tab and SQL result): one check box per column, a box to find a column by name, **Show all** and
-  **Hide all** (with text in the find box they act only on the columns listed). Right-click a column header:
-  **Size column to fit**, **Size all columns to fit**, **Hide this column**, **Show all columns**, **Columns...** and
-  the list of columns with a check mark (a click shows or hides it; the menu stays open). The last visible column
+- **Columns...** (Data tab and SQL result; dialog "Columns of <table>"): one check box per column, a box to find a
+  column by name, **Show all** and **Hide all** (with text in the find box they act only on the columns listed).
+  Right-click a column header: **Size column to fit**, **Size all columns to fit**, **Hide this column**,
+  **Columns...**, **Show all columns** (disabled with no hidden column) and the list of columns with a check mark (a click shows or hides it; the menu stays open). The last visible column
   cannot be hidden. Hidden columns last while the table is open, are not saved, and are still searched and exported.
 - **Filter by this value** (right-click a cell of the Data tab): exact `column = value` filter in the database
   query; several add up (AND) and combine with the search; each is a button above the grid (click to remove).
-- **Schema** tab: column, type, nullable. **SQL** tab: any SQL, **Run** (Ctrl+Enter), first 10,000 rows shown.
+- **Schema** tab: column, type, nullable (Yes / No in the screen language, also in its export).
+- **SQL** tab: any SQL (the empty box shows `SELECT * FROM ...`), **Run** (Ctrl+Enter), first 10,000 rows shown; a
+  run that works clears the previous error next to the button and in the status bar, an error clears the old grid.
 - **Search rule**: the text is split into words; a row matches when one cell holds every word, in any order,
   ignoring case and accents (`Tensión campo` finds `EXCITACION TENSION DE CAMPO`; `tensao` does not: there is no
   fuzzy matching).
 - A NULL cell is shown empty; with **Settings > Show NULL** on it shows `NULL` (display only: copy gives an empty
   value, search and export do not change).
-- Every grid: click a cell, **Ctrl+C** copies it, right-click: **Copy value** / **Copy row (TAB separated)** and
-  **Copy row includes the header** (the same option as in Settings).
+- Every grid: click a cell, **Ctrl+C** copies it, right-click: (Data tab) **Filter by this value** / **Clear
+  filters**, then **Copy value**, **Copy row** (TAB separated) and **Copy row with header**.
 - Long work runs in the background with **Cancel**.
 
 ### Menus
 
-- **File**: **Open...**, **Export** (also the **Export...** button): **Database to SQLite**, **Database to Excel**
-  (one sheet per table), **Database to DuckDB**, **Current table / schema / SQL result to CSV or Excel**; **Close**;
-  **Exit**. Export to `.accdb`/`.mdb` is not available (no reliable library writes Access files).
+- **File**: **Open...**, **Export** (also the **Export...** button): **Database to SQLite**, **Database to DuckDB**,
+  **Database to Excel** (one sheet per table), **Current table / schema / SQL result to CSV or Excel**; **Close**;
+  **Exit** (Ctrl+Q). Exporting the table while a search or value filter is active asks first: **Whole table** or **Only the
+  <n> rows found**. Export to `.accdb`/`.mdb` is not available (no reliable library writes Access files).
 - **Log** panel at the bottom (**View > Log**, Ctrl+L, or the arrow at the left of the status bar and in the panel
   header): every message of the session with its time, in a monospace font one step smaller; select and Ctrl+C, or
   **Copy all**, **Clear**. About 10% of the window high (at least 3 lines, at most 25%), resized by dragging its top
   edge; open/closed state and height are saved; closed by default. While it is closed, the status bar shows the most
-  important message not yet seen in the log (last error in red, else last warning, else the last action) with a
-  count of new ones; clicking it opens the log. Right-click the status bar: **Copy** (the whole text).
+  important message not yet seen in the log (last error in red, else last warning, else the last action) and, on the
+  right, how many errors and warnings are unread; clicking the message opens the log. Right-click the status bar:
+  **Copy** (the whole text). Also on the right, always: the hidden columns of the grid on screen and how the open file
+  was read (`Opened via Access ODBC, converted to SQLite`, `Opened via mdbtools, ...`, `Opened via SQLite`,
+  `Opened via DuckDB`). Opening a file says `Loaded: <file> (<n> tables)`.
+- Shortcuts (the same in the 4 versions): Ctrl+O open, Ctrl+F Data search, F5 open the file again, Ctrl+Q exit,
+  Ctrl+1 / Ctrl+2 / Ctrl+3 Data / Schema / SQL tab, Ctrl+L Log, Ctrl+Enter run the SQL, Ctrl+C copy the cell.
 - Numbers are right-aligned in the grids and in the row counts of the table list (headers too); arrows are `←` `→`.
 - **Settings > Theme**: System, Light, Dark. **Settings > Language**: English, Português (Brasil), Español.
-  **Settings > Default search scope**: This table, All tables. **Settings > Show NULL** (off by default).
-  **Settings > Copy row includes the header**. All are saved and apply at once, without restarting.
+  **Settings > Default search scope**: This table, All tables. **Settings > Show NULL** (off by default). All are
+  saved and apply at once, without restarting.
 - **Help > About mdb2sql**: version, build, stack, Access reader, license and the GitHub and GitLab links.
 
 ### Saved settings
 
 Windows: `%APPDATA%\mdb2sql\zig-imgui.ini`; Linux: `~/.config/mdb2sql/zig-imgui.ini` (`$XDG_CONFIG_HOME` if set).
-Theme, language, Log panel, default search scope, Show NULL, Copy row includes the header and the last folder used.
+Theme, language, Log panel, default search scope, Show NULL, the last folder used and the last 8 Access files saved
+as SQLite (path, size and date of both files).
 
 ### Command line
 
@@ -324,7 +340,7 @@ gzip payload of the single executable use only Zig's standard library.
 
 ## Layout
 
-- `src/query.zig` - extension check, SQL builder with bound parameters and whitelisted identifiers, paging.
+- `src/query.zig` - extension check, SQL builder with bound parameters and whitelisted identifiers, row limits.
 - `src/db.zig` - DuckDB C API: the in-memory instance, read-only `ATTACH` of the file, streaming results, counts.
 - `src/access.zig` - Access reader (mdbtools, ODBC on Windows), conversion to SQLite, temporary files and cleanup.
 - `src/exporter.zig`, `src/xlsx.zig`, `src/csv.zig` - exports. `src/gridtools.zig` - row copy, word search, filters.

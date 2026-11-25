@@ -39,7 +39,12 @@ pub fn parse(args: []const []const u8) error{Usage}!?Options {
 // captura segue): clique numa celula com colunas ocultas, busca em todas as tabelas (global_late: tabela depois da
 // coluna 10.000 do catalogo; global_clear: termo apagado com a busca rodando), acerto da tabela aberta com filtro por
 // valor e o mesmo arquivo aberto de novo.
-pub const Action = enum { display_warning, log_error, log_error_open, exit_esc, show, filter, columns, close_columns, other_table, about, log, settings_menu, lang_en, lang_pt_br, lang_es, prompt, prompt_delete, click_cell, global_late, global_clear, global, open_hit, reopen };
+// Estados do padrao das 4 versoes: export_ask (pergunta tabela inteira / so as encontradas, com a busca do acerto),
+// header_menu e cell_menu (os menus da grade), file_menu e export_menu, sql_tab (dica do campo vazio), sql_error e
+// key_ctrl_enter (erro e depois SQL certo pelo Ctrl+Enter: o erro sai da barra), key_* (atalhos teclados de verdade:
+// Ctrl+1/2/F, F5) e reopen_saved (Access salvo aberto de novo: o SQLite salvo, sem converter; so com
+// MDB2SQL_CAPTURE_SAVE=1). exit_esc sai pelo Ctrl+Q.
+pub const Action = enum { display_warning, log_error, log_error_open, exit_esc, show, filter, columns, close_columns, other_table, about, log, settings_menu, lang_en, lang_pt_br, lang_es, prompt, prompt_delete, click_cell, global_late, global_clear, global, open_hit, reopen, export_ask, header_menu, cell_menu, file_menu, export_menu, sql_tab, sql_error, key_ctrl_enter, key_ctrl_1, key_ctrl_2, key_ctrl_f, key_f5, reopen_saved };
 pub const Step = struct { name: []const u8, action: Action, w: u32, h: u32 };
 pub const default_size = [2]u32{ 1280, 800 }; // tamanho em que o programa abre
 pub const max_size = [2]u32{ 1920, 1129 }; // area de trabalho de 1920x1200 menos a barra de tarefas e o titulo
@@ -66,6 +71,18 @@ pub const plan = [_]Step{
     .{ .name = "m_global_cleared", .action = .global_clear, .w = default_size[0], .h = default_size[1] },
     .{ .name = "n_global", .action = .global, .w = default_size[0], .h = default_size[1] },
     .{ .name = "n_hit_opened", .action = .open_hit, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "p_export_ask", .action = .export_ask, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "p_header_menu", .action = .header_menu, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "p_cell_menu", .action = .cell_menu, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "p_file_menu", .action = .file_menu, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "p_export_menu", .action = .export_menu, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "q_ctrl2_schema", .action = .key_ctrl_2, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "q_ctrl1_data", .action = .key_ctrl_1, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "q_ctrlf_search", .action = .key_ctrl_f, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "r_sql_empty", .action = .sql_tab, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "r_sql_error", .action = .sql_error, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "r_sql_fixed_ctrl_enter", .action = .key_ctrl_enter, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "q_f5_reopened", .action = .key_f5, .w = default_size[0], .h = default_size[1] },
     .{ .name = "e_soanlg", .action = .other_table, .w = default_size[0], .h = default_size[1] },
     .{ .name = "e_soanlg_max", .action = .other_table, .w = max_size[0], .h = max_size[1] },
     .{ .name = "g_log", .action = .log, .w = default_size[0], .h = default_size[1] },
@@ -88,6 +105,8 @@ pub const plan = [_]Step{
     .{ .name = "o_reopened", .action = .reopen, .w = default_size[0], .h = default_size[1] },
     // Apagar; com MDB2SQL_CAPTURE_SAVE=1, Salvar (na pasta das capturas, <origem>.sqlite)
     .{ .name = "k_closed", .action = .prompt_delete, .w = default_size[0], .h = default_size[1] },
+    // o mesmo Access aberto de novo depois do Salvar: abre o SQLite salvo, sem converter nem perguntar
+    .{ .name = "k_reopened_saved", .action = .reopen_saved, .w = default_size[0], .h = default_size[1] },
 };
 
 // PNG RGBA 8 bits. `pixels` vem do glReadPixels: linhas de baixo para cima, 4 bytes por pixel.

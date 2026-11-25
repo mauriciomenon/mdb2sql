@@ -1,10 +1,12 @@
-// Logica pura (sem UI, sem DuckDB): validacao de caminho, montagem de SQL, paginacao
-// !T: Pure logic: path validation, SQL building with bound parameters, paging math
+// Logica pura (sem UI, sem DuckDB): validacao de caminho, montagem de SQL, limite de linhas
+// !T: Pure logic: path validation, SQL building with bound parameters, row limits
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-pub const default_page_size: u32 = 100; // mesmo padrao das outras GUIs
+// Linhas da aba Dados: lista 100 / 500 / 1000 (as 4 versoes); mais desenharia celulas demais (tabelas de 130 colunas)
+pub const row_limits = [_]u32{ 100, 500, 1000 };
+pub const default_limit: u32 = row_limits[0];
 
 pub const PathError = error{UnsupportedExtension};
 
@@ -79,7 +81,7 @@ pub const Spec = struct {
     match_any: bool = false, // false = AND, true = OR
     sort_column: ?[]const u8 = null,
     sort_desc: bool = false,
-    limit: u32 = default_page_size,
+    limit: u32 = default_limit,
     offset: u64 = 0,
 };
 
@@ -236,13 +238,25 @@ pub fn buildSchema(a: Allocator, tables: []const []const u8, table: []const u8) 
     return out.toOwnedSliceSentinel(a, 0);
 }
 
-pub fn pageCount(total_rows: u64, page_size: u32) u64 {
-    if (page_size == 0 or total_rows == 0) return 1;
-    return (total_rows + page_size - 1) / page_size;
-}
-
-pub fn clampPage(page: u64, total_rows: u64, page_size: u32) u64 {
-    return @min(page, pageCount(total_rows, page_size) - 1);
+// !T: SQL of the Schema tab export: column, type and nullable with the titles of the screen and Yes/No in the screen
+// language (DuckDB's DESCRIBE says YES/NO), the same table the tab shows
+pub fn buildSchemaExport(a: Allocator, table: []const u8, titles: [3][]const u8, yes: []const u8, no: []const u8) Allocator.Error![:0]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(a);
+    try out.appendSlice(a, "SELECT column_name AS ");
+    try writeIdent(&out, a, titles[0]);
+    try out.appendSlice(a, ", column_type AS ");
+    try writeIdent(&out, a, titles[1]);
+    try out.appendSlice(a, ", CASE \"null\" WHEN 'YES' THEN ");
+    try writeLiteral(&out, a, yes);
+    try out.appendSlice(a, " ELSE ");
+    try writeLiteral(&out, a, no);
+    try out.appendSlice(a, " END AS ");
+    try writeIdent(&out, a, titles[2]);
+    try out.appendSlice(a, " FROM (DESCRIBE ");
+    try writeIdent(&out, a, table);
+    try out.append(a, ')');
+    return out.toOwnedSliceSentinel(a, 0);
 }
 
 // -------------------------------------------------------------------- tests
@@ -382,13 +396,4 @@ test "exact value filter: quoted identifier, bound value, NULL, empty text, AND 
         .columns = &t_cols,
         .criteria = &.{.{ .column = "NAME\" = 1 OR \"x", .op = .exact, .value = "1" }},
     }));
-}
-
-test "paging math" {
-    try t.expectEqual(1, pageCount(0, 100));
-    try t.expectEqual(1, pageCount(100, 100));
-    try t.expectEqual(2, pageCount(101, 100));
-    try t.expectEqual(1, pageCount(5, 0));
-    try t.expectEqual(1, clampPage(9, 101, 100));
-    try t.expectEqual(0, clampPage(3, 0, 100));
 }
