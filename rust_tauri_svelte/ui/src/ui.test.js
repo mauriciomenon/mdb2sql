@@ -79,12 +79,14 @@ test('table list shows the row count of each table', () => {
   const ui = markup('./App.svelte');
   const list = ui.match(/<div\s+class="table-list"[\s\S]*?\{\/each\}/)[0];
   assert.match(list, /<div class="table-head" aria-hidden="true"><span>\{t\('tables\.name'\)\}<\/span><span>\{t\('tables\.rows'\)\}<\/span><\/div>/);
-  assert.match(list, /<span class="name">\{name\}<\/span><span class="rows">\{fmt\(tableRows\.get\(name\) \?\? 0\)\}<\/span>/);
+  // tabela que nao deu para contar (null): celula vazia, nunca um 0 que nao e verdade
+  assert.match(list, /<span class="name">\{name\}<\/span><span class="rows">\{tableRows\.get\(name\) == null \? '' : fmt\(tableRows\.get\(name\)\)\}<\/span>/);
   assert.match(appFunction('openDatabase'), /tableRows = new Map\(opened\.tables\.map\(\(name, i\) => \[name, opened\.rows\[i\]\]\)\);/);
   assert.match(appFunction('closeDatabase'), /tableRows = new Map\(\);/);
   assert.deepEqual([en['tables.name'], en['tables.rows'], CATALOG_PT['tables.rows'], CATALOG_ES['tables.rows']], ['Table', 'Rows', 'Linhas', 'Filas']);
   const main = readFileSync(new URL('../../src/main.rs', import.meta.url), 'utf8');
-  assert.match(main, /rows: manager\.table_rows\(&tables\)\?,/);
+  // o titulo so muda depois da lista e das contagens (uma falha ali nao deixa o titulo do arquivo novo)
+  assert.match(main, /let tables = manager\.list_tables\(\)\?;\s*let rows = manager\.table_rows\(&tables\)\?;\s*show_title\(&app, Some\(&opened\)\);/);
 });
 
 // padrao item 21: Sobre = conteudo desta versao (Build, Stack, Janela, Bancos, Leitura do Access, Autor, Licenca, links)

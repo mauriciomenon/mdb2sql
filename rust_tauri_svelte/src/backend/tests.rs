@@ -73,7 +73,7 @@ mod tests {
         assert_eq!(manager.list_tables().unwrap(), vec!["Other table", "points"]);
         assert_eq!(manager.get_row_count("points", &[], "").unwrap(), 2);
         // coluna Linhas da lista de tabelas (padrao item 6), na ordem da lista
-        assert_eq!(manager.table_rows(&manager.list_tables().unwrap()).unwrap(), [5, 2]);
+        assert_eq!(manager.table_rows(&manager.list_tables().unwrap()).unwrap(), [Some(5), Some(2)]);
 
         let schema = manager.get_table_schema("points").unwrap();
         let names: Vec<&str> = schema.iter().map(|c| c.name.as_str()).collect();
@@ -97,6 +97,29 @@ mod tests {
         assert_eq!(result.columns.len(), 2);
         assert_eq!(result.rows.len(), 1);
         assert!(result.truncated);
+    }
+
+    // coluna Linhas: uma tabela que nao da para contar (view de um .duckdb sobre um CSV que sumiu) fica sem numero e o
+    // arquivo abre mesmo assim; as outras tabelas tem o numero
+    #[test]
+    fn a_table_that_cannot_be_counted_does_not_stop_the_open() {
+        let dir = tempdir().unwrap();
+        let csv = dir.path().join("gone.csv");
+        std::fs::write(&csv, "a\n1\n").unwrap();
+        let path = dir.path().join("views.duckdb");
+        let conn = duckdb::Connection::open(&path).unwrap();
+        conn.execute_batch(&format!(
+            "CREATE TABLE t AS SELECT range AS k FROM range(3); CREATE VIEW v AS SELECT * FROM read_csv('{}');",
+            csv.to_string_lossy().replace('\'', "''")
+        ))
+        .unwrap();
+        drop(conn);
+        std::fs::remove_file(&csv).unwrap();
+        let manager = DBManager::new();
+        manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+        let tables = manager.list_tables().unwrap();
+        assert_eq!(tables, ["t", "v"]);
+        assert_eq!(manager.table_rows(&tables).unwrap(), [Some(3), None]);
     }
 
     fn filter(column: &str, value: serde_json::Value) -> Filter {
@@ -151,7 +174,7 @@ mod tests {
             // valor que seria injecao se fosse concatenado: e so um texto que nenhuma linha tem
             assert_eq!(ids(&[filter("si\"gla", json!("' OR 1=1 --"))]), Vec::<i64>::new());
             assert_eq!(manager.get_row_count("t", &[], "").unwrap(), 5);
-            assert_eq!(manager.table_rows(&["t".to_string()]).unwrap(), [5], "{path:?}");
+            assert_eq!(manager.table_rows(&["t".to_string()]).unwrap(), [Some(5)], "{path:?}");
             // o limite Rows continua valendo com filtro
             assert_eq!(manager.query_table("t", 1, &[filter("si\"gla", json!("U9A"))], "").unwrap().len(), 1);
             assert!(manager.query_table("t", 10, &[filter("missing", json!(1))], "").is_err());

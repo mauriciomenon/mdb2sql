@@ -43,7 +43,7 @@ struct Opened {
     // gravar por cima dele)
     file: String,
     tables: Vec<String>,
-    rows: Vec<i64>,
+    rows: Vec<Option<i64>>, // None: a tabela nao deu para contar (a celula fica vazia)
     source: String,
     converted: bool,
 }
@@ -100,12 +100,13 @@ fn load_database(app: AppHandle, db_path: String, saved: Option<String>, state: 
         Some(_) => manager.validate_database_path(&path).unwrap_or(path),
         None => manager.current_path().unwrap_or(path),
     };
-    show_title(&app, Some(&opened));
     let tables = manager.list_tables()?;
+    let rows = manager.table_rows(&tables)?;
+    show_title(&app, Some(&opened));
     Ok(Opened {
         file: manager.current_path().unwrap_or_else(|| opened.clone()),
         path: opened,
-        rows: manager.table_rows(&tables)?,
+        rows,
         tables,
         source: connected.source,
         converted: has_converted,

@@ -422,17 +422,16 @@ impl DBManager {
         self.with_conn(list_tables)
     }
 
-    // NIVEL BASICO: Linhas de cada tabela, na ordem de `tables` (coluna Linhas da lista de tabelas, como no Zig)
+    // NIVEL BASICO: Linhas de cada tabela, na ordem de `tables` (coluna Linhas da lista de tabelas, como no Zig).
+    // Tabela que nao da para contar (ex.: view de um .duckdb que le um arquivo que sumiu) fica sem numero (None): o
+    // arquivo abre do mesmo jeito e o erro aparece so ao abrir essa tabela, como antes da coluna existir
     // NIVEL TECNICO: one COUNT(*) per table on the session engine; DB4 (287 tables, 114 k rows) takes milliseconds
-    pub fn table_rows(&self, tables: &[String]) -> Result<Vec<i64>, String> {
+    pub fn table_rows(&self, tables: &[String]) -> Result<Vec<Option<i64>>, String> {
         self.with_conn(|conn| {
-            tables
+            Ok(tables
                 .iter()
-                .map(|table| {
-                    conn.query_row(&format!("SELECT COUNT(*) FROM {}", ident(table)), [], |row| row.get(0))
-                        .map_err(|e| format!("[[err.countRows]] {table}: {e}"))
-                })
-                .collect()
+                .map(|table| conn.query_row(&format!("SELECT COUNT(*) FROM {}", ident(table)), [], |row| row.get(0)).ok())
+                .collect())
         })
     }
 

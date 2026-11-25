@@ -1194,7 +1194,7 @@
         {/if}
         {#each visibleTables as name, i (name)}
           <div id="table-{i}" role="option" tabindex="-1" aria-selected={name === selectedTable} class:selected={name === selectedTable} onclick={() => openTable(name)}>
-            <span class="name">{name}</span><span class="rows">{fmt(tableRows.get(name) ?? 0)}</span>
+            <span class="name">{name}</span><span class="rows">{tableRows.get(name) == null ? '' : fmt(tableRows.get(name))}</span>
           </div>
         {/each}
       </div>
