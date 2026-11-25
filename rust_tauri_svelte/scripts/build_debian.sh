@@ -44,6 +44,9 @@ MDB2SQL_BUILD_DATE=$(date -u +%F)
 export MDB2SQL_BUILD_NUMBER MDB2SQL_BUILD_DATE
 echo "Source: $source_id  versao $version  build $MDB2SQL_BUILD_NUMBER ($MDB2SQL_BUILD_DATE)"
 
+# no maximo 4 nucleos em todo build e teste (cargo e o C++ do DuckDB pelo jobserver do cargo), como no Windows
+export CARGO_BUILD_JOBS=4
+
 # --- ferramentas fixas em .tools/ (como no Windows) ---------------------------------------------------------
 rustup toolchain install # le rust-toolchain.toml (Rust 1.99.1)
 tauri_cli_version=2.12.4 # mesma do scripts/setup_tools.ps1

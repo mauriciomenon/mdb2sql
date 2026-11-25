@@ -14,6 +14,9 @@ $env:CXXFLAGS = "/d1trimfile:$Root\"
 $env:MDB2SQL_BUILD_NUMBER = (git rev-list --count HEAD)
 $env:MDB2SQL_BUILD_DATE = Get-Date -Format 'yyyy-MM-dd'
 
+# no maximo 4 nucleos em todo build e teste (cargo e o C++ do DuckDB pelo jobserver do cargo): a maquina continua usavel
+$env:CARGO_BUILD_JOBS = '4'
+
 # o build oficial sempre leva o mdbtools dentro do exe: sem .tools\mdbtools-1.0.1-w11-amd64\ o build.rs para
 $env:MDB2SQL_REQUIRE_MDBTOOLS = '1'
 

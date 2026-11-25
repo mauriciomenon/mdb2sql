@@ -17,6 +17,7 @@ rodar e onde fica cada coisa. Versao: "version" em Cargo.toml (fonte unica; carg
   servidor de desenvolvimento e abre uma janela vazia.
 - Codigos de saida: 0 ok, 1 falha de build/teste, 2 maquina errada (nao e Windows amd64).
 - Rode cada build num pwsh novo (pwsh -NoProfile -File ...).
+- No maximo 4 nucleos: os scripts poem CARGO_BUILD_JOBS=4 (o C++ do DuckDB segue o mesmo limite).
 
 
 2. "MAKE" - BUILD COMPLETO

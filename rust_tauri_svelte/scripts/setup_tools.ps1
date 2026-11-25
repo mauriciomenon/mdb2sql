@@ -18,7 +18,8 @@ rustup toolchain install
 if ($LASTEXITCODE) { throw "rustup toolchain install falhou ($LASTEXITCODE)" }
 
 # tauri-cli compilado do codigo do crates.io em .tools\bin\cargo-tauri.exe; --locked usa o Cargo.lock publicado
-# com o crate e o cargo confere o sha256 de cada dependencia contra o indice do crates.io
+# com o crate e o cargo confere o sha256 de cada dependencia contra o indice do crates.io; 4 nucleos (env_w11.ps1)
+$env:CARGO_BUILD_JOBS = '4'
 cargo install --root .tools tauri-cli --version $TauriCliVersion --locked
 if ($LASTEXITCODE) { throw "cargo install tauri-cli falhou ($LASTEXITCODE)" }
 
