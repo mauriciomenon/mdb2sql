@@ -623,6 +623,7 @@ class MainWindow(QMainWindow):
         self.log_action.triggered.connect(self.set_log_visible)
         self._latest = {"error": "", "warning": ""}  # ultimo erro e ultimo aviso da sessao
         self._unread = {"error": 0, "warning": 0}  # chegaram com o painel recolhido
+        self._sql_error, self._sql_error_unread = "", False  # erro da ultima consulta SQL (sai quando outra da certo)
 
     def log(self, text: str, level: str = "info") -> None:
         """Linha do painel Log; level 'error' ou 'warning' entra na barra de status quando o painel esta recolhido."""
@@ -657,7 +658,7 @@ class MainWindow(QMainWindow):
         self.log_unread.setVisible(bool(unread))
         # recolhido: a linha mais importante ainda nao lida (erro destacado > aviso > ultima acao, que ja esta la)
         for level in ("error", "warning"):
-            if self._unread[level]:
+            if self._unread[level] and self._latest[level]:
                 text = self._latest[level]
                 self.status_label.setText(status_line(text))
                 self.status_label.setToolTip(text)
@@ -1571,14 +1572,29 @@ class MainWindow(QMainWindow):
             message = tr("status.sql_done")
         else:
             message = counted("status.sql_first" if more else "status.sql_rows", len(rows))
-        self._set_message(self.sql_info, message)
+        # deu certo: o erro da consulta anterior sai da linha do botao e da barra de baixo (igual nas 4 versoes)
+        if self._sql_error:
+            if self._latest["error"] == self._sql_error:
+                self._latest["error"] = ""
+            if self._sql_error_unread:
+                self._unread["error"] = max(0, self._unread["error"] - 1)
+            self._sql_error = ""
+        self._set_message(self.sql_info, message, log=False)
+        self._set_message(self.status_label, message)
         self._update_export_actions()
 
     def _on_sql_error(self, request_id: int, message: str) -> None:
-        if request_id == self._sql_request:
-            text = tr("status.sql_error", message=message)
-            self._set_message(self.sql_info, text, error=True, log=False)  # na linha do botao Executar
-            self._set_message(self.status_label, text, error=True)
+        if request_id != self._sql_request:
+            return
+        # o erro limpa a grade da consulta anterior (e o que exportar); o texto do banco vai como vem, depois do
+        # prefixo traduzido
+        self.sql_model.set_rows([])
+        self.sql_query = None
+        self._update_export_actions()
+        text = tr("status.sql_error", message=message)
+        self._sql_error, self._sql_error_unread = text, self.log_dock.isHidden()
+        self._set_message(self.sql_info, text, error=True, log=False)  # na linha do botao Executar
+        self._set_message(self.status_label, text, error=True)
 
     # -------------------------------------------------------------- export
 

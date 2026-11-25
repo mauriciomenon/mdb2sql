@@ -362,6 +362,32 @@ def test_sql_tab_runs_query_and_copies(qtbot, window: MainWindow) -> None:
     assert [w.text() for w in window.statusBar().findChildren(QLabel)].count(window.status_label.text()) == 1
 
 
+def test_sql_error_clears_the_grid_and_success_clears_the_error(qtbot, window: MainWindow) -> None:
+    # igual nas 4 versoes: o erro limpa a grade velha; a consulta seguinte que da certo tira o erro da linha do botao
+    # e da barra de baixo (com o Log recolhido o erro nao lido ficava na barra)
+    window.sql_edit.setPlainText("SELECT name FROM people")
+    window.run_sql()
+    qtbot.waitUntil(lambda: window.sql_model.rowCount() == 3 and window._busy == 0, timeout=30000)
+    assert window.log_dock.isHidden()
+
+    window.sql_edit.setPlainText("SELEC 1")
+    window.run_sql()
+    qtbot.waitUntil(lambda: window._busy == 0 and window.sql_info.text().startswith("SQL query error"), timeout=30000)
+    assert window.sql_model.rowCount() == 0 and window.sql_query is None
+    assert not any(a.isEnabled() for a in window.export_sql_actions)
+    assert window.status_label.text() == window.sql_info.text() and "color" in window.status_label.styleSheet()
+    assert window.log_unread.text() == "(1)"
+
+    window.sql_edit.setPlainText("SELECT 1 AS um")
+    window.run_sql()
+    qtbot.waitUntil(lambda: window._busy == 0 and window.sql_model.rowCount() == 1, timeout=30000)
+    assert window.sql_info.text() == window.status_label.text() == "SQL result: 1 row"
+    assert window.sql_info.styleSheet() == window.status_label.styleSheet() == ""
+    assert window.log_unread.isHidden()
+    window.log("next action")  # o erro resolvido nao volta para a barra
+    assert window.status_label.text() == "SQL result: 1 row"
+
+
 def test_export_actions_write_files_next_to_source(qtbot, window: MainWindow, people_db: Path, monkeypatch) -> None:
     asked = []
 
