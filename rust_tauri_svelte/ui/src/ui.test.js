@@ -55,6 +55,14 @@ test('the main window has no repeated button or menu item', () => {
   assert.deepEqual(labels.filter((label) => /^export/i.test(label)), ['Export ▸', 'Export...']);
 });
 
+// padrao item 18: Configuracoes = Tema, Idioma, Escopo padrao da busca, Exibir NULL, nesta ordem
+test('Settings menu order: theme, language, default scope, show NULL', () => {
+  const ui = markup('./App.svelte');
+  const settings = ui.slice(ui.indexOf("openMenu === 'settings'"), ui.indexOf("openMenu === 'help'"));
+  const at = ["t('settings.theme')", "t('settings.language')", "t('settings.searchScope')", "t('settings.showNull')"].map((k) => settings.indexOf(k));
+  assert.ok(at.every((v, i) => v >= 0 && (i === 0 || v > at[i - 1])), at.join(','));
+});
+
 // padrao item 19 (= Zig): Arquivo = Abrir... (Ctrl+O), Exportar > (submenu com a lista), Fechar, separador, Sair (Ctrl+Q)
 test('File menu: Open..., Export submenu, Close, Exit', () => {
   const ui = markup('./App.svelte');

@@ -849,6 +849,7 @@
     <div class="menu-root">
       <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openMenu === 'settings'} onclick={(e) => toggleMenu(e, 'settings')}>{t('menu.settings')}</button>
       {#if openMenu === 'settings'}
+        <!-- ordem das 4 versoes: Tema, Idioma, Escopo padrao da busca, Exibir NULL; cada escolha vale na hora e fica gravada -->
         <div class="dropdown" role="menu" aria-label={t('menu.settings')}>
           <span class="group">{t('settings.theme')}</span>
           {#each THEMES as [key], i}
@@ -864,16 +865,16 @@
             </button>
           {/each}
           <div class="separator" role="separator"></div>
-          <button type="button" role="menuitemcheckbox" aria-checked={showNull} onclick={() => setShowNull(!showNull)}>
-            <span class="check">{showNull ? '✓' : ''}</span>{t('settings.showNull')}
-          </button>
-          <div class="separator" role="separator"></div>
           <span class="group">{t('settings.searchScope')}</span>
           {#each SCOPES as [id, key]}
             <button type="button" role="menuitemradio" aria-checked={defaultScope === id} onclick={() => setDefaultScope(id)}>
               <span class="check">{defaultScope === id ? '●' : ''}</span>{t(key)}
             </button>
           {/each}
+          <div class="separator" role="separator"></div>
+          <button type="button" role="menuitemcheckbox" aria-checked={showNull} onclick={() => setShowNull(!showNull)}>
+            <span class="check">{showNull ? '✓' : ''}</span>{t('settings.showNull')}
+          </button>
         </div>
       {/if}
     </div>
