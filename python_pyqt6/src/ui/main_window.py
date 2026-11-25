@@ -229,6 +229,7 @@ class MainWindow(QMainWindow):
         self._texts: list[tuple[Callable[[str], object], str, bool]] = []
         self.manager: DBManager | None = None
         self.current_db_path: Path | None = None
+        self.current_db_key = ""  # tamanho|data do arquivo aberto, lidos ao abrir (Access salvo como SQLite)
         self.pending_table_name: str | None = None
         self.loaded_table: tuple[str, int] | None = None  # (name, total rows in the table)
         self.loaded_schema: list[dict[str, Any]] = []  # schema da tabela carregada, como o backend devolve
@@ -240,6 +241,7 @@ class MainWindow(QMainWindow):
         self.hidden_columns: set[str] = set()
         self.matched_rows = 0  # linhas da tabela que passam nos filtros e na pesquisa
         self.loaded_search = ""  # pesquisa usada na consulta da tabela carregada
+        self.loaded_filters: list[tuple[str, Any]] = []  # filtros usados na consulta da tabela carregada
         self.converted_choice: str | None = None  # "Lembrar nesta sessao" da pergunta do SQLite convertido
         self._table_request = 0
         self._sql_request = 0
@@ -706,6 +708,7 @@ class MainWindow(QMainWindow):
         self.log_dock.setVisible(bool(visible))
         if visible:
             self._unread = {"error": 0, "warning": 0}
+            self._sql_error_unread = False
             # ~10% da altura (minimo 3 linhas; maximo 25%, em resizeEvent); a borda continua arrastavel
             self.resizeDocks([self.log_dock], [max(self.log_view.minimumHeight() + 32, round(self.height() * 0.10))],
                              Qt.Orientation.Vertical)
@@ -961,11 +964,18 @@ class MainWindow(QMainWindow):
             text = tr(key)
             apply(text.replace("&", "") if plain else text)
         self._fit_search_minimum()  # a dica tem outro tamanho
+        for row in range(self.table_list.topLevelItemCount()):
+            item = self.table_list.topLevelItem(row)
+            count = self.table_counts.get(item.text(0))
+            item.setText(1, num(count) if count is not None else "")
         if self.loaded_schema:
             self._show_schema()
+            self._fit_columns(self.schema_table)
         self._refresh_filter_bar()
         self._show_reader()
         self._apply_search()
+        if self.manager is not None and not self.table_list.topLevelItemCount():
+            self._set_message(self.info_label, tr("status.no_tables"), log=False)
         if self.data_stack.currentWidget() is self.found_list and self._found_summary is not None:
             count, search = self._found_summary
             self._set_message(self.info_label, counted("status.found", count, search=search), log=False)
@@ -1176,12 +1186,13 @@ class MainWindow(QMainWindow):
         # o mesmo Access (caminho, tamanho, data) ja convertido e salvo: abre o SQLite salvo, sem converter de novo
         saved = self.saved_conversion(db_path)
         def task(report):
+            source_key = file_key(db_path)  # a versao do arquivo que vai ser lida (lembrada se o SQLite for salvo)
             manager, tables = open_database(saved or db_path, report, work_dir)
             try:  # linhas de cada tabela para a lista; sem elas a lista abre do mesmo jeito
                 counts = manager.table_counts()
             except Exception:  # noqa: BLE001 (a contagem e so informativa)
                 counts = {}
-            return db_path, saved, manager, tables, counts
+            return db_path, saved, manager, tables, counts, source_key
 
         self._run(self._db_request, task, self._on_database_loaded, self._on_database_error, progress)
 
@@ -1204,14 +1215,14 @@ class MainWindow(QMainWindow):
         dest = Path(str(entry.get("dest", "")))
         return dest if entry.get("dest_key") and file_key(dest) == entry.get("dest_key") else None
 
-    def _remember_conversion(self, source: Path, dest: Path) -> None:
+    def _remember_conversion(self, source: Path, source_key: str, dest: Path) -> None:
         saved = {k: v for k, v in self._saved_conversions().items()
                  if isinstance(v, dict) and Path(str(v.get("dest", ""))).is_file()}  # sem os apagados
-        saved[path_key(source)] = {"source": file_key(source), "dest": str(dest), "dest_key": file_key(dest)}
+        saved[path_key(source)] = {"source": source_key, "dest": str(dest), "dest_key": file_key(dest)}
         self.settings.setValue("converted_files", json.dumps(saved))
 
     def _on_database_loaded(self, request_id: int, result: object) -> None:
-        db_path, saved, manager, tables, counts = result  # type: ignore[misc]
+        db_path, saved, manager, tables, counts, source_key = result  # type: ignore[misc]
         if request_id != self._db_request:
             manager.release()  # abertura antiga terminou depois de outra mais nova: descarta (e o SQLite dela)
             return
@@ -1227,6 +1238,7 @@ class MainWindow(QMainWindow):
             self.table_filter_timer.stop()
             self.scope_actions[self.default_scope()].setChecked(True)
             self.loaded_table = None
+            self.loaded_schema = []
             self.table_model.set_rows([])
             self.schema_model.set_rows([])
         # consultas de tabela e SQL ainda pendentes sao do banco anterior: descartar o que elas devolverem
@@ -1238,6 +1250,7 @@ class MainWindow(QMainWindow):
             self.manager.release()
         self.manager = manager
         self.current_db_path = db_path
+        self.current_db_key = source_key
         self.sql_query = None
         self.sql_model.set_rows([])
         self.sql_info.clear()
@@ -1260,6 +1273,7 @@ class MainWindow(QMainWindow):
             self.table_list.setCurrentItem(self.table_list.topLevelItem(tables.index(previous) if previous in tables else 0))
         else:
             self.loaded_table = None
+            self.loaded_schema = []
             self.table_model.set_rows([])
             self.schema_model.set_rows([])
             self._set_message(self.info_label, tr("status.no_tables"), log=False)
@@ -1313,6 +1327,9 @@ class MainWindow(QMainWindow):
         manager = self.manager
         if manager is None:
             return True
+        # uma abertura ainda em andamento (F5) nao troca o banco durante a pergunta: o resultado dela e descartado
+        self._db_request += 1
+        self._set_opening(False)
         target = None
         if manager.converted is not None and self.current_db_path is not None:
             choice = self.converted_choice
@@ -1329,16 +1346,16 @@ class MainWindow(QMainWindow):
                 if target is not None:
                     break
                 choice = None  # cancelou o dialogo de salvar: volta para a pergunta
-        source, converted = self.current_db_path, manager.converted
+        source, source_key, converted = self.current_db_path, self.current_db_key, manager.converted
         self._clear_database()
         try:
             manager.release(target)
         except OSError as exc:
             self._set_message(self.status_label, tr("status.error", message=exc), error=True)
             return True
-        if target is not None and source is not None:
+        if target is not None and source is not None and converted is not None and target.is_file():
             # o mesmo Access, sem mudanca, abre direto este SQLite (nesta e nas proximas execucoes)
-            self._remember_conversion(source, target)
+            self._remember_conversion(source, source_key, target)
             self._set_message(self.status_label, tr("status.converted_saved", path=target))
         elif converted is not None:
             self.log(tr("log.converted_deleted", name=converted.name))
@@ -1355,6 +1372,7 @@ class MainWindow(QMainWindow):
         self.manager = None
         self.current_db_path = None
         self.loaded_table = None
+        self.loaded_schema = []
         self.sql_query = None
         self._reset_view(None)
         for model in (self.table_model, self.schema_model, self.sql_model):
@@ -1530,6 +1548,7 @@ class MainWindow(QMainWindow):
         self._show_schema()
         self.loaded_table = (payload["table_name"], payload["total_rows"])
         self.matched_rows = payload["matched_rows"]
+        self.loaded_filters = list(payload["filters"])  # os da consulta que deu esta contagem
         self.loaded_search = payload["search"]
 
         for view in (self.data_table, self.schema_table):
@@ -1565,7 +1584,7 @@ class MainWindow(QMainWindow):
 
         table, total_rows = self.loaded_table
         loaded = num(self.table_model.rowCount())
-        if self.filters or self.loaded_search.split():  # contagem feita no banco, alem das linhas carregadas
+        if self.loaded_filters or self.loaded_search.split():  # contagem no banco, alem das linhas carregadas
             message = counted("status.showing_matched", self.matched_rows, table=table, loaded=loaded,
                               total=num(total_rows))
         else:
@@ -1755,10 +1774,9 @@ class MainWindow(QMainWindow):
         self.export_button.setEnabled(self.manager is not None)
         self.close_db_action.setEnabled(self.manager is not None)
 
-    def ask_found_rows(self) -> bool | None:
-        """Pesquisa ativa na tabela: exportar a tabela inteira (False) ou so as linhas encontradas (True)? None =
-        Cancelar. Igual nas 4 versoes."""
-        count = self.matched_rows
+    def ask_found_rows(self, count: int) -> bool | None:
+        """Pesquisa ativa na tabela: exportar a tabela inteira (False) ou so as `count` linhas encontradas (True)?
+        None = Cancelar. Igual nas 4 versoes."""
         one = "_one" if count == 1 else ""
         box = QMessageBox(QMessageBox.Icon.NoIcon, tr("export.title"), tr(f"export.ask{one}", count=num(count)),
                           QMessageBox.StandardButton.NoButton, self)
@@ -1774,7 +1792,8 @@ class MainWindow(QMainWindow):
         # pasta padrao: a do arquivo aberto; sem ele, a ultima pasta usada
         folder = default_save_dir(self.current_db_path, self.settings.value("last_dir"))
         target = folder / f"{name}{suffix}"
-        if self.current_db_path is not None and target == self.current_db_path:
+        reading = {self.current_db_path, Path(self.manager.current_db) if self.manager and self.manager.current_db else None}
+        if target in reading:
             target = folder / f"{name}_export{suffix}"  # nunca sugerir o proprio banco aberto
         file_name, _ = QFileDialog.getSaveFileName(self, title, str(target), file_type(suffix))
         if not file_name:
@@ -1803,11 +1822,13 @@ class MainWindow(QMainWindow):
         # o que a grade mostra)
         if self.manager is None or self.loaded_table is None:
             return
-        table = self.loaded_table[0]
-        found = self.ask_found_rows() if self.loaded_search.split() else False
+        # o que a grade conta, lido antes da pergunta (a tela pode mudar enquanto ela esta aberta)
+        table, filters, search = self.loaded_table[0], list(self.loaded_filters), self.loaded_search
+        found = self.ask_found_rows(self.matched_rows) if search.split() else False
         if found is None:
             return
-        filters, search = (list(self.filters), self.loaded_search) if found else ([], "")
+        if not found:
+            filters, search = [], ""
         title = self._dialog_title(self.export_table_actions[(".csv", ".xlsx").index(suffix)])
         out = self._ask_save_path(title, table, suffix)
         if out is not None:

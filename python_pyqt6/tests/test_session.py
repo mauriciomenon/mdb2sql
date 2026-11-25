@@ -124,8 +124,7 @@ def test_saved_conversion_opens_without_asking_again(qtbot, access_window: MainW
 
     win = access_window
     source = win.current_db_path
-    target = tmp_path / "kept" / "sample.sqlite"
-    target.parent.mkdir()
+    target = source.with_suffix(".sqlite")  # o padrao do Salvar...: ao lado do Access
     asked = []
     monkeypatch.setattr(win, "ask_converted", lambda path: asked.append(path) or (mw.SAVE, False))
     monkeypatch.setattr(win, "ask_converted_target", lambda path: target)
@@ -141,11 +140,54 @@ def test_saved_conversion_opens_without_asking_again(qtbot, access_window: MainW
     again = MainWindow()  # proxima execucao: lembrado nas configuracoes
     qtbot.addWidget(again)
     assert again.saved_conversion(source) == target
-    os.utime(source, ns=(source.stat().st_atime_ns, source.stat().st_mtime_ns + 10**9))  # o Access mudou
+    # lendo o SQLite salvo, Exportar > Banco para SQLite nunca sugere o proprio arquivo que esta aberto
+    win.open_database(source)
+    qtbot.waitUntil(lambda: win.manager is not None and win.loaded_table is not None and win._busy == 0, timeout=60000)
+    suggested = []
+    monkeypatch.setattr(mw.QFileDialog, "getSaveFileName", lambda *a: suggested.append(Path(a[2])) or ("", ""))
+    win._ask_save_path("t", target.stem, ".sqlite")
+    assert suggested == [target.with_name("sample_export.sqlite")]
+    assert win.release_database()
+    # o SQLite salvo mudou: converte de novo; o Access mudou: tambem
+    os.utime(target, ns=(target.stat().st_atime_ns, target.stat().st_mtime_ns + 10**9))
+    assert again.saved_conversion(source) is None
+    os.utime(source, ns=(source.stat().st_atime_ns, source.stat().st_mtime_ns + 10**9))
     assert again.saved_conversion(source) is None
     win.open_database(source)
     qtbot.waitUntil(lambda: win.manager is not None and win._busy == 0, timeout=60000)
     assert win.manager.converted is not None and len(_converted_files(win)) == 1
+
+
+@needs_mdbtools
+def test_saved_key_is_the_one_read_when_the_access_file_opened(qtbot, access_window: MainWindow, tmp_path: Path,
+                                                               monkeypatch) -> None:
+    # o Access mudou enquanto estava aberto: o SQLite salvo tem o conteudo antigo e nao e reaproveitado
+    import os
+
+    win = access_window
+    source = win.current_db_path
+    target = tmp_path / "kept.sqlite"
+    os.utime(source, ns=(source.stat().st_atime_ns, source.stat().st_mtime_ns + 10**9))
+    monkeypatch.setattr(win, "ask_converted", lambda path: (mw.SAVE, False))
+    monkeypatch.setattr(win, "ask_converted_target", lambda path: target)
+    assert win.release_database() and target.is_file()
+    assert win.saved_conversion(source) is None
+
+
+@needs_mdbtools
+def test_close_during_a_reload_keeps_one_database_and_saves_the_one_asked(qtbot, access_window: MainWindow,
+                                                                         tmp_path: Path, monkeypatch) -> None:
+    # F5 ainda convertendo e Fechar: a pergunta vale para o banco aberto; a recarga em andamento e descartada
+    win = access_window
+    source = win.current_db_path
+    target = tmp_path / "kept.sqlite"
+    monkeypatch.setattr(win, "ask_converted", lambda path: (mw.SAVE, False))
+    monkeypatch.setattr(win, "ask_converted_target", lambda path: target)
+    win.load_database()  # F5: conversao nova em andamento
+    assert win.release_database() and target.is_file()
+    qtbot.waitUntil(lambda: win._busy == 0, timeout=60000)
+    assert win.manager is None and _converted_files(win) == []  # a recarga terminou depois e foi descartada
+    assert win.saved_conversion(source) == target and win.loaded_schema == []
 
 
 @needs_mdbtools
@@ -274,9 +316,20 @@ def test_language_applies_at_once_and_is_saved(qtbot, people_db: Path) -> None:
         assert again.language_actions["pt_BR"].isChecked() and again.empty_label.text() == "Nenhum banco aberto"
         win.language_actions["es"].trigger()
         assert win.menuBar().actions()[0].text() == "&Archivo" and win.tabs.tabText(0) == "Datos"
+        # o separador de milhar da contagem da lista e as larguras do Schema tambem acompanham
+        win._fill_tables(["big", "empty_table", "people"], {"big": 1234, "empty_table": 0, "people": 3})
+        win.language_actions["en"].trigger()
+        assert win.table_list.topLevelItem(0).text(1) == "1,234"
+        win.language_actions["pt_BR"].trigger()
+        assert win.table_list.topLevelItem(0).text(1) == "1.234"
+        header = win.schema_table.horizontalHeader()
+        assert win.schema_table.columnWidth(2) >= header.fontMetrics().horizontalAdvance("Aceita nulo")
+        win._fill_tables([], {})  # arquivo sem tabelas: "Nenhuma tabela" tambem troca
+        win.language_actions["es"].trigger()
+        assert win.info_label.text() == "Ninguna tabla"
     finally:
         win.set_language("en")  # os textos do Qt (qtbase) voltam ao ingles para os outros testes
-    assert win.menuBar().actions()[0].text() == "&File" and win.info_label.text() == "empty_table: showing 0 of 0 rows"
+    assert win.menuBar().actions()[0].text() == "&File" and win.info_label.text() == "No tables"
 
 
 # nomes proprios e siglas que podem vir com maiuscula no meio da frase

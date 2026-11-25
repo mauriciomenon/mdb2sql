@@ -122,6 +122,19 @@ def test_top_bar_path_open_and_drop(qtbot, window: MainWindow, people_db: Path, 
     window.path_edit.resize(200, window.path_edit.height())
     shown = window.path_edit.shown_text()
     assert shown.startswith("…") and str(people_db).endswith(shown[1:]) and len(shown) > 5
+    # o desenho sem foco passa pelo caminho que corta o comeco (e nao pelo do QLineEdit): pinta sem erro
+    painted = []
+    original = type(window.path_edit).paintEvent
+
+    def spy(edit, event):
+        painted.append(not edit.hasFocus() and edit.fontMetrics().horizontalAdvance(edit.text()) > 150)
+        original(edit, event)
+
+    from unittest import mock
+
+    with mock.patch.object(type(window.path_edit), "paintEvent", spy):
+        window.path_edit.grab()
+    assert painted and painted[-1]
 
     # caminho digitado + Enter abre; caminho que nao existe: erro e o aberto continua
     import duckdb
@@ -173,6 +186,15 @@ def test_narrow_window_wraps_the_data_bar_and_the_search_stretches(qtbot, window
     for widget in (window.search_edit, window.columns_button, *window.scope_buttons):
         assert inside(widget), widget
     assert window.search_edit.width() >= 160
+    # quebra a linha exatamente quando a barra inteira nao cabe na largura da aba Data
+    spacing = 6
+    needed = (window.search_edit.minimumWidth() + window.scope_buttons[0].parentWidget().sizeHint().width()
+              + window.columns_button.sizeHint().width() + 2 * spacing + 12)
+    wrapped = window.columns_button.y() > window.search_edit.geometry().bottom()
+    assert wrapped == (needed > window.data_page.width())
+    window.resize(1600, 800)  # mais largura: a mesma barra volta para uma linha so
+    qtbot.waitUntil(lambda: window.columns_button.y() < window.search_edit.geometry().bottom(), timeout=3000)
+    assert needed <= window.data_page.width()
     for toolbar in window.findChildren(QToolBar):  # nada escondido no "»" da barra de cima
         extension = toolbar.findChild(QAbstractButton, "qt_toolbar_ext_button")
         assert extension is None or not extension.isVisible()
@@ -477,6 +499,18 @@ def test_sql_error_clears_the_grid_and_success_clears_the_error(qtbot, window: M
     window.log("next action")  # o erro resolvido nao volta para a barra
     assert window.status_label.text() == "SQL result: 1 row"
 
+    # erro SQL ja visto no Log: a consulta que da certo depois nao desconta outro erro ainda nao lido
+    window.sql_edit.setPlainText("SELEC 2")
+    window.run_sql()
+    qtbot.waitUntil(lambda: window._busy == 0 and window.sql_info.text().startswith("SQL query error"), timeout=30000)
+    window.set_log_visible(True)
+    window.set_log_visible(False)
+    window._set_message(window.status_label, "Error: other", error=True)
+    window.sql_edit.setPlainText("SELECT 2")
+    window.run_sql()
+    qtbot.waitUntil(lambda: window._busy == 0 and window.sql_info.text() == "SQL result: 1 row", timeout=30000)
+    assert window.log_unread.text() == "(1)" and window.status_label.text() == "Error: other"
+
 
 def test_export_actions_write_files_next_to_source(qtbot, window: MainWindow, people_db: Path, monkeypatch) -> None:
     asked = []
@@ -523,8 +557,15 @@ def test_export_with_active_search_asks_whole_table_or_found_rows(qtbot, window:
     out = people_db.parent / "found.csv"
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_a: (str(out), ""))
     _select_table(qtbot, window, "people")
-    answers = []
-    monkeypatch.setattr(window, "ask_found_rows", lambda: answers.pop(0))
+    answers, asked = [], []
+
+    def ask(count: int):
+        asked.append(count)
+        # a tela muda enquanto a pergunta esta aberta (outro filtro): grava o que a grade contava ao perguntar
+        window.filters.append(("id", 99))
+        return answers.pop(0)
+
+    monkeypatch.setattr(window, "ask_found_rows", ask)
 
     def exported() -> list[list[str]]:
         window.status_label.setText("")
@@ -536,9 +577,11 @@ def test_export_with_active_search_asks_whole_table_or_found_rows(qtbot, window:
     assert len(exported()) == 3  # sem pesquisa: nao pergunta, a tabela inteira
     _reloaded(qtbot, window, lambda: window.search_edit.setText("ana"))
     answers[:] = [True]
-    assert exported() == [["1", "Ana", "9.5"]] and answers == []
+    assert exported() == [["1", "Ana", "9.5"]] and answers == [] and asked == [1]
+    window.filters.clear()
     answers[:] = [False]
     assert len(exported()) == 3
+    window.filters.clear()
     answers[:] = [None]  # Cancelar
     out.unlink()
     window.export_table_actions[0].trigger()
@@ -556,7 +599,7 @@ def test_export_with_active_search_asks_whole_table_or_found_rows(qtbot, window:
 
     monkeypatch.undo()
     QTimer.singleShot(0, answer)
-    assert window.ask_found_rows() is None  # fechar a pergunta = Cancelar
+    assert window.ask_found_rows(1) is None  # fechar a pergunta = Cancelar
     assert seen[0] == "Export the whole table or only the 1 row found?"
     assert sorted(seen[1:]) == sorted(["Whole table", "Only the 1 row found", "Cancel"])
 
@@ -635,7 +678,7 @@ def test_results_of_the_previous_database_are_dropped(qtbot, window: MainWindow,
     window.run_sql()
     qtbot.waitUntil(lambda: window.sql_model.rowCount() == 3, timeout=30000)
     stale_table = (window._table_request, load_table_payload(window.manager, "people"))
-    stale_open = (people_db, None, *open_database(people_db), {})  # abertura lenta de A que termina depois de B
+    stale_open = (people_db, None, *open_database(people_db), {}, "")  # abertura lenta de A que termina depois de B
 
     other = people_db.parent / "other.duckdb"
     with duckdb.connect(str(other)) as conn:

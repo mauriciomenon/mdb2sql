@@ -12,6 +12,7 @@ class TablePayload(TypedDict):
     rows: list[dict[str, Any]]
     total_rows: int  # linhas na tabela inteira
     matched_rows: int  # linhas que passam nos filtros e na pesquisa (= total_rows sem eles)
+    filters: list[tuple[str, Any]]  # filtros coluna = valor usados na consulta
     schema: list[dict[str, Any]]
 
 
@@ -53,5 +54,6 @@ def load_table_payload(
         "rows": rows,
         "total_rows": total_rows,
         "matched_rows": matched_rows,
+        "filters": list(filters),
         "schema": schema,
     }
