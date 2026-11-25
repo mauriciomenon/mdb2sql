@@ -1091,8 +1091,8 @@ function App() {
       <nav className="sidebar" aria-label={t('sidebar.label')}>
         <input
           type="search"
-          placeholder={t('sidebar.filter', tables.length)}
-          aria-label={t('sidebar.filter', tables.length)}
+          placeholder={tn('sidebar.filter', tables.length, tables.length)}
+          aria-label={tn('sidebar.filter', tables.length, tables.length)}
           title={t('search.tip')}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
@@ -1276,13 +1276,13 @@ function App() {
 
             <footer className="info">
               {view === 'sql'
-                ? result && t('info.sql', result.rows.length) + (result.more ? t('info.sqlLimit', limit) : '')
+                ? result && tn('info.sql', result.rows.length, result.rows.length) + (result.more ? t('info.sqlLimit', limit) : '')
                 : searchAll
                   ? shownHits
-                    ? t('info.searchAll', shownHits.length, tableSearch)
+                    ? tn('info.searchAll', shownHits.length, shownHits.length, tableSearch)
                     : searching && progressText(t('job.searching'), progress, t)
-                  : t('info.showing', shownTable, rows.length, rowCount) + (narrowed ? t('info.filtered', totalCount) : '')}
-              {sqlSearching && t('info.searchSql', visibleRows.length, search.trim())}
+                  : tn('info.showing', rowCount, shownTable, rows.length, rowCount) + (narrowed ? tn('info.filtered', rowCount, totalCount) : '')}
+              {sqlSearching && tn('info.searchSql', visibleRows.length, visibleRows.length, search.trim())}
               {copied && ` - ${copied}`}
             </footer>
           </>
@@ -1334,11 +1334,11 @@ function App() {
           {shownStatus.text}
         </p>
         {shownStatus.unread > 0 && (
-          <span className="badge" title={t('log.unread', shownStatus.unread)}>
+          <span className="badge" title={tn('log.unread', shownStatus.unread, shownStatus.unread)}>
             {shownStatus.unread}
           </span>
         )}
-        {hiddenCount > 0 && <span className="source">{hiddenCount === 1 ? t('hidden.one') : t('hidden.many', hiddenCount)}</span>}
+        {hiddenCount > 0 && <span className="source">{tn('hidden', hiddenCount, hiddenCount)}</span>}
         {source && (
           <span className="source" title={t('status.sourceTip')}>
             {converted ? t('status.sourceConverted', source) : t('status.source', source)}

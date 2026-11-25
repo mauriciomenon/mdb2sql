@@ -384,7 +384,7 @@ describe('App IPC flow', () => {
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'tension de campo' } });
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], 'tension de campo'), { timeout: 2000 });
     expect(GetRowCount).toHaveBeenCalledWith('RANGER_SOACCU', [], 'tension de campo');
-    expect(await screen.findByText(/showing 2 of 1 rows matching \(2 in the table\)/)).toBeInTheDocument();
+    expect(await screen.findByText(/showing 2 of 1 row matching \(2 in the table\)/)).toBeInTheDocument();
     // the search stays when another table is chosen
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'tension de campo'));
@@ -426,7 +426,7 @@ describe('App IPC flow', () => {
     const hit = await screen.findByRole('button', { name: 'RANGER_SOGEN (3)' });
     expect(hit.closest('ul').className).toBe('hits');
     expect(screen.queryByRole('columnheader')).not.toBeInTheDocument();
-    expect(screen.getByText('1 tables with rows matching "tensao"')).toBeInTheDocument();
+    expect(screen.getByText('1 table with rows matching "tensao"')).toBeInTheDocument();
     expect(bridge.GetTableData).not.toHaveBeenCalledWith('RANGER_SOACCU', 100, [], 'tensao'); // the grid is not queried
 
     fireEvent.click(hit);
@@ -566,7 +566,7 @@ describe('App IPC flow', () => {
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [byName], ''));
     expect(GetRowCount).toHaveBeenCalledWith('RANGER_SOACCU', [byName], '');
     expect(await screen.findByText("Filter: NAME = 'Beta'")).toBeInTheDocument();
-    expect(await screen.findByText(/showing 2 of 1 rows matching \(2 in the table\)/)).toBeInTheDocument();
+    expect(await screen.findByText(/showing 2 of 1 row matching \(2 in the table\)/)).toBeInTheDocument();
 
     // a second column is ANDed; the row limit keeps the filters
     fireEvent.contextMenu(screen.getByRole('cell', { name: '2' }));
@@ -847,7 +847,7 @@ describe('App IPC flow', () => {
     await waitFor(() => expect(screen.getByRole('status').className).toContain('error'));
     // one translated line in the status bar; the engine's full text (LINE 1, caret) only in the log
     expect(screen.getByRole('status').textContent).toBe('SQL query error: syntax error at or near "selec"');
-    expect(screen.getByTitle('1 unread errors or warnings').textContent).toBe('1');
+    expect(screen.getByTitle('1 unread error or warning').textContent).toBe('1');
 
     // a later action does not hide the unread error while the log is collapsed
     fireEvent.click(screen.getByRole('tab', { name: 'Data' }));
@@ -902,7 +902,7 @@ describe('App IPC flow', () => {
     run('bad');
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('SQL query error: syntax error at or near "selec"'));
     expect(screen.queryByText('good')).not.toBeInTheDocument(); // the old grid is gone
-    expect(screen.getByTitle('1 unread errors or warnings')).toBeInTheDocument();
+    expect(screen.getByTitle('1 unread error or warning')).toBeInTheDocument();
     run('ok');
     expect(await screen.findByText('good')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('status').className).not.toContain('error'));
@@ -987,7 +987,7 @@ describe('App IPC flow', () => {
     fireEvent.keyDown(screen.getByLabelText('SQL'), { key: 'Enter', ctrlKey: true });
     await waitFor(() => expect(RunQuery).toHaveBeenCalledWith('select 1', 100));
     expect(await screen.findByText('n (2)')).toBeInTheDocument();
-    expect(screen.getByText(/1 rows \(limit 100/)).toBeInTheDocument();
+    expect(screen.getByText(/SQL result: 1 row \(limit 100/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
     fireEvent.click(screen.getByRole('menuitem', { name: en('export.sqlCsv') }));
@@ -1011,7 +1011,7 @@ describe('App IPC flow', () => {
 
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'alp' } });
     fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
-    await screen.findByText(/showing 2 of 1 rows matching/);
+    await screen.findByText(/showing 2 of 1 row matching/);
     exportCsv();
     const dialog = await screen.findByRole('dialog', { name: 'Export RANGER_SOACCU' });
     expect(within(dialog).getAllByRole('button').map((b) => b.textContent)).toEqual(['Whole table', 'Only the 1 row found', 'Cancel']);
@@ -1231,7 +1231,7 @@ describe('App IPC flow', () => {
     await screen.findByText('Beta');
     fireEvent.change(screen.getByLabelText('Search the result'), { target: { value: 'alp' } });
     expect(screen.queryByText('Beta')).not.toBeInTheDocument();
-    expect(screen.getByText(/1 match "alp"/)).toBeInTheDocument();
+    expect(screen.getByText(/ - 1 matches "alp"/)).toBeInTheDocument();
   });
 
   it('shows the Linux display warning at start: 3 short lines, Copy for the command, Help link, and the log', async () => {
@@ -1275,6 +1275,20 @@ describe('language catalogs', () => {
       expect(Object.keys(CATALOGS[l]).sort()).toEqual(keys);
       expect(Object.entries(CATALOGS[l]).filter(([, v]) => !v.trim())).toEqual([]);
     }
+  });
+
+  // standard item 23: the right plural, "1 tabela" / "2 tabelas"
+  it('use the singular for a count of one', () => {
+    const pt = (key, n, ...args) => translateN('pt-BR', key, n, ...args);
+    expect(pt('sidebar.filter', 1, 1)).toBe('Filtrar 1 tabela');
+    expect(pt('sidebar.filter', 3, 3)).toBe('Filtrar 3 tabelas');
+    expect(pt('info.showing', 1, 'T', 1, 1) + pt('info.filtered', 1, 9)).toBe('T: mostrando 1 de 1 linha correspondente (9 na tabela)');
+    expect(pt('info.showing', 2, 'T', 2, 2)).toBe('T: mostrando 2 de 2 linhas');
+    expect(pt('info.sql', 1, 1)).toBe('Resultado SQL: 1 linha');
+    expect(pt('info.searchAll', 1, 1, 'x')).toBe('1 tabela com linhas que contêm "x"');
+    expect(pt('log.unread', 1, 1)).toBe('1 erro ou aviso não lido');
+    // a .one text always has its plural key
+    expect(Object.keys(CATALOGS.en).filter((k) => k.endsWith('.one') && !(k.slice(0, -4) in CATALOGS.en))).toEqual([]);
   });
 
   it('hold every key the screen uses', () => {

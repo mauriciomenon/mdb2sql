@@ -74,3 +74,11 @@ func T(key string, args ...any) string {
 	}
 	return s
 }
+
+// N is T for a text with a count: key.one when n is 1 and the catalogs have it ("1 arquivo"), else key ("2 arquivos")
+func N(key string, n int, args ...any) string {
+	if _, ok := catalogs[Langs[0]][key+".one"]; ok && n == 1 {
+		key += ".one"
+	}
+	return T(key, args...)
+}

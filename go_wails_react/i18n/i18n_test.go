@@ -74,6 +74,16 @@ func TestT(t *testing.T) {
 	if got := T("err.unsupported", ".txt"); got != "Formato de banco não suportado: .txt" {
 		t.Errorf("pt-BR: %q", got)
 	}
+	// a count: "1 arquivo", "2 arquivos" (standard item 23)
+	if got := N("log.staleRemoved", 1, 1); got != "1 arquivo convertido de uma sessão anterior removido" {
+		t.Errorf("one: %q", got)
+	}
+	if got := N("log.staleRemoved", 2, 2); got != "2 arquivos convertidos de uma sessão anterior removidos" {
+		t.Errorf("two: %q", got)
+	}
+	if got := N("err.unsupported", 1, ".txt"); got != "Formato de banco não suportado: .txt" { // no .one: the key
+		t.Errorf("no .one: %q", got)
+	}
 	SetLang("xx") // ignored
 	if Lang() != "pt-BR" || T("no.such.key") != "no.such.key" {
 		t.Errorf("lang %q", Lang())

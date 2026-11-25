@@ -144,14 +144,18 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	if n := backend.CleanStaleConverted(); n > 0 {
-		a.log("log.staleRemoved", n)
+		a.logText(i18n.N("log.staleRemoved", n, n))
 	}
 }
 
 // log sends one line to the Log panel (View > Log) in the current language
 func (a *App) log(key string, args ...any) {
+	a.logText(i18n.T(key, args...))
+}
+
+func (a *App) logText(text string) {
 	if a.ctx != nil { // nil in tests: the Wails runtime only works inside the app
-		runtime.EventsEmit(a.ctx, "log", i18n.T(key, args...))
+		runtime.EventsEmit(a.ctx, "log", text)
 	}
 }
 
