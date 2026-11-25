@@ -188,6 +188,38 @@ describe('App IPC flow', () => {
     expect(list.querySelector('.count')).toBeNull();
   });
 
+  // standard item 24: Data tab from top to bottom - one line (search, This table | All tables, Rows, Columns...), the
+  // filters line only with value filters, the grid, one line under it; nothing else (the copy notice goes to the status bar)
+  it('lays out the Data tab as the standard: one bar, filters only when set, the grid and one line under it', async () => {
+    const GetRowCount = vi.fn(async (_t, filters, search) => (filters.length || search ? 1 : 2));
+    const ClipboardSetText = vi.fn(async () => true);
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetRowCount } } }, runtime: { ClipboardSetText } });
+    render(<App />);
+    openDefault();
+    await screen.findByText('Alpha');
+    const content = document.querySelector('.content');
+    const parts = () => [...content.children].map((el) => el.className);
+    expect(parts()).toEqual(['content-bar', 'table-container', 'info']);
+    const bar = content.querySelector('.content-bar');
+    const search = within(bar).getByLabelText('Search the table');
+    expect(search).toHaveAttribute('placeholder', 'Search the table');
+    expect(within(bar).getByRole('radiogroup', { name: 'Search in' })).toBeInTheDocument();
+    expect(within(bar).getByRole('combobox')).toBeInTheDocument();
+    expect(within(bar).getByRole('button', { name: 'Columns...' })).toBeInTheDocument();
+    expect(content.querySelector('.info').textContent).toBe('RANGER_SOACCU: showing 2 of 2 rows');
+
+    fireEvent.contextMenu(screen.getByText('Beta'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Filter by this value' }));
+    await screen.findByText("Filter: NAME = 'Beta'");
+    expect(parts()).toEqual(['content-bar', 'filters', 'table-container', 'info']);
+    await waitFor(() => expect(content.querySelector('.info').textContent).toBe('RANGER_SOACCU: showing 2 of 1 row found'));
+
+    fireEvent.contextMenu(screen.getByText('Beta'));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Copy value/ }));
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Copied value'));
+    expect(content.querySelector('.info').textContent).toBe('RANGER_SOACCU: showing 2 of 1 row found');
+  });
+
   it('does nothing when the dialog is cancelled', async () => {
     const SelectDatabase = vi.fn(async () => '');
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, SelectDatabase } } } });
@@ -383,7 +415,7 @@ describe('App IPC flow', () => {
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'tension de campo' } });
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], 'tension de campo'), { timeout: 2000 });
     expect(GetRowCount).toHaveBeenCalledWith('RANGER_SOACCU', [], 'tension de campo');
-    expect(await screen.findByText(/showing 2 of 1 row matching \(2 in the table\)/)).toBeInTheDocument();
+    expect(await screen.findByText(/showing 2 of 1 row found$/)).toBeInTheDocument();
     // the search stays when another table is chosen
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'tension de campo'));
@@ -565,7 +597,7 @@ describe('App IPC flow', () => {
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [byName], ''));
     expect(GetRowCount).toHaveBeenCalledWith('RANGER_SOACCU', [byName], '');
     expect(await screen.findByText("Filter: NAME = 'Beta'")).toBeInTheDocument();
-    expect(await screen.findByText(/showing 2 of 1 row matching \(2 in the table\)/)).toBeInTheDocument();
+    expect(await screen.findByText(/showing 2 of 1 row found$/)).toBeInTheDocument();
 
     // a second column is ANDed; the row limit keeps the filters
     fireEvent.contextMenu(screen.getByRole('cell', { name: '2' }));
@@ -1011,7 +1043,7 @@ describe('App IPC flow', () => {
 
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'alp' } });
     fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
-    await screen.findByText(/showing 2 of 1 row matching/);
+    await screen.findByText(/showing 2 of 1 row found/);
     exportCsv();
     const dialog = await screen.findByRole('dialog', { name: 'Export RANGER_SOACCU' });
     expect(within(dialog).getAllByRole('button').map((b) => b.textContent)).toEqual(['Whole table', 'Only the 1 row found', 'Cancel']);
@@ -1282,7 +1314,8 @@ describe('language catalogs', () => {
     const pt = (key, n, ...args) => translateN('pt-BR', key, n, ...args);
     expect(pt('sidebar.filter', 1, 1)).toBe('Filtrar 1 tabela');
     expect(pt('sidebar.filter', 3, 3)).toBe('Filtrar 3 tabelas');
-    expect(pt('info.showing', 1, 'T', 1, 1) + pt('info.filtered', 1, 9)).toBe('T: mostrando 1 de 1 linha correspondente (9 na tabela)');
+    expect(pt('info.found', 1, 'T', 1, 1)).toBe('T: mostrando 1 de 1 linha encontrada');
+    expect(pt('info.found', 3, 'T', 3, 3)).toBe('T: mostrando 3 de 3 linhas encontradas');
     expect(pt('info.showing', 2, 'T', 2, 2)).toBe('T: mostrando 2 de 2 linhas');
     expect(pt('info.sql', 1, 1)).toBe('Resultado SQL: 1 linha');
     expect(pt('info.searchAll', 1, 1, 'x')).toBe('1 tabela com linhas que contêm "x"');

@@ -47,8 +47,8 @@ Changes in 1.3.0:
   one transaction. The 287-table test file (DB4): mdbtools 72 s → 33 s, ODBC 37 s → 10 s; Export → SQLite 31-72 s
   → 3 s (median of 3, same machine, see "Tested").
 - The Data search runs in the database over the WHOLE table (not only the loaded rows): every word in one
-  cell, any order, ignoring case and accents; the line under the grid says "showing 100 of 412 rows matching
-  (36754 in the table)". The SQL tab still searches its loaded result.
+  cell, any order, ignoring case and accents; the line under the grid says "RANGER_SOSTAT: showing 100 of
+  412 rows found". The SQL tab still searches its loaded result.
 - Languages: Settings > Language: English (default), Português (Brasil), Español; saved; changes at once,
   without restarting. Every text (menus, dialogs, messages, About, tooltips, native dialogs) comes from
   `i18n/en.json`, `i18n/pt-BR.json`, `i18n/es.json` (same keys, shared by Go and React).

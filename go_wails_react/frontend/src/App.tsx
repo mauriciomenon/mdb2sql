@@ -258,11 +258,9 @@ function App() {
   // open context menu: of the selected cell, of a column header (header = column name) or of the status bar
   const [menu, setMenu] = useState<{ x: number; y: number; header?: string; status?: boolean } | null>(null);
   const [filters, setFilters] = useState<Filter[]>([]); // of the current table, applied by Go in the query
-  const [totalCount, setTotalCount] = useState(0); // rows of the table without filters and search
   const [hidden, setHidden] = useState<Set<string>>(new Set()); // hidden columns of the current table
   const [widths, setWidths] = useState<Record<string, number>>({}); // Data columns resized by hand (current table)
   const [colsOpen, setColsOpen] = useState(false); // "Columns..." dialog
-  const [copied, setCopied] = useState('');
   const [sql, setSql] = useState('');
   const [result, setResult] = useState<QueryResult | null>(null);
   const [resultSql, setResultSql] = useState(''); // SQL of the result shown (what "Export SQL result" writes)
@@ -504,8 +502,7 @@ function App() {
       // the Wails clipboard goes through Go/Win32, so it does not depend on webview clipboard permissions
       if (window.runtime?.ClipboardSetText) await window.runtime.ClipboardSetText(text);
       else await navigator.clipboard.writeText(text);
-      setCopied(done);
-      addLog(done);
+      setStatus(done); // in the status bar (and the log), not under the grid (standard item 24)
     } catch (err) {
       fail(err);
     }
@@ -703,7 +700,6 @@ function App() {
       setError('');
       setSelectedTable(tableName);
       setSel(null);
-      setCopied('');
       setFilters(tableFilters);
       if (!keep) {
         setHidden(new Set());
@@ -711,17 +707,14 @@ function App() {
       }
       if (view === 'sql') setView('data');
       const bridge = getWailsBridge();
-      const narrowed = tableFilters.length > 0 || find !== '';
-      const [data, count, cols, total] = await Promise.all([
+      const [data, count, cols] = await Promise.all([
         bridge.GetTableData(tableName, rowLimit, tableFilters, find),
         bridge.GetRowCount(tableName, tableFilters, find),
         bridge.GetTableSchema ? bridge.GetTableSchema(tableName) : Promise.resolve([]),
-        narrowed ? bridge.GetRowCount(tableName, [], '') : null,
       ]);
       if (req !== tableReq.current) return;
       setRows(data ?? []); // Go sends null for an empty table
       setRowCount(count);
-      setTotalCount(total ?? count);
       setSchema(cols ?? []);
       setShownFind(find);
       setShownTable(tableName);
@@ -1138,7 +1131,7 @@ function App() {
                 ref={searchRef}
                 type="search"
                 className="search"
-                placeholder={view === 'sql' ? t('sql.searchPlaceholder') : t('search.placeholder')}
+                placeholder={view === 'sql' ? t('sql.searchPlaceholder') : t('search.label')}
                 aria-label={view === 'sql' ? t('sql.searchLabel') : t('search.label')}
                 title={t('search.tip')}
                 value={search}
@@ -1276,9 +1269,8 @@ function App() {
                   ? shownHits
                     ? tn('info.searchAll', shownHits.length, shownHits.length, tableSearch)
                     : searching && progressText(t('job.searching'), progress, t)
-                  : tn('info.showing', rowCount, shownTable, rows.length, rowCount) + (narrowed ? tn('info.filtered', rowCount, totalCount) : '')}
+                  : tn(narrowed ? 'info.found' : 'info.showing', rowCount, shownTable, rows.length, rowCount)}
               {sqlSearching && tn('info.searchSql', visibleRows.length, visibleRows.length, search.trim())}
-              {copied && ` - ${copied}`}
             </footer>
           </>
         )}
