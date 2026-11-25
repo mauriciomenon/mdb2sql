@@ -127,6 +127,8 @@ const Capture = struct {
     hidden_before: usize = 0, // click_cell: colunas ocultas antes do clique
     cleared: bool = false, // global_clear: o termo foi apagado com a busca rodando
     hit_rows: u64 = 0, // open_hit: linhas que a busca global listou para a tabela
+    release_key: ?c_int = null, // passos key_*: tecla apertada, solta no quadro seguinte
+    source_path: [1024:0]u8 = @splat(0), // prompt_delete: o Access de origem (reopen_saved abre de novo)
 
     fn size(c: *const Capture) [2]u32 {
         const s = dbm.capture.plan[@min(c.step, dbm.capture.plan.len - 1)];
@@ -159,6 +161,12 @@ const Capture = struct {
 
     // Antes de app.update(): pede o estado do passo atual quando nada esta rodando
     fn before(c: *Capture, app: *App) void {
+        // tecla do passo anterior: solta (o atalho ja foi visto no quadro em que foi apertado)
+        if (c.release_key) |k| {
+            shim_key(k, false);
+            shim_key(ig.ImGuiMod_Ctrl, false);
+            c.release_key = null;
+        }
         // global_clear: o termo e apagado com a busca rodando, como o usuario apagando a caixa
         if (c.applied and c.step < dbm.capture.plan.len and dbm.capture.plan[c.step].action == .global_clear and
             !c.cleared and app.slot.busyWith(.search_all))
@@ -169,6 +177,12 @@ const Capture = struct {
         }
         while (true) {
             if (c.step == dbm.capture.plan.len or c.applied) return;
+            // reopen_saved comeca com o arquivo fechado (depois do Salvar)
+            if (dbm.capture.plan[c.step].action == .reopen_saved) {
+                if (app.slot.busy() or app.choice != null or app.leave != null) return;
+                if (c.apply(app)) return;
+                continue;
+            }
             if (!app.slot.busy() and !app.want_open and !app.db.isOpen()) {
                 c.failed = "the database did not open";
                 return;
@@ -178,12 +192,27 @@ const Capture = struct {
         }
     }
 
+    // Atalho de teclado de verdade: o ImGui ve a tecla no proximo quadro; before() solta no seguinte
+    fn press(c: *Capture, ctrl: bool, key: c_int) void {
+        if (ctrl) shim_key(ig.ImGuiMod_Ctrl, true);
+        shim_key(key, true);
+        c.release_key = key;
+    }
+
     // true = estado pedido; false = passo pulado (o laco tenta o proximo)
     fn apply(c: *Capture, app: *App) bool {
         const cap = dbm.capture;
         const action = cap.plan[c.step].action;
-        // cada passo comeca sem os dialogos do passo anterior
+        // cada passo comeca sem os dialogos e menus do passo anterior, na aba Dados (os de SQL na aba SQL; os de
+        // atalho na aba em que estao)
         if (action != .about) app.about_open = false;
+        if (action != .export_ask) app.ask_export = null;
+        app.close_popups = true;
+        switch (action) {
+            .sql_tab, .sql_error, .key_ctrl_enter => app.want_tab = .sql,
+            .key_ctrl_1, .key_ctrl_2, .key_ctrl_f => {},
+            else => app.want_tab = .data,
+        }
         // so os passos de Log abrem o painel (a captura nao le nem grava as configuracoes)
         app.prefs.log_open = action == .log or action == .log_error_open;
         if (app.prefs.log_open) markLogRead();
@@ -196,7 +225,54 @@ const Capture = struct {
                     return false;
                 }
                 c.esc_frames = 0;
-                app.requestLeave(.exit);
+                c.press(true, ig.ImGuiKey_Q); // Sair pelo atalho Ctrl+Q
+            },
+            .export_ask => {
+                if (app.applied_search[0] == 0 and app.filters.items.len == 0) {
+                    c.skip(app.gpa, "no search or filter on the open table");
+                    return false;
+                }
+                app.want_export = .table_csv;
+            },
+            .header_menu, .cell_menu => {
+                if (app.col_names.len == 0 or app.data == null or app.data.?.rows.len == 0) {
+                    c.skip(app.gpa, "the open table has no rows");
+                    return false;
+                }
+                // a primeira coluna visivel (os passos de Colunas ocultam algumas)
+                var col: usize = 0;
+                while (col + 1 < app.col_names.len and app.data_sel.hidden.isSet(col)) col += 1;
+                if (action == .header_menu) {
+                    app.data_sel.header_col = col;
+                    app.data_sel.popup_header = true;
+                } else app.data_sel = .{ .row = 0, .col = col, .popup = true, .hidden = app.data_sel.hidden };
+            },
+            .file_menu => app.start_menu = .File,
+            .export_menu => app.start_menu = .Export,
+            .sql_tab => {
+                app.sql[0] = 0;
+                app.clearResult();
+                app.sql_msg.len = 0;
+            },
+            .sql_error => {
+                copyZ(&app.sql, "SELEC 1");
+                app.want_run = true;
+            },
+            .key_ctrl_enter => {
+                copyZ(&app.sql, "SELECT 42 AS n");
+                c.press(true, ig.ImGuiKey_Enter);
+            },
+            .key_ctrl_1 => c.press(true, ig.ImGuiKey_1),
+            .key_ctrl_2 => c.press(true, ig.ImGuiKey_2),
+            .key_ctrl_f => c.press(true, ig.ImGuiKey_F),
+            .key_f5 => c.press(false, ig.ImGuiKey_F5),
+            .reopen_saved => {
+                if (!c.save_end or c.source_path[0] == 0) {
+                    c.skip(app.gpa, "the converted SQLite was not saved (MDB2SQL_CAPTURE_SAVE=1 saves it)");
+                    return false;
+                }
+                app.setPath(zstr(&c.source_path));
+                app.want_open = true;
             },
             .display_warning => if (app.display_warning == null) {
                 c.skip(app.gpa, "no display warning (X11 in use)");
@@ -290,6 +366,7 @@ const Capture = struct {
                     return false;
                 }
                 const tmp = app.converted.?.tmp;
+                c.source_path = app.converted.?.source;
                 if (action == .prompt) app.requestLeave(.close) else {
                     app.requestLeave(.close);
                     c.deleted_tmp = tmp;
@@ -371,6 +448,14 @@ const Capture = struct {
             .open_hit => if (app.filters.items.len > 0 or app.total != c.hit_rows) c.note(app.gpa, "the opened table does not show the row count listed"),
             .reopen => if (app.table_filter[0] != 0 or app.table_filter_applied[0] != 0 or app.search[0] != 0 or app.scope != app.prefs.search_scope)
                 c.note(app.gpa, "the reopened file kept the table filter, the search or the scope"),
+            .export_ask => if (app.ask_export == null) c.note(app.gpa, "the whole table / rows found question did not open"),
+            .key_ctrl_1 => if (app.tab != .data) c.note(app.gpa, "Ctrl+1 did not show the Data tab"),
+            .key_ctrl_2 => if (app.tab != .schema) c.note(app.gpa, "Ctrl+2 did not show the Schema tab"),
+            .key_ctrl_f => if (app.tab != .data or app.focus_search) c.note(app.gpa, "Ctrl+F did not focus the Data search"),
+            .sql_error => if (alert.len == 0 or !app.sql_msg.is_err) c.note(app.gpa, "the SQL error is not on the status bar"),
+            .key_ctrl_enter => if (app.result == null or alert.len > 0 or app.sql_msg.is_err) c.note(app.gpa, "Ctrl+Enter with a SQL that works did not clear the previous error"),
+            .key_f5 => if (!app.db.isOpen() or !app.status.loaded) c.note(app.gpa, "F5 did not open the file again"),
+            .reopen_saved => if (app.converted != null or app.source != .sqlite) c.note(app.gpa, "the saved SQLite was not reused (the Access file was converted again)"),
             else => {},
         }
     }
@@ -835,6 +920,7 @@ const App = struct {
     want_tab: ?Tab = null, // aba a selecionar no proximo quadro (atalhos, --sql)
     focus_search: bool = false, // Ctrl+F: foco na busca da aba Dados
     want_refresh: bool = false, // F5: abre de novo o arquivo aberto
+    close_popups: bool = false, // --capture: cada passo comeca sem os menus do passo anterior
     reveal_selected: bool = false, // rola a lista de tabelas ate a selecionada (ex.: --table)
     start_table: []const u8 = "", // --table: tabela inicial do proximo open
     start_sql: bool = false, // --sql: roda depois do primeiro open
@@ -1486,6 +1572,10 @@ const App = struct {
     }
 
     fn draw(app: *App) void {
+        if (app.close_popups) {
+            app.close_popups = false;
+            ig.igClosePopupsExceptModals();
+        }
         app.drawMenu();
         const vp = ig.igGetMainViewport();
         ig.igSetNextWindowPos(vp.*.WorkPos, ig.ImGuiCond_Always, .{ .x = 0, .y = 0 });
@@ -2370,6 +2460,7 @@ const GridSel = struct {
     row: ?usize = null,
     col: usize = 0,
     popup: bool = false, // abrir o menu da celula ao lado dela (estado inicial --cell)
+    popup_header: bool = false, // abrir o menu do cabecalho da coluna header_col (--capture)
     // Colunas ocultas desta grade (indice da coluna). Valem ate trocar de tabela/resultado ou "Mostrar todas";
     // so mudam o que e desenhado: busca e exportacao continuam com todas as colunas.
     hidden: std.StaticBitSet(max_grid_cols) = .empty,
@@ -2435,6 +2526,7 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
     ig.igTableSetupScrollFreeze(0, 1);
     for (g.columns[0..n_cols]) |name| ig.igTableSetupColumn(name.ptr, 0, 0, 0);
     var open_header = false;
+    var header_at: ?[2]f32 = null; // --capture: onde o menu do cabecalho abre
     if (can_hide) {
         // a lista de ocultas e nossa (GridSel.hidden); o ImGui so executa
         for (0..n_cols) |c| ig.igTableSetColumnEnabled(@intCast(c), !sel.hidden.isSet(c));
@@ -2459,6 +2551,12 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
             if (ig.igIsMouseReleased_Nil(1) and hovered) {
                 sel.header_col = c;
                 open_header = true;
+            }
+            // --capture: o menu desta coluna abre logo abaixo do cabecalho (sem mouse)
+            if (sel.popup_header and c == sel.header_col) {
+                sel.popup_header = false;
+                open_header = true;
+                header_at = .{ ig.igGetItemRectMin().x, ig.igGetItemRectMax().y };
             }
         }
     } else ig.igTableHeadersRow();
@@ -2536,6 +2634,7 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
     // Ordem do Rust: Ajustar coluna, Ajustar todas, Ocultar esta coluna, Colunas..., Mostrar todas (sem coluna oculta,
     // desabilitado) e a lista das colunas; a ultima coluna visivel nao pode ser ocultada.
     if (open_header) _ = ig.igOpenPopup_Str("##header", 0);
+    if (header_at) |p| ig.igSetNextWindowPos(.{ .x = p[0], .y = p[1] }, ig.ImGuiCond_Always, .{ .x = 0, .y = 0 });
     if (ig.igBeginPopup("##header", 0)) {
         defer ig.igEndPopup();
         const visible = n_cols - sel.hiddenCount(n_cols);
