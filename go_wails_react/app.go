@@ -599,6 +599,9 @@ func (a *App) RunQuery(query string, limit int) (backend.QueryResult, error) {
 	return res, err
 }
 
+// file name the save dialog proposes for the SQL result: query.csv / query.xlsx (standard item 17)
+const queryExportName = "query"
+
 // export file types: catalog key of the name and the pattern
 var exportFilters = map[string][2]string{
 	"duckdb": {"filter.duckdbOut", "*.duckdb"},
@@ -671,16 +674,17 @@ func (a *App) ExportDatabase(format string) (string, error) {
 	})
 }
 
-// ExportTable exporta a tabela atual inteira (format csv ou xlsx)
-func (a *App) ExportTable(table, format string) (string, error) {
+// ExportTable exporta a tabela atual (format csv ou xlsx): inteira, ou com search/filters so as linhas encontradas
+// (com a busca ativa a UI pergunta qual das duas)
+func (a *App) ExportTable(table, format string, filters []backend.Filter, search string) (string, error) {
 	return a.runExport(table, format, func(ctx context.Context, out string) error {
-		return a.dbManager.ExportTable(ctx, table, format, out, a.progress)
+		return a.dbManager.ExportTable(ctx, table, format, out, a.progress, search, filters...)
 	})
 }
 
-// ExportQuery exporta o resultado completo do SQL (format csv ou xlsx)
+// ExportQuery exporta o resultado completo do SQL (format csv ou xlsx); nome proposto query.csv / query.xlsx
 func (a *App) ExportQuery(query, format string) (string, error) {
-	return a.runExport("result", format, func(ctx context.Context, out string) error {
+	return a.runExport(queryExportName, format, func(ctx context.Context, out string) error {
 		return a.dbManager.ExportQuery(ctx, query, format, out, a.progress)
 	})
 }

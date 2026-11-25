@@ -291,17 +291,17 @@ func TestExportKeepsOtherFilesAndOldTarget(t *testing.T) {
 	write("p.partial.csv", "user file")
 	write("p.partial.csv.wal", "user wal")
 
-	if err := m.ExportTable(context.Background(), "nope", "csv", out, noop); err == nil {
+	if err := m.ExportTable(context.Background(), "nope", "csv", out, noop, ""); err == nil {
 		t.Fatal("unknown table must fail")
 	}
 	check("p.csv", "old target") // failed export: old target intact
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := m.ExportTable(ctx, "Pontos A", "csv", out, noop); err == nil {
+	if err := m.ExportTable(ctx, "Pontos A", "csv", out, noop, ""); err == nil {
 		t.Fatal("cancelled export must fail")
 	}
 	check("p.csv", "old target")
-	if err := m.ExportTable(context.Background(), "Pontos A", "csv", out, noop); err != nil {
+	if err := m.ExportTable(context.Background(), "Pontos A", "csv", out, noop, ""); err != nil {
 		t.Fatal(err)
 	}
 	if data, _ := os.ReadFile(out); !strings.HasPrefix(string(data), "\xEF\xBB\xBFid,") {
@@ -325,7 +325,7 @@ func TestExportTableCSVAndDatabases(t *testing.T) {
 	noop := func(int, int, string) {}
 
 	csvPath := filepath.Join(dir, "p.csv")
-	if err := m.ExportTable(context.Background(), "Pontos A", "csv", csvPath, noop); err != nil {
+	if err := m.ExportTable(context.Background(), "Pontos A", "csv", csvPath, noop, ""); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(csvPath)
@@ -334,8 +334,29 @@ func TestExportTableCSVAndDatabases(t *testing.T) {
 	if string(data) != want {
 		t.Errorf("csv:\n%q\nwant\n%q", data, want)
 	}
-	if err := m.ExportTable(context.Background(), "nope", "csv", csvPath, noop); err == nil {
+	if err := m.ExportTable(context.Background(), "nope", "csv", csvPath, noop, ""); err == nil {
 		t.Error("unknown table must fail")
+	}
+	// standard item 17: with the search active the user may export only the rows found (search and value filters)
+	found := filepath.Join(dir, "found.csv")
+	if err := m.ExportTable(context.Background(), "Pontos A", "csv", found, noop, "limite", Filter{"ok", true}); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(found); string(data) != "\xEF\xBB\xBFid,valor,x,nome,ok,em\r\n1,12.34,0.5,\"LÍMITE \"\"a\"\", b\",true,2026-07-14 10:20:30\r\n" {
+		t.Errorf("rows found to csv: %q", data)
+	}
+	foundX := filepath.Join(dir, "found.xlsx")
+	if err := m.ExportTable(context.Background(), "Pontos A", "xlsx", foundX, noop, "", Filter{"id", float64(3)}); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := excelize.OpenFile(foundX); err != nil {
+		t.Error(err)
+	} else {
+		rows, _ := f.GetRows("Pontos A")
+		f.Close()
+		if len(rows) != 2 || rows[1][0] != "3" {
+			t.Errorf("rows found to xlsx: %v", rows)
+		}
 	}
 	if err := m.ExportDatabase(context.Background(), "duckdb", src, noop); err == nil {
 		t.Error("exporting over the open file must fail")

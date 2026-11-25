@@ -38,7 +38,7 @@ declare global {
           GetAppInfo?: () => Promise<AppInfo>;
           RunQuery?: (query: string, limit: number) => Promise<QueryResult>;
           ExportDatabase?: (format: string) => Promise<string>;
-          ExportTable?: (table: string, format: string) => Promise<string>;
+          ExportTable?: (table: string, format: string, filters: Filter[], search: string) => Promise<string>;
           ExportQuery?: (query: string, format: string) => Promise<string>;
           CancelJob?: () => Promise<void>;
           GetTheme?: () => Promise<Theme>;
@@ -253,6 +253,8 @@ function App() {
   const [displayWarn, setDisplayWarn] = useState<DisplayWarning | null>(null); // Linux: X11 missing, on Wayland
   // "save or delete the converted SQLite" question; resolve gets the answer (null = cancel)
   const [ask, setAsk] = useState<{ name: string; resolve: (a: { choice: string; remember: boolean } | null) => void } | null>(null);
+  // "whole table or only the n rows found?" before a table export with the search active; resolve(true) = rows found
+  const [exportAsk, setExportAsk] = useState<{ table: string; found: number; resolve: (found: boolean | null) => void } | null>(null);
   const started = useRef(false);
   // the functions of the latest render, for listeners registered once (file drop, keyboard shortcuts)
   const latest = useRef<Record<string, (...args: any[]) => unknown>>({});
@@ -770,14 +772,30 @@ function App() {
     }
   }
 
+  // the current table to CSV/Excel; with the Data search or value filters on, first asks: the whole table or only the
+  // n rows found (standard item 17)
+  async function exportTable(format: string) {
+    setOpenMenu(null);
+    const table = selectedTable;
+    const keep = shownTable === table && (filters.length > 0 || shownFind !== '') ? { filters, find: shownFind } : null;
+    let onlyFound = false;
+    if (keep) {
+      const answer = await new Promise<boolean | null>((resolve) => setExportAsk({ table, found: rowCount, resolve }));
+      setExportAsk(null);
+      if (answer === null) return; // Cancel or Esc
+      onlyFound = answer;
+    }
+    await runExport(table, () => bridge?.ExportTable?.(table, format, onlyFound ? keep!.filters : [], onlyFound ? keep!.find : ''));
+  }
+
   const bridge = window.go?.main?.App;
   const sqlResultName = t('sql.result');
   const exportItems = [
     { group: 'db', label: t('export.dbSqlite'), on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('sqlite')) },
     { group: 'db', label: t('export.dbDuckdb'), on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('duckdb')) },
     { group: 'db', label: t('export.dbXlsx'), on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('xlsx')) },
-    { group: 'table', label: t('export.tableCsv'), on: !!selectedTable, run: () => runExport(selectedTable, () => bridge?.ExportTable?.(selectedTable, 'csv')) },
-    { group: 'table', label: t('export.tableXlsx'), on: !!selectedTable, run: () => runExport(selectedTable, () => bridge?.ExportTable?.(selectedTable, 'xlsx')) },
+    { group: 'table', label: t('export.tableCsv'), on: !!selectedTable, run: () => exportTable('csv') },
+    { group: 'table', label: t('export.tableXlsx'), on: !!selectedTable, run: () => exportTable('xlsx') },
     { group: 'sql', label: t('export.sqlCsv'), on: !!resultSql, run: () => runExport(sqlResultName, () => bridge?.ExportQuery?.(resultSql, 'csv')) },
     { group: 'sql', label: t('export.sqlXlsx'), on: !!resultSql, run: () => runExport(sqlResultName, () => bridge?.ExportQuery?.(resultSql, 'xlsx')) },
   ];
@@ -846,7 +864,7 @@ function App() {
       setView(v);
       if (v === 'sql') setTimeout(() => sqlRef.current?.focus()); // the field exists after this render
     },
-    modal: () => !!(about || colsOpen || ask || displayWarn || busy),
+    modal: () => !!(about || colsOpen || ask || exportAsk || displayWarn || busy),
   };
 
   const toggleMenu = (name: MenuName) => (e: React.MouseEvent) => {
@@ -1404,6 +1422,8 @@ function App() {
 
       {ask && <ConversionDialog name={ask.name} t={t} onAnswer={ask.resolve} />}
 
+      {exportAsk && <ExportAskDialog table={exportAsk.table} found={exportAsk.found} t={t} tn={tn} onAnswer={exportAsk.resolve} />}
+
       {displayWarn && (
         <div className="backdrop">
           <div className="about conversion" role="alertdialog" aria-modal="true" aria-labelledby="display-title">
@@ -1512,6 +1532,32 @@ function ConversionDialog({ name, t, onAnswer }: { name: string; t: T; onAnswer:
           <button onClick={() => onAnswer({ choice: 'delete', remember })}>{t('conv.delete')}</button>
           <button className="end" onClick={() => onAnswer(null)}>
             {t('conv.cancel')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Table export with the search active: the whole table, only the rows found, or Cancel (Esc)
+type ExportAskProps = { table: string; found: number; t: T; tn: TN; onAnswer: (onlyFound: boolean | null) => void };
+function ExportAskDialog({ table, found, t, tn, onAnswer }: ExportAskProps) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onAnswer(null);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  return (
+    <div className="backdrop">
+      <div className="about conversion" role="dialog" aria-modal="true" aria-labelledby="export-ask-title">
+        <h2 id="export-ask-title">{t('exportAsk.title', table)}</h2>
+        <div className="col-actions">
+          <button autoFocus onClick={() => onAnswer(false)}>
+            {t('exportAsk.all')}
+          </button>
+          <button onClick={() => onAnswer(true)}>{tn('exportAsk.found', found, found)}</button>
+          <button className="end" onClick={() => onAnswer(null)}>
+            {t('job.cancel')}
           </button>
         </div>
       </div>

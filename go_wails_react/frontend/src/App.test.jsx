@@ -985,6 +985,42 @@ describe('App IPC flow', () => {
     await waitFor(() => expect(ExportQuery).toHaveBeenCalledWith('select 1', 'csv'));
   });
 
+  // standard item 17: texts of Rust/Zig; with the search active a table export asks: whole table or only the rows found
+  it('asks whole table or only the rows found before exporting a searched table', async () => {
+    const ExportTable = vi.fn(async () => 'C:\\out\\t.csv');
+    const GetRowCount = vi.fn(async (_t, _f, search) => (search ? 1 : 2));
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, ExportTable, GetRowCount } } } });
+    render(<App />);
+    openDefault();
+    await screen.findByText('Alpha');
+    const exportCsv = () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Current table to CSV...' }));
+    };
+    exportCsv(); // no search: no question
+    await waitFor(() => expect(ExportTable).toHaveBeenLastCalledWith('RANGER_SOACCU', 'csv', [], ''));
+
+    fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'alp' } });
+    fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
+    await screen.findByText(/showing 2 of 1 rows matching/);
+    exportCsv();
+    const dialog = await screen.findByRole('dialog', { name: 'Export RANGER_SOACCU' });
+    expect(within(dialog).getAllByRole('button').map((b) => b.textContent)).toEqual(['Whole table', 'Only the 1 row found', 'Cancel']);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Only the 1 row found' }));
+    await waitFor(() => expect(ExportTable).toHaveBeenLastCalledWith('RANGER_SOACCU', 'csv', [], 'alp'));
+    exportCsv();
+    fireEvent.click(await screen.findByRole('button', { name: 'Whole table' }));
+    await waitFor(() => expect(ExportTable).toHaveBeenLastCalledWith('RANGER_SOACCU', 'csv', [], ''));
+    expect(ExportTable).toHaveBeenCalledTimes(3);
+    exportCsv();
+    await screen.findByRole('dialog', { name: 'Export RANGER_SOACCU' });
+    fireEvent.keyDown(window, { key: 'Escape' }); // Esc = Cancel: nothing exported
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(ExportTable).toHaveBeenCalledTimes(3);
+    expect(translateN('pt-BR', 'exportAsk.found', 5, 5)).toBe('Só as 5 linhas encontradas');
+    expect(translate('pt-BR', 'export.sqlCsv')).toBe('Resultado do SQL para CSV...');
+  });
+
   // owner's rule: no action twice on screen; the export list is the exception of the standard (items 1 and 19, as
   // Zig): File > Export and the Export... button of the path bar open the same list
   it('shows every button and menu action once', async () => {
