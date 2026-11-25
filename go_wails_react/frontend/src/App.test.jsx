@@ -318,7 +318,11 @@ describe('App IPC flow', () => {
 
     fireEvent.contextMenu(header('NAME'));
     const items = [...screen.getByRole('menu', { name: 'Column' }).querySelectorAll('button')].map((b) => b.textContent);
-    expect(items).toEqual(['Size column to fit', 'Size all columns to fit', 'Hide this column', 'Columns...', '✓ID', '✓NAME', 'Show all columns']);
+    // standard item 13: the order of Rust, "Show all columns" before the column list (disabled: none hidden)
+    expect(items).toEqual(['Size column to fit', 'Size all columns to fit', 'Hide this column', 'Columns...', 'Show all columns', '✓ID', '✓NAME']);
+    expect(screen.getByRole('menuitem', { name: 'Show all columns' })).toBeDisabled();
+    const menuBox = screen.getByRole('menu', { name: 'Column' });
+    expect([...menuBox.children].map((el) => el.tagName)).toEqual(['BUTTON', 'BUTTON', 'HR', 'BUTTON', 'BUTTON', 'BUTTON', 'HR', 'BUTTON', 'BUTTON']);
     fireEvent.click(screen.getByRole('menuitem', { name: 'Size column to fit' }));
     expect(header('NAME').style.width).toBe('');
     expect(header('ID').style.width).toBe('24px');

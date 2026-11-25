@@ -1305,8 +1305,8 @@ function App() {
         </div>
       )}
 
-      {/* header menu as in the Dear ImGui table of the Zig version: fit, the columns with a check mark, show all;
-          the last visible column cannot be hidden here (its header is what opens this menu) */}
+      {/* header menu in the order of Rust (Grid.svelte): fit, fit all, hide, Columns..., show all, then the columns with a
+          check mark; the last visible column cannot be hidden here (its header is what opens this menu) */}
       {menu?.header !== undefined && (
         <div
           key={`${menu.x},${menu.y}`}
@@ -1338,6 +1338,9 @@ function App() {
           <button role="menuitem" onClick={() => setColsOpen(true)}>
             {t('colmenu.columns')}
           </button>
+          <button role="menuitem" disabled={hiddenCount === 0} onClick={() => setHidden(new Set())}>
+            {t('colmenu.showAll')}
+          </button>
           <hr />
           {gridColumns.map((col) => {
             const shown = !hidden.has(col);
@@ -1348,10 +1351,6 @@ function App() {
               </button>
             );
           })}
-          <hr />
-          <button role="menuitem" disabled={hiddenCount === 0} onClick={() => setHidden(new Set())}>
-            {t('colmenu.showAll')}
-          </button>
         </div>
       )}
 
