@@ -99,6 +99,7 @@
   let nullText = $derived(showNull ? t('grid.null') : '');
 
   let openMenu = $state(null); // 'file' | 'view' | 'settings' | 'help' | 'export' (botao Exportar... do topo)
+  let exportSub = $state(false); // submenu Arquivo > Exportar aberto
   let tab = $state('data');
   let themeIndex = $state(0);
   let aboutDialog;
@@ -256,7 +257,14 @@
   function toggleMenu(event, name) {
     event.stopPropagation();
     statusMenu = null;
+    exportSub = false;
     openMenu = openMenu === name ? null : name;
+  }
+
+  // NIVEL BASICO: Arquivo > Sair e Ctrl+Q: resolve antes o SQLite convertido (pergunta) e fecha o app
+  async function quit() {
+    openMenu = null;
+    if (await settleConverted()) await invoke('exit_app');
   }
 
   onMount(() => {
@@ -749,11 +757,34 @@
     <div class="menu-root">
       <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openMenu === 'file'} onclick={(e) => toggleMenu(e, 'file')}>{t('menu.file')}</button>
       {#if openMenu === 'file'}
+        <!-- como o menu Arquivo do Zig: Abrir..., Exportar > (submenu), Fechar, Sair -->
         <div class="dropdown" role="menu" aria-label={t('menu.file')}>
-          <span class="group">{t('file.export')}</span>
-          {@render exportItems()}
+          <button type="button" role="menuitem" onclick={browse} onmouseenter={() => (exportSub = false)}>
+            {t('file.open')} <kbd>{t('file.openKey')}</kbd>
+          </button>
+          <div class="submenu-root" role="none" onmouseenter={() => (exportSub = true)} onmouseleave={() => (exportSub = false)}>
+            <button
+              type="button"
+              role="menuitem"
+              aria-haspopup="menu"
+              aria-expanded={exportSub}
+              disabled={busy || !openedPath}
+              onclick={(e) => {
+                e.stopPropagation(); // o clique abre o submenu, nao fecha o menu
+                exportSub = !exportSub;
+              }}
+            >
+              {t('file.export')} <span class="arrow">▸</span>
+            </button>
+            {#if exportSub && !busy && openedPath}
+              <div class="dropdown sub" role="menu" aria-label={t('file.export')}>{@render exportItems()}</div>
+            {/if}
+          </div>
+          <button type="button" role="menuitem" disabled={busy || !openedPath} onclick={closeDatabase} onmouseenter={() => (exportSub = false)}>
+            {t('file.close')}
+          </button>
           <div class="separator" role="separator"></div>
-          <button type="button" role="menuitem" disabled={busy || !openedPath} onclick={closeDatabase}>{t('file.close')}</button>
+          <button type="button" role="menuitem" onclick={quit}>{t('file.exit')} <kbd>{t('file.exitKey')}</kbd></button>
         </div>
       {/if}
     </div>
@@ -1295,11 +1326,34 @@
   }
 
   .dropdown button {
+    display: flex;
+    align-items: center;
     background: none;
     border-color: transparent;
     color: var(--text);
     font-weight: 400;
     text-align: left;
+  }
+
+  /* atalho e seta do submenu na ponta direita do item, como no menu da grade */
+  .dropdown kbd,
+  .dropdown .arrow {
+    margin-left: auto;
+    padding-left: 16px;
+    color: var(--muted);
+    font: inherit;
+  }
+
+  /* Arquivo > Exportar: o submenu abre ao lado do item */
+  .submenu-root {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .dropdown.sub {
+    top: -5px;
+    left: 100%;
   }
 
   .dropdown button:hover:not(:disabled),

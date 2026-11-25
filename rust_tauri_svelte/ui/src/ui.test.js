@@ -40,7 +40,7 @@ const repeated = (labels) => labels.filter((label, i) => labels.indexOf(label) !
 test('the main window has no repeated button or menu item', () => {
   const app = markup('./App.svelte');
   const labels = buttonLabels(app);
-  for (const label of ['Browse...', 'Columns...', 'Close database', 'Copy all', 'Save...', 'Delete']) {
+  for (const label of ['Browse...', 'Open...', 'Columns...', 'Close', 'Exit', 'Copy all', 'Save...', 'Delete']) {
     assert.ok(labels.includes(label), `${label} in ${labels.join(', ')}`);
   }
   assert.deepEqual(repeated(labels), []);
@@ -48,10 +48,24 @@ test('the main window has no repeated button or menu item', () => {
   assert.equal(count(app, '{#each EXPORTS'), 1);
   assert.equal(count(app, 'startExport('), 1);
   assert.equal(count(app, '{@render exportItems()}'), 2);
-  assert.equal(count(app, 'onclick={browse}'), 1);
+  assert.equal(count(app, 'onclick={browse}'), 2); // Procurar... do topo e Arquivo > Abrir... (padrao itens 1 e 19)
   assert.equal(count(app, 'onclick={closeDatabase}'), 1);
   assert.equal(count(app, 'onclick={copyLog}'), 1);
-  assert.deepEqual(labels.filter((label) => /^export/i.test(label)), ['Export...']); // o botao do topo
+  // o botao do topo e o submenu do Arquivo, que abrem a mesma lista
+  assert.deepEqual(labels.filter((label) => /^export/i.test(label)), ['Export ▸', 'Export...']);
+});
+
+// padrao item 19 (= Zig): Arquivo = Abrir... (Ctrl+O), Exportar > (submenu com a lista), Fechar, separador, Sair (Ctrl+Q)
+test('File menu: Open..., Export submenu, Close, Exit', () => {
+  const ui = markup('./App.svelte');
+  const file = ui.slice(ui.indexOf("openMenu === 'file'"), ui.indexOf("openMenu === 'view'"));
+  assert.deepEqual(buttonLabels(file), ['Open...', 'Export ▸', 'Close', 'Exit']);
+  assert.ok(file.indexOf('{@render exportItems()}') > file.indexOf("t('file.export')"), 'lista dentro do submenu');
+  assert.ok(file.indexOf('class="separator"') > file.indexOf("t('file.close')"), 'separador antes de Sair');
+  assert.match(file, /\{t\('file\.open'\)\} <kbd>\{t\('file\.openKey'\)\}<\/kbd>/);
+  assert.match(file, /onclick=\{quit\}>\{t\('file\.exit'\)\} <kbd>\{t\('file\.exitKey'\)\}<\/kbd>/);
+  assert.deepEqual([en['file.openKey'], en['file.exitKey']], ['Ctrl+O', 'Ctrl+Q']);
+  assert.match(appFunction('quit'), /if \(await settleConverted\(\)\) await invoke\('exit_app'\);/);
 });
 
 // padrao item 1 (topo = Zig): so o campo do caminho e Procurar... Abrir Exportar... (sem titulo nem rotulo); caminho

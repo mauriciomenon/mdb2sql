@@ -49,7 +49,7 @@ O botao **Export...** ao lado de **Open** abre a mesma lista de exportacao do me
 **Access**: o arquivo e lido uma vez (num DuckDB em memoria, que e o motor da tela) e gravado uma vez num **SQLite
 temporario** com os mesmos dados e tipos (inteiro, decimal exato, texto, data, booleano e binario, e os NULL); nada e
 convertido duas vezes. A barra de status mostra a etapa (lendo o Access, gravando o SQLite) e depois "Opened via mdbtools → SQLite" (ou "Access ODBC → SQLite").
-Ao **fechar o banco** (File > Close database), **abrir outro** ou **sair**, o app pergunta
+Ao **fechar o banco** (File > Close), **abrir outro** ou **sair**, o app pergunta
 **Save the converted SQLite?**:
 - **Save...**: dialogo de salvar na pasta do Access, nome `<nome do Access>.sqlite`; o SQLite fica onde voce escolher
   e pode ser aberto depois direto (bem mais rapido que reler o Access);
@@ -95,7 +95,8 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
   (ou `NULL` com **Settings > Show NULL** ligado; so a tela: copiar, pesquisar e exportar nao mudam) e numero inteiro
   sem ".0", como nas outras stacks. As colunas se ajustam ao conteudo; nada e cortado.
 
-**Menu File**: **Export** (abaixo) e **Close database**.
+**Menu File**: **Open...** (`Ctrl+O`), **Export** (submenu, abaixo; a mesma lista do botao **Export...**), **Close**
+e **Exit** (`Ctrl+Q`).
   - **Database to SQLite (.sqlite)** / **Database to DuckDB (.duckdb)**: todas as tabelas, com os tipos. No SQLite
     datas vao como texto ISO e o tipo fica declarado na coluna (o arquivo reabre com os mesmos tipos); decimais
     com mais de 15 digitos (a Moeda do Access e `DECIMAL(19,4)`) vao como numero REAL (tipo declarado
