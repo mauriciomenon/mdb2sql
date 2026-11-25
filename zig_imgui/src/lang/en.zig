@@ -92,12 +92,12 @@ pub const export_found_one = "Only the {d} row found";
 
 // About
 pub const about_title = "About mdb2sql";
-pub const about_tagline = "Opens Access, SQLite and DuckDB databases, searches them and exports to SQLite, Excel, CSV and DuckDB.";
+pub const about_tagline = "Opens Access, SQLite and DuckDB databases and exports to SQLite, DuckDB, Excel and CSV.";
 pub const about_build = "Build";
 pub const about_stack = "Stack";
 pub const about_window = "Window";
-pub const about_database = "Database";
-pub const about_access = "Access reader";
+pub const about_database = "Databases";
+pub const about_access = "Access reading";
 pub const about_access_win = "mdbtools {s} (included) or the Access ODBC driver, converted once to SQLite";
 pub const about_access_unix = "mdbtools {s} (included), converted once to SQLite";
 pub const about_author = "Author";

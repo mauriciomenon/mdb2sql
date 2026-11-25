@@ -123,6 +123,29 @@ test "All tables result: the count line and the list \"table (n)\" (Python and R
     try expectOrder("fn drawGlobal(", &.{ "\"global_found\"", "\"{s} ({d})\"" });
 }
 
+test "Data tab below the search (standard 24): filters line, grid, then the count line; no pages" {
+    try expectOrder("fn drawData(", &.{ "tr(\"rows_label\")", "tr(\"columns_button\")", "tr(\"filters_label\")", "drawGrid(\"##data\"", "\"rows_showing\"" });
+    const ui = @embedFile("main.zig");
+    for ([_][]const u8{ "tr(\"prev\")", "tr(\"next\")", "page_line" }) |gone| try std.testing.expect(std.mem.indexOf(u8, ui, gone) == null);
+}
+
+test "File menu (Open... Ctrl+O, Export, Close, Exit Ctrl+Q) and the Python shortcuts" {
+    try expectOrder("if (ig.igBeginMenu(file_l", &.{ "tr(\"menu_open\"), \"Ctrl+O\"", "igBeginMenu(export_l", "tr(\"menu_close\")", "tr(\"menu_exit\"), \"Ctrl+Q\"" });
+    try expectOrder("const chord = ig.igIsKeyChordPressed_Nil;", &.{ "ImGuiKey_O)", "ImGuiKey_L)", "ImGuiKey_Q)", "ImGuiKey_F)", "ImGuiKey_F5,", "ImGuiKey_1)", "ImGuiKey_2)", "ImGuiKey_3)", "ImGuiKey_Enter)" });
+}
+
+test "About as in Rust (Build, Stack, Window, Databases, Access reading, Author, License, links), titled About mdb2sql" {
+    const pt = i18n.catalogs[1];
+    try std.testing.expectEqualStrings("Sobre o mdb2sql", pt.about_title);
+    inline for (.{ .{ "about_build", "Build" }, .{ "about_stack", "Stack" }, .{ "about_window", "Janela" }, .{ "about_database", "Bancos" }, .{ "about_access", "Leitura do Access" }, .{ "about_author", "Autor" }, .{ "about_license", "Licença" } }) |p|
+        try std.testing.expectEqualStrings(p[1], @field(pt, p[0]));
+    try expectOrder("fn drawAbout(", &.{ "tr(\"about_build\")", "tr(\"about_stack\")", "tr(\"about_window\")", "tr(\"about_database\")", "tr(\"about_access\")", "tr(\"about_author\")", "tr(\"about_license\")", "about.links" });
+}
+
+test "export menu order: SQLite, DuckDB, Excel, then CSV and Excel of the table, schema or result" {
+    try expectOrder("fn exportItems(", &.{ "tr(\"export_db_sqlite\")", "tr(\"export_db_duckdb\")", "tr(\"export_db_xlsx\")", "tr(\"export_table_csv\")", "tr(\"export_table_xlsx\")" });
+}
+
 test "license: GPL v2 or later in About (three languages), LICENSE file is the GPL v2 text" {
     try std.testing.expectEqualStrings("GPL v2 or later (GPL-2.0-or-later)", i18n.catalogs[0].about_license_text);
     try std.testing.expectEqualStrings("GPL v2 ou posterior (GPL-2.0-or-later)", i18n.catalogs[1].about_license_text);
