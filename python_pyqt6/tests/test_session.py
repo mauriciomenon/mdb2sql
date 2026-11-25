@@ -40,7 +40,7 @@ def test_converted_prompt_esc_and_x_cancel_enter_saves(qtbot, monkeypatch, key, 
 
     QTimer.singleShot(0, answer)
     assert win.ask_converted(Path("db.accdb")) == (expected, False)
-    assert seen == ["Save SQLite..."]
+    assert seen == ["Save..."]
 
 
 def test_cancelling_the_save_dialog_returns_to_the_prompt(qtbot, monkeypatch) -> None:
@@ -100,9 +100,10 @@ def test_close_asks_and_deletes_or_saves_or_cancels(qtbot, access_window: MainWi
     assert asked == [source, source]
     assert win.manager is None and win.stack.currentWidget() is win.empty_label
     assert target.is_file() and _converted_files(win) == []
-    assert win.status_label.text() == f"SQLite saved: {target}"
+    assert win.status_label.text() == f"Saved the converted file to {target}"
 
-    # Apagar, lembrado nesta sessao: a proxima vez nao pergunta
+    # Apagar, lembrado nesta sessao: a proxima vez nao pergunta (o SQLite salvo foi apagado: converte de novo)
+    target.unlink()
     win.open_database(source)
     qtbot.waitUntil(lambda: win.manager is not None and win._busy == 0, timeout=60000)
     monkeypatch.setattr(win, "ask_converted", lambda path: asked.append(path) or (mw.DELETE, True))
@@ -111,7 +112,39 @@ def test_close_asks_and_deletes_or_saves_or_cancels(qtbot, access_window: MainWi
     qtbot.waitUntil(lambda: win.manager is not None and win._busy == 0, timeout=60000)
     assert win.release_database() and _converted_files(win) == []
     assert len(asked) == 3 and win.converted_choice == mw.DELETE
-    assert "SQLite converted from sample.mdb deleted" in win.log_view.toPlainText()
+    assert "Deleted the converted file sample.sqlite" in win.log_view.toPlainText()
+
+
+@needs_mdbtools
+def test_saved_conversion_opens_without_asking_again(qtbot, access_window: MainWindow, tmp_path: Path, monkeypatch):
+    # igual nas 4 versoes: o mesmo Access (caminho, tamanho, data) ja salvo como SQLite abre o salvo, sem converter
+    # nem perguntar ao fechar, tambem na proxima execucao; mudou o Access ou o SQLite, converte de novo
+    import os
+
+    win = access_window
+    source = win.current_db_path
+    target = tmp_path / "kept" / "sample.sqlite"
+    target.parent.mkdir()
+    asked = []
+    monkeypatch.setattr(win, "ask_converted", lambda path: asked.append(path) or (mw.SAVE, False))
+    monkeypatch.setattr(win, "ask_converted_target", lambda path: target)
+    assert win.release_database() and target.is_file() and asked == [source]
+
+    win.open_database(source)
+    qtbot.waitUntil(lambda: win.manager is not None and win.loaded_table is not None and win._busy == 0, timeout=60000)
+    assert win.manager.converted is None and win.manager.reader == "SQLite" and _converted_files(win) == []
+    assert win.windowTitle().startswith("sample.mdb - ")
+    assert f"sample.mdb: opened the SQLite saved from it ({target})" in win.log_view.toPlainText()
+    assert win.release_database() and asked == [source]  # nada a salvar: nao pergunta
+
+    again = MainWindow()  # proxima execucao: lembrado nas configuracoes
+    qtbot.addWidget(again)
+    assert again.saved_conversion(source) == target
+    os.utime(source, ns=(source.stat().st_atime_ns, source.stat().st_mtime_ns + 10**9))  # o Access mudou
+    assert again.saved_conversion(source) is None
+    win.open_database(source)
+    qtbot.waitUntil(lambda: win.manager is not None and win._busy == 0, timeout=60000)
+    assert win.manager.converted is not None and len(_converted_files(win)) == 1
 
 
 @needs_mdbtools

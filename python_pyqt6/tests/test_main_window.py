@@ -418,7 +418,7 @@ def test_results_of_the_previous_database_are_dropped(qtbot, window: MainWindow,
     window.run_sql()
     qtbot.waitUntil(lambda: window.sql_model.rowCount() == 3, timeout=30000)
     stale_table = (window._table_request, load_table_payload(window.manager, "people"))
-    stale_open = (people_db, *open_database(people_db))  # abertura lenta de A que termina depois de B
+    stale_open = (people_db, None, *open_database(people_db))  # abertura lenta de A que termina depois de B
 
     other = people_db.parent / "other.duckdb"
     with duckdb.connect(str(other)) as conn:

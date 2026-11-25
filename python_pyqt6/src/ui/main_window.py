@@ -2,6 +2,7 @@
 # !T: QMainWindow with toolbar + table sidebar + data/schema/SQL views; database work runs on QThreadPool.
 # !T: Every visible text comes from the language catalog (shared.i18n.tr)
 
+import json
 import re
 import threading
 from datetime import datetime
@@ -123,6 +124,20 @@ def status_line(text: str) -> str:
     """
     first = text.splitlines()[0] if text else ""
     return re.sub(r": (?:[A-Z][a-z]+ )+Error: ", ": ", first, count=1)
+
+
+def path_key(path: Path) -> str:
+    """Chave do arquivo nas configuracoes: caminho absoluto, sem diferenca de maiusculas (Windows)."""
+    return str(path.resolve()).lower()
+
+
+def file_key(path: Path) -> str:
+    """Versao do arquivo: tamanho e data de modificacao ('' se nao der para ler)."""
+    try:
+        info = path.stat()
+    except OSError:
+        return ""
+    return f"{info.st_size}|{info.st_mtime_ns}"
 
 
 def hidden_text(count: int) -> str:
@@ -913,19 +928,48 @@ class MainWindow(QMainWindow):
 
         self._db_request += 1  # abrir outro arquivo invalida a abertura anterior ainda em andamento
         work_dir = self.session.path
+        # o mesmo Access (caminho, tamanho, data) ja convertido e salvo: abre o SQLite salvo, sem converter de novo
+        saved = self.saved_conversion(db_path)
         self._run(
             self._db_request,
-            lambda report: (db_path, *open_database(db_path, report, work_dir)),
+            lambda report: (db_path, saved, *open_database(saved or db_path, report, work_dir)),
             self._on_database_loaded,
             self._on_database_error,
             progress,
         )
 
+    # --------------------------------- Access convertido e salvo: lembrado entre execucoes (igual nas 4 versoes)
+
+    def _saved_conversions(self) -> dict[str, dict[str, str]]:
+        try:
+            saved = json.loads(str(self.settings.value("converted_files", "{}")))
+        except ValueError:
+            return {}
+        return saved if isinstance(saved, dict) else {}
+
+    def saved_conversion(self, source: Path) -> Path | None:
+        """SQLite salvo deste Access, se nenhum dos dois mudou desde entao (caminho + tamanho + data)."""
+        if source.suffix.lower() not in (".accdb", ".mdb"):
+            return None
+        entry = self._saved_conversions().get(path_key(source))
+        if not isinstance(entry, dict) or not file_key(source) or entry.get("source") != file_key(source):
+            return None
+        dest = Path(str(entry.get("dest", "")))
+        return dest if entry.get("dest_key") and file_key(dest) == entry.get("dest_key") else None
+
+    def _remember_conversion(self, source: Path, dest: Path) -> None:
+        saved = {k: v for k, v in self._saved_conversions().items()
+                 if isinstance(v, dict) and Path(str(v.get("dest", ""))).is_file()}  # sem os apagados
+        saved[path_key(source)] = {"source": file_key(source), "dest": str(dest), "dest_key": file_key(dest)}
+        self.settings.setValue("converted_files", json.dumps(saved))
+
     def _on_database_loaded(self, request_id: int, result: object) -> None:
-        db_path, manager, tables = result  # type: ignore[misc]
+        db_path, saved, manager, tables = result  # type: ignore[misc]
         if request_id != self._db_request:
             manager.release()  # abertura antiga terminou depois de outra mais nova: descarta (e o SQLite dela)
             return
+        if saved is not None:
+            self.log(tr("log.reused", name=db_path.name, path=saved))
         previous = self.table_list.currentItem().text() if self.table_list.currentItem() else None
         if db_path != self.current_db_path:
             self._reset_view(None)  # outro arquivo: filtros e colunas ocultas nao valem mais
@@ -990,7 +1034,8 @@ class MainWindow(QMainWindow):
 
     def ask_converted(self, source: Path) -> tuple[str, bool]:
         """Pergunta o que fazer com o SQLite convertido: (SAVE | DELETE | CANCEL, lembrar nesta sessao)."""
-        box = QMessageBox(QMessageBox.Icon.Question, tr("converted.title"), tr("converted.text", name=source.name),
+        # igual ao Go: titulo, pergunta, "Lembrar nesta sessao", Salvar... / Apagar / Cancelar (sem icone)
+        box = QMessageBox(QMessageBox.Icon.NoIcon, tr("converted.title"), tr("converted.text", name=source.name),
                           QMessageBox.StandardButton.NoButton, self)
         save = box.addButton(tr("converted.save"), QMessageBox.ButtonRole.AcceptRole)
         delete = box.addButton(tr("converted.delete"), QMessageBox.ButtonRole.DestructiveRole)
@@ -1034,17 +1079,19 @@ class MainWindow(QMainWindow):
                 if target is not None:
                     break
                 choice = None  # cancelou o dialogo de salvar: volta para a pergunta
-        source = self.current_db_path
+        source, converted = self.current_db_path, manager.converted
         self._clear_database()
         try:
             manager.release(target)
         except OSError as exc:
             self._set_message(self.status_label, tr("status.error", message=exc), error=True)
             return True
-        if target is not None:
+        if target is not None and source is not None:
+            # o mesmo Access, sem mudanca, abre direto este SQLite (nesta e nas proximas execucoes)
+            self._remember_conversion(source, target)
             self._set_message(self.status_label, tr("status.converted_saved", path=target))
-        elif source is not None and source.suffix.lower() in (".accdb", ".mdb"):
-            self.log(tr("log.converted_deleted", name=source.name))
+        elif converted is not None:
+            self.log(tr("log.converted_deleted", name=converted.name))
         return True
 
     def _clear_database(self) -> None:
