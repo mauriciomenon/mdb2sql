@@ -108,8 +108,10 @@ While a file opens, the status line shows the time, a progress bar (tables conve
 - **Table list** (left): every table with its row count, the whole name shown (the panel starts as wide as the
   longest name, up to 40% of the window, and scrolls sideways beyond that); the box on top filters by name 300 ms
   after the last key (Enter: at once).
-- **Data** tab: search box, **Rows** list (the first 100, 500 or 1000 rows), click a column header to sort; below,
-  `<table>: showing <n> of <total> rows` (with a search or filter: `... rows matching (<n> in the table)`). The search
+- **Data** tab, top to bottom: one line with the search box, **This table** | **All tables**, **Rows** (the first 100,
+  500 or 1000 rows) and **Columns...** (a narrow window wraps it, nothing cut); the value filters line, only when
+  there are filters; the grid (click a column header to sort); under the grid `<table>: showing <n> of <total> rows`
+  (with a search or filter: `... rows found`). The search
   runs 300 ms after the last key (Enter: at once), in the database over the **whole table** (every column), for
   Access, SQLite and DuckDB alike, before the row limit: the row count follows it.
 - Next to the search box, **This table** | **All tables**: with **All tables** the text is searched in every table

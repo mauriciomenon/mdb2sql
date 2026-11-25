@@ -2081,7 +2081,7 @@ const App = struct {
                 // um pouco mais de espaco entre as colunas (so o horizontal das celulas, +6 px de cada lado)
                 const pad = ig.igGetStyle().*.CellPadding;
                 ig.igPushStyleVar_Vec2(ig.ImGuiStyleVar_CellPadding, .{ .x = pad.x * 2, .y = pad.y });
-                _ = drawGrid("##schema", &shown, null, &app.schema_sel, null, .plain, &app.prefs, "");
+                _ = drawGrid("##schema", &shown, null, &app.schema_sel, null, .plain, &app.prefs, "", 0);
                 ig.igPopStyleVar(1);
             }
         }
@@ -2141,27 +2141,16 @@ const App = struct {
         // exportar a tabela fica so no Exportar... da barra de cima (um botao por acao)
         sameLineIfFits(buttonWidth(tr("columns_button")), -1);
         columnsButton(&app.data_sel);
-        // contagem na linha de baixo (as colunas ocultas ficam na barra de baixo): quebra na borda da janela em vez
-        // de ser cortada
-        const shown: u64 = if (app.data) |g| g.rows.len else 0;
-        const in_table = if (index < app.counts.len) app.counts[index] else app.total;
-        var cb: [700]u8 = undefined;
-        const count_line = if (app.applied_search[0] != 0 or app.filters.items.len > 0)
-            i18n.fmtCount(&cb, "rows_found", app.total, .{ name, shown, app.total, in_table })
-        else
-            i18n.fmtCount(&cb, "rows_showing", app.total, .{ name, shown, app.total });
-        ig.igAlignTextToFramePadding();
-        ig.igPushTextWrapPos(0);
-        textSlice(count_line);
-        ig.igPopTextWrapPos();
 
+        // Abaixo da busca, igual nas 4 (padrao 24): so com filtros por valor, a linha deles; a grade; embaixo dela a
+        // contagem. Nada mais (sem paginas, sem contagem acima da grade).
         // Filtros ativos: um botao por filtro (clicar remove) e Limpar filtros; o que nao cabe desce de linha
         const filters_l = tr("filters_label");
         for (app.filters.items, 0..) |f, i| {
             var label: [200]u8 = undefined;
             const chip = dbm.gridtools.filterLabel(&label, f);
             if (i == 0) {
-                sameLineIfFits(textWidth(filters_l) + ig.igGetStyle().*.ItemSpacing.x + buttonWidth(chip), 24);
+                ig.igAlignTextToFramePadding();
                 ig.igTextDisabled("%s", filters_l.ptr);
             }
             sameLineIfFits(buttonWidth(chip), -1);
@@ -2177,11 +2166,26 @@ const App = struct {
         }
 
         app.data_sel.has_filters = app.filters.items.len > 0;
-        if (app.data) |*g| if (drawGrid("##data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null, .filter, &app.prefs, app.db.table_names[index])) |s| {
+        // a grade deixa embaixo a linha da contagem
+        const count_h = ig.igGetFrameHeight() + st.*.ItemSpacing.y;
+        if (app.data) |*g| if (drawGrid("##data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null, .filter, &app.prefs, name, count_h)) |s| {
             app.sort_col = s.col;
             app.sort_desc = s.desc;
             app.want_reload = true;
         };
+        // "<tabela>: mostrando X de Y linhas" (com busca ou filtro: "X de Y linhas encontradas"); as colunas ocultas
+        // ficam na barra de baixo. Uma linha: o que nao cabe termina em "..." (inteira no tooltip)
+        const shown: u64 = if (app.data) |g| g.rows.len else 0;
+        var cb: [700]u8 = undefined;
+        const count_line = if (app.applied_search[0] != 0 or app.filters.items.len > 0)
+            i18n.fmtCount(&cb, "rows_found", app.total, .{ name, shown, app.total })
+        else
+            i18n.fmtCount(&cb, "rows_showing", app.total, .{ name, shown, app.total });
+        ig.igAlignTextToFramePadding();
+        var fb: [760]u8 = undefined;
+        const fitted = fitLine(&fb, count_line, ig.igGetContentRegionAvail().x);
+        textSlice(fitted);
+        if (fitted.len != count_line.len and ig.igIsItemHovered(0)) tooltip(count_line);
         // pedidos do menu da celula
         const sel = &app.data_sel;
         if (sel.want_clear) app.want_clear_filters = true;
@@ -2218,7 +2222,7 @@ const App = struct {
             ig.igSameLine(0, -1);
             textT("rows_match", .{ rows.len, g.rows.len });
         }
-        _ = drawGrid("##result", g, null, &app.result_sel, app.result_rows, .hide, &app.prefs, tr("sql_result"));
+        _ = drawGrid("##result", g, null, &app.result_sel, app.result_rows, .hide, &app.prefs, tr("sql_result"), 0);
     }
 
     // Escopo da busca ao lado da caixa: "Esta tabela" | "Todas as tabelas", dois segmentos colados; o escolhido com
@@ -2348,9 +2352,10 @@ fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool, heade
 // `rows` limita e ordena as linhas mostradas (filtro); null = todas.
 // Clique seleciona a celula; Ctrl+C copia o valor; o clique direito abre o menu da celula (copiar, filtrar).
 // Com `mode` != .plain o clique direito no cabecalho abre o menu do cabecalho: ajustar a largura, ocultar e mostrar
-// colunas. NULL aparece como "NULL" ou como celula vazia (Configuracoes > Exibir NULL). `owner`: tabela ou resultado,
+// colunas. NULL aparece como "NULL" ou como celula vazia (Configuracoes > Exibir NULL). `bottom`: altura livre embaixo
+// da grade (a linha da contagem na aba Dados). `owner`: tabela ou resultado,
 // no titulo do dialogo Colunas.
-fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, rows: ?[]const usize, mode: GridMode, prefs: *settings.Settings, owner: []const u8) ?Sort {
+fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, rows: ?[]const usize, mode: GridMode, prefs: *settings.Settings, owner: []const u8, bottom: f32) ?Sort {
     const n_cols: usize = @min(g.columns.len, max_grid_cols);
     if (n_cols == 0) return null;
     const can_hide = mode != .plain;
@@ -2358,7 +2363,7 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         ig.ImGuiTableFlags_ScrollX | ig.ImGuiTableFlags_ScrollY | ig.ImGuiTableFlags_SizingFixedFit;
     if (sort != null) flags |= ig.ImGuiTableFlags_Sortable | ig.ImGuiTableFlags_SortTristate;
     if (can_hide) flags |= ig.ImGuiTableFlags_Hideable;
-    if (!ig.igBeginTable(id, @intCast(n_cols), flags, .{ .x = 0, .y = 0 }, 0)) return null;
+    if (!ig.igBeginTable(id, @intCast(n_cols), flags, .{ .x = 0, .y = -bottom }, 0)) return null;
     defer ig.igEndTable();
     const table = ig.igGetCurrentTable(); // "Ajustar coluna" do menu do cabecalho
 

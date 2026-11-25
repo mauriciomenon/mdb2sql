@@ -210,14 +210,14 @@ test "no lecturing hints and no copyright line in any catalog" {
     }
 }
 
-test "Data tab count line: shown of matching rows, the table total when narrowed, plural by the matching count" {
+test "Data tab count line under the grid: shown of all rows, or of the rows found; plural by the count" {
     defer lang = .en;
     var b: [160]u8 = undefined;
     lang = .pt_br;
     try t.expectEqualStrings("Tipos: mostrando 3 de 3 linhas", fmtCount(&b, "rows_showing", 3, .{ "Tipos", 3, 3 }));
     try t.expectEqualStrings("Tipos: mostrando 1 de 1 linha", fmtCount(&b, "rows_showing", 1, .{ "Tipos", 1, 1 }));
-    try t.expectEqualStrings("Medições: mostrando 1 de 1 linha correspondente (2 na tabela)", fmtCount(&b, "rows_found", 1, .{ "Medições", 1, 1, 2 }));
-    try t.expectEqualStrings("T: mostrando 100 de 604 linhas correspondentes (36754 na tabela)", fmtCount(&b, "rows_found", 604, .{ "T", 100, 604, 36754 }));
+    try t.expectEqualStrings("Medições: mostrando 1 de 1 linha encontrada", fmtCount(&b, "rows_found", 1, .{ "Medições", 1, 1 }));
+    try t.expectEqualStrings("T: mostrando 100 de 604 linhas encontradas", fmtCount(&b, "rows_found", 604, .{ "T", 100, 604 }));
     lang = .es;
     try t.expectEqualStrings("T: mostrando 0 de 0 filas", fmtCount(&b, "rows_showing", 0, .{ "T", 0, 0 }));
     // Todas as tabelas
