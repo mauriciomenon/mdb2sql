@@ -486,6 +486,19 @@ mod tests {
         assert_eq!(conf["app"]["windows"][0]["title"], WINDOW_TITLE);
     }
 
+    // padrao item 5: o mesmo mdb2sql.ico nas 4 versoes (exe, janela e instaladores); os PNG saem do mesmo desenho
+    // (cargo tauri icon com o mdb2sql.png de 1024 px). Fora do repositorio inteiro (so esta pasta) o teste so confere o ico
+    #[test]
+    fn icon_is_the_shared_mdb2sql_ico() {
+        let ico = std::fs::read("icons/icon.ico").unwrap();
+        assert_eq!(u16::from_le_bytes([ico[4], ico[5]]), 7, "16, 24, 32, 48, 64, 128 e 256 px");
+        for other in ["../python_pyqt6/src/resources/mdb2sql.ico", "../zig_imgui/assets/mdb2sql.ico", "../go_wails_react/build/windows/icon.ico"] {
+            if let Ok(shared) = std::fs::read(other) {
+                assert!(shared == ico, "icons/icon.ico differs from {other}");
+            }
+        }
+    }
+
     // Cargo.toml e a fonte unica: tauri.conf.json herda dele quando nao tem "version"
     #[test]
     fn versions_agree_with_cargo_toml() {
