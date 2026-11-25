@@ -949,7 +949,8 @@
 
   <dialog bind:this={aboutDialog} class="about" aria-labelledby="about-title">
     {#if aboutInfo}
-      <h2 id="about-title">{t('app.name')} <span class="version">{aboutInfo.version}</span></h2>
+      <!-- titulo "Sobre o mdb2sql" (o do Zig, o mesmo do menu); o conteudo e o desta versao -->
+      <h2 id="about-title">{t('help.about')} <span class="version">{aboutInfo.version}</span></h2>
       <p class="tagline">{t('about.description')}</p>
       <dl>
         {#each aboutRows as [label, value]}

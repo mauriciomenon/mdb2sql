@@ -1,7 +1,5 @@
 // English (default). Same keys in pt-BR.js and es.js (i18n.test.js checks).
 export default {
-  'app.name': 'MDB2SQL',
-
   'menu.main': 'Main menu',
   'menu.file': 'File',
   'menu.view': 'View',
@@ -32,7 +30,7 @@ export default {
   'theme.system': 'System',
   'theme.light': 'Light',
   'theme.dark': 'Dark',
-  'help.about': 'About MDB2SQL',
+  'help.about': 'About mdb2sql',
 
   'open.title': 'Open database',
   'open.all': 'Databases (Access, SQLite, DuckDB)',

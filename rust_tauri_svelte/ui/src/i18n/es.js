@@ -1,7 +1,5 @@
 // Espanol. Mismas claves que en.js (i18n.test.js lo comprueba).
 export default {
-  'app.name': 'MDB2SQL',
-
   'menu.main': 'Menú principal',
   'menu.file': 'Archivo',
   'menu.view': 'Ver',
@@ -32,7 +30,7 @@ export default {
   'theme.system': 'Sistema',
   'theme.light': 'Claro',
   'theme.dark': 'Oscuro',
-  'help.about': 'Acerca de MDB2SQL',
+  'help.about': 'Acerca de mdb2sql',
 
   'open.title': 'Abrir base de datos',
   'open.all': 'Bases de datos (Access, SQLite, DuckDB)',

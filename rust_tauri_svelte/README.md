@@ -122,7 +122,7 @@ O texto da barra de status tambem pode ser copiado: botao direito > **Copy**.
 search scope** (This table, All tables) e **Show NULL** (desligado por padrao: a celula NULL fica vazia; ligado, mostra
 `NULL`); as escolhas ficam gravadas e valem na hora.
 
-**Menu Help > About MDB2SQL**: versao, build, stack (Rust + Tauri + Svelte), janela (WebView2/WebKitGTK), SQLite e
+**Menu Help > About mdb2sql** (o titulo do dialogo): versao, build, stack (Rust + Tauri + Svelte), janela (WebView2/WebKitGTK), SQLite e
 DuckDB, leitor do Access, autor, licenca e os links do codigo no GitHub e no GitLab (o app so pode abrir esses dois
 enderecos).
 

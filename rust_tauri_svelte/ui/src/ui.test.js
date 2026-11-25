@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import en from './i18n/en.js';
+import CATALOG_ES from './i18n/es.js';
+import CATALOG_PT from './i18n/pt-BR.js';
 
 const markup = (file) =>
   readFileSync(new URL(file, import.meta.url), 'utf8')
@@ -53,6 +55,21 @@ test('the main window has no repeated button or menu item', () => {
   assert.equal(count(app, 'onclick={copyLog}'), 1);
   // o botao do topo e o submenu do Arquivo, que abrem a mesma lista
   assert.deepEqual(labels.filter((label) => /^export/i.test(label)), ['Export ▸', 'Export...']);
+});
+
+// padrao item 21: Sobre = conteudo desta versao (Build, Stack, Janela, Bancos, Leitura do Access, Autor, Licenca, links)
+// com o titulo do Zig, "Sobre o mdb2sql" (o mesmo do menu Ajuda), nas 3 linguas
+test('About: title About mdb2sql and the rows of this stack', () => {
+  const ui = markup('./App.svelte');
+  const about = ui.match(/<dialog bind:this=\{aboutDialog\}[\s\S]*?<\/dialog>/)[0];
+  assert.match(about, /<h2 id="about-title">\{t\('help\.about'\)\} <span class="version">\{aboutInfo\.version\}<\/span><\/h2>/);
+  assert.match(ui, /onclick=\{showAbout\}>\{t\('help\.about'\)\}/);
+  const pt = (key) => (key in en ? (CATALOG_PT[key] ?? '') : '');
+  assert.deepEqual([pt('help.about'), en['help.about'], CATALOG_ES['help.about']], ['Sobre o mdb2sql', 'About mdb2sql', 'Acerca de mdb2sql']);
+  const code = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  const rows = [...code.match(/let aboutRows = \$derived\.by\(\(\) => \{[\s\S]*?\n {2}\}\);/)[0].matchAll(/\[t\('(about\.\w+)'\)/g)].map((m) => m[1]);
+  assert.deepEqual(rows, ['about.build', 'about.stack', 'about.window', 'about.engines', 'about.access', 'about.author', 'about.license']);
+  assert.deepEqual(rows.map(pt), ['Build', 'Stack', 'Janela', 'Bancos', 'Leitura do Access', 'Autor', 'Licença']);
 });
 
 // padrao item 18: Configuracoes = Tema, Idioma, Escopo padrao da busca, Exibir NULL, nesta ordem
