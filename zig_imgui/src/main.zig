@@ -1427,7 +1427,8 @@ const App = struct {
         const buttons = buttonWidth(tr("browse")) + buttonWidth(tr("open")) + buttonWidth(tr("export_button")) +
             3 * ig.igGetStyle().*.ItemSpacing.x;
         ig.igSetNextItemWidth(ig.igGetContentRegionAvail().x - buttons);
-        const enter = ig.igInputTextWithHint("##path", tr("path_hint"), &app.path, app.path.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null);
+        // ElideLeft: caminho maior que a linha perde o comeco (com ...), nunca o nome do arquivo
+        const enter = ig.igInputTextWithHint("##path", tr("path_hint"), &app.path, app.path.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue | ig.ImGuiInputTextFlags_ElideLeft, null, null);
         ig.igSameLine(0, -1);
         if (button(tr("browse"))) app.want_browse = true;
         ig.igSameLine(0, -1);
