@@ -974,6 +974,7 @@ describe('App IPC flow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'File' }));
     fireEvent.mouseEnter(screen.getByRole('menuitem', { name: /^Export/ })); // the submenu opens beside it
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Export/ })); // a click after the hover keeps it open
     const list = screen.getByRole('menu', { name: 'Export' });
     // SQLite before DuckDB (owner's format order)
     const items = within(list).getAllByRole('menuitem').map((el) => el.textContent);

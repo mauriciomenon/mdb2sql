@@ -982,7 +982,7 @@ function App() {
                     onMouseEnter={() => setSubOpen(true)}
                     onClick={(e) => {
                       e.stopPropagation(); // the window click handler would close the File menu
-                      setSubOpen(!subOpen);
+                      setSubOpen(true); // as a native submenu: the click after the hover keeps it open
                     }}
                   >
                     {t('menu.export')} <span className="sub-arrow">▸</span>
