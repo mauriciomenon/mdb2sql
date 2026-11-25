@@ -296,6 +296,40 @@ def test_theme_is_saved(qtbot, window: MainWindow, monkeypatch) -> None:
     assert QSettings().value("theme") == "system"
 
 
+def test_theme_change_restyles_the_table_list_and_the_alerts(qtbot, window: MainWindow, monkeypatch) -> None:
+    # trocar escuro <-> claro muda tudo (a lista de tabelas ficava escura no claro: a folha de estilo guardava a
+    # paleta antiga); o erro destacado troca para a cor legivel no tema novo
+    from PyQt6.QtGui import QColor, QPalette
+
+    def scheme(dark: bool) -> QPalette:
+        palette = QPalette(QApplication.palette())
+        for role, color in ((QPalette.ColorRole.Window, "#202020" if dark else "#f3f3f3"),
+                            (QPalette.ColorRole.Base, "#2d2d2d" if dark else "#ffffff")):
+            palette.setColor(role, QColor(color))
+        return palette
+
+    original = QApplication.palette()
+    restyled = []
+    real = window.table_list.setStyleSheet
+    monkeypatch.setattr(window.table_list, "setStyleSheet", lambda sheet: restyled.append(sheet) or real(sheet))
+    try:
+        QApplication.setPalette(scheme(dark=True))
+        window._set_message(window.status_label, "Error: boom", error=True)
+        qtbot.waitUntil(lambda: "#ff8a80" in window.status_label.styleSheet(), timeout=3000)
+        restyled.clear()
+        QApplication.setPalette(scheme(dark=False))
+        qtbot.waitUntil(lambda: "#b3261e" in window.status_label.styleSheet(), timeout=3000)
+        assert restyled[-1] == mw_tables_style()
+    finally:
+        QApplication.setPalette(original)
+
+
+def mw_tables_style() -> str:
+    from ui.main_window import TABLES_STYLE
+
+    return TABLES_STYLE
+
+
 def test_search_all_tables_and_open_one(qtbot, window: MainWindow) -> None:
     # controle de duas opcoes junto ao campo; padrao: esta tabela
     scope_texts = ("This table", "All tables")

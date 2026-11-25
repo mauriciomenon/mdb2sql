@@ -688,6 +688,7 @@ class MainWindow(QMainWindow):
                 self.status_label.setText(status_line(text))
                 self.status_label.setToolTip(text)
                 self.status_label.setStyleSheet(f"color: {self._alert_color(level)};")
+                self.status_label.setProperty("alert", level)
                 return
 
     def _alert_color(self, level: str) -> str:
@@ -696,6 +697,23 @@ class MainWindow(QMainWindow):
         if level == "error":
             return "#ff8a80" if dark else "#b3261e"
         return "#ffd180" if dark else "#8a5300"
+
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt)
+        super().changeEvent(event)
+        # tema trocado (Configuracoes > Tema ou o do sistema): tudo acompanha, igual nas 4 versoes
+        if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.ApplicationPaletteChange):
+            QTimer.singleShot(0, self._restyle)  # !T: after Qt finished applying the new palette
+
+    def _restyle(self) -> None:
+        # !T: A widget style sheet keeps the palette it was polished with: with the windows11 style the table list
+        # !T: stayed dark after Dark -> Light. Setting it again polishes it with the new palette
+        self.table_list.setStyleSheet("")
+        self.table_list.setStyleSheet(TABLES_STYLE)
+        # erro/aviso destacados na cor legivel no tema novo
+        for label in (self.status_label, self.info_label, self.sql_info):
+            level = label.property("alert")
+            if level in ("error", "warning"):
+                label.setStyleSheet(f"color: {self._alert_color(level)};")
 
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt)
         super().resizeEvent(event)
@@ -933,6 +951,7 @@ class MainWindow(QMainWindow):
         label.setText(status_line(text))
         label.setToolTip(text)  # texto inteiro (erro do motor com LINE 1 e ^^^) na dica e no Log
         label.setStyleSheet("" if level == "info" else f"color: {self._alert_color(level)};")
+        label.setProperty("alert", level)  # a cor volta a ser calculada quando o tema muda
         if log and text:
             self.log(text, level)  # depois do texto: com o Log recolhido, um erro nao lido continua na barra
 
