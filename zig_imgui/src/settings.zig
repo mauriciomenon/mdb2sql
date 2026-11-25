@@ -28,7 +28,6 @@ pub const Settings = struct {
     log_frac: f32 = default_log_frac, // altura do painel de Log, fracao da janela
     search_scope: SearchScope = .table, // escopo padrao da busca
     show_null: bool = false, // ligado, NULL aparece como "NULL"; desligado (padrao), celula vazia
-    copy_header: bool = false, // "Copiar linha" leva tambem a linha de nomes das colunas
     last_dir_buf: [2048]u8 = undefined,
     last_dir_len: usize = 0,
 
@@ -57,15 +56,14 @@ pub const Settings = struct {
             if (std.mem.eql(u8, key, "log_frac")) s.log_frac = clampLogFrac(std.fmt.parseFloat(f32, value) catch default_log_frac);
             if (std.mem.eql(u8, key, "search_scope")) s.search_scope = std.meta.stringToEnum(SearchScope, value) orelse .table;
             if (std.mem.eql(u8, key, "show_null")) s.show_null = std.mem.eql(u8, value, "1");
-            if (std.mem.eql(u8, key, "copy_header")) s.copy_header = std.mem.eql(u8, value, "1");
         }
         return s;
     }
 
     pub fn write(s: *const Settings, w: *Io.Writer) Io.Writer.Error!void {
-        try w.print("theme={t}\r\nlang={t}\r\nlog_open={d}\r\nlog_frac={d:.3}\r\nsearch_scope={t}\r\nshow_null={d}\r\ncopy_header={d}\r\nlast_dir={s}\r\n", .{
-            s.theme,        s.lang,                    @intFromBool(s.log_open),    s.log_frac,
-            s.search_scope, @intFromBool(s.show_null), @intFromBool(s.copy_header), s.lastDir(),
+        try w.print("theme={t}\r\nlang={t}\r\nlog_open={d}\r\nlog_frac={d:.3}\r\nsearch_scope={t}\r\nshow_null={d}\r\nlast_dir={s}\r\n", .{
+            s.theme,        s.lang,                    @intFromBool(s.log_open), s.log_frac,
+            s.search_scope, @intFromBool(s.show_null), s.lastDir(),
         });
     }
 
@@ -153,7 +151,7 @@ test "default folder of the save dialog" {
 }
 
 test "settings round trip through the file" {
-    var s: Settings = .{ .theme = .dark, .lang = .pt_br, .log_open = true, .log_frac = 0.22, .search_scope = .all, .show_null = true, .copy_header = true };
+    var s: Settings = .{ .theme = .dark, .lang = .pt_br, .log_open = true, .log_frac = 0.22, .search_scope = .all, .show_null = true };
     s.setLastDir("C:\\pasta com espaço");
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
@@ -166,10 +164,19 @@ test "settings round trip through the file" {
     try t.expect(back.log_open);
     try t.expectApproxEqAbs(@as(f32, 0.22), back.log_frac, 0.001);
     try t.expectEqual(.all, back.search_scope);
-    try t.expect(back.show_null and back.copy_header);
-    // padrao: busca na tabela aberta, NULL como celula vazia, copia sem cabecalho (arquivo de versao anterior tambem)
+    try t.expect(back.show_null);
+    // padrao: busca na tabela aberta, NULL como celula vazia (arquivo de versao anterior tambem)
     try t.expectEqual(.table, Settings.parse("theme=dark\n").search_scope);
-    try t.expect(!Settings.parse("theme=dark\n").show_null and !Settings.parse("").copy_header);
+    try t.expect(!Settings.parse("theme=dark\n").show_null);
+    // a opcao "copiar com cabecalho" saiu (o menu da celula tem os dois itens): arquivo antigo com ela abre igual
+    // e ela nao volta a ser gravada
+    const old = Settings.parse("show_null=1\r\ncopy_header=1\r\nlast_dir=C:\\x\r\n");
+    try t.expect(old.show_null);
+    try t.expectEqualStrings("C:\\x", old.lastDir());
+    var wb: [512]u8 = undefined;
+    var w: Io.Writer = .fixed(&wb);
+    try old.write(&w);
+    try t.expect(std.mem.indexOf(u8, w.buffered(), "copy_header") == null);
     try t.expectEqual(.table, Settings.parse("search_scope=x\n").search_scope);
     // padrao: Log recolhido, 10%; fracao fora do limite volta para dentro
     try t.expect(!Settings.parse("").log_open);

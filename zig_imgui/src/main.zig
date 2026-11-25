@@ -1238,10 +1238,6 @@ const App = struct {
         const now = ig.igGetTime();
         if (app.search_wait.fire(now)) app.runSearch();
         if (app.table_filter_wait.fire(now)) app.table_filter_applied = app.table_filter;
-        if (prefs_dirty) {
-            prefs_dirty = false;
-            app.savePrefs();
-        }
 
         if (app.want_theme) |theme| {
             app.prefs.theme = theme;
@@ -1573,7 +1569,7 @@ const App = struct {
                     if (ig.igMenuItem_Bool(n, null, i18n.lang == l, true)) app.want_lang = l;
                 }
             }
-            // as opcoes da tela, com o padrao gravado: escopo da busca, NULL e cabecalho na copia
+            // as opcoes da tela, com o padrao gravado: escopo da busca e NULL
             ig.igSeparator();
             var sb: [96]u8 = undefined;
             if (ig.igBeginMenu(idLabel(&sb, "menu_search_scope", "scope"), true)) {
@@ -1590,10 +1586,6 @@ const App = struct {
             }
             if (ig.igMenuItem_Bool(tr("menu_show_null"), null, app.prefs.show_null, true)) {
                 app.prefs.show_null = !app.prefs.show_null;
-                app.savePrefs();
-            }
-            if (ig.igMenuItem_Bool(tr("copy_header"), null, app.prefs.copy_header, true)) {
-                app.prefs.copy_header = !app.prefs.copy_header;
                 app.savePrefs();
             }
         }
@@ -2186,8 +2178,6 @@ const max_grid_cols = 512;
 // plain: so copia; hide: tambem ocultar colunas; filter: tambem "Filtrar por este valor" (aba Dados)
 const GridMode = enum { plain, hide, filter };
 
-var prefs_dirty = false; // opcao mudada dentro de uma grade (menu da celula): update() grava as configuracoes
-
 // Poe na area de transferencia o valor da celula selecionada ou a linha dela separada por TAB (NULL = vazio);
 // `header`: a linha de nomes das colunas vem antes
 fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool, header: bool) void {
@@ -2302,8 +2292,9 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         }
     }
 
-    if (ig.igIsWindowFocused(0) and ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_C)) copySelection(g, sel, false, prefs.copy_header);
+    if (ig.igIsWindowFocused(0) and ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_C)) copySelection(g, sel, false, false);
     if (open_menu) _ = ig.igOpenPopup_Str("##copy", 0);
+    // menu da celula do Go: filtros por valor (aba Dados), depois copiar valor, linha e linha com o cabecalho
     if (ig.igBeginPopup("##copy", 0)) {
         defer ig.igEndPopup();
         if (mode == .filter) {
@@ -2311,11 +2302,9 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
             if (ig.igMenuItem_Bool(tr("clear_filters"), null, false, sel.has_filters)) sel.want_clear = true;
             ig.igSeparator();
         }
-        if (ig.igMenuItem_Bool(tr("copy_value"), "Ctrl+C", false, true)) copySelection(g, sel, false, prefs.copy_header);
-        if (ig.igMenuItem_Bool(tr("copy_row"), null, false, true)) copySelection(g, sel, true, prefs.copy_header);
-        ig.igSeparator();
-        // a mesma opcao de Configuracoes, gravada
-        if (ig.igCheckbox(tr("copy_header"), &prefs.copy_header)) prefs_dirty = true;
+        if (ig.igMenuItem_Bool(tr("copy_value"), "Ctrl+C", false, true)) copySelection(g, sel, false, false);
+        if (ig.igMenuItem_Bool(tr("copy_row"), null, false, true)) copySelection(g, sel, true, false);
+        if (ig.igMenuItem_Bool(tr("copy_row_header"), null, false, true)) copySelection(g, sel, true, true);
     }
     if (!can_hide) return changed;
 

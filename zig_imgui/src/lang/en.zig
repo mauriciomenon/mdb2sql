@@ -40,8 +40,8 @@ pub const global_found = "\"{s}\" found in {d} tables";
 // grid menus and Columns dialog
 pub const filter_by_value = "Filter by this value";
 pub const copy_value = "Copy value";
-pub const copy_row = "Copy row (TAB separated)";
-pub const copy_header = "Copy row includes the header";
+pub const copy_row = "Copy row";
+pub const copy_row_header = "Copy row with header";
 pub const fit_column = "Size column to fit";
 pub const fit_all_columns = "Size all columns to fit";
 pub const hide_column = "Hide this column";

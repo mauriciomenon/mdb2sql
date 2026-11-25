@@ -82,6 +82,26 @@ test "UI texts: one Export button, no copyright line, no lecturing hints" {
     }
 }
 
+// Itens de menu (chaves do catalogo) na ordem em que aparecem em main.zig a partir de `start`
+fn expectOrder(comptime start: []const u8, keys: []const []const u8) !void {
+    const ui = @embedFile("main.zig");
+    const from = std.mem.indexOf(u8, ui, start) orelse return error.MenuNotFound;
+    var last: usize = from;
+    for (keys) |k| {
+        const at = std.mem.indexOfPos(u8, ui, last, k) orelse {
+            std.debug.print("{s} not after {s}\n", .{ k, start });
+            return error.WrongOrder;
+        };
+        last = at;
+    }
+}
+
+test "cell menu as in Go: value filters, then copy value, row and row with header; no copy option" {
+    try expectOrder("igBeginPopup(\"##copy\"", &.{ "tr(\"filter_by_value\")", "tr(\"clear_filters\")", "tr(\"copy_value\")", "tr(\"copy_row\")", "tr(\"copy_row_header\")" });
+    // a caixa "Copiar linha com o cabecalho" e a opcao dela em Configuracoes sairam
+    try std.testing.expect(std.mem.indexOf(u8, @embedFile("main.zig"), "copy_header") == null);
+}
+
 test "license: GPL v2 or later in About (three languages), LICENSE file is the GPL v2 text" {
     try std.testing.expectEqualStrings("GPL v2 or later (GPL-2.0-or-later)", i18n.catalogs[0].about_license_text);
     try std.testing.expectEqualStrings("GPL v2 ou posterior (GPL-2.0-or-later)", i18n.catalogs[1].about_license_text);

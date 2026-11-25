@@ -40,8 +40,8 @@ pub const global_found = "\"{s}\" encontrado em {d} tabelas";
 // menus da grade e dialogo Colunas
 pub const filter_by_value = "Filtrar por este valor";
 pub const copy_value = "Copiar valor";
-pub const copy_row = "Copiar linha (separada por TAB)";
-pub const copy_header = "Copiar linha com o cabeçalho";
+pub const copy_row = "Copiar linha";
+pub const copy_row_header = "Copiar linha com cabeçalho";
 pub const fit_column = "Ajustar coluna";
 pub const fit_all_columns = "Ajustar todas as colunas";
 pub const hide_column = "Ocultar esta coluna";

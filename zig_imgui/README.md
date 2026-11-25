@@ -130,8 +130,8 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   fuzzy matching).
 - A NULL cell is shown empty; with **Settings > Show NULL** on it shows `NULL` (display only: copy gives an empty
   value, search and export do not change).
-- Every grid: click a cell, **Ctrl+C** copies it, right-click: **Copy value** / **Copy row (TAB separated)** and
-  **Copy row includes the header** (the same option as in Settings).
+- Every grid: click a cell, **Ctrl+C** copies it, right-click: (Data tab) **Filter by this value** / **Clear
+  filters**, then **Copy value**, **Copy row** (TAB separated) and **Copy row with header**.
 - Long work runs in the background with **Cancel**.
 
 ### Menus
@@ -147,14 +147,14 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   count of new ones; clicking it opens the log. Right-click the status bar: **Copy** (the whole text).
 - Numbers are right-aligned in the grids and in the row counts of the table list (headers too); arrows are `←` `→`.
 - **Settings > Theme**: System, Light, Dark. **Settings > Language**: English, Português (Brasil), Español.
-  **Settings > Default search scope**: This table, All tables. **Settings > Show NULL** (off by default).
-  **Settings > Copy row includes the header**. All are saved and apply at once, without restarting.
+  **Settings > Default search scope**: This table, All tables. **Settings > Show NULL** (off by default). All are
+  saved and apply at once, without restarting.
 - **Help > About mdb2sql**: version, build, stack, Access reader, license and the GitHub and GitLab links.
 
 ### Saved settings
 
 Windows: `%APPDATA%\mdb2sql\zig-imgui.ini`; Linux: `~/.config/mdb2sql/zig-imgui.ini` (`$XDG_CONFIG_HOME` if set).
-Theme, language, Log panel, default search scope, Show NULL, Copy row includes the header and the last folder used.
+Theme, language, Log panel, default search scope, Show NULL and the last folder used.
 
 ### Command line
 
