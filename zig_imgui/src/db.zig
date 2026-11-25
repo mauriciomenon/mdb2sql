@@ -560,6 +560,26 @@ pub fn testDb() Db {
     return db;
 }
 
+test "Schema export: the tab titles and the nullable values in the screen language" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [256]u8 = undefined;
+    const path = tmpPath(&buf, &tmp, "schema.duckdb");
+    try makeSample(path);
+    var db = testDb();
+    defer db.close();
+    try db.openReadOnly(path);
+    const sql = try query.buildSchemaExport(t.allocator, "strict", .{ "Coluna", "Tipo", "Aceita \"nulo\"" }, "Sim", "Não");
+    defer t.allocator.free(sql);
+    var g = try db.run(sql, &.{});
+    defer g.deinit();
+    try t.expectEqualStrings("Aceita \"nulo\"", g.columns[2]);
+    try t.expectEqual(2, g.rows.len);
+    try t.expectEqualStrings("id", g.rows[0][0].?);
+    try t.expectEqualStrings("Não", g.rows[0][2].?); // id INTEGER NOT NULL
+    try t.expectEqualStrings("Sim", g.rows[1][2].?);
+}
+
 test "rejects bad extension and missing file" {
     var db = Db.init(t.allocator);
     defer db.close();

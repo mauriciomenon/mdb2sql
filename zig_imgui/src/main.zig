@@ -1166,6 +1166,7 @@ const App = struct {
         app.selected = out.table orelse return;
         app.reveal_selected = true;
         app.schema = out.schema;
+        if (app.schema) |*g| localizeSchema(g);
         app.col_names = out.columns;
         app.data = out.data;
         out.schema = null;
@@ -1301,6 +1302,7 @@ const App = struct {
             app.prefs.lang = l;
             app.savePrefs();
             if (app.status.loaded) app.setLoadedStatus(false);
+            if (app.schema) |*g| localizeSchema(g);
         }
         app.want_lang = null;
         if (app.want_browse) {
@@ -1414,24 +1416,12 @@ const App = struct {
         if (kind == .table_csv or kind == .table_xlsx) {
             const index = app.selected orelse return;
             if (app.tab == .schema) {
-                // o esquema exportado e o mesmo da aba: coluna, tipo, nulo (nomes no idioma da tela)
-                var sql: std.ArrayList(u8) = .empty;
-                defer sql.deinit(app.gpa);
-                const ok = blk: {
-                    sql.appendSlice(app.gpa, "SELECT column_name AS ") catch break :blk false;
-                    query.writeIdent(&sql, app.gpa, tr("schema_column")) catch break :blk false;
-                    sql.appendSlice(app.gpa, ", column_type AS ") catch break :blk false;
-                    query.writeIdent(&sql, app.gpa, tr("schema_type")) catch break :blk false;
-                    sql.appendSlice(app.gpa, ", \"null\" AS ") catch break :blk false;
-                    query.writeIdent(&sql, app.gpa, tr("schema_null")) catch break :blk false;
-                    sql.appendSlice(app.gpa, " FROM (DESCRIBE ") catch break :blk false;
-                    query.writeIdent(&sql, app.gpa, app.db.table_names[index]) catch break :blk false;
-                    sql.append(app.gpa, ')') catch break :blk false;
-                    break :blk sql.items.len < r.sql.len;
-                };
-                if (!ok) return app.status.set(true, "err_table_name_long", .{});
-                @memcpy(r.sql[0..sql.items.len], sql.items);
-                r.sql[sql.items.len] = 0;
+                // o esquema exportado e o mesmo da aba: coluna, tipo, aceita nulo (titulos e Sim/Nao no idioma da tela)
+                const sql = query.buildSchemaExport(app.gpa, app.db.table_names[index], .{ tr("schema_column"), tr("schema_type"), tr("schema_null") }, tr("yes"), tr("no")) catch "";
+                defer app.gpa.free(sql);
+                if (sql.len == 0 or sql.len >= r.sql.len) return app.status.set(true, "err_table_name_long", .{});
+                @memcpy(r.sql[0..sql.len], sql);
+                r.sql[sql.len] = 0;
                 kind = if (kind == .table_csv) .result_csv else .result_xlsx;
             } else {
                 // a tabela inteira com a busca e a ordenacao aplicadas na tela
@@ -2212,6 +2202,21 @@ const App = struct {
 fn columnsButton(sel: *GridSel) void {
     if (button(tr("columns_button"))) sel.open_columns = true;
     itemTooltip(tr("columns_tip"));
+}
+
+// Resultado do SQL: "3 linhas, 1 coluna" (cada contagem com o seu plural)
+fn sqlRowsCols(buf: []u8, rows: usize, cols: usize) []const u8 {
+    var rb: [48]u8 = undefined;
+    var cb: [48]u8 = undefined;
+    return std.fmt.bufPrint(buf, "{s}, {s}", .{ i18n.fmtCount(&rb, "sql_rows", rows, .{rows}), i18n.fmtCount(&cb, "sql_cols", cols, .{cols}) }) catch "";
+}
+
+// Coluna "Aceita nulo" do Esquema no idioma da tela (Sim/Nao, Si/No, Yes/No): o YES/NO do DuckDB troca pelo texto
+// do catalogo (estatico); refeito ao trocar o idioma
+fn localizeSchema(g: *dbm.Grid) void {
+    for (g.rows) |row| if (row.len > 2) if (row[2]) |v| {
+        row[2] = i18n.yesNo(v);
+    };
 }
 
 // "1 coluna oculta", "3 colunas ocultas" ou vazio

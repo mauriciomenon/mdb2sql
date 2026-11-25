@@ -37,6 +37,27 @@ pub fn fmtCount(buf: []u8, comptime key: []const u8, n: u64, args: anytype) []co
     return if (n == 1) fmt(buf, key ++ "_one", args) else fmt(buf, key, args);
 }
 
+// Palavra de uma contagem com o plural certo ("1 linha", "2 linhas"): `key ++ "_one"` quando n == 1
+pub fn trCount(comptime key: []const u8, n: u64) [:0]const u8 {
+    return if (n == 1) tr(key ++ "_one") else tr(key);
+}
+
+pub fn fmtCountZ(buf: []u8, comptime key: []const u8, n: u64, args: anytype) [:0]const u8 {
+    return if (n == 1) fmtZ(buf, key ++ "_one", args) else fmtZ(buf, key, args);
+}
+
+// Coluna "Aceita nulo" do Esquema: o YES/NO do DuckDB (ou o Sim/Nao de outro idioma, ao trocar o idioma) no idioma
+// atual; outro texto volta como veio
+pub fn yesNo(v: []const u8) []const u8 {
+    if (std.mem.eql(u8, v, "YES")) return tr("yes");
+    if (std.mem.eql(u8, v, "NO")) return tr("no");
+    inline for (catalogs) |C| {
+        if (std.mem.eql(u8, v, C.yes)) return tr("yes");
+        if (std.mem.eql(u8, v, C.no)) return tr("no");
+    }
+    return v;
+}
+
 pub fn fmtZ(buf: []u8, comptime key: []const u8, args: anytype) [:0]const u8 {
     return switch (lang) {
         inline else => |l| std.fmt.bufPrintSentinel(buf, @field(Catalog(l), key), args, 0) catch "",

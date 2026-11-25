@@ -238,6 +238,27 @@ pub fn buildSchema(a: Allocator, tables: []const []const u8, table: []const u8) 
     return out.toOwnedSliceSentinel(a, 0);
 }
 
+// !T: SQL of the Schema tab export: column, type and nullable with the titles of the screen and Yes/No in the screen
+// language (DuckDB's DESCRIBE says YES/NO), the same table the tab shows
+pub fn buildSchemaExport(a: Allocator, table: []const u8, titles: [3][]const u8, yes: []const u8, no: []const u8) Allocator.Error![:0]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(a);
+    try out.appendSlice(a, "SELECT column_name AS ");
+    try writeIdent(&out, a, titles[0]);
+    try out.appendSlice(a, ", column_type AS ");
+    try writeIdent(&out, a, titles[1]);
+    try out.appendSlice(a, ", CASE \"null\" WHEN 'YES' THEN ");
+    try writeLiteral(&out, a, yes);
+    try out.appendSlice(a, " ELSE ");
+    try writeLiteral(&out, a, no);
+    try out.appendSlice(a, " END AS ");
+    try writeIdent(&out, a, titles[2]);
+    try out.appendSlice(a, " FROM (DESCRIBE ");
+    try writeIdent(&out, a, table);
+    try out.append(a, ')');
+    return out.toOwnedSliceSentinel(a, 0);
+}
+
 // -------------------------------------------------------------------- tests
 
 const t = std.testing;
