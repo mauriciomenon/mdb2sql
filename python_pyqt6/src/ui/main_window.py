@@ -356,12 +356,13 @@ class MainWindow(QMainWindow):
         # !T: On the tabs for the shortcut scope, on each view for its right-click menu
         copy_actions = [self.copy_action, self.copy_row_action, self.copy_row_header_action]
         self.tabs.addActions(copy_actions)
+        # menu da celula igual nas 4 versoes (Go): na aba Data primeiro os filtros por valor, depois copiar
+        separator = QAction(self)
+        separator.setSeparator(True)
+        self.data_table.addActions([self.filter_value_action, self.clear_filters_action, separator])
         for view in (self.data_table, self.schema_table, self.sql_table):
             view.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
             view.addActions(copy_actions)
-        separator = QAction(self)
-        separator.setSeparator(True)
-        self.data_table.addActions([separator, self.filter_value_action, self.clear_filters_action])
         for view in (self.data_table, self.sql_table):
             view.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             # !T: The slot must not hold the header itself: header wrapper <-> slot is a cycle only the GC sees, and

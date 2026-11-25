@@ -443,7 +443,7 @@ def test_nothing_duplicated(qtbot, points_window: MainWindow) -> None:
 
     buttons = _texts(b for b in win.findChildren(QAbstractButton) if b.isVisible())
     assert _repeated(buttons) == []
-    assert buttons.count("Export") == 1 and buttons.count("Columns...") == 1 and buttons.count("Clear Filters") == 1
+    assert buttons.count("Export") == 1 and buttons.count("Columns...") == 1 and buttons.count("Clear filters") == 1
     assert _repeated(_menu_texts(win.menuBar())) == []
     assert _menu_texts(win.menuBar()).count("Export") == 1
     assert _repeated(_texts(win.data_table.actions())) == []
@@ -678,7 +678,7 @@ def test_right_click_filter_runs_in_the_database(qtbot, points_window: MainWindo
     win = points_window
     assert win.info_label.text() == "points: Showing 100 of 300 rows"
     menu = [a.text() for a in win.data_table.actions() if not a.isSeparator()]
-    assert menu[-2:] == ["&Filter by This Value", "C&lear Filters"] and "&Copy Value" in menu
+    assert menu[:2] == ["&Filter by this value", "C&lear filters"] and "&Copy value" in menu
     assert not win.clear_filters_action.isEnabled() and win.clear_filters_button.isHidden()
 
     # U18A nao esta nas 100 linhas carregadas: o filtro vai na consulta e acha as 50

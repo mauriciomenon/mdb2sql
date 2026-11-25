@@ -42,16 +42,18 @@ def test_copy_value_and_row(qtbot, tmp_path: Path) -> None:
     win = _open(qtbot, db_file)
     clipboard = QApplication.clipboard()
 
-    # as tres acoes estao no menu de contexto (clique direito) da grade
+    # menu de contexto (clique direito) da grade igual nas 4 versoes (Go): na aba Data primeiro os filtros por valor,
+    # depois copiar valor / linha / linha com cabecalho; nas outras grades so copiar
     assert win.data_table.contextMenuPolicy() == Qt.ContextMenuPolicy.ActionsContextMenu
-    copy_texts = ["&Copy Value", "Copy &Row", "Copy Row with &Header"]
+    copy_texts = ["&Copy value", "Copy &row", "Copy row with &header"]
     assert [action.text() for action in win.data_table.actions()] == [
-        *copy_texts,
+        "&Filter by this value",
+        "C&lear filters",
         "",  # separador
-        "&Filter by This Value",
-        "C&lear Filters",
+        *copy_texts,
     ]
     assert [action.text() for action in win.sql_table.actions()] == copy_texts
+    assert [action.text() for action in win.schema_table.actions()] == copy_texts
 
     win.data_table.setCurrentIndex(win.data_proxy.index(0, 1))
     win.copy_action.trigger()
