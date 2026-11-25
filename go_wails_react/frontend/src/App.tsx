@@ -12,7 +12,7 @@ export type Theme = 'system' | 'light' | 'dark';
 type View = 'data' | 'schema' | 'sql';
 type Scope = 'table' | 'all'; // Data tab search: the open table or all tables
 type TableHits = { table: string; rows: number };
-type MenuName = 'file' | 'export' | 'exportBar' | 'view' | 'settings' | 'help';
+type MenuName = 'file' | 'exportBar' | 'view' | 'settings' | 'help';
 type QueryResult = { columns: string[]; rows: Row[]; more: boolean };
 type Progress = { done: number; total: number; label: string };
 type Conversion = { done: boolean; saved: string };
@@ -216,6 +216,8 @@ function App() {
   const [theme, setThemeState] = useState<Theme>('system');
   const [showNull, setShowNull] = useState(false); // Settings > Show NULL (off: a NULL cell is empty)
   const [openMenu, setOpenMenu] = useState<MenuName | null>(null);
+  const [subOpen, setSubOpen] = useState(false); // File > Export submenu
+  useEffect(() => setSubOpen(false), [openMenu]);
   const [about, setAbout] = useState<AppInfo | null>(null);
   const [search, setSearch] = useState('');
   const [tableSearch, setTableSearch] = useState(''); // search applied in the database (Data tab), after a pause
@@ -316,7 +318,7 @@ function App() {
       const action =
         e.key === 'F5' && !e.ctrlKey && !e.altKey && !e.shiftKey ? () => latest.current.reload()
         : !ctrl ? null
-        : k === 'o' ? () => latest.current.loadDatabase(true)
+        : k === 'o' ? () => latest.current.loadDatabase()
         : k === 'f' ? () => latest.current.focusSearch()
         : k === 'q' ? () => latest.current.quit()
         : k === 'l' ? () => toggleLog()
@@ -600,16 +602,14 @@ function App() {
     }
   }
 
-  // pick=true abre o seletor de arquivo; pick=false usa o banco padrao (MDB2SQL_DB_PATH ou data/sample.duckdb)
-  async function loadDatabase(pick: boolean) {
+  // File > Open..., Browse... and Ctrl+O: the native file dialog, then the file chosen opens
+  async function loadDatabase() {
     setError('');
     try {
       const bridge = getWailsBridge();
-      let path = '';
-      if (pick && bridge.SelectDatabase) {
-        path = await bridge.SelectDatabase();
-        if (!path) return; // dialog cancelled
-      }
+      if (!bridge.SelectDatabase) throw new Error(t('err.bridge'));
+      const path = await bridge.SelectDatabase();
+      if (!path) return; // dialog cancelled
       await openPath(path);
     } catch (err) {
       fail(err, t('status.loadError'));
@@ -766,7 +766,7 @@ function App() {
     { group: 'sql', label: t('export.sqlXlsx'), on: !!resultSql, run: () => runExport(sqlResultName, () => bridge?.ExportQuery?.(resultSql, 'xlsx')) },
   ];
 
-  // the export list: the Export... button of the top bar and the Export menu open the same items
+  // the export list: the Export... button of the top bar and File > Export open the same items
   const exportMenu = (className: string) => (
     <div className={className} role="menu" aria-label={t('menu.export')}>
       {exportItems.map((it, i) => (
@@ -909,26 +909,36 @@ function App() {
           <div className="menu-root">
             {menuButton('file', t('menu.file'))}
             {openMenu === 'file' && (
+              // as the Zig version: Open..., Export >, Close, Exit
               <div className="dropdown" role="menu" aria-label={t('menu.file')}>
-                <button role="menuitem" disabled={busy} onClick={() => loadDatabase(true)}>
-                  {t('menu.open')}
+                <button role="menuitem" disabled={busy} onClick={() => loadDatabase()} onMouseEnter={() => setSubOpen(false)}>
+                  {t('menu.open')} <kbd>Ctrl+O</kbd>
                 </button>
-                <button role="menuitem" disabled={busy} onClick={() => loadDatabase(false)} title={t('menu.openSampleTip')}>
-                  {t('menu.openSample')}
-                </button>
-                <button role="menuitem" disabled={busy || !dbName} onClick={closeDatabase}>
+                <div className="menu-root">
+                  <button
+                    role="menuitem"
+                    aria-haspopup="menu"
+                    aria-expanded={subOpen}
+                    disabled={busy || tables.length === 0}
+                    onMouseEnter={() => setSubOpen(true)}
+                    onClick={(e) => {
+                      e.stopPropagation(); // the window click handler would close the File menu
+                      setSubOpen(!subOpen);
+                    }}
+                  >
+                    {t('menu.export')} <span className="sub-arrow">▸</span>
+                  </button>
+                  {subOpen && exportMenu('dropdown sub')}
+                </div>
+                <button role="menuitem" disabled={busy || !dbName} onClick={closeDatabase} onMouseEnter={() => setSubOpen(false)}>
                   {t('menu.close')}
                 </button>
                 <hr />
-                <button role="menuitem" onClick={quit}>
-                  {t('menu.exit')}
+                <button role="menuitem" onClick={quit} onMouseEnter={() => setSubOpen(false)}>
+                  {t('menu.exit')} <kbd>Ctrl+Q</kbd>
                 </button>
               </div>
             )}
-          </div>
-          <div className="menu-root">
-            {menuButton('export', t('menu.export'))}
-            {openMenu === 'export' && exportMenu('dropdown')}
           </div>
           <div className="menu-root">
             {menuButton('view', t('menu.view'))}
@@ -1004,7 +1014,7 @@ function App() {
               onBlur={() => setPathFocused(false)}
             />
           </div>
-          <button disabled={busy} onClick={() => loadDatabase(true)}>
+          <button disabled={busy} onClick={() => loadDatabase()}>
             {t('top.browse')}
           </button>
           <button disabled={busy} onClick={openTyped}>

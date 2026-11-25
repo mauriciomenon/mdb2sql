@@ -159,10 +159,27 @@ body {
 }
 
 .dropdown button {
+  display: flex;
+  align-items: center;
   border: 0;
   text-align: left;
   white-space: nowrap;
   background: none;
+}
+
+/* shortcut and submenu arrow at the right edge of the item */
+.dropdown kbd,
+.dropdown .sub-arrow {
+  margin-left: auto;
+  padding-left: 24px;
+  font: inherit;
+  color: var(--muted);
+}
+
+/* File > Export: the list opens beside its item */
+.dropdown.sub {
+  top: -5px;
+  left: 100%;
 }
 
 .dropdown button:hover:not(:disabled) {

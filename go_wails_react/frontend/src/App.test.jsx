@@ -32,6 +32,12 @@ const menu = (name, item) => {
   fireEvent.click(screen.getByRole('menuitem', { name: item }));
 };
 
+// Open of the path bar with the field empty: the default database (MDB2SQL_DB_PATH or the sample)
+const openDefault = () => fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+
+// File > Open... (the native file dialog)
+const OPEN_DIALOG = /^Open\.\.\./;
+
 beforeEach(() => {
   bridge.LoadDatabase.mockClear();
   bridge.GetTableData.mockClear();
@@ -47,10 +53,10 @@ describe('App IPC flow', () => {
   it('loads database via IPC and renders rows', async () => {
     render(<App />);
 
-    menu('File', 'Open database...');
+    openDefault();
 
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenCalled());
-    expect(screen.getByText(/Loaded:/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Loaded:/i)).toBeInTheDocument();
 
     // Should list tables and allow selection
     const tableItem = screen.getAllByText('RANGER_SOACCU')[0];
@@ -67,7 +73,7 @@ describe('App IPC flow', () => {
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, SelectDatabase } } } });
     render(<App />);
 
-    menu('File', 'Open database...');
+    menu('File', OPEN_DIALOG);
 
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenCalledWith('C:\\data\\real.duckdb'));
     expect(await screen.findByText(/Loaded: real\.duckdb \(2 tables\)/)).toBeInTheDocument();
@@ -157,7 +163,7 @@ describe('App IPC flow', () => {
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, SelectDatabase } } } });
     render(<App />);
 
-    menu('File', 'Open database...');
+    menu('File', OPEN_DIALOG);
 
     await waitFor(() => expect(SelectDatabase).toHaveBeenCalled());
     expect(bridge.LoadDatabase).not.toHaveBeenCalled();
@@ -169,7 +175,7 @@ describe('App IPC flow', () => {
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, DatabaseName } } } });
     render(<App />);
 
-    menu('File', 'Open sample data');
+    openDefault();
 
     expect(await screen.findByText(/Loaded: DB4\.duckdb \(2 tables\)/)).toBeInTheDocument();
     expect(bridge.LoadDatabase).toHaveBeenCalledWith('');
@@ -221,7 +227,7 @@ describe('App IPC flow', () => {
 
   it('hides several columns at once from Columns... and from the header menu', async () => {
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
     const header = (name) => screen.queryByRole('columnheader', { name });
 
@@ -271,7 +277,7 @@ describe('App IPC flow', () => {
 
   it('resizes a Data column by its header edge; Size column to fit and Size all columns to fit undo it', async () => {
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
     const header = (name) => screen.getByRole('columnheader', { name });
     const drag = (name, dx) => {
@@ -303,7 +309,7 @@ describe('App IPC flow', () => {
 
   it('Show all / Hide all act only on the columns the dialog search lists', async () => {
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
     fireEvent.click(screen.getByRole('button', { name: 'Columns...' }));
     expect(screen.getByLabelText('Filter columns')).toHaveFocus();
@@ -330,7 +336,7 @@ describe('App IPC flow', () => {
     const GetRowCount = vi.fn(async (_t, _f, search) => (search ? 1 : 2));
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetRowCount } } } });
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'tension de campo' } });
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], 'tension de campo'), { timeout: 2000 });
@@ -356,7 +362,7 @@ describe('App IPC flow', () => {
     });
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables } } }, runtime: { EventsOn } });
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
     const scope = screen.getByRole('radiogroup', { name: 'Search in' });
     expect(within(scope).getAllByRole('radio').map((r) => r.textContent)).toEqual(['This table', 'All tables']);
@@ -392,7 +398,7 @@ describe('App IPC flow', () => {
     const SetSearchScope = vi.fn(async () => {});
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, SetSearchScope, GetSearchScope: vi.fn(async () => 'all') } } } });
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
     expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true');
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
@@ -412,7 +418,7 @@ describe('App IPC flow', () => {
     const SearchAllTables = vi.fn(() => new Promise((resolve, reject) => answers.push({ resolve, reject })));
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables, GetSearchScope: vi.fn(async () => 'all') } } } });
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
     const box = screen.getByLabelText('Search the table');
     const searchFor = (text) => {
@@ -445,7 +451,7 @@ describe('App IPC flow', () => {
     const SearchAllTables = vi.fn(async () => [{ table: 'RANGER_SOACCU', rows: 2 }]);
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables } } } });
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     fireEvent.contextMenu(await screen.findByText('Beta'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Filter by this value' }));
     await screen.findByText("Filter: NAME = 'Beta'");
@@ -468,12 +474,12 @@ describe('App IPC flow', () => {
     });
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables, CloseDatabase, GetSearchScope: vi.fn(async () => 'all') } } } });
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'ana' } });
     fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
     await waitFor(() => expect(SearchAllTables).toHaveBeenCalledWith('ana'));
-    menu('File', 'Close database');
+    menu('File', 'Close');
     await waitFor(() => expect(CloseDatabase).toHaveBeenCalled());
     expect(await screen.findByText('Closed sample.duckdb')).toBeInTheDocument();
     expect(screen.queryByText(/context canceled/)).not.toBeInTheDocument();
@@ -484,7 +490,7 @@ describe('App IPC flow', () => {
     const SearchAllTables = vi.fn(async () => [{ table: 'RANGER_SOGEN', rows: 1 }]);
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchAllTables, GetSearchScope: vi.fn(async () => 'all') } } } });
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'ana' } });
     fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
@@ -492,7 +498,7 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'This table' }));
     fireEvent.change(screen.getByLabelText('Filter 2 tables'), { target: { value: 'gen' } });
 
-    menu('File', 'Open sample data');
+    openDefault();
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], ''));
     expect(screen.getByLabelText('Search the table')).toHaveValue('');
@@ -506,7 +512,7 @@ describe('App IPC flow', () => {
     const GetRowCount = vi.fn(async (_table, filters) => (filters.length ? 1 : 2));
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetRowCount } } } });
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
 
     fireEvent.contextMenu(await screen.findByText('Beta'));
     expect(screen.getByRole('menuitem', { name: 'Clear filters' })).toBeDisabled();
@@ -584,12 +590,12 @@ describe('App IPC flow', () => {
       runtime: { Quit },
     });
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
     expect(LoadDatabase).toHaveBeenCalledTimes(1);
 
     // Cancel: nothing changes, nothing is loaded
-    menu('File', 'Open sample data');
+    openDefault();
     const dialog = await screen.findByRole('dialog', { name: 'Converted SQLite file' });
     expect(dialog.textContent).toMatch(/DB4\.sqlite/);
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -599,7 +605,7 @@ describe('App IPC flow', () => {
     expect(screen.getByText('Alpha')).toBeInTheDocument();
 
     // Delete + remember: resolved once, then the other file opens
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByRole('dialog', { name: 'Converted SQLite file' });
     fireEvent.click(screen.getByRole('checkbox', { name: 'Remember for this session' }));
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
@@ -608,15 +614,15 @@ describe('App IPC flow', () => {
     await screen.findByText('Alpha');
 
     // remembered for the session: Exit does not ask again
-    menu('File', 'Exit');
+    menu('File', /^Exit/);
     await waitFor(() => expect(Quit).toHaveBeenCalled());
     expect(ResolveConversion).toHaveBeenLastCalledWith('delete', false);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
     // Close database: the remembered choice again, then the file closes
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
-    menu('File', 'Close database');
+    menu('File', 'Close');
     await waitFor(() => expect(ResolveConversion).toHaveBeenCalledTimes(3));
     await waitFor(() => expect(CloseDatabase).toHaveBeenCalled());
     expect(await screen.findByText(en('empty.formats'))).toBeInTheDocument();
@@ -637,22 +643,22 @@ describe('App IPC flow', () => {
       runtime: { Quit },
     });
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
 
-    menu('File', 'Exit');
+    menu('File', /^Exit/);
     await screen.findByRole('dialog', { name: 'Converted SQLite file' });
     expect(screen.getByRole('button', { name: 'Save...' })).toHaveFocus(); // Enter = Save
     fireEvent.keyDown(window, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(Quit).not.toHaveBeenCalled();
 
-    menu('File', 'Exit');
+    menu('File', /^Exit/);
     await screen.findByRole('dialog', { name: 'Converted SQLite file' });
     fireEvent.click(screen.getByRole('button', { name: 'Close' })); // the dialog's x
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
-    menu('File', 'Exit');
+    menu('File', /^Exit/);
     await screen.findByRole('dialog', { name: 'Converted SQLite file' });
     fireEvent.click(screen.getByRole('button', { name: 'Save...' }));
     await waitFor(() => expect(ResolveConversion).toHaveBeenCalledWith('save', false));
@@ -681,7 +687,7 @@ describe('App IPC flow', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
     fireEvent.click(screen.getByRole('button', { name: 'Columns...' }));
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
@@ -743,7 +749,7 @@ describe('App IPC flow', () => {
     });
     global.window = Object.assign(window, { runtime: { ClipboardSetText, EventsOn } });
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
     goLog('DB4.accdb converted to SQLite with mdbtools in 12s');
 
@@ -775,7 +781,7 @@ describe('App IPC flow', () => {
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, SetLogOpen, RunQuery, GetLogOpen: vi.fn(async () => false) } } } });
     render(<App />);
     expect(screen.queryByRole('textbox', { name: 'Log' })).not.toBeInTheDocument(); // collapsed by default
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
     fireEvent.click(screen.getByRole('tab', { name: 'SQL' }));
     fireEvent.click(screen.getByRole('button', { name: 'Run' }));
@@ -825,7 +831,7 @@ describe('App IPC flow', () => {
     const GetTableData = vi.fn(async () => [{ ID: 1, NAME: null }]);
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, SetShowNull } } }, runtime: { ClipboardSetText } });
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByRole('cell', { name: '1' });
     expect(screen.queryByText('NULL')).not.toBeInTheDocument();
 
@@ -845,36 +851,43 @@ describe('App IPC flow', () => {
     const GetTableData = vi.fn(async () => [{ ID: 1, NAME: null }]);
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, GetShowNull: vi.fn(async () => true) } } } });
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     expect(await screen.findByText('NULL')).toBeInTheDocument();
   });
 
   it('right-aligns numeric columns, header included', async () => {
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
     expect(screen.getByRole('columnheader', { name: 'ID' }).className).toBe('num');
     expect(screen.getByRole('columnheader', { name: 'NAME' }).className).toBe('');
     expect(screen.getByRole('cell', { name: '2' }).className).toBe('num');
   });
 
-  it('exports from the Export menu and runs SQL', async () => {
+  // standard item 19: File menu of Zig - Open... (Ctrl+O), Export >, Close, Exit (Ctrl+Q)
+  it('exports from File > Export and from Export..., and runs SQL', async () => {
     const ExportDatabase = vi.fn(async () => 'C:\\out\\db.xlsx');
     const ExportQuery = vi.fn(async () => 'C:\\out\\r.csv');
     const RunQuery = vi.fn(async () => ({ columns: ['n', 'n (2)'], rows: [{ n: 1, 'n (2)': 'x' }], more: true }));
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, ExportDatabase, ExportQuery, RunQuery } } } });
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
-    expect(screen.getByRole('menuitem', { name: /Database as Excel/ })).toBeDisabled(); // nothing open yet
-    // SQLite before DuckDB (owner's format order)
-    const items = screen.getAllByRole('menuitem').map((el) => el.textContent);
-    expect(items.indexOf(en('export.dbSqlite'))).toBeLessThan(items.indexOf(en('export.dbDuckdb')));
-    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
-    menu('File', 'Open sample data');
+    expect(screen.getByRole('button', { name: 'Export...' })).toBeDisabled(); // nothing open yet
+    fireEvent.click(screen.getByRole('button', { name: 'File' }));
+    const file = screen.getByRole('menu', { name: 'File' });
+    expect(within(file).getAllByRole('menuitem').map((el) => el.textContent)).toEqual(['Open... Ctrl+O', 'Export ▸', 'Close', 'Exit Ctrl+Q']);
+    expect(within(file).getByRole('menuitem', { name: /^Export/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'File' }));
+    openDefault();
     await screen.findByText('Alpha');
 
-    menu('Export', /Database as Excel/);
+    fireEvent.click(screen.getByRole('button', { name: 'File' }));
+    fireEvent.mouseEnter(screen.getByRole('menuitem', { name: /^Export/ })); // the submenu opens beside it
+    const list = screen.getByRole('menu', { name: 'Export' });
+    // SQLite before DuckDB (owner's format order)
+    const items = within(list).getAllByRole('menuitem').map((el) => el.textContent);
+    expect(items.indexOf(en('export.dbSqlite'))).toBeLessThan(items.indexOf(en('export.dbDuckdb')));
+    fireEvent.click(within(list).getByRole('menuitem', { name: en('export.dbXlsx') }));
     await waitFor(() => expect(ExportDatabase).toHaveBeenCalledWith('xlsx'));
     expect(await screen.findByText(/Exported .* to C:\\out\\db\.xlsx/)).toBeInTheDocument();
 
@@ -885,15 +898,16 @@ describe('App IPC flow', () => {
     expect(await screen.findByText('n (2)')).toBeInTheDocument();
     expect(screen.getByText(/1 rows \(limit 100/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'SQL result as CSV' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: en('export.sqlCsv') }));
     await waitFor(() => expect(ExportQuery).toHaveBeenCalledWith('select 1', 'csv'));
   });
 
-  // owner's rule: no action twice on screen (1.1.1 had Export in File and again as a toolbar button)
+  // owner's rule: no action twice on screen; the export list is the exception of the standard (items 1 and 19, as
+  // Zig): File > Export and the Export... button of the path bar open the same list
   it('shows every button and menu action once', async () => {
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
     fireEvent.contextMenu(screen.getByText('Beta'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Filter by this value' }));
@@ -904,16 +918,15 @@ describe('App IPC flow', () => {
         .filter((el) => !el.closest('.sidebar')) // the table list is data, not actions
         .map((el) => el.getAttribute('aria-label') || el.textContent.trim());
     const all = names('button');
-    for (const m of ['File', 'Export', 'View', 'Settings', 'Help']) {
+    for (const m of ['File', 'Export...', 'View', 'Settings', 'Help']) {
       fireEvent.click(screen.getByRole('button', { name: m }));
       all.push(...names('menuitem'), ...names('menuitemradio'), ...names('menuitemcheckbox'));
       fireEvent.click(screen.getByRole('button', { name: m }));
     }
     const dupes = all.filter((n, i) => all.indexOf(n) !== i);
     expect(dupes).toEqual([]);
-    // the Export menu and the Export... button of the path bar (standard item 1, as Zig) open the same list
-    expect(all.filter((n) => /export/i.test(n))).toEqual(['Export', 'Export...']);
-    expect(all).toContain('Database as Excel (.xlsx, one sheet per table)');
+    expect(all.filter((n) => /^export/i.test(n))).toEqual(['Export...', 'Export ▸']);
+    expect(all).toContain(en('export.dbXlsx'));
     expect(all).toContain('Clear filters');
     expect(all).toContain('Columns...');
     // labels and data only: no how-to sentences, no copyright line
@@ -924,7 +937,7 @@ describe('App IPC flow', () => {
 
   it('selects a cell by focus and opens its menu from the keyboard', async () => {
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     const cell = await screen.findByText('Beta');
     fireEvent.focus(cell);
     expect(cell).toHaveAttribute('aria-selected', 'true');
@@ -968,7 +981,7 @@ describe('App IPC flow', () => {
     const CancelJob = vi.fn(async () => {});
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, RunQuery, CancelJob } } } });
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
 
     // table B answers late, after table A was chosen again: A stays
@@ -994,14 +1007,14 @@ describe('App IPC flow', () => {
     expect(screen.queryByText('slow answer')).not.toBeInTheDocument();
 
     // another file: the SQL result of the previous one can no longer be exported
-    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
-    expect(screen.getByRole('menuitem', { name: 'SQL result as CSV' })).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
-    menu('File', 'Open sample data');
+    fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
+    expect(screen.getByRole('menuitem', { name: en('export.sqlCsv') })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
+    openDefault();
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenCalledTimes(2));
     await screen.findByText('Alpha');
-    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
-    expect(screen.getByRole('menuitem', { name: 'SQL result as CSV' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
+    expect(screen.getByRole('menuitem', { name: en('export.sqlCsv') })).toBeDisabled();
   });
 
   it('describes progress by table or by row', () => {
@@ -1049,7 +1062,7 @@ describe('App IPC flow', () => {
       go: { main: { App: { ...bridge, LoadDatabase: vi.fn(async () => ['RANGER_SOACCU', 'RANGER_SOGEN', 'TENSÃO_CAMPO']) } } },
     });
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
     await screen.findByText('Alpha');
     // applied after a 300 ms pause in typing, like the Data search
     fireEvent.change(screen.getByLabelText('Filter 3 tables'), { target: { value: 'gen ranger' } });
@@ -1068,7 +1081,7 @@ describe('App IPC flow', () => {
     const RunQuery = vi.fn(async () => ({ columns: ['ID', 'NAME'], rows, more: false }));
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, RunQuery } } }, runtime: { ClipboardSetText } });
     render(<App />);
-    menu('File', 'Open sample data');
+    openDefault();
 
     fireEvent.contextMenu(await screen.findByText('Beta'));
     fireEvent.click(screen.getByRole('menuitem', { name: /Copy value/ }));
@@ -1119,7 +1132,7 @@ describe('App IPC flow', () => {
   it('handles IPC unavailable gracefully', async () => {
     global.window = Object.assign(window, { go: undefined });
     render(<App />);
-    menu('File', 'Open database...');
+    menu('File', OPEN_DIALOG);
     expect(await screen.findByText(/IPC bridge not available/i)).toBeInTheDocument();
   });
 });
@@ -1147,7 +1160,7 @@ describe('language catalogs', () => {
   // placeholder and aria-label; key names (Ctrl+C), symbols and data (mdb2sql, GitHub links) are allowed
   it('leave no literal UI text in App.tsx', () => {
     const jsx = source.replace(/\r\n/g, '\n');
-    const allowed = new Set(['mdb2sql', 'Ctrl+C', 'Ctrl+Enter']);
+    const allowed = new Set(['mdb2sql', 'Ctrl+C', 'Ctrl+Enter', 'Ctrl+O', 'Ctrl+Q']);
     const word = /[A-Za-zÀ-ÖØ-öø-ÿ]/;
     // text right after an opening or closing tag, on the same line
     const between = [...jsx.matchAll(/<\/?[a-zA-Z][^<>]*>([^<>{}\n]+)</g)].map((m) => m[1].trim()).filter((s) => word.test(s));
