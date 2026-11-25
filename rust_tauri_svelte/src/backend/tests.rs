@@ -72,6 +72,8 @@ mod tests {
         assert_eq!(source, "DuckDB");
         assert_eq!(manager.list_tables().unwrap(), vec!["Other table", "points"]);
         assert_eq!(manager.get_row_count("points", &[], "").unwrap(), 2);
+        // coluna Linhas da lista de tabelas (padrao item 6), na ordem da lista
+        assert_eq!(manager.table_rows(&manager.list_tables().unwrap()).unwrap(), [Some(5), Some(2)]);
 
         let schema = manager.get_table_schema("points").unwrap();
         let names: Vec<&str> = schema.iter().map(|c| c.name.as_str()).collect();
@@ -95,6 +97,29 @@ mod tests {
         assert_eq!(result.columns.len(), 2);
         assert_eq!(result.rows.len(), 1);
         assert!(result.truncated);
+    }
+
+    // coluna Linhas: uma tabela que nao da para contar (view de um .duckdb sobre um CSV que sumiu) fica sem numero e o
+    // arquivo abre mesmo assim; as outras tabelas tem o numero
+    #[test]
+    fn a_table_that_cannot_be_counted_does_not_stop_the_open() {
+        let dir = tempdir().unwrap();
+        let csv = dir.path().join("gone.csv");
+        std::fs::write(&csv, "a\n1\n").unwrap();
+        let path = dir.path().join("views.duckdb");
+        let conn = duckdb::Connection::open(&path).unwrap();
+        conn.execute_batch(&format!(
+            "CREATE TABLE t AS SELECT range AS k FROM range(3); CREATE VIEW v AS SELECT * FROM read_csv('{}');",
+            csv.to_string_lossy().replace('\'', "''")
+        ))
+        .unwrap();
+        drop(conn);
+        std::fs::remove_file(&csv).unwrap();
+        let manager = DBManager::new();
+        manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+        let tables = manager.list_tables().unwrap();
+        assert_eq!(tables, ["t", "v"]);
+        assert_eq!(manager.table_rows(&tables).unwrap(), [Some(3), None]);
     }
 
     fn filter(column: &str, value: serde_json::Value) -> Filter {
@@ -149,6 +174,7 @@ mod tests {
             // valor que seria injecao se fosse concatenado: e so um texto que nenhuma linha tem
             assert_eq!(ids(&[filter("si\"gla", json!("' OR 1=1 --"))]), Vec::<i64>::new());
             assert_eq!(manager.get_row_count("t", &[], "").unwrap(), 5);
+            assert_eq!(manager.table_rows(&["t".to_string()]).unwrap(), [Some(5)], "{path:?}");
             // o limite Rows continua valendo com filtro
             assert_eq!(manager.query_table("t", 1, &[filter("si\"gla", json!("U9A"))], "").unwrap().len(), 1);
             assert!(manager.query_table("t", 10, &[filter("missing", json!(1))], "").is_err());
@@ -302,9 +328,9 @@ mod tests {
         let mut wb = rust_xlsxwriter::Workbook::new();
         let mut namer = SheetNamer::default();
         let mut tick = || Ok(());
-        let sheets = export::write_sheets(&mut wb, &mut namer, &conn, "big", "SELECT * FROM big", 2, &mut tick).unwrap();
+        let sheets = export::write_sheets(&mut wb, &mut namer, &conn, "big", "SELECT * FROM big", &[], 2, &mut tick).unwrap();
         assert_eq!(sheets, [("big".to_string(), 2), ("big (2)".to_string(), 2), ("big (3)".to_string(), 1)]);
-        let sheets = export::write_sheets(&mut wb, &mut namer, &conn, "empty", "SELECT * FROM empty", 2, &mut tick).unwrap();
+        let sheets = export::write_sheets(&mut wb, &mut namer, &conn, "empty", "SELECT * FROM empty", &[], 2, &mut tick).unwrap();
         assert_eq!(sheets, [("empty".to_string(), 0)]);
         assert_eq!(EXCEL_MAX_DATA_ROWS, 1_048_575);
         let dir = tempdir().unwrap();
@@ -327,6 +353,23 @@ mod tests {
         assert_eq!(lines.next().unwrap(), "\u{FEFF}id,name,ts,d,t,n,u,ok,x");
         assert_eq!(lines.next().unwrap(), "1,\"a, \"\"b\"\"\",2026-07-14 10:00:00,2024-02-29,23:59:58.5,12.30,7,true,0.1");
         assert_eq!(lines.next().unwrap(), "2,,,,,,,,");
+
+        // padrao item 17: "so as N linhas encontradas" = as linhas da grade com a pesquisa e os filtros (mesma regra da
+        // contagem); CSV e Excel
+        let (cond, params) = manager.rows_where("points", &[], "B").unwrap();
+        assert_eq!(manager.get_row_count("points", &[], "B").unwrap(), 1);
+        let found = Source::Rows("points".into(), cond, params);
+        let found_csv = dir.path().join("found.csv");
+        assert_eq!(export::export_source(&conn, &found, "csv", &found_csv, &mut ok_progress()).unwrap(), Summary { count: 1, sheets: None });
+        let text = std::fs::read_to_string(&found_csv).unwrap();
+        assert_eq!(text.split("\r\n").filter(|l| !l.is_empty()).count(), 2, "header and the one row found: {text}");
+        let found_xlsx = dir.path().join("found.xlsx");
+        assert_eq!(export::export_source(&conn, &found, "xlsx", &found_xlsx, &mut ok_progress()).unwrap(), Summary { count: 1, sheets: Some(1) });
+        let (cond, params) = manager.rows_where("points", &[filter("id", json!(2))], "").unwrap();
+        let by_value = Source::Rows("points".into(), cond, params);
+        assert_eq!(export::export_source(&conn, &by_value, "csv", &found_csv, &mut ok_progress()).unwrap(), Summary { count: 1, sheets: None });
+        assert!(std::fs::read_to_string(&found_csv).unwrap().contains("\r\n2,,,,,,,,\r\n"));
+        assert!(manager.rows_where("missing", &[], "x").is_err());
 
         let sql = Source::Sql("SELECT k FROM \"Other table\" WHERE k > 2;".into());
         let xlsx = dir.path().join("result.xlsx");
@@ -783,6 +826,29 @@ mod tests {
         assert!(!stale.exists() && own.exists() && other.exists());
         converted::remove_own(dir.path());
         assert!(!own.exists() && other.exists());
+    }
+
+    // padrao item 22: a chave (caminho, tamanho, data) reconhece o mesmo arquivo sem mudanca entre execucoes; mudou o
+    // conteudo ou a data, a chave muda e o Access e convertido de novo
+    #[test]
+    fn file_key_changes_when_the_file_changes() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("Banco.accdb");
+        std::fs::write(&path, b"abc").unwrap();
+        let key = converted::file_key(&path).expect("key of an existing file");
+        assert_eq!(converted::file_key(&path), Some(key.clone()), "same file, same key");
+        // o mesmo arquivo por outro caminho (relativo, com ..) da a mesma chave
+        let other_way = dir.path().join("sub").join("..").join("Banco.accdb");
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        assert_eq!(converted::file_key(&other_way), Some(key.clone()));
+        assert!(key.contains("|3|"), "{key}"); // tamanho em bytes
+        if cfg!(windows) {
+            assert_eq!(key, key.to_lowercase(), "Windows: path in lowercase");
+        }
+        std::fs::write(&path, b"abcd").unwrap();
+        assert_ne!(converted::file_key(&path), Some(key), "changed file, new key");
+        assert_eq!(converted::file_key(&dir.path().join("missing.accdb")), None);
+        assert_eq!(converted::file_key(dir.path()), None, "a folder has no key");
     }
 
     // nomes de temporario reservados de forma exclusiva: chamadas seguidas nunca repetem nem reaproveitam arquivo

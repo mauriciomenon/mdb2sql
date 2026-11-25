@@ -9,6 +9,7 @@ import {
   fold,
   hasAllWords,
   importantEntry,
+  resolveContext,
   rowToTsv,
   searchWords,
   setListed,
@@ -16,9 +17,41 @@ import {
   toggleHidden,
   toggleShown,
   tsvField,
+  unreadEntries,
   visibleColumns,
   withFilter,
 } from './grid.js';
+
+// padrao item 16: SQL que roda sem erro tira o erro de SQL anterior da barra de baixo e do contador (outros erros ficam)
+test('a SQL run without error clears the earlier SQL error from the status bar', () => {
+  const log = [
+    { level: 'error', context: 'status.openFailed', n: 1 },
+    { level: 'error', context: 'err.sql', n: 2 },
+    { level: 'info', key: 'status.query', n: 3 },
+  ];
+  assert.equal(importantEntry(unreadEntries(log)).n, 2);
+  const after = resolveContext(log, 'err.sql');
+  assert.deepEqual(unreadEntries(after).map((e) => e.n), [1]);
+  assert.equal(importantEntry(unreadEntries(after)).n, 1);
+  assert.equal(after.length, 3); // o texto continua no log
+  assert.equal(log[1].resolved, undefined); // o log antigo nao muda
+});
+
+// erro do SQL na linha do botao (texto do motor com o prefixo traduzido), a grade velha sai; dica "SELECT * FROM ..."
+test('SQL tab: error on the Run line, the old grid leaves, hint SELECT * FROM ...', () => {
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  const run = app.match(/\n {2}async function runSql\(\) \{[\s\S]*?\n {2}\}/)[0];
+  assert.match(run, /lastSql = query;\s*sqlError = '';\s*log = resolveContext\(log, 'err\.sql'\);/);
+  assert.match(run, /catch \(err\) \{\s*sqlResult = null;\s*lastSql = '';\s*sqlError = String\(err\);\s*showError\(err, 'err\.sql'\);/);
+  assert.match(app, /\{#if sqlError\}\s*<span class="sql-error">\{statusLine\(errorLine\(sqlError, 'err\.sql'\)\)\}<\/span>\s*\{:else if sqlResult\}/);
+  assert.match(app, /const SQL_HINT = 'SELECT \* FROM \.\.\.';/);
+  // abrir outro arquivo ou fechar tira o erro de SQL da linha do botao e da barra de baixo, juntos
+  for (const name of ['openDatabase', 'closeDatabase']) {
+    const body = app.match(new RegExp(`\\n {2}async function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n {2}\\}`))[0];
+    assert.match(body, /sqlError = '';\s*log = resolveContext\(log, 'err\.sql'\);/, name);
+  }
+  assert.match(app, /placeholder=\{SQL_HINT\}/);
+});
 
 test('several columns are hidden at once and shown again, order kept', () => {
   const columns = [{ name: 'id' }, { name: 'SIGLA' }, { name: 'note' }];

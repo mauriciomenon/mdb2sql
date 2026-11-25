@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import en from './i18n/en.js';
+import CATALOG_ES from './i18n/es.js';
+import CATALOG_PT from './i18n/pt-BR.js';
 
 const markup = (file) =>
   readFileSync(new URL(file, import.meta.url), 'utf8')
@@ -34,23 +36,138 @@ function buttonLabels(text) {
 
 const count = (text, needle) => text.split(needle).length - 1;
 // Close/Cancel fecham cada um o seu dialogo: o mesmo nome em dialogos diferentes nao e acao repetida
-const DIALOG_DISMISS = [en['common.close'], en['common.cancel'], '×'];
+// Copiar (texto do Go): o comando do aviso de X11 e a linha da barra de status, cada um no seu lugar
+const DIALOG_DISMISS = [en['common.close'], en['common.cancel'], '×', en['x11.copy']];
 const repeated = (labels) => labels.filter((label, i) => labels.indexOf(label) !== i && !DIALOG_DISMISS.includes(label));
 
 test('the main window has no repeated button or menu item', () => {
   const app = markup('./App.svelte');
   const labels = buttonLabels(app);
-  for (const label of ['Browse...', 'Columns...', 'Close database', 'Copy all', 'Save...', 'Delete']) {
+  for (const label of ['Browse...', 'Open...', 'Columns...', 'Close', 'Exit', 'Copy all', 'Save...', 'Delete']) {
     assert.ok(labels.includes(label), `${label} in ${labels.join(', ')}`);
   }
   assert.deepEqual(repeated(labels), []);
-  // uma lista de exportacao so (File > Export) e um jeito so de escolher o arquivo
+  // uma lista de exportacao so, mostrada pelo botao Exportar... do topo e pelo menu Arquivo
   assert.equal(count(app, '{#each EXPORTS'), 1);
   assert.equal(count(app, 'startExport('), 1);
-  assert.equal(count(app, 'onclick={browse}'), 1);
+  assert.equal(count(app, '{@render exportItems()}'), 2);
+  assert.equal(count(app, 'onclick={browse}'), 2); // Procurar... do topo e Arquivo > Abrir... (padrao itens 1 e 19)
   assert.equal(count(app, 'onclick={closeDatabase}'), 1);
   assert.equal(count(app, 'onclick={copyLog}'), 1);
-  assert.equal(labels.filter((label) => /^export/i.test(label)).length, 0); // nenhum botao Export... fora do menu
+  // o botao do topo e o submenu do Arquivo, que abrem a mesma lista
+  assert.deepEqual(labels.filter((label) => /^export/i.test(label)), ['Export ▸', 'Export...']);
+});
+
+// padrao item 17: exportar a tabela com pesquisa ou filtro ativo pergunta "tabela inteira" ou "so as N linhas
+// encontradas"; a escolha manda (ou nao) os filtros e a pesquisa ao backend; Cancelar/Esc nao exporta
+test('exporting a searched table asks: whole table or only the rows found', () => {
+  const code = appFunction('startExport');
+  // a pesquisa que ainda esperava os 300 ms vale antes da pergunta (o numero mostrado e o exportado)
+  assert.match(code, /if \(scope === 'table' && !everywhere && \(search\.trim\(\) \|\| filters\.length\)\) \{[^\n]*\n[^\n]*\n\s*clearTimeout\(searchTimer\);\s*await openTable\(selectedTable\);\s*const choice = await askRows\(label\);\s*if \(!choice\) return;[^\n]*\n\s*if \(choice === 'found'\) rows = \{ filters, search: search\.trim\(\) \};/);
+  assert.match(code, /invoke\('export', \{ scope, format, path, table: selectedTable \|\| null, sql: lastSql \|\| null, \.\.\.rows \}\)/);
+  const dialog = markup('./App.svelte').match(/<dialog\s+bind:this=\{rowsDialog\}[\s\S]*?<\/dialog>/)[0];
+  assert.deepEqual(buttonLabels(dialog), ['Whole table', 'Cancel']); // o do meio e todo texto com numero
+  assert.match(dialog, /onclick=\{\(\) => rowsReply\('found'\)\}>\{t\('export\.foundRows', \{ count: fmt\(matchCount\) \}\)\}/);
+  assert.match(dialog, /oncancel=\{\(e\) => \{\s*e\.preventDefault\(\);\s*rowsReply\(null\);/);
+  // ordem do menu de exportacao: SQLite, DuckDB, Excel do banco; tabela e SQL com CSV e Excel (textos desta versao)
+  const order = [...readFileSync(new URL('./App.svelte', import.meta.url), 'utf8').match(/const EXPORTS = \[[\s\S]*?\];/)[0].matchAll(/'(export\.\w+)'/g)].map((m) => m[1]);
+  assert.deepEqual(order, ['export.dbSqlite', 'export.dbDuckdb', 'export.dbXlsx', 'export.tableCsv', 'export.tableXlsx', 'export.sqlCsv', 'export.sqlXlsx']);
+  assert.match(code, /: 'query';/); // resultado do SQL sai como query.csv / query.xlsx
+});
+
+// padrao item 6 (= Zig): a lista de tabelas tem as colunas Tabela e Linhas; as linhas vem do backend ao abrir
+test('table list shows the row count of each table', () => {
+  const ui = markup('./App.svelte');
+  const list = ui.match(/<div\s+class="table-list"[\s\S]*?\{\/each\}/)[0];
+  assert.match(list, /<div class="table-head" aria-hidden="true"><span>\{t\('tables\.name'\)\}<\/span><span>\{t\('tables\.rows'\)\}<\/span><\/div>/);
+  // tabela que nao deu para contar (null): celula vazia, nunca um 0 que nao e verdade
+  assert.match(list, /<span class="name">\{name\}<\/span><span class="rows">\{tableRows\.get\(name\) == null \? '' : fmt\(tableRows\.get\(name\)\)\}<\/span>/);
+  assert.match(appFunction('openDatabase'), /tableRows = new Map\(opened\.tables\.map\(\(name, i\) => \[name, opened\.rows\[i\]\]\)\);/);
+  assert.match(appFunction('closeDatabase'), /tableRows = new Map\(\);/);
+  assert.deepEqual([en['tables.name'], en['tables.rows'], CATALOG_PT['tables.rows'], CATALOG_ES['tables.rows']], ['Table', 'Rows', 'Linhas', 'Filas']);
+  const main = readFileSync(new URL('../../src/main.rs', import.meta.url), 'utf8');
+  // o titulo so muda depois da lista e das contagens (uma falha ali nao deixa o titulo do arquivo novo)
+  assert.match(main, /let tables = manager\.list_tables\(\)\?;\s*let rows = manager\.table_rows\(&tables\)\?;\s*show_title\(&app, Some\(&opened\)\);/);
+});
+
+// padrao item 21: Sobre = conteudo desta versao (Build, Stack, Janela, Bancos, Leitura do Access, Autor, Licenca, links)
+// com o titulo do Zig, "Sobre o mdb2sql" (o mesmo do menu Ajuda), nas 3 linguas
+test('About: title About mdb2sql and the rows of this stack', () => {
+  const ui = markup('./App.svelte');
+  const about = ui.match(/<dialog bind:this=\{aboutDialog\}[\s\S]*?<\/dialog>/)[0];
+  assert.match(about, /<h2 id="about-title">\{t\('help\.about'\)\} <span class="version">\{aboutInfo\.version\}<\/span><\/h2>/);
+  assert.match(ui, /onclick=\{showAbout\}>\{t\('help\.about'\)\}/);
+  const pt = (key) => (key in en ? (CATALOG_PT[key] ?? '') : '');
+  assert.deepEqual([pt('help.about'), en['help.about'], CATALOG_ES['help.about']], ['Sobre o mdb2sql', 'About mdb2sql', 'Acerca de mdb2sql']);
+  const code = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  const rows = [...code.match(/let aboutRows = \$derived\.by\(\(\) => \{[\s\S]*?\n {2}\}\);/)[0].matchAll(/\[t\('(about\.\w+)'\)/g)].map((m) => m[1]);
+  assert.deepEqual(rows, ['about.build', 'about.stack', 'about.window', 'about.engines', 'about.access', 'about.author', 'about.license']);
+  // rotulos traduzidos como no Sobre do Zig (Stack = Tecnologia / Tecnologia; Build fica, como no Go e no Zig)
+  assert.deepEqual(rows.map(pt), ['Build', 'Tecnologia', 'Janela', 'Bancos', 'Leitura do Access', 'Autor', 'Licença']);
+  assert.deepEqual([en['about.stack'], CATALOG_ES['about.stack'], CATALOG_ES['about.build']], ['Stack', 'Tecnología', 'Compilación']);
+});
+
+// padrao item 18: Configuracoes = Tema, Idioma, Escopo padrao da busca, Exibir NULL, nesta ordem
+test('Settings menu order: theme, language, default scope, show NULL', () => {
+  const ui = markup('./App.svelte');
+  const settings = ui.slice(ui.indexOf("openMenu === 'settings'"), ui.indexOf("openMenu === 'help'"));
+  const at = ["t('settings.theme')", "t('settings.language')", "t('settings.searchScope')", "t('settings.showNull')"].map((k) => settings.indexOf(k));
+  assert.ok(at.every((v, i) => v >= 0 && (i === 0 || v > at[i - 1])), at.join(','));
+});
+
+// padrao item 19 (= Zig): Arquivo = Abrir... (Ctrl+O), Exportar > (submenu com a lista), Fechar, separador, Sair (Ctrl+Q)
+test('File menu: Open..., Export submenu, Close, Exit', () => {
+  const ui = markup('./App.svelte');
+  const file = ui.slice(ui.indexOf("openMenu === 'file'"), ui.indexOf("openMenu === 'view'"));
+  assert.deepEqual(buttonLabels(file), ['Open...', 'Export ▸', 'Close', 'Exit']);
+  assert.ok(file.indexOf('{@render exportItems()}') > file.indexOf("t('file.export')"), 'lista dentro do submenu');
+  assert.ok(file.indexOf('class="separator"') > file.indexOf("t('file.close')"), 'separador antes de Sair');
+  assert.match(file, /\{t\('file\.open'\)\} <kbd>\{t\('file\.openKey'\)\}<\/kbd>/);
+  assert.match(file, /onclick=\{quit\}>\{t\('file\.exit'\)\} <kbd>\{t\('file\.exitKey'\)\}<\/kbd>/);
+  assert.deepEqual([en['file.openKey'], en['file.exitKey']], ['Ctrl+O', 'Ctrl+Q']);
+  assert.match(appFunction('quit'), /if \(await settleConverted\(\)\) await invoke\('exit_app'\);/);
+});
+
+// padrao item 20 (= Python): Ctrl+O, Ctrl+F, F5, Ctrl+Q, Ctrl+1/2/3, Ctrl+L, Ctrl+Enter e Ctrl+C (grade); F5 nunca
+// recarrega a pagina do webview; com dialogo aberto os atalhos da janela nao valem
+test('keyboard shortcuts of the 4 stacks', () => {
+  const code = appFunction('shortcut');
+  const keys = [...code.matchAll(/\n\s+(\w+): /g)].map((m) => m[1]);
+  assert.deepEqual(keys, ['o', 'f', 'q', 'l', '1', '2', '3', 'enter']);
+  assert.match(code, /o: \(\) => !busy && browse\(\),/);
+  assert.match(code, /f: focusSearch,/);
+  assert.match(code, /q: quit,/);
+  assert.match(code, /3: focusSql,/);
+  // Ctrl+Enter e Arquivo > Abrir... valem como o botao de cada um: nada durante uma abertura ou consulta
+  assert.match(code, /enter: \(\) => tab === 'sql' && !busy && openedPath && runSql\(\),/);
+  assert.match(markup('./App.svelte'), /role="menuitem" disabled=\{busy\} onclick=\{browse\}/);
+  assert.match(code, /if \(e\.key === 'F5'\) e\.preventDefault\(\);\s*if \(document\.querySelector\('dialog\[open\]'\) \|\| e\.altKey\) return;\s*if \(e\.key === 'F5' && !e\.ctrlKey\) return reload\(\);/);
+  assert.match(appFunction('reload'), /if \(openedPath\) dbPath = openedPath;\s*if \(dbPath\.trim\(\)\) openDatabase\(\);/);
+  assert.match(markup('./App.svelte'), /<svelte:window onclick=\{[^}]*\} onkeydown=\{shortcut\} \/>/);
+  // Ctrl+Enter so pela janela (o editor tinha o seu e rodaria duas vezes)
+  assert.doesNotMatch(markup('./App.svelte').match(/<textarea\s+bind:value=\{sql\}[\s\S]*?<\/textarea>/)[0], /onkeydown/);
+  const grid = readFileSync(new URL('./Grid.svelte', import.meta.url), 'utf8');
+  assert.match(grid, /event\.ctrlKey && event\.key\.toLowerCase\(\) === 'c' && selected/);
+});
+
+// padrao item 1 (topo = Zig): so o campo do caminho e Procurar... Abrir Exportar... (sem titulo nem rotulo); caminho
+// longo mostra o fim (o comeco sai com "..."); arquivo arrastado para a janela abre
+test('top bar: path field, Browse..., Open, Export... and drag and drop', () => {
+  const header = markup('./App.svelte').match(/<header>[\s\S]*?<\/header>/)[0];
+  assert.doesNotMatch(header, /<h1|<label/);
+  assert.deepEqual(buttonLabels(header), ['Browse...', 'Open', 'Export...']);
+  assert.ok(header.indexOf('id="db-path"') < header.indexOf("t('header.browse')"));
+  assert.match(header, /aria-label=\{t\('header\.database'\)\}/);
+  assert.match(header, /<span class="path-view" aria-hidden="true"><bdi dir="ltr">\{dbPath\}<\/bdi><\/span>/);
+  const code = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  const view = code.match(/\n {2}\.path-view \{([^}]*)\}/)[1];
+  assert.match(view, /direction: rtl;[\s\S]*text-overflow: ellipsis;[\s\S]*white-space: nowrap;/);
+  assert.match(code, /\.path input\.elided \{\s*color: transparent;/);
+  assert.match(code, /onDragDropEvent\(\(\{ payload \}\) => \{\s*if \(payload\.type !== 'drop'[^\n]*\n\s*openDatabase\(null, payload\.paths\[0\]\);/);
+  // arquivo escolhido ou arrastado so vai para o campo depois da pergunta do SQLite convertido (Cancelar nao o mostra)
+  assert.match(appFunction('openDatabase'), /const path = \(chosen \?\? dbPath\)\.trim\(\)[^\n]*\n\s*if \(!\(await settleConverted\(\)\)\) return;\s*dbPath = path;/);
+  assert.match(appFunction('browse'), /await openDatabase\(null, String\(picked\)\);/);
+  assert.equal(en['header.open'], 'Open');
 });
 
 // ordem do app em tudo que o usuario ve: Access, SQLite, DuckDB
@@ -60,7 +177,6 @@ test('Access comes first, then SQLite, then DuckDB', () => {
   const isSorted = (list) => list.every((v, i) => v >= 0 && (i === 0 || v > list[i - 1]));
   assert.ok(isSorted(order(app, ["'open.access'", "'open.sqlite'", "'open.duckdb'"])));
   assert.ok(isSorted(order(app, ["'export.dbSqlite'", "'export.dbDuckdb'"])));
-  assert.ok(isSorted(order(en['open.all'], ['Access', 'SQLite', 'DuckDB'])));
   assert.ok(isSorted(order(en['header.placeholder'], ['.accdb', '.sqlite', '.duckdb'])));
   assert.ok(isSorted(order(en['about.description'], ['Access', 'SQLite', 'DuckDB'])));
 });
@@ -92,7 +208,7 @@ test('Data search scope: two-option selector next to the field and its default i
   assert.match(app, /const SCOPES = \[\s*\['table', 'scope\.table'\],\s*\['all', 'scope\.all'\],\s*\];/);
   assert.deepEqual([en['scope.table'], en['scope.all']], ['This table', 'All tables']);
   const ui = markup('./App.svelte');
-  const bar = ui.slice(ui.indexOf('{#if everywhere}'), ui.indexOf('class="search"'));
+  const bar = ui.match(/<div class="table-bar data-bar">[\s\S]*?\n {8}<\/div>/)[0];
   assert.match(bar, /<div class="scope" role="radiogroup" aria-label=\{t\('scope\.label'\)\}>\s*\{#each SCOPES as \[id, key\]\}/);
   assert.match(bar, /role="radio" aria-checked=\{scope === id\}[^>]*onclick=\{\(\) => setScope\(id\)\}/);
   assert.doesNotMatch(bar, /checkbox/);
@@ -204,10 +320,45 @@ test('Columns... dialog is proportional to the window', () => {
 test('table and column names are never cut with an ellipsis', () => {
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
   const css = app.match(/<style>([\s\S]*)<\/style>/)[1];
-  assert.doesNotMatch(css, /text-overflow/);
+  // "..." so no caminho do arquivo no topo (padrao item 1), nunca em nome de tabela ou coluna
+  assert.deepEqual([...css.matchAll(/([^{}]+)\{[^}]*text-overflow/g)].map((m) => m[1].replace(/\/\*[\s\S]*?\*\//g, '').trim()), ['.path-view']);
   assert.match(css, /\.table-list \[role='option'\] \{[^}]*overflow-wrap: anywhere;/);
   assert.match(css, /\.column-list label span \{[^}]*overflow-wrap: anywhere;/);
   assert.doesNotMatch(markup('./App.svelte'), /<select[^>]*size=/); // a lista nativa cortava nomes longos
+});
+
+// padrao item 24: aba Dados de cima para baixo: (a) busca | Esta tabela | Todas as tabelas | Linhas [100] | Colunas...
+// numa linha; (b) filtros so com filtro; (c) a grade (ou as tabelas achadas); (d) "{tabela}: mostrando X de Y linhas"
+// embaixo. Sem nome nem contagem acima da grade; Linhas sai da linha das abas
+test('Data tab layout: search line, filters, grid, count line', () => {
+  const ui = markup('./App.svelte');
+  const data = ui.slice(ui.indexOf('<div class="table-bar data-bar">'), ui.indexOf('</main>'));
+  const bar = data.match(/<div class="table-bar data-bar">[\s\S]*?\n {8}<\/div>/)[0];
+  const order = ['class="search"', 'class="scope"', '{@render rowLimit()}', "t('columns.button')"].map((s) => bar.indexOf(s));
+  assert.ok(order.every((v, i) => v >= 0 && (i === 0 || v > order[i - 1])), order.join(','));
+  assert.doesNotMatch(bar, /<h2|t\('data\.showing/);
+  const at = ['class="table-bar data-bar"', '{#if filters.length}', '<Grid', '<p class="table-info">'].map((s) => data.indexOf(s));
+  assert.ok(at.every((v, i) => v >= 0 && (i === 0 || v > at[i - 1])), at.join(','));
+  assert.match(data, /<p class="table-info">[\s\S]*t\('data\.showingMatches', \{ table: selectedTable, shown: fmt\(rows\.length\), matching: fmt\(matchCount\) \}\)[\s\S]*t\('data\.showing', \{ table: selectedTable, shown: fmt\(rows\.length\), total: fmt\(rowCount\) \}\)/);
+  const tabs = ui.match(/<div class="tabs"[\s\S]*?<\/div>/)[0];
+  assert.doesNotMatch(tabs, /<select|rowLimit|limit\.label/);
+  assert.equal(count(ui, '{@render rowLimit()}'), 2); // aba Dados e linha do Executar da aba SQL
+  assert.equal(en['data.showing'], '{table}: showing {shown} of {total} {total|row|rows}');
+  // 1280 px: a linha inteira cabe (a busca estica e nada tem margem automatica empurrando para a linha de baixo)
+  const css = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
+  assert.doesNotMatch(css.match(/\n {2}\.table-bar \.scope \{[^}]*\}/)[0], /margin-left: auto/);
+  assert.doesNotMatch(css.match(/\n {2}\.table-bar \.columns-button \{[^}]*\}/)[0], /margin-left: auto/);
+});
+
+// padrao item 8 (= Go): a 720 px a barra da aba Data quebra a linha (nada cortado, sem rolagem horizontal); a busca estica
+// sem largura maxima (base 160 px, como o Go)
+test('narrow window: the Data bar wraps and the search stretches', () => {
+  const css = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
+  assert.match(css, /\n {2}\.table-bar \{[^}]*flex-wrap: wrap;/);
+  const search = css.match(/\n {2}\.table-bar \.search \{([^}]*)\}/)[1];
+  assert.match(search, /flex: 1 1 160px;/);
+  assert.match(search, /min-width: 160px;/);
+  assert.doesNotMatch(search, /max-width|400px/);
 });
 
 test('the table name above the grid is never squeezed', () => {
@@ -220,7 +371,10 @@ test('each grid context menu lists an action once', () => {
   const grid = markup('./Grid.svelte');
   const [header, cell] = grid.split('{:else if menu}');
   assert.deepEqual(buttonLabels(header), ['Size column to fit', 'Size all columns to fit', 'Hide this column', 'Columns...', 'Show all columns']);
-  assert.deepEqual(buttonLabels(cell), ['Copy value', 'Copy row', 'Copy row with header', 'Filter by this value', 'Clear filters']);
+  // padrao item 14 (= Go): primeiro os filtros por valor (so na aba Data), depois copiar celula / linha / com cabecalho
+  assert.deepEqual(buttonLabels(cell), ['Filter by this value', 'Clear filters', 'Copy value', 'Copy row', 'Copy row with header']);
+  assert.ok(cell.indexOf('{#if actions}') < cell.indexOf("t('grid.filterValue')") && cell.indexOf('{/if}') < cell.indexOf("t('grid.copyValue')"));
+  assert.match(cell, /use:focusNow onclick=\{\(\) => copy\('value'\)\}/);
 });
 
 // item 11 do dono, como o menu do cabecalho do ImGui: Ajustar coluna/todas em toda grade (a borda do cabecalho
@@ -250,6 +404,19 @@ test('log panel and status bar text can be copied', () => {
   assert.match(app, /onclick=\{copyStatus\}>\{t\('status.copy'\)\}/);
 });
 
+// padrao item 2 (barra de baixo = Go): seta do log e mensagem a esquerda; nao lidos, colunas ocultas e modo de leitura a
+// direita, sem o rotulo da stack (fica no Sobre); ao abrir, "Aberto: <nome> (<n> tabelas)" sem o caminho
+test('bottom bar: log arrow and message, then unread, hidden columns and read mode', () => {
+  const bar = markup('./App.svelte').match(/<footer[\s\S]*?<\/footer>/)[0];
+  const order = ['class="log-toggle"', 'class="message"', 'class="badge"', "'status.hiddenOne'", "t('status.via'"];
+  const at = order.map((needle) => bar.indexOf(needle));
+  assert.ok(at.every((v, i) => v >= 0 && (i === 0 || v > at[i - 1])), at.join(','));
+  assert.doesNotMatch(bar, /app\.stack|class="stack"/);
+  assert.ok(!('app.stack' in en));
+  assert.match(appFunction('openDatabase'), /showStatus\('status\.opened', \{ name: baseName\(opened\.path\), count: fmt\(tables\.length\) \}\)/);
+  assert.equal(en['status.opened'], 'Loaded: {name} ({count} {count|table|tables})');
+});
+
 // REGRA_X11: aviso curto (3 linhas), link Ajuda clicavel (abre o navegador), comando com botao Copiar, sem URL crua
 test('X11 warning is short, with a clickable Help link and a Copy command button', () => {
   const app = markup('./App.svelte');
@@ -272,7 +439,7 @@ test('log panel collapses and expands in one click and remembers the choice', ()
   assert.match(app, /saveSetting\(LOG_KEY, open \? 'open' : 'closed'\)/);
   assert.equal(count(app, 'onclick={() => setLog(false)}'), 1); // seta do cabecalho do log
   assert.equal(count(app, 'onclick={() => setLog(!logOpen)}'), 2); // View > Log e seta da barra de status
-  assert.match(app, /e\.ctrlKey && !e\.altKey && e\.key\.toLowerCase\(\) === 'l'/);
+  assert.match(appFunction('shortcut'), /\n\s*l: \(\) => setLog\(!logOpen\),/);
   assert.match(app, /onclick=\{\(\) => setLog\(true\)\}>\{headline\.text\}/);
   const css = app.match(/<style>([\s\S]*)<\/style>/)[1];
   assert.match(css, /\.log textarea \{[^}]*height: 10vh;[^}]*min-height: calc\(3 \* 1\.4em \+ 10px\);[^}]*max-height: 25vh;[^}]*font-size: 11px;/);
@@ -296,10 +463,10 @@ test('converted SQLite question never traps the user', () => {
 test('every dialog has a visible default button, Enter and Esc', () => {
   const app = markup('./App.svelte');
   const dialogs = [...app.matchAll(/<dialog[\s\S]*?<\/dialog>/g)].map((m) => m[0]);
-  assert.equal(dialogs.length, 5); // Sobre, X11, SQLite convertido, Colunas, progresso
+  assert.equal(dialogs.length, 6); // Sobre, X11, SQLite convertido, tabela inteira/linhas encontradas, Colunas, progresso
   for (const d of dialogs) assert.match(d, /<button type="button" class="[^"]*(default|save)[^"]*"/, d.slice(0, 80));
   const code = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
-  for (const name of ['aboutDialog', 'x11Dialog', 'progressDialog']) {
+  for (const name of ['aboutDialog', 'x11Dialog', 'progressDialog', 'rowsDialog']) {
     assert.ok(code.includes(`${name}.querySelector('button.default')`), name); // foco inicial no botao padrao
   }
   assert.match(code, /onkeydown=\{\(e\) => e\.key === 'Enter' && columnsDialog\.close\(\)\}/);

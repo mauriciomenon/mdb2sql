@@ -13,11 +13,16 @@ export const LANGS = [
 export const CATALOGS = { en, 'pt-BR': ptBR, es };
 
 // NIVEL BASICO: Funcao de traducao do idioma; chave sem texto cai no ingles e, sem ingles, na propria chave.
-// {nome} no texto vira values.nome
+// {nome} no texto vira values.nome; {nome|singular|plural} vira a palavra que concorda com o numero values.nome
+// ("1 tabela", "2 tabelas", "0 tabelas": singular so com 1)
 export function translator(lang) {
   const catalog = CATALOGS[lang] ?? en;
   return (key, values = {}) =>
-    (catalog[key] ?? en[key] ?? key).replace(/\{(\w+)\}/g, (all, name) => (name in values ? String(values[name]) : all));
+    (catalog[key] ?? en[key] ?? key).replace(/\{(\w+)(?:\|([^|}]*)\|([^}]*))?\}/g, (all, name, one, many) => {
+      if (!(name in values)) return all;
+      const value = String(values[name]);
+      return one === undefined ? value : value === '1' ? one : many;
+    });
 }
 
 // NIVEL BASICO: Mensagem do backend com [[chave]] vira a frase do catalogo; o resto (detalhe tecnico) fica igual

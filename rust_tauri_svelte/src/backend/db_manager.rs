@@ -422,6 +422,19 @@ impl DBManager {
         self.with_conn(list_tables)
     }
 
+    // NIVEL BASICO: Linhas de cada tabela, na ordem de `tables` (coluna Linhas da lista de tabelas, como no Zig).
+    // Tabela que nao da para contar (ex.: view de um .duckdb que le um arquivo que sumiu) fica sem numero (None): o
+    // arquivo abre do mesmo jeito e o erro aparece so ao abrir essa tabela, como antes da coluna existir
+    // NIVEL TECNICO: one COUNT(*) per table on the session engine; DB4 (287 tables, 114 k rows) takes milliseconds
+    pub fn table_rows(&self, tables: &[String]) -> Result<Vec<Option<i64>>, String> {
+        self.with_conn(|conn| {
+            Ok(tables
+                .iter()
+                .map(|table| conn.query_row(&format!("SELECT COUNT(*) FROM {}", ident(table)), [], |row| row.get(0)).ok())
+                .collect())
+        })
+    }
+
     // NIVEL BASICO: Valida se tableName existe no banco
     // NIVEL TECNICO: Prevents SQL injection by checking against known tables
     fn validate_table_name(&self, table_name: &str) -> Result<(), String> {
@@ -553,6 +566,13 @@ impl DBManager {
             }
             Ok(found)
         })
+    }
+
+    // NIVEL BASICO: WHERE das linhas da tabela que a grade achou (filtros e pesquisa, a mesma regra da grade e da
+    // contagem), para exportar so elas
+    pub fn rows_where(&self, table_name: &str, filters: &[Filter], search: &str) -> Result<(String, Vec<duckdb::types::Value>), String> {
+        self.validate_table_name(table_name)?;
+        where_all(filters, &self.column_names(table_name)?, search)
     }
 
     // NIVEL BASICO: Retorna numero de linhas da tabela que passam pelos filtros e pela pesquisa (sem nada: todas)
