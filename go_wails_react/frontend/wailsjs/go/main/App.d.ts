@@ -9,13 +9,15 @@ export function CloseDatabase():Promise<void>;
 
 export function DatabaseName():Promise<string>;
 
+export function DatabasePath():Promise<string>;
+
 export function DisplayWarning():Promise<main.DisplayWarning>;
 
 export function ExportDatabase(arg1:string):Promise<string>;
 
 export function ExportQuery(arg1:string,arg2:string):Promise<string>;
 
-export function ExportTable(arg1:string,arg2:string):Promise<string>;
+export function ExportTable(arg1:string,arg2:string,arg3:Array<backend.Filter>,arg4:string):Promise<string>;
 
 export function GetAppInfo():Promise<main.AppInfo>;
 
@@ -62,3 +64,5 @@ export function SetTheme(arg1:string):Promise<void>;
 export function SourceKind():Promise<string>;
 
 export function StartupPath():Promise<string>;
+
+export function TableCounts():Promise<Array<number>>;

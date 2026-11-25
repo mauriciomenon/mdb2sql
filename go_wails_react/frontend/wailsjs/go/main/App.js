@@ -14,6 +14,10 @@ export function DatabaseName() {
   return window['go']['main']['App']['DatabaseName']();
 }
 
+export function DatabasePath() {
+  return window['go']['main']['App']['DatabasePath']();
+}
+
 export function DisplayWarning() {
   return window['go']['main']['App']['DisplayWarning']();
 }
@@ -26,8 +30,8 @@ export function ExportQuery(arg1, arg2) {
   return window['go']['main']['App']['ExportQuery'](arg1, arg2);
 }
 
-export function ExportTable(arg1, arg2) {
-  return window['go']['main']['App']['ExportTable'](arg1, arg2);
+export function ExportTable(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ExportTable'](arg1, arg2, arg3, arg4);
 }
 
 export function GetAppInfo() {
@@ -120,4 +124,8 @@ export function SourceKind() {
 
 export function StartupPath() {
   return window['go']['main']['App']['StartupPath']();
+}
+
+export function TableCounts() {
+  return window['go']['main']['App']['TableCounts']();
 }
