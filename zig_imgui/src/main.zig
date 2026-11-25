@@ -19,8 +19,6 @@ const tr = i18n.tr;
 const ExportKind = worker.ExportKind;
 const glcc = platform.glcc;
 
-const page_size = query.default_page_size;
-
 extern fn glfwGetVersion(major: *c_int, minor: *c_int, rev: *c_int) void;
 
 // Backends do ImGui (imgui_impl_glfw/opengl3, compilados com IMGUI_IMPL_API=extern "C")
@@ -798,9 +796,9 @@ const App = struct {
     select_search: bool = false, // o proximo select abre a tabela com a busca da caixa (escolha na busca global)
     sort_col: ?usize = null,
     sort_desc: bool = false,
-    page: u64 = 0,
+    limit: u32 = query.default_limit, // linhas carregadas na aba Dados (lista 100 / 500 / 1000)
     total: u64 = 0,
-    // busca e ordenacao que valem para a pagina na tela (a caixa de busca pode ter texto ainda nao aplicado)
+    // busca que vale para as linhas na tela (a caixa de busca pode ter texto ainda nao aplicado)
     applied_search: [256:0]u8 = @splat(0),
     // Filtros coluna = valor exato (clique direito na celula), somados com AND na consulta ao banco.
     // `column` aponta para col_names e `value` e do gpa; a lista so muda sem trabalho rodando (o pedido a le).
@@ -908,7 +906,6 @@ const App = struct {
     fn runSearch(app: *App) void {
         app.search_wait.due = null;
         if (app.scope == .table) {
-            app.page = 0;
             app.want_reload = true;
             return;
         }
@@ -988,6 +985,7 @@ const App = struct {
     fn start(app: *App, kind: worker.Kind) void {
         const r = &app.slot.req;
         r.kind = kind;
+        r.limit = app.limit;
         switch (kind) {
             .open => {
                 r.path = app.path;
@@ -1007,7 +1005,6 @@ const App = struct {
                 r.filters = app.filters.items;
                 r.sort_col = app.sort_col;
                 r.sort_desc = app.sort_desc;
-                r.page = app.page;
             },
             .sql => r.sql = app.sql,
             .export_ => {}, // preenchido em startExport
@@ -1076,7 +1073,6 @@ const App = struct {
                 out.data = null;
                 app.data_sel.row = null; // as colunas ocultas continuam valendo na mesma tabela
                 app.total = out.total;
-                app.page = out.page;
                 app.applied_search = app.slot.req.search;
             },
             .sql => {
@@ -1166,7 +1162,6 @@ const App = struct {
         out.schema = null;
         out.data = null;
         app.total = out.total;
-        app.page = out.page;
         copyZ(&app.search, search);
         copyZ(&app.applied_search, search);
         app.search_wait.due = null; // tecla pendente da tabela anterior nao busca nesta
@@ -1324,7 +1319,6 @@ const App = struct {
         if (app.leave != null) return; // esperando a resposta sobre o SQLite convertido
         if (app.want_filter != null or app.want_unfilter != null or app.want_clear_filters) {
             app.editFilters();
-            app.page = 0;
             app.want_reload = true;
         }
         if (app.start_export != null and app.db.isOpen() and !app.want_open and !app.want_reload and !app.want_run) {
@@ -2034,18 +2028,22 @@ const App = struct {
 
     fn drawData(app: *App) void {
         const index = app.selected orelse return ig.igTextDisabled("%s", tr("select_table").ptr);
-        const pages = query.pageCount(app.total, page_size);
+        const name = app.db.table_names[index];
         // ID por tabela: o ImGui guarda ordenacao e larguras por ID, e cada tabela tem as suas
         ig.igPushID_Int(@intCast(index));
         defer ig.igPopID();
 
-        // a busca ocupa o que sobra da linha depois do seletor e (em "Esta tabela") de Anterior/Proxima/Colunas;
+        // a busca ocupa o que sobra da linha depois do seletor e (em "Esta tabela") de Linhas e Colunas...;
         // com largura fixa sobrava linha vazia. Minimo de 10 letras: janela estreita, os botoes descem
-        const gap = ig.igGetStyle().*.ItemSpacing.x;
+        const st = ig.igGetStyle();
+        const gap = st.*.ItemSpacing.x;
         const scope_w = buttonWidth(tr("scope_table")) + buttonWidth(tr("scope_all")) + gap;
+        const rows_l = tr("rows_label");
+        const combo_w = textWidth("0000") + ig.igGetFrameHeight() + 2 * st.*.FramePadding.x;
+        const limit_w = textWidth(rows_l) + gap + combo_w;
         // +2 gaps de folga: sameLineIfFits mede pela borda da janela, um pouco antes da borda deste painel
-        const pager_w = if (app.scope == .table) buttonWidth(tr("prev")) + buttonWidth(tr("next")) + buttonWidth(tr("columns_button")) + 5 * gap else 0;
-        ig.igSetNextItemWidth(@max(ig.igGetFontSize() * 10, ig.igGetContentRegionAvail().x - scope_w - pager_w));
+        const tail_w = if (app.scope == .table) limit_w + buttonWidth(tr("columns_button")) + 4 * gap else 0;
+        ig.igSetNextItemWidth(@max(ig.igGetFontSize() * 10, ig.igGetContentRegionAvail().x - scope_w - tail_w));
         // busca 300 ms depois da ultima tecla; Enter busca na hora
         if (ig.igInputTextWithHint("##search", tr("search"), &app.search, app.search.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) {
             app.runSearch();
@@ -2054,37 +2052,40 @@ const App = struct {
         ig.igSameLine(0, -1);
         app.scopeSelector();
         if (app.scope == .all) return app.drawGlobal();
-        const prev_l = tr("prev");
-        const next_l = tr("next");
-        sameLineIfFits(buttonWidth(prev_l), -1); // janela estreita: os botoes descem em vez de serem cortados
-        ig.igBeginDisabled(app.page == 0);
-        if (button(prev_l)) {
-            app.page -|= 1;
-            app.want_reload = true;
+        // Linhas: 100 / 500 / 1000 primeiras linhas (da busca e dos filtros, na ordem da grade); o rotulo e a lista
+        // descem juntos se nao couberem
+        sameLineIfFits(limit_w, -1);
+        ig.igAlignTextToFramePadding();
+        textSlice(rows_l);
+        ig.igSameLine(0, -1);
+        ig.igSetNextItemWidth(combo_w);
+        var lb: [16]u8 = undefined;
+        if (ig.igBeginCombo("##limit", std.fmt.bufPrintSentinel(&lb, "{d}", .{app.limit}, 0) catch "", 0)) {
+            defer ig.igEndCombo();
+            for (query.row_limits) |n| {
+                var nb: [16]u8 = undefined;
+                const item = std.fmt.bufPrintSentinel(&nb, "{d}", .{n}, 0) catch continue;
+                if (ig.igSelectable_Bool(item, n == app.limit, 0, .{ .x = 0, .y = 0 }) and n != app.limit) {
+                    app.limit = n;
+                    app.want_reload = true;
+                }
+            }
         }
-        ig.igEndDisabled();
-        sameLineIfFits(buttonWidth(next_l), -1);
-        ig.igBeginDisabled(app.page + 1 >= pages);
-        if (button(next_l)) {
-            app.page += 1;
-            app.want_reload = true;
-        }
-        ig.igEndDisabled();
         // exportar a tabela fica so no Exportar... da barra de cima (um botao por acao)
         sameLineIfFits(buttonWidth(tr("columns_button")), -1);
         columnsButton(&app.data_sel);
-        // contagem na linha de baixo: ao lado dos botoes ela ficava cortada na janela de 1280
-        const first = app.page * page_size;
-        const shown = if (app.data) |g| g.rows.len else 0;
+        // contagem na linha de baixo (as colunas ocultas ficam na barra de baixo): quebra na borda da janela em vez
+        // de ser cortada
+        const shown: u64 = if (app.data) |g| g.rows.len else 0;
+        const in_table = if (index < app.counts.len) app.counts[index] else app.total;
+        var cb: [700]u8 = undefined;
+        const count_line = if (app.applied_search[0] != 0 or app.filters.items.len > 0)
+            i18n.fmtCount(&cb, "rows_found", app.total, .{ name, shown, app.total, in_table })
+        else
+            i18n.fmtCount(&cb, "rows_showing", app.total, .{ name, shown, app.total });
         ig.igAlignTextToFramePadding();
-        // nome da tabela e contagem (as colunas ocultas ficam na barra de baixo): quebra na borda da janela em vez de
-        // ser cortado
         ig.igPushTextWrapPos(0);
-        textT("page_line", .{
-            app.db.table_names[index],        app.page + 1,  pages,
-            if (shown == 0) 0 else first + 1, first + shown, app.total,
-            if (app.applied_search[0] != 0 or app.filters.items.len > 0) tr("filtered") else "",
-        });
+        textSlice(count_line);
         ig.igPopTextWrapPos();
 
         // Filtros ativos: um botao por filtro (clicar remove) e Limpar filtros; o que nao cabe desce de linha
@@ -2112,7 +2113,6 @@ const App = struct {
         if (app.data) |*g| if (drawGrid("##data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null, .filter, &app.prefs, app.db.table_names[index])) |s| {
             app.sort_col = s.col;
             app.sort_desc = s.desc;
-            app.page = 0;
             app.want_reload = true;
         };
         // pedidos do menu da celula

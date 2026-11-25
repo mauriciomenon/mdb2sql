@@ -48,7 +48,7 @@ pub const Req = struct {
     filters: []const query.Criterion = &.{}, // reload/export: filtros coluna = valor exato (a UI so muda a lista sem trabalho rodando)
     sort_col: ?usize = null,
     sort_desc: bool = false,
-    page: u64 = 0,
+    limit: u32 = query.default_limit, // open, select, reload: linhas carregadas (lista 100 / 500 / 1000)
     sql: [8192:0]u8 = @splat(0), // sql, export do resultado
     export_kind: ExportKind = .db_duckdb,
     dest: [4096]u8 = undefined, // export: arquivo de destino (UTF-8)
@@ -75,8 +75,7 @@ pub const Out = struct {
     schema: ?dbm.Grid = null, // open, select
     columns: []const []const u8 = &.{}, // vive na arena de schema
     data: ?dbm.Grid = null, // open, select, reload
-    total: u64 = 0,
-    page: u64 = 0,
+    total: u64 = 0, // linhas da tabela que casam com a busca e os filtros
     result: ?dbm.Grid = null, // sql
     exported: u64 = 0, // export: tabelas ou linhas gravadas
     converted: access.TempPath = .{}, // open de Access: o SQLite temporario (len 0 = nenhum)
@@ -133,12 +132,14 @@ fn exec(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *expor
             for (names, 0..) |n, i| {
                 if (std.ascii.eqlIgnoreCase(n, req.table_name)) index = i;
             }
-            try loadTable(db, index, "", out);
+            try loadTable(db, index, "", req.limit, out);
         },
-        .select => try loadTable(db, req.table, std.mem.sliceTo(&req.search, 0), out),
+        .select => try loadTable(db, req.table, std.mem.sliceTo(&req.search, 0), req.limit, out),
         .reload => {
             out.table = req.table;
-            try loadPage(db, try tableSpec(db, req), req.page, out);
+            var spec = try tableSpec(db, req);
+            spec.limit = req.limit;
+            try loadRows(db, spec, out);
         },
         .sql => out.result = try db.run(std.mem.sliceTo(&req.sql, 0), &.{}),
         .export_ => out.exported = try exportJob(db, gpa, env, req, progress),
@@ -203,7 +204,7 @@ pub fn searchAll(db: *dbm.Db, gpa: Allocator, term: []const u8, progress: *expor
     return hits.toOwnedSlice(gpa);
 }
 
-// Tabela atual com a busca e a ordenacao da tela (sem pagina)
+// Tabela atual com a busca e a ordenacao da tela (sem o limite de linhas)
 fn tableSpec(db: *dbm.Db, req: *const Req) !query.Spec {
     if (req.table >= db.table_names.len) return error.TableNotFound;
     return .{
@@ -243,8 +244,8 @@ fn exportJob(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *
     }
 }
 
-// Schema + primeira pagina, sem ordenacao; com a busca pedida (vazia = nenhuma)
-fn loadTable(db: *dbm.Db, index: usize, search: []const u8, out: *Out) dbm.Error!void {
+// Schema + as primeiras `limit` linhas, sem ordenacao; com a busca pedida (vazia = nenhuma)
+fn loadTable(db: *dbm.Db, index: usize, search: []const u8, limit: u32, out: *Out) dbm.Error!void {
     if (index >= db.table_names.len) return error.TableNotFound;
     out.table = index;
     out.schema = try db.schema(db.table_names[index]);
@@ -252,14 +253,12 @@ fn loadTable(db: *dbm.Db, index: usize, search: []const u8, out: *Out) dbm.Error
     const cols = try sch.arena.allocator().alloc([]const u8, sch.rows.len);
     for (cols, sch.rows) |*n, row| n.* = row[0] orelse "";
     out.columns = cols;
-    try loadPage(db, .{ .table = db.table_names[index], .tables = db.table_names, .columns = cols, .search = search }, 0, out);
+    try loadRows(db, .{ .table = db.table_names[index], .tables = db.table_names, .columns = cols, .search = search, .limit = limit }, out);
 }
 
-fn loadPage(db: *dbm.Db, spec_in: query.Spec, page: u64, out: *Out) dbm.Error!void {
-    var spec = spec_in;
+// Contagem das linhas que casam e as primeiras spec.limit delas
+fn loadRows(db: *dbm.Db, spec: query.Spec, out: *Out) dbm.Error!void {
     out.total = try db.count(spec);
-    out.page = query.clampPage(page, out.total, spec.limit);
-    spec.offset = out.page * spec.limit;
     out.data = try db.page(spec);
 }
 
@@ -371,14 +370,14 @@ test "jobs run on a worker thread: open, select, reload, sql, export, errors" {
     const columns = out.columns;
     out.deinit(t.allocator);
 
-    // reload: busca sem acento, ordenacao desc, pagina alem do fim e ajustada
-    slot.req = .{ .kind = .reload, .table = people, .columns = columns, .sort_col = 0, .sort_desc = true, .page = 7 };
+    // reload: busca sem acento, ordenacao desc
+    slot.req = .{ .kind = .reload, .table = people, .columns = columns, .sort_col = 0, .sort_desc = true };
     setZ(&slot.req.search, "ACAO");
     try slot.start();
     out = slot.wait().?;
     try t.expect(out.err == null);
     try t.expectEqual(2, out.total);
-    try t.expectEqual(0, out.page);
+    try t.expectEqual(2, out.data.?.rows.len);
     try t.expectEqualStrings("3", out.data.?.rows[0][0].?);
     out.deinit(t.allocator);
 
@@ -429,16 +428,29 @@ test "jobs run on a worker thread: open, select, reload, sql, export, errors" {
     defer t.allocator.free(blank);
     try t.expectEqual(0, blank.len);
 
-    // select de outra tabela
-    for (db.table_names, 0..) |n, i| {
-        if (std.mem.eql(u8, n, "big")) slot.req = .{ .kind = .select, .table = i };
-    }
+    // select de outra tabela: as primeiras 100 linhas (padrao); a lista Linhas pede 500 ou 1000 (aqui o total, 250)
+    const big = out_table(&db, "big");
+    slot.req = .{ .kind = .select, .table = big };
     try slot.start();
     out = pollUntilDone(&slot);
     try t.expect(out.err == null);
     try t.expectEqual(250, out.total);
     try t.expectEqual(100, out.data.?.rows.len);
+    var big_schema = out.schema.?;
+    out.schema = null;
+    defer big_schema.deinit();
+    const big_cols = out.columns;
     out.deinit(t.allocator);
+    for (query.row_limits) |limit| {
+        slot.req = .{ .kind = .reload, .table = big, .columns = big_cols, .limit = limit };
+        try slot.start();
+        out = slot.wait().?;
+        try t.expect(out.err == null);
+        try t.expectEqual(250, out.total);
+        try t.expectEqual(@min(limit, 250), out.data.?.rows.len);
+        out.deinit(t.allocator);
+    }
+    try t.expectEqualSlices(u32, &.{ 100, 500, 1000 }, &query.row_limits);
 
     // sql livre e erro de sql (a mensagem fica no Db)
     slot.req = .{ .kind = .sql };

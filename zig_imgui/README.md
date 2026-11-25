@@ -108,9 +108,10 @@ While a file opens, the status line shows the time, a progress bar (tables conve
 - **Table list** (left): every table with its row count, the whole name shown (the panel starts as wide as the
   longest name, up to 40% of the window, and scrolls sideways beyond that); the box on top filters by name 300 ms
   after the last key (Enter: at once).
-- **Data** tab: 100 rows per page, **< Prev** / **Next >**, search box, click a column header to sort. The search
+- **Data** tab: search box, **Rows** list (the first 100, 500 or 1000 rows), click a column header to sort; below,
+  `<table>: showing <n> of <total> rows` (with a search or filter: `... rows matching (<n> in the table)`). The search
   runs 300 ms after the last key (Enter: at once), in the database over the **whole table** (every column), for
-  Access, SQLite and DuckDB alike, before the paging: the row count and pages follow it.
+  Access, SQLite and DuckDB alike, before the row limit: the row count follows it.
 - Next to the search box, **This table** | **All tables**: with **All tables** the text is searched in every table
   (same rule and same query as the table search) and the Data tab lists the tables with the number of rows found;
   clicking one opens that table with the same search and without value filters, showing that same number of rows.
@@ -327,7 +328,7 @@ gzip payload of the single executable use only Zig's standard library.
 
 ## Layout
 
-- `src/query.zig` - extension check, SQL builder with bound parameters and whitelisted identifiers, paging.
+- `src/query.zig` - extension check, SQL builder with bound parameters and whitelisted identifiers, row limits.
 - `src/db.zig` - DuckDB C API: the in-memory instance, read-only `ATTACH` of the file, streaming results, counts.
 - `src/access.zig` - Access reader (mdbtools, ODBC on Windows), conversion to SQLite, temporary files and cleanup.
 - `src/exporter.zig`, `src/xlsx.zig`, `src/csv.zig` - exports. `src/gridtools.zig` - row copy, word search, filters.
