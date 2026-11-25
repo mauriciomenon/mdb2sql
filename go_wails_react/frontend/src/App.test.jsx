@@ -404,12 +404,14 @@ describe('App IPC flow', () => {
     act(() => goProgress({ done: 1, total: 2, label: 'RANGER_SOACCU' }));
     expect(screen.getByText('Searching RANGER_SOACCU - 1 of 2')).toBeInTheDocument();
     await act(async () => answer([{ table: 'RANGER_SOGEN', rows: 3 }]));
-    const hit = await screen.findByRole('row', { name: 'RANGER_SOGEN 3' });
-    expect(screen.getByRole('columnheader', { name: 'Rows found' })).toBeInTheDocument();
+    // standard item 10: a list of "table (n)" (Python and Rust), no 2-column table
+    const hit = await screen.findByRole('button', { name: 'RANGER_SOGEN (3)' });
+    expect(hit.closest('ul').className).toBe('hits');
+    expect(screen.queryByRole('columnheader')).not.toBeInTheDocument();
     expect(screen.getByText('1 tables with rows matching "tensao"')).toBeInTheDocument();
     expect(bridge.GetTableData).not.toHaveBeenCalledWith('RANGER_SOACCU', 100, [], 'tensao'); // the grid is not queried
 
-    fireEvent.click(within(hit).getByRole('button', { name: 'RANGER_SOGEN' }));
+    fireEvent.click(hit);
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'tensao'));
     expect(within(scope).getByRole('radio', { name: 'This table' })).toHaveAttribute('aria-checked', 'true');
     expect(await screen.findByText('Alpha')).toBeInTheDocument();
@@ -455,11 +457,11 @@ describe('App IPC flow', () => {
     searchFor('bob'); // a new term before the answer
     await waitFor(() => expect(SearchAllTables).toHaveBeenLastCalledWith('bob'));
     await act(async () => answers[0].resolve([{ table: 'RANGER_SOGEN', rows: 9 }]));
-    expect(screen.queryByRole('row', { name: 'RANGER_SOGEN 9' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'RANGER_SOGEN (9)' })).not.toBeInTheDocument();
     expect(screen.getByText('Searching')).toBeInTheDocument();
     searchFor(''); // the term erased: the grid comes back and the answer of "bob" is dropped too
     await act(async () => answers[1].resolve([{ table: 'RANGER_SOGEN', rows: 5 }]));
-    expect(screen.queryByRole('row', { name: 'RANGER_SOGEN 5' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'RANGER_SOGEN (5)' })).not.toBeInTheDocument();
     expect(await screen.findByText('Alpha')).toBeInTheDocument();
 
     searchFor('zed');
@@ -483,8 +485,8 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'All tables' }));
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'a' } });
     fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
-    const hit = await screen.findByRole('row', { name: 'RANGER_SOACCU 2' });
-    fireEvent.click(within(hit).getByRole('button', { name: 'RANGER_SOACCU' }));
+    const hit = await screen.findByRole('button', { name: 'RANGER_SOACCU (2)' });
+    fireEvent.click(hit);
     await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], 'a'));
     expect(screen.queryByRole('group', { name: 'Active filters' })).not.toBeInTheDocument();
   });
@@ -519,7 +521,7 @@ describe('App IPC flow', () => {
     await screen.findByText('Alpha');
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'ana' } });
     fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
-    await screen.findByRole('row', { name: 'RANGER_SOGEN 1' });
+    await screen.findByRole('button', { name: 'RANGER_SOGEN (1)' });
     fireEvent.click(screen.getByRole('radio', { name: 'This table' }));
     fireEvent.change(screen.getByLabelText('Filter 2 tables'), { target: { value: 'gen' } });
 

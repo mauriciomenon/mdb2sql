@@ -1186,28 +1186,16 @@ function App() {
               {searchAll ? (
                 shownHits &&
                 (shownHits.length > 0 ? (
-                  <table className="hits">
-                    <thead>
-                      <tr>
-                        <th scope="col">{t('hits.table')}</th>
-                        <th scope="col" className="num">
-                          {t('hits.rows')}
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {shownHits.map((h) => (
-                        <tr key={h.table}>
-                          <td>
-                            <button className="table-item" onClick={() => openHit(h.table)}>
-                              {h.table}
-                            </button>
-                          </td>
-                          <td className="num">{h.rows}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  // as Python and Rust: "table (n)"; a click opens the table with the same search
+                  <ul className="hits">
+                    {shownHits.map((h) => (
+                      <li key={h.table}>
+                        <button className="table-item" onClick={() => openHit(h.table)}>
+                          {t('hits.item', h.table, h.rows)}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 ) : (
                   <p className="empty">{t('sidebar.noMatch')}</p>
                 ))
