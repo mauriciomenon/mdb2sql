@@ -77,7 +77,8 @@ def _converted_files(win: MainWindow) -> list[Path]:
 @needs_mdbtools
 def test_access_opens_through_one_sqlite_conversion(access_window: MainWindow) -> None:
     win = access_window
-    assert win.status_label.text() == "Loaded: sample.mdb (2 tables) via mdbtools, converted to SQLite"
+    assert win.status_label.text() == "Loaded: sample.mdb (2 tables)"
+    assert win.reader_label.text() == "Opened via mdbtools, converted to SQLite"
     assert [win.table_list.item(i).text() for i in range(2)] == ["empty table", "points"]
     assert [p.name for p in _converted_files(win)] == ["sample.sqlite"]
 
@@ -186,7 +187,7 @@ def test_log_panel_keeps_the_messages_and_copies(qtbot, people_db: Path) -> None
     assert win.log_dock.isVisible()
     lines = win.log_view.toPlainText().splitlines()
     assert re.fullmatch(r"\d\d:\d\d:\d\d  Loading: people\.duckdb", lines[0])
-    assert lines[1].endswith("Loaded: people.duckdb (2 tables) via DuckDB")
+    assert lines[1].endswith("Loaded: people.duckdb (2 tables)")
     assert win.log_view.isReadOnly()  # selecionavel; Ctrl+C do proprio campo
 
     win.log_copy_button.click()  # Copiar tudo
@@ -196,7 +197,7 @@ def test_log_panel_keeps_the_messages_and_copies(qtbot, people_db: Path) -> None
     menu = win.status_menu(win.status_label)
     assert [a.text() for a in menu.actions()] == ["&Copy", "&Log"]
     menu.actions()[0].trigger()
-    assert QApplication.clipboard().text() == "Loaded: people.duckdb (2 tables) via DuckDB"
+    assert QApplication.clipboard().text() == "Loaded: people.duckdb (2 tables)"
 
 
 def test_log_panel_collapsed_shows_the_most_important_line(qtbot) -> None:
@@ -213,14 +214,15 @@ def test_log_panel_collapsed_shows_the_most_important_line(qtbot) -> None:
     assert win.log_view.minimumHeight() >= 3 * win.log_view.fontMetrics().lineSpacing()
 
     # erro > aviso > ultima acao: com o painel recolhido, o erro fica na barra (destacado) mesmo depois de outra acao
-    win._set_message(win.info_label, "SQL error: boom", error=True)
-    win._set_message(win.info_label, "Export cancelled: x.csv not written", warning=True)
+    win._set_message(win.status_label, "SQL error: boom", error=True)
+    win._set_message(win.status_label, "Export cancelled: x.csv not written", warning=True)
     for n in range(40):  # historico maior que o painel: ao abrir, o fim (a linha mais nova) fica visivel
         win.log(f"line {n}")
-    win._set_message(win.status_label, "Loaded: a.duckdb (1 tables) via DuckDB")
+    win._set_message(win.status_label, "Loaded: a.duckdb (1 table)")
     assert win.status_label.text() == "SQL error: boom" and "color" in win.status_label.styleSheet()
-    assert "SQL error" not in win.info_label.text() and "Export cancelled" not in win.info_label.text()  # uma vez so
     assert win.log_unread.text() == "(2)" and not win.log_unread.isHidden()
+    # o contador fica a direita, a mensagem a esquerda (barra de baixo igual ao Go)
+    assert win.log_unread.x() > win.status_label.x()
 
     # clique na mensagem reexibe o log e zera os nao lidos; a seta do cabecalho recolhe; estado lembrado
     qtbot.mouseClick(win.status_label, Qt.MouseButton.LeftButton)
@@ -272,10 +274,13 @@ def test_catalogs_have_the_same_keys_and_placeholders() -> None:
         for key, text in catalog.items():
             assert _placeholders(text) == _placeholders(catalogs["en"][key]), (code, key)
     # toda chave usada no codigo existe (as montadas com f-string conferidas pelos prefixos)
-    used = set()
+    used, plural = set(), set()
     for path in (p for p in SRC.rglob("*.py") if p.name != "i18n.py"):
         used |= set(re.findall(r'tr\("([\w.]+)"', path.read_text(encoding="utf-8")))
+        plural |= set(re.findall(r'counted\(\s*"([\w.]+)"', path.read_text(encoding="utf-8")))
     assert used - keys == set()
+    # plural certo: "1 tabela" / "2 tabelas" (counted escolhe <chave>_one quando o numero e 1)
+    assert plural and {f"{key}_one" for key in plural} | plural <= keys | {"status.sql_first_one"}
     for prefix, names in (("theme.", mw.THEMES), ("language.", i18n.LANGUAGES), ("filter.", ("sqlite", "duckdb",
                                                                                              "xlsx", "csv")),
                           ("export.done_", ("tables", "rows"))):
@@ -338,7 +343,7 @@ def test_no_ui_text_outside_the_catalogs(qtbot, people_db: Path, monkeypatch) ->
             bare = inner
         # o que sobra fora das marcas so pode ser dado (nome de tabela/coluna/arquivo, valor) ou nome de produto
         # (o menu do cabecalho lista as colunas da tabela aberta: code, label)
-        leftover = re.sub(r"people\.duckdb|people|empty_table|label = 'Ana'|code|label|×|via DuckDB|[\s:;()\-]", "", bare)
+        leftover = re.sub(r"people\.duckdb|people|empty_table|label = 'Ana'|code|label|×|[\s:;()\-]", "", bare)
         if leftover and not NOT_TEXT.fullmatch(text.replace("&", "").strip()):
             outside.append((kind, text))
     assert outside == [], "\n".join(map(repr, outside))

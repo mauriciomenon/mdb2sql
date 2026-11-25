@@ -141,8 +141,9 @@ def file_key(path: Path) -> str:
     return f"{info.st_size}|{info.st_mtime_ns}"
 
 
-def hidden_text(count: int) -> str:
-    return "" if not count else tr("status.hidden_one") if count == 1 else tr("status.hidden_many", count=count)
+def counted(key: str, count: int, **values: object) -> str:
+    """Texto com o plural certo: a chave '<key>_one' quando count == 1 ('1 tabela'), '<key>' nos outros casos."""
+    return tr(f"{key}_one" if count == 1 else key, count=num(count), **values)
 
 
 class PaddedStyle(QProxyStyle):
@@ -381,8 +382,12 @@ class MainWindow(QMainWindow):
         run_button.setAccessibleName(tr("action.run_sql").replace("&", ""))
         run_button.setToolTip(self.run_sql_action.toolTip())
         run_button.clicked.connect(self.run_sql)
+        # linha do botao: resultado (linhas) ou erro da ultima consulta
+        self.sql_info = QLabel()
+        self.sql_info.setContentsMargins(6, 0, 0, 0)
+        self._copy_menu_on(self.sql_info)
         sql_bar = QHBoxLayout()
-        sql_bar.addStretch(1)
+        sql_bar.addWidget(self.sql_info, 1)
         sql_bar.addWidget(run_button)
         editor = QWidget()
         editor_layout = QVBoxLayout(editor)
@@ -494,10 +499,17 @@ class MainWindow(QMainWindow):
         self.data_page = QWidget()
         layout = QVBoxLayout(self.data_page)
         layout.setContentsMargins(0, 0, 0, 0)
+        # barra da tabela, embaixo da grade (como o Go): linhas mostradas / encontradas / na tabela, ou a pesquisa em
+        # todas as tabelas
+        self.info_label = QLabel()
+        self.info_label.setContentsMargins(6, 0, 6, 2)
+        self._copy_menu_on(self.info_label)
+
         layout.setSpacing(4)
         layout.addLayout(bar)
         layout.addWidget(self.filters_bar)
         layout.addWidget(self.data_stack)
+        layout.addWidget(self.info_label)
         return self.data_page
 
     def _create_table_view(self, model: TableModel, name: str) -> tuple[QSortFilterProxyModel, QTableView]:
@@ -836,15 +848,19 @@ class MainWindow(QMainWindow):
         notice = i18n.catalog(code)["status.language_restart"]
         self._set_message(self.status_label, notice)
 
+    def _copy_menu_on(self, label: QLabel) -> None:
+        # !T: A long message must not widen the window or squeeze the tables panel: the label takes the width it gets
+        # !T: (the full text is in the tooltip, the log and the Copy menu)
+        label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        # clique direito > Copiar (o texto inteiro), e o painel Log com o historico
+        label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        label.customContextMenuRequested.connect(lambda pos, lbl=label: self.status_menu(lbl).popup(lbl.mapToGlobal(pos)))
+
     def _create_status_bar(self) -> None:
+        # barra de baixo igual nas 4 versoes (Go): a esquerda a seta do Log e a mensagem; a direita o contador de nao
+        # lidos do Log, as colunas ocultas e como o arquivo foi lido (fixo enquanto ele estiver aberto)
         self.status_label = QLabel()  # o centro da janela ja diz "No database loaded"
-        self.info_label = QLabel(tr("status.ready"))
-        for label in (self.status_label, self.info_label):
-            # clique direito > Copiar (o texto inteiro), e o painel Log com o historico
-            label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            label.customContextMenuRequested.connect(
-                lambda pos, lbl=label: self.status_menu(lbl).popup(lbl.mapToGlobal(pos))
-            )
+        self._copy_menu_on(self.status_label)
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)  # indeterminado: o backend nao informa percentual
         self.progress.setTextVisible(False)
@@ -860,13 +876,18 @@ class MainWindow(QMainWindow):
         self.log_unread = QLabel()
         self.log_unread.setToolTip(tr("log.unread_tip"))
         self.status_label.installEventFilter(self)  # clique na mensagem reexibe o log
+        self.hidden_label = QLabel()  # "2 colunas ocultas" da tabela aberta na aba Data
+        self.hidden_label.hide()
+        self.reader_label = QLabel()  # "Aberto via Access ODBC, convertido para SQLite"
+        self.reader_label.setToolTip(tr("status.reader_tip"))
 
         status_bar = self.statusBar()
         status_bar.addWidget(self.log_toggle)
-        status_bar.addWidget(self.log_unread)
         status_bar.addWidget(self.status_label, 1)
         status_bar.addPermanentWidget(self.progress)
-        status_bar.addPermanentWidget(self.info_label)
+        status_bar.addPermanentWidget(self.log_unread)
+        status_bar.addPermanentWidget(self.hidden_label)
+        status_bar.addPermanentWidget(self.reader_label)
         self.set_log_visible(self.settings.value("log_visible", False, type=bool))  # padrao: recolhido
 
     def status_menu(self, label: QLabel) -> QMenu:
@@ -883,14 +904,6 @@ class MainWindow(QMainWindow):
         self, label: QLabel, text: str, error: bool = False, log: bool = True, warning: bool = False
     ) -> None:
         level = "error" if error else "warning" if warning else "info"
-        if level != "info" and label is self.info_label:
-            # erro/aviso so a esquerda (seta, contador, linha mais importante): a mesma mensagem nunca aparece duas
-            # vezes; a direita volta para o estado da tabela (linhas, colunas ocultas)
-            label = self.status_label
-            if self.loaded_table is not None:
-                self._apply_search()
-            else:
-                self.info_label.clear()
         label.setText(status_line(text))
         label.setToolTip(text)  # texto inteiro (erro do motor com LINE 1 e ^^^) na dica e no Log
         label.setStyleSheet("" if level == "info" else f"color: {self._alert_color(level)};")
@@ -1083,6 +1096,7 @@ class MainWindow(QMainWindow):
         self.current_db_path = db_path
         self.sql_query = None
         self.sql_model.set_rows([])
+        self.sql_info.clear()
         self.setWindowTitle(f"{db_path.name} - {app_title()}")
         self.path_edit.setText(str(db_path))
         self.stack.setCurrentWidget(self.tabs)
@@ -1096,9 +1110,9 @@ class MainWindow(QMainWindow):
         self._fit_tables_panel(tables)
         self._filter_tables(self.table_filter.text())
 
-        # o caminho usado para abrir (Access ODBC, mdbtools, SQLite, DuckDB) fica visivel na barra de status
-        key = "status.loaded_access" if manager.converted else "status.loaded"
-        self._set_message(self.status_label, tr(key, name=db_path.name, count=num(len(tables)), reader=manager.reader))
+        # "Aberto: <arquivo> (N tabelas)"; como foi lido (Access ODBC, mdbtools, SQLite, DuckDB) fica fixo a direita
+        self._set_message(self.status_label, counted("status.loaded", len(tables), name=db_path.name))
+        self._show_reader()
         self._set_opening(False)
         self._update_export_actions()
 
@@ -1109,9 +1123,17 @@ class MainWindow(QMainWindow):
             self.loaded_table = None
             self.table_model.set_rows([])
             self.schema_model.set_rows([])
-            self._set_message(self.info_label, tr("status.no_tables"))
+            self._set_message(self.info_label, tr("status.no_tables"), log=False)
         if self.data_stack.currentWidget() is self.found_list:
             self._search_now()  # lista de todas as tabelas: refeita no banco aberto agora
+
+    def _show_reader(self) -> None:
+        manager = self.manager
+        if manager is None:
+            self.reader_label.clear()
+            return
+        key = "status.reader_converted" if manager.converted else "status.reader"
+        self.reader_label.setText(tr(key, reader=manager.reader))
 
     def _on_database_error(self, request_id: int, message: str) -> None:
         if request_id != self._db_request:
@@ -1205,6 +1227,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(app_title())
         self.status_label.clear()
         self.info_label.clear()
+        self.sql_info.clear()
+        self._apply_search()  # sem tabela: barra da tabela e colunas ocultas vazias
+        self._show_reader()
         self._set_opening(False)
         self._update_export_actions()
 
@@ -1269,11 +1294,13 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(tr("search.found_item", table=table, count=num(count)))
             item.setData(Qt.ItemDataRole.UserRole, table)
             self.found_list.addItem(item)
-        self._set_message(self.info_label, tr("status.found", count=num(len(found))), log=False)
+        search = self.search_edit.text().strip()
+        self._set_message(self.info_label, counted("status.found", len(found), search=search), log=False)
 
     def _on_found_error(self, request_id: int, message: str) -> None:
         if request_id == self._found_request:
-            self._set_message(self.info_label, tr("status.error", message=message), error=True)
+            self._set_message(self.status_label, tr("status.error", message=message), error=True)
+            self._apply_search()  # sai o "Pesquisando": a barra da tabela volta para a tabela aberta
 
     def open_found_table(self, item: QListWidgetItem) -> None:
         # a tabela escolhida abre na aba Data com a mesma pesquisa e sem filtros por valor (a grade mostra o numero
@@ -1378,25 +1405,27 @@ class MainWindow(QMainWindow):
 
     def _on_table_error(self, request_id: int, message: str) -> None:
         if request_id == self._table_request:
-            self._set_message(self.info_label, tr("status.table_error", message=message), error=True)
+            self._set_message(self.status_label, tr("status.table_error", message=message), error=True)
+            self._apply_search()  # sai o "Carregando": a barra da tabela volta para a tabela que esta na grade
 
     def _apply_search(self) -> None:
-        # linha da barra de status da aba Data; pesquisa e filtros ja vieram aplicados da consulta ao banco
+        # barra da tabela (aba Data) e colunas ocultas (barra de baixo); pesquisa e filtros ja vieram aplicados da
+        # consulta ao banco
+        hidden = sum(name in self.hidden_columns for name in self.table_model.columns)
+        self.hidden_label.setText(counted("status.hidden", hidden) if hidden else "")
+        self.hidden_label.setVisible(bool(hidden))
         if self.loaded_table is None:
+            self.info_label.clear()
             return
 
         table, total_rows = self.loaded_table
-        loaded = self.table_model.rowCount()
-        total = num(total_rows)
+        loaded = num(self.table_model.rowCount())
         if self.filters or self.loaded_search.split():  # contagem feita no banco, alem das linhas carregadas
-            message = tr("status.showing_matched", table=table, loaded=num(loaded), matched=num(self.matched_rows),
-                         total=total)
-        elif not loaded:
-            message = tr("status.zero_rows", table=table)
+            message = counted("status.showing_matched", self.matched_rows, table=table, loaded=loaded,
+                              total=num(total_rows))
         else:
-            message = tr("status.showing", table=table, loaded=num(loaded), total=total)
-        hidden = sum(name in self.hidden_columns for name in self.table_model.columns)
-        self._set_message(self.info_label, message + hidden_text(hidden), log=False)
+            message = counted("status.showing", total_rows, table=table, loaded=loaded)
+        self._set_message(self.info_label, message, log=False)
 
     # ----------------------------------------------- filtros e colunas ocultas
 
@@ -1520,7 +1549,7 @@ class MainWindow(QMainWindow):
         limit = self.limit_combo.currentData()
         self._sql_request += 1
         self.tabs.setCurrentWidget(self.sql_page)
-        self._set_message(self.info_label, tr("status.sql_running"), log=False)
+        self._set_message(self.sql_info, tr("status.sql_running"), log=False)
         self._run(
             self._sql_request,
             lambda _report: (query, *manager.execute_query(query, limit)),
@@ -1541,13 +1570,15 @@ class MainWindow(QMainWindow):
         if not columns:
             message = tr("status.sql_done")
         else:
-            message = tr("status.sql_first" if more else "status.sql_rows", count=num(len(rows)))
-        self._set_message(self.info_label, message)
+            message = counted("status.sql_first" if more else "status.sql_rows", len(rows))
+        self._set_message(self.sql_info, message)
         self._update_export_actions()
 
     def _on_sql_error(self, request_id: int, message: str) -> None:
         if request_id == self._sql_request:
-            self._set_message(self.info_label, tr("status.sql_error", message=message), error=True)
+            text = tr("status.sql_error", message=message)
+            self._set_message(self.sql_info, text, error=True, log=False)  # na linha do botao Executar
+            self._set_message(self.status_label, text, error=True)
 
     # -------------------------------------------------------------- export
 
@@ -1662,7 +1693,7 @@ class MainWindow(QMainWindow):
             dialog.canceled.disconnect(cancel.set)
             dialog.close()
             dialog.deleteLater()  # nao acumula dialogos "Export" escondidos
-            self._set_message(self.info_label, message, error=error, warning=warning)
+            self._set_message(self.status_label, message, error=error, warning=warning)
 
         def cancelled_or_done(_request_id: int, count: object) -> None:
             if count is None:

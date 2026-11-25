@@ -59,18 +59,19 @@ def test_open_lists_tables_and_loads_first(window: MainWindow) -> None:
     names = [window.table_list.item(i).text() for i in range(window.table_list.count())]
 
     assert names == ["empty_table", "people"]
-    assert window.status_label.text() == "Loaded: people.duckdb (2 tables) via DuckDB"
+    assert window.status_label.text() == "Loaded: people.duckdb (2 tables)"
+    assert window.reader_label.text() == "Opened via DuckDB"  # fixo a direita da barra de baixo
     assert window.windowTitle() == "people.duckdb - mdb2sql 1.3.0 - Python"
     assert window.stack.currentWidget() is window.tabs
     # tabela vazia ainda mostra as colunas do schema
-    assert window.info_label.text() == "empty_table: 0 rows"
+    assert window.info_label.text() == "empty_table: showing 0 of 0 rows"
     assert window.table_model.columns == ["code", "label"]
     assert window.progress.isHidden()
 
 
 def test_select_sort_search_and_copy(qtbot, window: MainWindow) -> None:
     _select_table(qtbot, window, "people")
-    assert window.info_label.text() == "people: Showing 3 of 3 rows"
+    assert window.info_label.text() == "people: showing 3 of 3 rows"
     assert _column(window, 0) == ["1", "2", "10"]
     assert window.schema_model.rowCount() == 3
     # Schema: titulos e nulidade traduzidos (nao as chaves nem o YES/NO do backend), igual nas 4 versoes
@@ -98,7 +99,7 @@ def test_select_sort_search_and_copy(qtbot, window: MainWindow) -> None:
     assert window._table_request == request + 1 and not window.table_load_timer.isActive()
     qtbot.waitUntil(lambda: window.data_proxy.rowCount() == 1, timeout=5000)
     assert _column(window, 1) == ["carla"]
-    assert window.info_label.text() == "people: Showing 1 of 1 matching rows (3 rows in table)"
+    assert window.info_label.text() == "people: showing 1 of 1 row matching (3 in the table)"
 
     window.data_table.selectAll()
     window.copy_selection()
@@ -183,7 +184,7 @@ def test_row_limit_reloads_table(qtbot, window: MainWindow) -> None:
     window.limit_combo.setCurrentIndex(1)
     qtbot.waitUntil(lambda: window._table_request > request and window._busy == 0, timeout=30000)
 
-    assert window.info_label.text() == "people: Showing 3 of 3 rows"
+    assert window.info_label.text() == "people: showing 3 of 3 rows"
 
 
 def _menu(win: MainWindow, title: str):
@@ -251,7 +252,7 @@ def test_search_all_tables_and_open_one(qtbot, window: MainWindow) -> None:
     qtbot.waitUntil(lambda: window.found_list.count() == 1, timeout=30000)
     assert window.data_stack.currentWidget() is window.found_list
     assert window.found_list.item(0).text() == "people (1)"
-    assert window.info_label.text() == "All tables: 1 with matching rows"
+    assert window.info_label.text() == '1 table with rows matching "ANA"'
 
     # escolher uma abre a tabela na aba Data com a mesma pesquisa; o escopo volta para esta tabela
     window.found_list.itemClicked.emit(window.found_list.item(0))
@@ -259,13 +260,13 @@ def test_search_all_tables_and_open_one(qtbot, window: MainWindow) -> None:
                     and window._busy == 0, timeout=30000)
     assert window.scope_actions["table"].isChecked() and window.data_stack.currentWidget() is window.data_table
     assert _column(window, 1) == ["Ana"]
-    assert window.info_label.text() == "people: Showing 1 of 1 matching rows (3 rows in table)"
+    assert window.info_label.text() == "people: showing 1 of 1 row matching (3 in the table)"
 
     # sem resultado: lista vazia; escopo padrao em Configuracoes, gravado e ja valendo na tela
     window.default_scope_actions["all"].trigger()
     assert QSettings().value("search_scope") == "all" and window.scope_actions["all"].isChecked()
     window.search_edit.setText("zzz")
-    qtbot.waitUntil(lambda: window.info_label.text() == "All tables: 0 with matching rows", timeout=30000)
+    qtbot.waitUntil(lambda: window.info_label.text() == '0 tables with rows matching "zzz"', timeout=30000)
     assert window.found_list.count() == 0
     again = MainWindow()
     qtbot.addWidget(again)
@@ -295,7 +296,7 @@ def test_search_all_tables_never_shows_an_old_result_and_reports_failure(qtbot, 
     window.search_edit.setText("foo")
     qtbot.waitUntil(lambda: "broken view" in window.status_label.text() and window._busy == 0, timeout=30000)
     assert window.status_label.text() == "Error: broken view"
-    assert window.info_label.text() == "a: 0 rows" and not window.progress.isVisible()
+    assert window.info_label.text() == "a: showing 0 of 0 rows" and not window.progress.isVisible()
 
 
 def test_opening_a_found_table_clears_its_value_filters(qtbot, window: MainWindow) -> None:
@@ -339,7 +340,7 @@ def test_sql_tab_runs_query_and_copies(qtbot, window: MainWindow) -> None:
     qtbot.waitUntil(lambda: window.sql_model.rowCount() == 3, timeout=30000)
 
     assert window.sql_model.columns == ["id", "n", "n_2"]
-    assert window.info_label.text() == "SQL: 3 rows"
+    assert window.sql_info.text() == "SQL result: 3 rows"
     window.sql_table.setCurrentIndex(window.sql_proxy.index(0, 1))
     window.copy_action.trigger()
     assert QApplication.clipboard().text() == "carla"
@@ -350,7 +351,7 @@ def test_sql_tab_runs_query_and_copies(qtbot, window: MainWindow) -> None:
     qtbot.waitUntil(lambda: window.status_label.text().startswith("SQL query error"), timeout=30000)
     # a mesma mensagem nunca aparece duas vezes na barra de status: so a esquerda; a direita, o estado da tabela
     shown = [w.text() for w in window.statusBar().findChildren(QLabel) if "SQL query error" in w.text()]
-    assert len(shown) == 1 and not window.info_label.text().startswith("SQL")
+    assert len(shown) == 1 and window.sql_info.text().startswith("SQL query error")  # e na linha do botao
 
     # erro do motor: uma linha na barra (sem "Parser Error:"), o texto inteiro (LINE 1, ^) no log e na dica
     window.sql_edit.setPlainText("selec 1")
@@ -384,9 +385,9 @@ def test_export_actions_write_files_next_to_source(qtbot, window: MainWindow, pe
     ]
     for action in actions:
         action.trigger()
-        qtbot.waitUntil(lambda: window.info_label.text().startswith("Export"), timeout=60000)
-        assert window.info_label.text().startswith("Exported"), window.info_label.text()
-        window.info_label.setText("")
+        qtbot.waitUntil(lambda: window.status_label.text().startswith("Export"), timeout=60000)
+        assert window.status_label.text().startswith("Exported"), window.status_label.text()
+        window.status_label.setText("")
 
     # pasta sugerida = pasta do banco aberto; o proprio banco nunca e sugerido; resultado SQL = query.csv (nas 4)
     assert [Path(s).parent for s in asked] == [people_db.parent] * 7
@@ -410,9 +411,9 @@ def test_export_with_active_search_asks_whole_table_or_found_rows(qtbot, window:
     monkeypatch.setattr(window, "ask_found_rows", lambda: answers.pop(0))
 
     def exported() -> list[list[str]]:
-        window.info_label.setText("")
+        window.status_label.setText("")
         window.export_table_actions[0].trigger()
-        qtbot.waitUntil(lambda: window.info_label.text().startswith("Export"), timeout=60000)
+        qtbot.waitUntil(lambda: window.status_label.text().startswith("Export"), timeout=60000)
         with open(out, encoding="utf-8-sig", newline="") as handle:
             return list(csv.reader(handle))[1:]
 
@@ -605,11 +606,12 @@ def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None
 
     assert _hidden(window) == [True, False, True]
     assert window.hidden_columns == {"id", "score"}
-    assert window.info_label.text() == "people: Showing 3 of 3 rows - 2 hidden columns"
+    assert window.info_label.text() == "people: showing 3 of 3 rows"
+    assert window.hidden_label.text() == "2 hidden columns" and not window.hidden_label.isHidden()  # barra de baixo
     # a pesquisa continua olhando todas as colunas (7.25 esta na coluna oculta) e exportar leva todas
     window.search_edit.setText("7.25")
     qtbot.waitUntil(lambda: window.data_proxy.rowCount() == 1, timeout=5000)
-    assert window.info_label.text() == "people: Showing 1 of 1 matching rows (3 rows in table) - 2 hidden columns"
+    assert window.info_label.text() == "people: showing 1 of 1 row matching (3 in the table)"
     assert window.manager.select_table("people") == ('SELECT * FROM "people"', [])  # exportar: todas as colunas
     _reloaded(qtbot, window, window.search_edit.clear)
 
@@ -622,7 +624,7 @@ def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None
     dialog.set_all(True)
     dialog.accept()
     assert _hidden(window) == [False, False, False]
-    assert window.info_label.text() == "people: Showing 3 of 3 rows"
+    assert window.info_label.text() == "people: showing 3 of 3 rows" and window.hidden_label.isHidden()
 
 
 def test_columns_dialog_checks_all_selected_rows(qtbot) -> None:
@@ -725,7 +727,7 @@ def test_header_menu_fits_hides_and_shows_columns(qtbot, window: MainWindow) -> 
     # a lista alterna; ocultar desta coluna; a ultima visivel nao pode sair
     _header_action(window, 0, "score").trigger()
     assert _hidden(window) == [False, False, True]
-    assert window.info_label.text() == "people: Showing 3 of 3 rows - 1 hidden column"
+    assert window.hidden_label.text() == "1 hidden column"
     _header_action(window, 0, "Hide this column").trigger()
     assert _hidden(window) == [True, False, True]
     assert not _header_action(window, 1, "name").isEnabled()
@@ -800,14 +802,14 @@ def _chips(win: MainWindow) -> list[str]:
 
 def test_right_click_filter_runs_in_the_database(qtbot, points_window: MainWindow) -> None:
     win = points_window
-    assert win.info_label.text() == "points: Showing 100 of 300 rows"
+    assert win.info_label.text() == "points: showing 100 of 300 rows"
     menu = [a.text() for a in win.data_table.actions() if not a.isSeparator()]
     assert menu[:2] == ["&Filter by this value", "C&lear filters"] and "&Copy value" in menu
     assert not win.clear_filters_action.isEnabled() and win.filters_bar.isHidden()
 
     # U18A nao esta nas 100 linhas carregadas: o filtro vai na consulta e acha as 50
     _reloaded(qtbot, win, lambda: win.add_filter("sigla", "U18A"))
-    assert win.info_label.text() == "points: Showing 50 of 50 matching rows (300 rows in table)"
+    assert win.info_label.text() == "points: showing 50 of 50 rows matching (300 in the table)"
     assert set(_column(win, 1)) == {"U18A"}
     assert _chips(win) == ["Filter:", "sigla = 'U18A'  ×"]
 
@@ -815,23 +817,23 @@ def test_right_click_filter_runs_in_the_database(qtbot, points_window: MainWindo
     win.data_table.setCurrentIndex(win.data_proxy.index(0, 2))
     _reloaded(qtbot, win, win.filter_value_action.trigger)
     assert win.filters == [("sigla", "U18A"), ("obs", None)]
-    assert win.info_label.text() == "points: Showing 25 of 25 matching rows (300 rows in table)"
+    assert win.info_label.text() == "points: showing 25 of 25 rows matching (300 in the table)"
     assert _chips(win) == ["Filters:", "sigla = 'U18A'  ×", "obs IS NULL  ×"]
     assert win.clear_filters_action.isEnabled() and not win.filters_bar.isHidden()
 
     # a pesquisa de palavras combina com o filtro, nas linhas carregadas
     win.search_edit.setText("298")
     qtbot.waitUntil(lambda: win.data_proxy.rowCount() == 1, timeout=5000)
-    assert win.info_label.text() == "points: Showing 1 of 1 matching rows (300 rows in table)"
+    assert win.info_label.text() == "points: showing 1 of 1 row matching (300 in the table)"
     _reloaded(qtbot, win, win.search_edit.clear)  # a pesquisa vai no banco: limpar recarrega a tabela
 
     # remover um a um (botao do filtro) e limpar
     _reloaded(qtbot, win, win.filter_chips.itemAt(1).widget().click)
     assert win.filters == [("obs", None)]
-    assert win.info_label.text() == "points: Showing 100 of 150 matching rows (300 rows in table)"  # limite Rows vale
+    assert win.info_label.text() == "points: showing 100 of 150 rows matching (300 in the table)"  # limite Rows vale
     _reloaded(qtbot, win, win.clear_filters_button.click)
     assert win.filters == [] and _chips(win) == []
-    assert win.info_label.text() == "points: Showing 100 of 300 rows"
+    assert win.info_label.text() == "points: showing 100 of 300 rows"
 
 
 def test_filter_integer_and_quoted_text_from_cell(qtbot, points_window: MainWindow) -> None:
@@ -857,4 +859,4 @@ def test_table_switch_clears_filters(qtbot, points_window: MainWindow) -> None:
     _select_table(qtbot, win, "other")
 
     assert win.filters == [] and _chips(win) == [] and win.hidden_columns == set()
-    assert win.info_label.text() == "other: 0 rows"
+    assert win.info_label.text() == "other: showing 0 of 0 rows"
