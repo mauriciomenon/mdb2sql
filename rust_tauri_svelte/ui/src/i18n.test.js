@@ -91,6 +91,69 @@ test('license line of the About says GPL v2 or later in each language', () => {
   assert.equal(CATALOGS.es['about.licenseValue'], 'GPL v2 o posterior');
 });
 
+// padrao item 23: o mesmo item com o mesmo texto do catalogo do Go (a referencia de redacao), nas 3 linguas. Ficam com o
+// texto que o padrao manda em outro lugar: topo e menu Arquivo (Zig), exportacao e menu do cabecalho (Rust/Zig), Sobre
+// (Rust, titulo do Zig), "Aberto: ..." (Python/Zig), Todas as tabelas (Rust)
+test('texts of the same item match the Go catalog in the 3 languages', (t) => {
+  const goDir = new URL('../../../go_wails_react/i18n/', import.meta.url);
+  let go;
+  try {
+    go = Object.fromEntries(['en', 'pt-BR', 'es'].map((code) => [code, JSON.parse(readFileSync(new URL(`${code}.json`, goDir), 'utf8'))]));
+  } catch {
+    t.skip('catalogo do Go fora deste checkout');
+    return;
+  }
+  const goText = (code, key, ...args) => go[code][key].replace(/\{(\d)\}/g, (_, i) => String(args[i]));
+  const same = [
+    ['menu.main', 'menu.main'], ['menu.file', 'menu.file'], ['menu.view', 'menu.view'], ['menu.settings', 'menu.settings'],
+    ['menu.help', 'menu.help'], ['view.log', 'menu.log'], ['settings.theme', 'menu.theme'], ['settings.language', 'menu.language'],
+    ['settings.showNull', 'menu.showNull'], ['settings.searchScope', 'menu.searchScope'], ['theme.system', 'theme.system'],
+    ['theme.light', 'theme.light'], ['theme.dark', 'theme.dark'], ['open.title', 'dlg.open'], ['open.all', 'filter.all'],
+    ['about.author', 'about.author'], ['about.license', 'about.license'], ['about.licenseValue', 'about.licenseText'],
+    ['about.linkTip', 'about.openLink'], ['common.close', 'about.close'], ['common.cancel', 'conv.cancel'],
+    ['convert.title', 'conv.title'], ['convert.saveTitle', 'dlg.saveConverted'], ['convert.save', 'conv.save'],
+    ['convert.delete', 'conv.delete'], ['convert.remember', 'conv.remember'], ['columns.search', 'cols.filter'],
+    ['columns.none', 'cols.none'], ['columns.showAll', 'cols.showAll'], ['columns.hideAll', 'cols.hideAll'],
+    ['columns.button', 'cols.button'], ['columns.tip', 'cols.tip'], ['tabs.view', 'tab.label'], ['tabs.data', 'tab.data'],
+    ['tabs.sql', 'tab.sql'], ['limit.label', 'rows.label'], ['sql.label', 'sql.label'], ['sql.run', 'sql.run'],
+    ['sql.result', 'sql.result'], ['data.allHidden', 'empty.noColumns'], ['data.noMatch', 'empty.noFilterMatch'],
+    ['data.empty', 'empty.noRows'], ['search.placeholder', 'search.placeholder'], ['search.label', 'search.label'],
+    ['scope.label', 'scope.label'], ['scope.table', 'scope.table'], ['scope.all', 'scope.all'], ['filters.label', 'filters.group'],
+    ['filters.removeTip', 'filters.removeTip'], ['filters.clear', 'filters.clear'], ['schema.column', 'schema.column'],
+    ['schema.type', 'schema.type'], ['schema.nullable', 'schema.nullable'], ['grid.cell', 'cellmenu.label'],
+    ['grid.copyValue', 'cellmenu.copy'], ['grid.copyRow', 'cellmenu.copyRow'], ['grid.copyRowHeader', 'cellmenu.copyRowHeader'],
+    ['grid.fitColumn', 'colmenu.fit'], ['grid.fitAll', 'colmenu.fitAll'], ['grid.hideColumn', 'colmenu.hide'],
+    ['grid.columns', 'colmenu.columns'], ['grid.showAll', 'colmenu.showAll'], ['grid.filterValue', 'cellmenu.filter'],
+    ['grid.clearFilters', 'cellmenu.clear'], ['grid.copiedValue', 'copied.value'], ['grid.copiedRow', 'copied.row'],
+    ['grid.copiedRowHeader', 'copied.rowHeader'], ['log.title', 'log.title'], ['log.copyAll', 'log.copyAll'],
+    ['log.show', 'log.expand'], ['log.hide', 'log.collapse'], ['status.copy', 'status.copy'], ['status.opening', 'status.loading'],
+    ['status.openFailed', 'err.openFailed'], ['status.viaTip', 'status.sourceTip'], ['status.hiddenOne', 'hidden.one'],
+    ['status.logCopied', 'copied.log'], ['x11.title', 'display.title'], ['x11.wayland', 'display.wayland'],
+    ['x11.noDisplay', 'display.missingServer'], ['x11.copy', 'display.copy'], ['x11.help', 'display.help'],
+    ['common.ok', 'display.ok'], ['err.exportCancelled', 'err.exportCancelled'],
+  ];
+  // [chave daqui, valores, chave do Go, argumentos do Go]
+  const filled = [
+    ['columns.title', { table: 'T' }, 'cols.title', ['T']],
+    ['columns.count', { shown: 2, total: 5 }, 'cols.count', [2, 5]],
+    ['filters.remove', { filter: 'F' }, 'filters.remove', ['F']],
+    ['status.via', { source: 'S' }, 'status.source', ['S']],
+    ['status.hiddenMany', { count: 3 }, 'hidden.many', [3]],
+    ['status.closed', { name: 'x.mdb' }, 'status.closed', ['x.mdb']],
+    ['status.sqliteSaved', { path: 'P' }, 'log.convertedSaved', ['P']],
+    ['status.sqliteDeleted', { name: 'x.sqlite' }, 'log.convertedDeleted', ['x.sqlite']],
+    ['convert.text', { name: 'x.sqlite' }, 'conv.text', ['x.sqlite']],
+    ['tables.filter', { count: 3 }, 'sidebar.filter', [3]],
+    ['status.query', { rows: 5 }, 'info.sql', [5]],
+    ['log.unread', { count: 2 }, 'log.unread', [2]],
+  ];
+  for (const [code] of LANGS) {
+    const tr = translator(code);
+    for (const [key, goKey] of same) assert.equal(tr(key), goText(code, goKey), `${code} ${key} = Go ${goKey}`);
+    for (const [key, values, goKey, args] of filled) assert.equal(tr(key, values), goText(code, goKey, ...args), `${code} ${key}`);
+  }
+});
+
 // padrao item 23: plural certo ("1 tabela", "2 tabelas", "0 tabelas") nas 3 linguas; cada forma escolhida pelo numero
 // que o proprio texto mostra
 test('counts agree in number', () => {
@@ -124,7 +187,7 @@ test('translator fills {values}, falls back to English, describes backend keys',
   assert.equal(pt('status.hiddenMany', { count: 3 }), '3 colunas ocultas');
   assert.equal(translator('xx')('menu.file'), 'File');
   assert.equal(pt('missing.key'), 'missing.key');
-  assert.equal(describe(pt, '[[err.unsupported]] .txt'), 'Tipo de arquivo não suportado: .txt');
+  assert.equal(describe(pt, '[[err.unsupported]] .txt'), 'Formato de banco não suportado: .txt');
   assert.equal(describe(translator('es'), 'T1: [[err.exportCancelled]]'), 'T1: Exportación cancelada');
   // falha da pesquisa em todas as tabelas: frase no idioma da tela, detalhe do motor igual
   assert.equal(describe(pt, '[[err.countRows]] z: Invalid Input Error: test'), 'Não foi possível contar as linhas de z: Invalid Input Error: test');

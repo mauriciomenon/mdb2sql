@@ -36,7 +36,8 @@ function buttonLabels(text) {
 
 const count = (text, needle) => text.split(needle).length - 1;
 // Close/Cancel fecham cada um o seu dialogo: o mesmo nome em dialogos diferentes nao e acao repetida
-const DIALOG_DISMISS = [en['common.close'], en['common.cancel'], '×'];
+// Copiar (texto do Go): o comando do aviso de X11 e a linha da barra de status, cada um no seu lugar
+const DIALOG_DISMISS = [en['common.close'], en['common.cancel'], '×', en['x11.copy']];
 const repeated = (labels) => labels.filter((label, i) => labels.indexOf(label) !== i && !DIALOG_DISMISS.includes(label));
 
 test('the main window has no repeated button or menu item', () => {
@@ -166,7 +167,6 @@ test('Access comes first, then SQLite, then DuckDB', () => {
   const isSorted = (list) => list.every((v, i) => v >= 0 && (i === 0 || v > list[i - 1]));
   assert.ok(isSorted(order(app, ["'open.access'", "'open.sqlite'", "'open.duckdb'"])));
   assert.ok(isSorted(order(app, ["'export.dbSqlite'", "'export.dbDuckdb'"])));
-  assert.ok(isSorted(order(en['open.all'], ['Access', 'SQLite', 'DuckDB'])));
   assert.ok(isSorted(order(en['header.placeholder'], ['.accdb', '.sqlite', '.duckdb'])));
   assert.ok(isSorted(order(en['about.description'], ['Access', 'SQLite', 'DuckDB'])));
 });

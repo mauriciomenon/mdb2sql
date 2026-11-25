@@ -362,7 +362,7 @@
           showStatus('status.sqliteSaved', { path: saved });
         } else {
           await invoke('discard_converted');
-          showStatus('status.sqliteDeleted');
+          showStatus('status.sqliteDeleted', { name: `${stem(openedPath)}.sqlite` });
         }
         break;
       } catch (err) {
@@ -481,7 +481,7 @@
     }
   }
 
-  // NIVEL BASICO: File > Close database
+  // NIVEL BASICO: Arquivo > Fechar
   async function closeDatabase() {
     openMenu = null;
     if (!openedPath || !(await settleConverted())) return;
@@ -491,6 +491,7 @@
       showError(err);
       return;
     }
+    const name = baseName(openedPath);
     tables = [];
     tableRows = new Map();
     openedPath = '';
@@ -501,7 +502,7 @@
     sqlError = '';
     lastSql = '';
     resetTable();
-    showStatus('status.closed');
+    showStatus('status.closed', { name });
   }
 
   // NIVEL BASICO: Seletor de arquivo nativo; o arquivo escolhido e aberto em seguida
@@ -1174,7 +1175,7 @@
         bind:value={tableText}
         oninput={onTableFilter}
         onkeydown={(e) => e.key === 'Enter' && onTableFilter(e)}
-        placeholder={t('tables.filter')}
+        placeholder={t('tables.filter', { count: fmt(tables.length) })}
         disabled={tables.length === 0}
       />
       <!-- nome inteiro sempre (quebra a linha, nada de reticencias); setas, Home e End trocam de tabela -->
@@ -1360,7 +1361,7 @@
       onclick={() => setLog(!logOpen)}>{logOpen ? '▾' : '▴'}</button
     >
     <button type="button" class="message" title={t('log.show')} onclick={() => setLog(true)}>{headline.text}</button>
-    {#if unread.length}<span class="badge" title={t('log.unreadTip')}>{unread.length}</span>{/if}
+    {#if unread.length}<span class="badge" title={t('log.unread', { count: unread.length })}>{unread.length}</span>{/if}
     {#if hidden.size}<span class="source">{t(hidden.size === 1 ? 'status.hiddenOne' : 'status.hiddenMany', { count: hidden.size })}</span>{/if}
     {#if source}<span class="source" title={t('status.viaTip')}>{t('status.via', { source })}</span>{/if}
   </footer>

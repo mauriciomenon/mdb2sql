@@ -67,22 +67,22 @@ SQLite e Access ficam num DuckDB em memoria enquanto o banco esta aberto (motor 
 exportacao); arquivos DuckDB sao abertos direto, so leitura.
 
 **Tela**:
-- **Tables** (esquerda): lista de tabelas com o nome inteiro (nome longo quebra a linha); **Filter tables** filtra
-  por nome (300 ms depois da ultima tecla, como a pesquisa da aba Data; Enter filtra na hora). Clique ou setas
-  (Home/End) abrem a tabela.
-- Aba **Data**: as primeiras linhas (quantas: **Row limit**, 100/500/1000) e o total. A **pesquisa** (**Search
+- **Tables** (esquerda): lista de tabelas com o nome inteiro (nome longo quebra a linha) e as linhas de cada uma
+  (colunas **Table** e **Rows**); **Filter N tables** filtra por nome (300 ms depois da ultima tecla, como a pesquisa
+  da aba Data; Enter filtra na hora). Clique ou setas (Home/End) abrem a tabela.
+- Aba **Data**: as primeiras linhas (quantas: **Rows**, 100/500/1000) e o total. A **pesquisa** (**Search the whole
   table**) roda no banco, na **tabela inteira** (todas as linhas e colunas, nao so as carregadas): a linha aparece
   quando uma mesma celula tem todas as palavras, em qualquer ordem, sem diferenciar maiusculas nem acentos
   (`tension de campo` acha `EXCITACION TENSION DE CAMPO`, RTUNO 50 / PNTNO 9 de RANGER_SOANLG no DB4, fora das 100
   primeiras linhas; `tensao` acha `TENSÃO` mas nao `TENSION`: nao ha busca aproximada). A contagem vira
-  "Showing N of M matching rows (T in the table)". A pesquisa roda 300 ms depois da ultima tecla (Enter: na hora).
+  "N of M found (T in the table)". A pesquisa roda 300 ms depois da ultima tecla (Enter: na hora).
 - Ao lado da pesquisa, **This table | All tables**: em **All tables** o termo e procurado em todas as tabelas (mesma
   regra, nas colunas de texto) e aparece a lista das tabelas com o numero de linhas achadas; escolher uma abre essa
   tabela com a mesma pesquisa. O escopo padrao fica em **Settings > Default search scope** (DB4, 287 tabelas: ~1 s
   por palavra).
 - **Columns...**: marque e desmarque colunas (busca por nome no topo, caixas em grade que acompanha a janela).
-  **Show all** e **Hide all** agem nas colunas listadas (com busca, so nelas). A barra de status mostra "N columns
-  hidden". A pesquisa olha todas as colunas e a exportacao sai com todas.
+  **Show all** e **Hide all** agem nas colunas listadas (com busca, so nelas). A barra de status mostra "N hidden
+  columns". A pesquisa olha todas as colunas e a exportacao sai com todas.
 - **Botao direito no cabecalho** (como o menu do Dear ImGui da versao Zig): **Size column to fit** / **Size all
   columns to fit** em toda grade (arrastar a borda direita do cabecalho muda a largura; ajustar volta a caber nome e
   valores). Na aba Data tambem **Hide this column**, **Columns...**, **Show all columns** e a lista das colunas com
@@ -93,7 +93,7 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
   da grade (`Filter: SIGLA = 'U9A' x`) com **Clear filters**. Filtros e pesquisa valem juntos.
 - Aba **Schema**: colunas da tabela, tipo e se aceita nulo (Yes/No no idioma da tela).
 - Aba **SQL**: SQL livre do DuckDB sobre as tabelas abertas (ex.: `SELECT * FROM "RANGER_SOSTAT" WHERE RTUNO = 2`);
-  **Run SQL** ou `Ctrl+Enter`. A grade mostra ate o Row limit; a exportacao do resultado leva todas as linhas. Erro: a
+  **Run** ou `Ctrl+Enter`. A grade mostra ate o numero de **Rows**; a exportacao do resultado leva todas as linhas. Erro: a
   grade anterior sai e o erro aparece ao lado do botao e na barra de status; o proximo SQL sem erro limpa os dois.
 - **Grade**: clique seleciona a celula; `Ctrl+C` copia o valor; botao direito (ou a tecla de menu) abre **Copy
   value**, **Copy row**, **Copy row with header** (TAB, pronto para colar no Excel). NULL aparece como celula vazia
