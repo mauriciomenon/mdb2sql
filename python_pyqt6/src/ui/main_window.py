@@ -743,7 +743,14 @@ class MainWindow(QMainWindow):
         super().changeEvent(event)
         # tema trocado (Configuracoes > Tema ou o do sistema): tudo acompanha, igual nas 4 versoes
         if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.ApplicationPaletteChange):
-            QTimer.singleShot(0, self._restyle)  # !T: after Qt finished applying the new palette
+            # !T: After Qt finished applying the new palette; a child timer dies with the window (a pending call on a
+            # !T: deleted window would raise inside the event loop)
+            if not hasattr(self, "_restyle_timer"):
+                self._restyle_timer = QTimer(self)
+                self._restyle_timer.setSingleShot(True)
+                self._restyle_timer.setInterval(0)
+                self._restyle_timer.timeout.connect(self._restyle)
+            self._restyle_timer.start()
 
     def _restyle(self) -> None:
         # !T: A widget style sheet keeps the palette it was polished with: with the windows11 style the table list
@@ -761,13 +768,15 @@ class MainWindow(QMainWindow):
         self.log_dock.setMaximumHeight(max(self.log_view.minimumHeight() + 32, round(self.height() * 0.25)))
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 (Qt)
+        # !T: Checks the event type first: an exception here aborts the process, and the filter already runs while
+        # !T: the window is still being built (status_label does not exist yet)
         # clique na mensagem da barra de status reexibe o log
-        if watched is self.status_label and event.type() == QEvent.Type.MouseButtonRelease:
+        if event.type() == QEvent.Type.MouseButtonRelease and watched is getattr(self, "status_label", None):
             if event.button() == Qt.MouseButton.LeftButton and self.log_dock.isHidden():
                 self.set_log_visible(True)
         # !T: Text fields take drops of text only; a dragged file over them opens like a drop on the window
         drag = (QEvent.Type.DragEnter, QEvent.Type.DragMove, QEvent.Type.Drop)
-        if event.type() in drag and watched is not self.status_label and self.dropped_file(event) is not None:
+        if event.type() in drag and self.dropped_file(event) is not None:
             if event.type() == QEvent.Type.Drop:
                 self.dropEvent(event)
             else:
