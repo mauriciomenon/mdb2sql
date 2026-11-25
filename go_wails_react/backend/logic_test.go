@@ -186,6 +186,44 @@ func fixtureDB(t *testing.T) string {
 	return path
 }
 
+// Help > About names the embedded mdbtools with the version of its VERSION.txt (standard item 21, as Rust)
+func TestMdbtoolsVersionLabel(t *testing.T) {
+	for text, want := range map[string]string{
+		"mdbtools 1.0.1 (8eedb1b) - Windows amd64, static, no iconv/GLib.\r\n": "mdbtools 1.0.1",
+		"":               "mdbtools",
+		"something else": "mdbtools",
+	} {
+		if got := mdbtoolsVersionLabel(text); got != want {
+			t.Errorf("%q: %q, want %q", text, got, want)
+		}
+	}
+}
+
+// standard item 6: the table list shows each table's row count (as Zig), in table list order; a cancel stops it
+func TestTableCounts(t *testing.T) {
+	m := NewDBManager()
+	if err := m.Connect(fixtureDB(t)); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	tables, _ := m.ListTables()
+	counts, err := m.TableCounts(context.Background())
+	if err != nil || len(counts) != len(tables) {
+		t.Fatalf("counts %v for %v: %v", counts, tables, err)
+	}
+	want := map[string]int{"Pontos A": 3, "seven": 7, "vazia": 0}
+	for i, table := range tables {
+		if counts[i] != want[table] {
+			t.Errorf("%s: %d rows, want %d", table, counts[i], want[table])
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := m.TableCounts(ctx); err == nil {
+		t.Error("a cancelled count must fail")
+	}
+}
+
 func TestExportXLSXSplitsSheets(t *testing.T) {
 	old := MaxExcelDataRows
 	MaxExcelDataRows = 3
@@ -266,17 +304,17 @@ func TestExportKeepsOtherFilesAndOldTarget(t *testing.T) {
 	write("p.partial.csv", "user file")
 	write("p.partial.csv.wal", "user wal")
 
-	if err := m.ExportTable(context.Background(), "nope", "csv", out, noop); err == nil {
+	if err := m.ExportTable(context.Background(), "nope", "csv", out, noop, ""); err == nil {
 		t.Fatal("unknown table must fail")
 	}
 	check("p.csv", "old target") // failed export: old target intact
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := m.ExportTable(ctx, "Pontos A", "csv", out, noop); err == nil {
+	if err := m.ExportTable(ctx, "Pontos A", "csv", out, noop, ""); err == nil {
 		t.Fatal("cancelled export must fail")
 	}
 	check("p.csv", "old target")
-	if err := m.ExportTable(context.Background(), "Pontos A", "csv", out, noop); err != nil {
+	if err := m.ExportTable(context.Background(), "Pontos A", "csv", out, noop, ""); err != nil {
 		t.Fatal(err)
 	}
 	if data, _ := os.ReadFile(out); !strings.HasPrefix(string(data), "\xEF\xBB\xBFid,") {
@@ -300,7 +338,7 @@ func TestExportTableCSVAndDatabases(t *testing.T) {
 	noop := func(int, int, string) {}
 
 	csvPath := filepath.Join(dir, "p.csv")
-	if err := m.ExportTable(context.Background(), "Pontos A", "csv", csvPath, noop); err != nil {
+	if err := m.ExportTable(context.Background(), "Pontos A", "csv", csvPath, noop, ""); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(csvPath)
@@ -309,8 +347,29 @@ func TestExportTableCSVAndDatabases(t *testing.T) {
 	if string(data) != want {
 		t.Errorf("csv:\n%q\nwant\n%q", data, want)
 	}
-	if err := m.ExportTable(context.Background(), "nope", "csv", csvPath, noop); err == nil {
+	if err := m.ExportTable(context.Background(), "nope", "csv", csvPath, noop, ""); err == nil {
 		t.Error("unknown table must fail")
+	}
+	// standard item 17: with the search active the user may export only the rows found (search and value filters)
+	found := filepath.Join(dir, "found.csv")
+	if err := m.ExportTable(context.Background(), "Pontos A", "csv", found, noop, "limite", Filter{"ok", true}); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(found); string(data) != "\xEF\xBB\xBFid,valor,x,nome,ok,em\r\n1,12.34,0.5,\"LÍMITE \"\"a\"\", b\",true,2026-07-14 10:20:30\r\n" {
+		t.Errorf("rows found to csv: %q", data)
+	}
+	foundX := filepath.Join(dir, "found.xlsx")
+	if err := m.ExportTable(context.Background(), "Pontos A", "xlsx", foundX, noop, "", Filter{"id", float64(3)}); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := excelize.OpenFile(foundX); err != nil {
+		t.Error(err)
+	} else {
+		rows, _ := f.GetRows("Pontos A")
+		f.Close()
+		if len(rows) != 2 || rows[1][0] != "3" {
+			t.Errorf("rows found to xlsx: %v", rows)
+		}
 	}
 	if err := m.ExportDatabase(context.Background(), "duckdb", src, noop); err == nil {
 		t.Error("exporting over the open file must fail")

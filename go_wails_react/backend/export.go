@@ -73,12 +73,16 @@ func truncUTF16(s string, max int) string {
 	return s
 }
 
-type exportItem struct{ name, query string }
+// exportItem: the sheet/table name, its SELECT and the values of the SELECT's ? parameters (search and filters)
+type exportItem struct {
+	name, query string
+	args        []any
+}
 
 func tableItems(tables []string) []exportItem {
 	items := make([]exportItem, len(tables))
 	for i, t := range tables {
-		items[i] = exportItem{t, "SELECT * FROM " + quoteIdent(t)}
+		items[i] = exportItem{t, "SELECT * FROM " + quoteIdent(t), nil}
 	}
 	return items
 }
@@ -102,8 +106,9 @@ func (m *DBManager) ExportDatabase(ctx context.Context, format, out string, prog
 	})
 }
 
-// ExportTable writes one table to out (format "csv" or "xlsx")
-func (m *DBManager) ExportTable(ctx context.Context, table, format, out string, progress Progress) error {
+// ExportTable writes one table to out (format "csv" or "xlsx"): every row, or with a search or filters only the rows
+// the Data tab finds with them (the user chose "only the rows found")
+func (m *DBManager) ExportTable(ctx context.Context, table, format, out string, progress Progress, search string, filters ...Filter) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.conn == nil {
@@ -112,11 +117,15 @@ func (m *DBManager) ExportTable(ctx context.Context, table, format, out string, 
 	if _, err := m.validateTableName(table); err != nil {
 		return err
 	}
-	total, err := m.rowCount(ctx, table, "")
+	total, err := m.rowCount(ctx, table, search, filters...)
 	if err != nil {
 		return err
 	}
-	return m.exportOne(ctx, exportItem{table, "SELECT * FROM " + quoteIdent(table)}, format, out, progress, total)
+	where, args, err := m.tableWhere(table, filters, search)
+	if err != nil {
+		return err
+	}
+	return m.exportOne(ctx, exportItem{table, "SELECT * FROM " + quoteIdent(table) + where, args}, format, out, progress, total)
 }
 
 // ExportQuery writes the full result of a SQL query to out (format "csv" or "xlsx"); the sheet is "Result"
@@ -126,7 +135,7 @@ func (m *DBManager) ExportQuery(ctx context.Context, query, format, out string, 
 	if m.conn == nil {
 		return fmt.Errorf("no database connected")
 	}
-	return m.exportOne(ctx, exportItem{"Result", query}, format, out, progress, 0)
+	return m.exportOne(ctx, exportItem{"Result", query, nil}, format, out, progress, 0)
 }
 
 func (m *DBManager) exportOne(ctx context.Context, it exportItem, format, out string, progress Progress, total int) error {
@@ -282,7 +291,7 @@ func rowProgress(ctx context.Context, progress Progress, label string, total int
 }
 
 func (m *DBManager) writeCSV(ctx context.Context, path string, it exportItem, progress Progress, total int) error {
-	rows, err := m.conn.QueryContext(ctx, it.query)
+	rows, err := m.conn.QueryContext(ctx, it.query, it.args...)
 	if err != nil {
 		return err
 	}
@@ -368,7 +377,7 @@ func (m *DBManager) writeXLSX(ctx context.Context, path string, items []exportIt
 }
 
 func (m *DBManager) writeSheets(ctx context.Context, f *excelize.File, used map[string]bool, first *bool, it exportItem, onRow func(int) error) error {
-	rows, err := m.conn.QueryContext(ctx, it.query)
+	rows, err := m.conn.QueryContext(ctx, it.query, it.args...)
 	if err != nil {
 		return err
 	}
@@ -380,7 +389,7 @@ func (m *DBManager) writeSheets(ctx context.Context, f *excelize.File, used map[
 	uuids := uuidColumns(rows)
 	total := -1 // row count for the sheet dimension; unknown (-1) if the query cannot be counted
 	countQuery := "SELECT count(*) FROM (" + strings.TrimRight(strings.TrimSpace(it.query), "; \t\r\n") + ")"
-	if err := m.conn.QueryRowContext(ctx, countQuery).Scan(&total); err != nil {
+	if err := m.conn.QueryRowContext(ctx, countQuery, it.args...).Scan(&total); err != nil {
 		total = -1
 	}
 	header := make([]any, len(cols))

@@ -2,9 +2,9 @@
 // !T: Single-screen viewer talking to Go through the Wails IPC bridge (window.go.main.App). Every visible text comes
 // from the catalogs in ../../i18n (see i18n.ts)
 
-import { Fragment, useEffect, useMemo, useRef, useState, version as reactVersion } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, version as reactVersion } from 'react';
 import './App.css';
-import { LANGS, translate, type Lang, type T } from './i18n';
+import { LANGS, translate, translateN, type Lang, type T, type TN } from './i18n';
 
 type Row = Record<string, unknown>;
 type Column = { name: string; type: string; null: string };
@@ -12,13 +12,24 @@ export type Theme = 'system' | 'light' | 'dark';
 type View = 'data' | 'schema' | 'sql';
 type Scope = 'table' | 'all'; // Data tab search: the open table or all tables
 type TableHits = { table: string; rows: number };
-type MenuName = 'file' | 'export' | 'view' | 'settings' | 'help';
+type MenuName = 'file' | 'exportBar' | 'view' | 'settings' | 'help';
 type QueryResult = { columns: string[]; rows: Row[]; more: boolean };
 type Progress = { done: number; total: number; label: string };
 type Conversion = { done: boolean; saved: string };
 // Linux without X11 (display.go): three short lines, the install command and the README help link
 type DisplayWarning = { text: string; missing: string; distro: string; command: string; help: string };
-export type AppInfo = { version: string; build?: string; buildDate?: string; go: string; wails: string; duckdb: string; access?: string };
+export type AppInfo = {
+  version: string;
+  build?: string;
+  buildDate?: string;
+  go: string;
+  wails: string;
+  duckdb: string;
+  access?: string; // reader an Access file would use now: "Access ODBC", "mdbtools" or ""
+  webview?: string; // what draws the window: "WebView2 158.0.4370.33" (runtime API), "WebKitGTK"
+  mdbtools?: string; // "mdbtools 1.0.1" (embedded) or "mdbtools" (on PATH: mdbtoolsSystem); "" = none
+  mdbtoolsSystem?: boolean;
+};
 export type Filter = { column: string; value: unknown }; // column = exact value, applied in the database query
 
 declare global {
@@ -32,12 +43,13 @@ declare global {
           GetTableSchema?: (tableName: string) => Promise<Column[]>;
           SelectDatabase?: () => Promise<string>;
           DatabaseName?: () => Promise<string>;
+          DatabasePath?: () => Promise<string>;
           SourceKind?: () => Promise<string>;
           StartupPath?: () => Promise<string>;
           GetAppInfo?: () => Promise<AppInfo>;
           RunQuery?: (query: string, limit: number) => Promise<QueryResult>;
           ExportDatabase?: (format: string) => Promise<string>;
-          ExportTable?: (table: string, format: string) => Promise<string>;
+          ExportTable?: (table: string, format: string, filters: Filter[], search: string) => Promise<string>;
           ExportQuery?: (query: string, format: string) => Promise<string>;
           CancelJob?: () => Promise<void>;
           GetTheme?: () => Promise<Theme>;
@@ -51,6 +63,7 @@ declare global {
           GetSearchScope?: () => Promise<Scope>;
           SetSearchScope?: (scope: Scope) => Promise<void>;
           SearchAllTables?: (search: string) => Promise<TableHits[]>;
+          TableCounts?: () => Promise<number[]>;
           PendingConversion?: () => Promise<string>;
           RememberedChoice?: () => Promise<string>;
           ResolveConversion?: (choice: string, remember: boolean) => Promise<Conversion>;
@@ -63,6 +76,8 @@ declare global {
       BrowserOpenURL?: (url: string) => void;
       ClipboardSetText?: (text: string) => Promise<boolean>;
       EventsOn?: (name: string, cb: (data: any) => void) => () => void;
+      OnFileDrop?: (cb: (x: number, y: number, paths: string[]) => void, useDropTarget: boolean) => void;
+      OnFileDropOff?: () => void;
       Quit?: () => void;
     };
   }
@@ -72,17 +87,27 @@ const ROW_LIMITS = [100, 500, 1000]; // more would render too many cells (130-co
 const TYPING_PAUSE = 300; // ms without typing before the table list filter and the Data search apply (Enter: at once)
 const THEMES: Theme[] = ['system', 'light', 'dark'];
 const SCOPES: Scope[] = ['table', 'all'];
+const VIEWS: View[] = ['data', 'schema', 'sql']; // tab order: Ctrl+1, Ctrl+2, Ctrl+3
 
-// Linhas (rotulo, valor) do dialogo Sobre; versao de wails.json, numero/data do build gravados pelo build, runtimes
-// lidos em execucao. Valor que comeca com https:// vira link aberto no navegador padrao.
+// How an Access file is read now: the ODBC driver (embedded mdbtools as fallback), mdbtools only, or nothing
+function accessReading(info: AppInfo, t: T): string {
+  const mdb = info.mdbtools ?? '';
+  if (info.access === 'Access ODBC') return mdb ? t('about.accessOdbc', mdb) : t('about.accessOdbcOnly');
+  if (info.access === 'mdbtools') return t(info.mdbtoolsSystem ? 'about.accessSystem' : 'about.accessEmbedded', mdb);
+  return t('about.reader.none');
+}
+
+// Linhas (rotulo, valor) do dialogo Sobre, as do Rust (Build, Stack, Janela, Bancos, Leitura do Access, Autor,
+// Licenca, links); versao de wails.json, numero/data do build gravados pelo build, runtimes lidos em execucao. Valor
+// que comeca com https:// vira link aberto no navegador padrao.
 export function aboutRows(info: AppInfo, t: T): [string, string][] {
   const v = (s: string) => s.replace(/^v/, '');
-  const reader = info.access === 'Access ODBC' ? 'about.reader.odbc' : info.access === 'mdbtools' ? 'about.reader.mdbtools' : 'about.reader.none';
   return [
     [t('about.build'), info.build ? `${info.build} (${info.buildDate})` : 'dev'],
     [t('about.stack'), `Go ${info.go} + Wails ${v(info.wails)} + React ${reactVersion}`],
-    [t('about.database'), `DuckDB ${v(info.duckdb)}`],
-    [t('about.accessReader'), t(reader)],
+    [t('about.window'), info.webview ?? ''],
+    [t('about.engines'), `DuckDB ${v(info.duckdb)}`], // SQLite files are read by DuckDB (its sqlite extension)
+    [t('about.access'), accessReading(info, t)],
     [t('about.author'), 'Mauricio Menon'],
     [t('about.license'), t('about.licenseText')],
     ['GitHub', 'https://github.com/mauriciomenon/mdb2sql'],
@@ -100,6 +125,9 @@ export function filterLabel(f: Filter): string {
 export const withFilter = (filters: Filter[], f: Filter) => [...filters.filter((x) => x.column !== f.column), f];
 
 export const cellText = (v: unknown) => String(v ?? '');
+
+// Schema > Nullable: Go sends YES/NO; shown translated (Sim/Nao, Si/No, Yes/No)
+export const nullableText = (v: string, t: T) => (v === 'YES' ? t('schema.yes') : v === 'NO' ? t('schema.no') : v);
 
 // Text a grid cell shows: NULL as nullText (Settings > Show NULL: "NULL" or empty); copy and search use cellText
 export const gridText = (v: unknown, nullText: string) => (v === null || v === undefined ? nullText : String(v));
@@ -146,7 +174,8 @@ export function progressText(verb: string, p: Progress | null, t: T): string {
 // Linha do painel Log: hora local HH:MM:SS + texto
 export const logLine = (text: string, at = new Date()) => `${at.toTimeString().slice(0, 8)}  ${text}`;
 type LogLevel = 'info' | 'warn' | 'error';
-type LogEntry = { line: string; text: string; level: LogLevel };
+// sql: an error of the SQL tab; cleared: a later query ran fine, so the status bar no longer shows it
+type LogEntry = { line: string; text: string; level: LogLevel; sql?: boolean; cleared?: boolean };
 
 // First line of a message (the status bar shows one line; the log keeps the whole text)
 export const firstLine = (s: string) => s.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? '';
@@ -161,7 +190,7 @@ export const clampLogHeight = (h: number, windowHeight: number) => Math.round(Ma
 
 // Status bar with the log collapsed: the last unread error, else the last unread warning, else the status
 export function statusLine(entries: LogEntry[], readMark: number, status: string, error: string) {
-  const unread = entries.slice(readMark).filter((e) => e.level !== 'info');
+  const unread = entries.slice(readMark).filter((e) => e.level !== 'info' && !e.cleared);
   const pick = unread.findLast((e) => e.level === 'error') ?? unread.findLast((e) => e.level === 'warn');
   return { text: pick?.text ?? (error || status), level: pick?.level ?? (error ? 'error' : 'info'), unread: unread.length };
 }
@@ -186,8 +215,17 @@ function App() {
   const langRef = useRef<Lang>(lang);
   langRef.current = lang;
   const t: T = (key, ...args) => translate(langRef.current, key, ...args);
+  const tn: TN = (key, n, ...args) => translateN(langRef.current, key, n, ...args); // "1 tabela", "2 tabelas"
   const [tables, setTables] = useState<string[]>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({}); // rows of each table (table list, as Zig)
   const [dbName, setDbName] = useState('');
+  const [pathText, setPathText] = useState(''); // path field of the top bar (Open/Enter opens it)
+  const [pathFocused, setPathFocused] = useState(false);
+  const pathRef = useRef<HTMLInputElement>(null);
+  const [pathElided, setPathElided] = useState(false); // path longer than the field: its start is hidden
+  const [openedPath, setOpenedPath] = useState(''); // the open file, which F5 opens again
+  const searchRef = useRef<HTMLInputElement>(null); // Ctrl+F
+  const sqlRef = useRef<HTMLTextAreaElement>(null); // Ctrl+3
   const [source, setSource] = useState('');
   const [converted, setConverted] = useState(false);
   const [filter, setFilter] = useState('');
@@ -205,6 +243,8 @@ function App() {
   const [theme, setThemeState] = useState<Theme>('system');
   const [showNull, setShowNull] = useState(false); // Settings > Show NULL (off: a NULL cell is empty)
   const [openMenu, setOpenMenu] = useState<MenuName | null>(null);
+  const [subOpen, setSubOpen] = useState(false); // File > Export submenu
+  useEffect(() => setSubOpen(false), [openMenu]);
   const [about, setAbout] = useState<AppInfo | null>(null);
   const [search, setSearch] = useState('');
   const [tableSearch, setTableSearch] = useState(''); // search applied in the database (Data tab), after a pause
@@ -218,11 +258,9 @@ function App() {
   // open context menu: of the selected cell, of a column header (header = column name) or of the status bar
   const [menu, setMenu] = useState<{ x: number; y: number; header?: string; status?: boolean } | null>(null);
   const [filters, setFilters] = useState<Filter[]>([]); // of the current table, applied by Go in the query
-  const [totalCount, setTotalCount] = useState(0); // rows of the table without filters and search
   const [hidden, setHidden] = useState<Set<string>>(new Set()); // hidden columns of the current table
   const [widths, setWidths] = useState<Record<string, number>>({}); // Data columns resized by hand (current table)
   const [colsOpen, setColsOpen] = useState(false); // "Columns..." dialog
-  const [copied, setCopied] = useState('');
   const [sql, setSql] = useState('');
   const [result, setResult] = useState<QueryResult | null>(null);
   const [resultSql, setResultSql] = useState(''); // SQL of the result shown (what "Export SQL result" writes)
@@ -233,19 +271,24 @@ function App() {
   const [displayWarn, setDisplayWarn] = useState<DisplayWarning | null>(null); // Linux: X11 missing, on Wayland
   // "save or delete the converted SQLite" question; resolve gets the answer (null = cancel)
   const [ask, setAsk] = useState<{ name: string; resolve: (a: { choice: string; remember: boolean } | null) => void } | null>(null);
+  // "whole table or only the n rows found?" before a table export with the search active; resolve(true) = rows found
+  const [exportAsk, setExportAsk] = useState<{ table: string; found: number; resolve: (found: boolean | null) => void } | null>(null);
   const started = useRef(false);
+  // the functions of the latest render, for listeners registered once (file drop, keyboard shortcuts)
+  const latest = useRef<Record<string, (...args: any[]) => unknown>>({});
   // request numbers: an answer that is not the latest one (another table, query or file since) is dropped
   const tableReq = useRef(0);
   const sqlReq = useRef(0);
   const searchReq = useRef(0);
+  const countReq = useRef(0);
   const loadedFind = useRef(''); // search of the last table request
   const [shownFind, setShownFind] = useState(''); // search of the rows shown in the Data tab
   const [shownTable, setShownTable] = useState(''); // table of the rows shown (the counts below belong to it)
   const [querying, setQuerying] = useState(false);
 
   // the log keeps the full text; short = the one line the status bar shows for it
-  const addLog = (text: string, level: LogLevel = 'info', short = firstLine(text)) =>
-    setLogLines((old) => [...old, { line: logLine(text), text: short, level }]);
+  const addLog = (text: string, level: LogLevel = 'info', short = firstLine(text), sql = false) =>
+    setLogLines((old) => [...old, { line: logLine(text), text: short, level, sql }]);
   // every status and error also goes to the Log panel
   const setStatus = (text: string) => {
     setStatusText(text);
@@ -293,17 +336,49 @@ function App() {
   useEffect(() => window.runtime?.EventsOn?.('progress', setProgress), []);
   useEffect(() => window.runtime?.EventsOn?.('log', (text: string) => addLog(text)), []);
 
-  // Ctrl+L collapses or expands the Log panel
+  // shortcuts of the Python version (standard item 20): Ctrl+O, Ctrl+F, F5, Ctrl+Q, Ctrl+1/2/3, Ctrl+L here; Ctrl+Enter
+  // in the SQL field and Ctrl+C in the grid. The keys are always taken from the webview (F5 would reload the page);
+  // with a dialog open they do nothing
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'l') {
-        e.preventDefault();
-        toggleLog();
-      }
+      const ctrl = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
+      const k = e.key.toLowerCase();
+      const action =
+        e.key === 'F5' && !e.ctrlKey && !e.altKey && !e.shiftKey ? () => latest.current.reload()
+        : !ctrl ? null
+        : k === 'o' ? () => latest.current.loadDatabase()
+        : k === 'f' ? () => latest.current.focusSearch()
+        : k === 'q' ? () => latest.current.quit()
+        : k === 'l' ? () => toggleLog()
+        : e.key === '1' || e.key === '2' || e.key === '3' ? () => latest.current.showView(VIEWS[Number(e.key) - 1])
+        : null;
+      if (!action) return;
+      e.preventDefault();
+      if (!latest.current.modal()) action();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // a file dragged onto the window opens, as the path field + Open (Go resolves the dropped file's full path)
+  useEffect(() => {
+    window.runtime?.OnFileDrop?.((_x, _y, paths) => paths?.[0] && latest.current.openPath(paths[0]), false);
+    return () => window.runtime?.OnFileDropOff?.();
+  }, []);
+
+  // path field as ImGui ElideLeft (Zig): a path longer than the field shows its end, the file name, with "..." in
+  // front; with the focus it scrolls as any field
+  useLayoutEffect(() => {
+    const el = pathRef.current;
+    if (!el) return;
+    const fit = () => {
+      if (!pathFocused) el.scrollLeft = el.scrollWidth;
+      setPathElided(!pathFocused && el.scrollWidth > el.clientWidth);
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [pathText, pathFocused]);
 
   // dragging the top border of the Log panel resizes it (10% of the window by default, 3 lines to 25%)
   function startLogResize(e: React.MouseEvent) {
@@ -427,8 +502,7 @@ function App() {
       // the Wails clipboard goes through Go/Win32, so it does not depend on webview clipboard permissions
       if (window.runtime?.ClipboardSetText) await window.runtime.ClipboardSetText(text);
       else await navigator.clipboard.writeText(text);
-      setCopied(done);
-      addLog(done);
+      setStatus(done); // in the status bar (and the log), not under the grid (standard item 24)
     } catch (err) {
       fail(err);
     }
@@ -483,8 +557,10 @@ function App() {
     tableReq.current++;
     sqlReq.current++;
     searchReq.current++;
+    countReq.current++;
     setQuerying(false);
     setTables([]);
+    setCounts({});
     setSelectedTable('');
     setRows([]);
     setSchema([]);
@@ -493,6 +569,7 @@ function App() {
     setResult(null);
     setResultSql('');
     setDbName('');
+    setOpenedPath('');
     setSource('');
     setConverted(false);
   }
@@ -554,25 +631,27 @@ function App() {
     }
   }
 
-  // pick=true abre o seletor de arquivo; pick=false usa o banco padrao (MDB2SQL_DB_PATH ou data/sample.duckdb)
-  async function loadDatabase(pick: boolean) {
+  // File > Open..., Browse... and Ctrl+O: the native file dialog, then the file chosen opens
+  async function loadDatabase() {
     setError('');
     try {
       const bridge = getWailsBridge();
-      let path = '';
-      if (pick && bridge.SelectDatabase) {
-        path = await bridge.SelectDatabase();
-        if (!path) return; // dialog cancelled
-      }
+      if (!bridge.SelectDatabase) throw new Error(t('err.bridge'));
+      const path = await bridge.SelectDatabase();
+      if (!path) return; // dialog cancelled
       await openPath(path);
     } catch (err) {
       fail(err, t('status.loadError'));
     }
   }
 
+  // the path of the top bar field: an empty field opens the default database (MDB2SQL_DB_PATH or the sample)
+  const openTyped = () => openPath(pathText.trim());
+
   async function openPath(path: string) {
     setError('');
     if (!(await settleConversion())) return;
+    if (path) setPathText(path);
     setJob(t('job.loading'));
     setProgress(null);
     setStatusText(t('status.loading'));
@@ -582,21 +661,26 @@ function App() {
       const tableList = (await bridge.LoadDatabase(path)) ?? [];
       // Go knows which file an empty path resolved to (MDB2SQL_DB_PATH or the bundled sample)
       const name = (await bridge.DatabaseName?.()) || path.split(/[\\/]/).pop() || 'sample.duckdb';
+      const opened = (await bridge.DatabasePath?.()) || path;
+      setPathText(opened);
+      setOpenedPath(opened);
       setSource((await bridge.SourceKind?.()) || '');
       setConverted(!!(await bridge.PendingConversion?.()));
       setDbName(name);
       setTables(tableList);
+      // the row counts come after the list (a file with many tables shows at once); another file drops them
+      const req = ++countReq.current;
+      Promise.resolve(bridge.TableCounts?.())
+        .then((c) => req === countReq.current && c && setCounts(Object.fromEntries(tableList.map((tb, i) => [tb, c[i]]))))
+        .catch((err) => req === countReq.current && fail(err));
       // another file starts clean: no table list filter, no Data search, the search scope of Settings
       setFilter('');
       setTableFilter('');
       setSearch('');
       setTableSearch('');
       setScope(defaultScopeRef.current);
-      setStatus(t('status.loaded', name, tableList.length));
-      if (tableList.length > 0) {
-        await loadTable(tableList[0], limit, undefined, '');
-        setSql(`SELECT * FROM "${tableList[0].replace(/"/g, '""')}" LIMIT 100`);
-      }
+      setStatus(tn('status.loaded', tableList.length, name, tableList.length));
+      if (tableList.length > 0) await loadTable(tableList[0], limit, undefined, '');
     } catch (err) {
       setDbName('');
       setSource('');
@@ -616,7 +700,6 @@ function App() {
       setError('');
       setSelectedTable(tableName);
       setSel(null);
-      setCopied('');
       setFilters(tableFilters);
       if (!keep) {
         setHidden(new Set());
@@ -624,17 +707,14 @@ function App() {
       }
       if (view === 'sql') setView('data');
       const bridge = getWailsBridge();
-      const narrowed = tableFilters.length > 0 || find !== '';
-      const [data, count, cols, total] = await Promise.all([
+      const [data, count, cols] = await Promise.all([
         bridge.GetTableData(tableName, rowLimit, tableFilters, find),
         bridge.GetRowCount(tableName, tableFilters, find),
         bridge.GetTableSchema ? bridge.GetTableSchema(tableName) : Promise.resolve([]),
-        narrowed ? bridge.GetRowCount(tableName, [], '') : null,
       ]);
       if (req !== tableReq.current) return;
       setRows(data ?? []); // Go sends null for an empty table
       setRowCount(count);
-      setTotalCount(total ?? count);
       setSchema(cols ?? []);
       setShownFind(find);
       setShownTable(tableName);
@@ -673,13 +753,17 @@ function App() {
       if (req !== sqlReq.current) return;
       setResult({ columns: res.columns ?? [], rows: res.rows ?? [], more: res.more });
       setResultSql(sql);
+      // a query that ran fine takes the earlier SQL error off the status bar (the log keeps it)
+      setLogLines((old) => (old.some((e) => e.sql && !e.cleared) ? old.map((e) => (e.sql ? { ...e, cleared: true } : e)) : old));
     } catch (err) {
       if (req !== sqlReq.current) return;
-      setResult(null);
+      setResult(null); // an error clears the old grid
       setResultSql('');
       // status bar: one translated line; the engine's full text (LINE 1, carets) goes to the log
       const full = err instanceof Error ? err.message : String(err);
-      setError(full, t('sql.error', sqlErrorSummary(full)));
+      const short = t('sql.error', sqlErrorSummary(full));
+      setErrorText(short);
+      addLog(full, 'error', short, true);
     } finally {
       if (req === sqlReq.current) setQuerying(false);
     }
@@ -701,17 +785,47 @@ function App() {
     }
   }
 
+  // the current table to CSV/Excel; with the Data search or value filters on, first asks: the whole table or only the
+  // n rows found (standard item 17)
+  async function exportTable(format: string) {
+    setOpenMenu(null);
+    const table = selectedTable;
+    const keep = shownTable === table && (filters.length > 0 || shownFind !== '') ? { filters, find: shownFind } : null;
+    let onlyFound = false;
+    if (keep) {
+      const answer = await new Promise<boolean | null>((resolve) => setExportAsk({ table, found: rowCount, resolve }));
+      setExportAsk(null);
+      if (answer === null) return; // Cancel or Esc
+      onlyFound = answer;
+    }
+    await runExport(table, () => bridge?.ExportTable?.(table, format, onlyFound ? keep!.filters : [], onlyFound ? keep!.find : ''));
+  }
+
   const bridge = window.go?.main?.App;
   const sqlResultName = t('sql.result');
   const exportItems = [
     { group: 'db', label: t('export.dbSqlite'), on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('sqlite')) },
     { group: 'db', label: t('export.dbDuckdb'), on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('duckdb')) },
     { group: 'db', label: t('export.dbXlsx'), on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('xlsx')) },
-    { group: 'table', label: t('export.tableCsv'), on: !!selectedTable, run: () => runExport(selectedTable, () => bridge?.ExportTable?.(selectedTable, 'csv')) },
-    { group: 'table', label: t('export.tableXlsx'), on: !!selectedTable, run: () => runExport(selectedTable, () => bridge?.ExportTable?.(selectedTable, 'xlsx')) },
+    { group: 'table', label: t('export.tableCsv'), on: !!selectedTable, run: () => exportTable('csv') },
+    { group: 'table', label: t('export.tableXlsx'), on: !!selectedTable, run: () => exportTable('xlsx') },
     { group: 'sql', label: t('export.sqlCsv'), on: !!resultSql, run: () => runExport(sqlResultName, () => bridge?.ExportQuery?.(resultSql, 'csv')) },
     { group: 'sql', label: t('export.sqlXlsx'), on: !!resultSql, run: () => runExport(sqlResultName, () => bridge?.ExportQuery?.(resultSql, 'xlsx')) },
   ];
+
+  // the export list: the Export... button of the top bar and File > Export open the same items
+  const exportMenu = (className: string) => (
+    <div className={className} role="menu" aria-label={t('menu.export')}>
+      {exportItems.map((it, i) => (
+        <Fragment key={it.label}>
+          {i > 0 && exportItems[i - 1].group !== it.group && <hr />}
+          <button role="menuitem" disabled={!it.on || busy} onClick={it.run}>
+            {it.label}
+          </button>
+        </Fragment>
+      ))}
+    </div>
+  );
 
   const visibleTables = useMemo(() => {
     const words = searchWords(tableFilter);
@@ -749,7 +863,22 @@ function App() {
   const nullText = showNull ? t('cell.null') : '';
   // log collapsed: the most important unread line (error, then warning) takes the status bar
   const shownStatus = logOpen ? { text: error || status, level: error ? 'error' : 'info', unread: 0 } : statusLine(logLines, readMark, status, error);
-  const viewName = (v: View) => (v === 'data' ? t('tab.data') : v === 'schema' ? t('tab.schema', schema.length) : t('tab.sql'));
+  const viewName = (v: View) => t(`tab.${v}`); // "Esquema" without the column count (standard item 15)
+
+  latest.current = {
+    ...{ openPath, loadDatabase, quit },
+    reload: () => openPath(openedPath), // nothing open: the default database, as the Python version
+    focusSearch: () => {
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    },
+    showView: (v: View) => {
+      if (tables.length === 0) return;
+      setView(v);
+      if (v === 'sql') setTimeout(() => sqlRef.current?.focus()); // the field exists after this render
+    },
+    modal: () => !!(about || colsOpen || ask || exportAsk || displayWarn || busy),
+  };
 
   const toggleMenu = (name: MenuName) => (e: React.MouseEvent) => {
     e.stopPropagation(); // the window click handler would close it again
@@ -827,36 +956,34 @@ function App() {
           <div className="menu-root">
             {menuButton('file', t('menu.file'))}
             {openMenu === 'file' && (
+              // as the Zig version: Open..., Export >, Close, Exit
               <div className="dropdown" role="menu" aria-label={t('menu.file')}>
-                <button role="menuitem" disabled={busy} onClick={() => loadDatabase(true)}>
-                  {t('menu.open')}
+                <button role="menuitem" disabled={busy} onClick={() => loadDatabase()} onMouseEnter={() => setSubOpen(false)}>
+                  {t('menu.open')} <kbd>Ctrl+O</kbd>
                 </button>
-                <button role="menuitem" disabled={busy} onClick={() => loadDatabase(false)} title={t('menu.openSampleTip')}>
-                  {t('menu.openSample')}
-                </button>
-                <button role="menuitem" disabled={busy || !dbName} onClick={closeDatabase}>
+                <div className="menu-root">
+                  <button
+                    role="menuitem"
+                    aria-haspopup="menu"
+                    aria-expanded={subOpen}
+                    disabled={busy || tables.length === 0}
+                    onMouseEnter={() => setSubOpen(true)}
+                    onClick={(e) => {
+                      e.stopPropagation(); // the window click handler would close the File menu
+                      setSubOpen(true); // as a native submenu: the click after the hover keeps it open
+                    }}
+                  >
+                    {t('menu.export')} <span className="sub-arrow">▸</span>
+                  </button>
+                  {subOpen && exportMenu('dropdown sub')}
+                </div>
+                <button role="menuitem" disabled={busy || !dbName} onClick={closeDatabase} onMouseEnter={() => setSubOpen(false)}>
                   {t('menu.close')}
                 </button>
                 <hr />
-                <button role="menuitem" onClick={quit}>
-                  {t('menu.exit')}
+                <button role="menuitem" onClick={quit} onMouseEnter={() => setSubOpen(false)}>
+                  {t('menu.exit')} <kbd>Ctrl+Q</kbd>
                 </button>
-              </div>
-            )}
-          </div>
-          {/* every action lives in one place only: no toolbar copies of the menu items */}
-          <div className="menu-root">
-            {menuButton('export', t('menu.export'))}
-            {openMenu === 'export' && (
-              <div className="dropdown" role="menu" aria-label={t('menu.export')}>
-                {exportItems.map((it, i) => (
-                  <Fragment key={it.label}>
-                    {i > 0 && exportItems[i - 1].group !== it.group && <hr />}
-                    <button role="menuitem" disabled={!it.on || busy} onClick={it.run}>
-                      {it.label}
-                    </button>
-                  </Fragment>
-                ))}
               </div>
             )}
           </div>
@@ -917,29 +1044,68 @@ function App() {
             )}
           </div>
         </nav>
+        {/* path bar as in Zig: the field takes the line, Browse... Open Export... on the right */}
+        <div className="pathbar">
+          <div className={pathElided ? 'path elided' : 'path'}>
+            <input
+              ref={pathRef}
+              type="text"
+              spellCheck={false}
+              placeholder={t('top.path')}
+              aria-label={t('top.path')}
+              value={pathText}
+              disabled={busy}
+              onChange={(e) => setPathText(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && openTyped()}
+              onFocus={() => setPathFocused(true)}
+              onBlur={() => setPathFocused(false)}
+            />
+          </div>
+          <button disabled={busy} onClick={() => loadDatabase()}>
+            {t('top.browse')}
+          </button>
+          <button disabled={busy} onClick={openTyped}>
+            {t('top.open')}
+          </button>
+          <div className="menu-root">
+            <button aria-haspopup="menu" aria-expanded={openMenu === 'exportBar'} disabled={busy || tables.length === 0} onClick={toggleMenu('exportBar')}>
+              {t('top.export')}
+            </button>
+            {openMenu === 'exportBar' && exportMenu('dropdown right')}
+          </div>
+        </div>
       </header>
 
       <nav className="sidebar" aria-label={t('sidebar.label')}>
         <input
           type="search"
-          placeholder={t('sidebar.filter', tables.length)}
-          aria-label={t('sidebar.filter', tables.length)}
+          placeholder={tn('sidebar.filter', tables.length, tables.length)}
+          aria-label={tn('sidebar.filter', tables.length, tables.length)}
           title={t('search.tip')}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && setTableFilter(filter)}
           disabled={tables.length === 0}
         />
+        {/* as Zig: the table name and its row count */}
+        {tables.length > 0 && (
+          <div className="table-head">
+            <span>{t('sidebar.table')}</span>
+            <span>{t('sidebar.rows')}</span>
+          </div>
+        )}
         <ul>
           {visibleTables.map((table) => (
             <li key={table}>
               <button
                 className="table-item"
                 title={table}
+                aria-label={table}
                 aria-current={table === selectedTable ? 'true' : undefined}
                 onClick={() => loadTable(table, limit)}
               >
-                {table}
+                <span className="name">{table}</span>
+                {table in counts && <span className="count">{counts[table]}</span>}
               </button>
             </li>
           ))}
@@ -955,16 +1121,17 @@ function App() {
             <div className="content-bar">
               <h2>{view === 'sql' ? t('tab.sql') : selectedTable}</h2>
               <div className="tabs" role="tablist" aria-label={t('tab.label')}>
-                {(['data', 'schema', 'sql'] as View[]).map((v) => (
+                {VIEWS.map((v) => (
                   <button key={v} role="tab" aria-selected={view === v} onClick={() => setView(v)}>
                     {viewName(v)}
                   </button>
                 ))}
               </div>
               <input
+                ref={searchRef}
                 type="search"
                 className="search"
-                placeholder={view === 'sql' ? t('sql.searchPlaceholder') : t('search.placeholder')}
+                placeholder={view === 'sql' ? t('sql.searchPlaceholder') : t('search.label')}
                 aria-label={view === 'sql' ? t('sql.searchLabel') : t('search.label')}
                 title={t('search.tip')}
                 value={search}
@@ -1016,7 +1183,9 @@ function App() {
             {view === 'sql' && (
               <div className="sql-bar">
                 <textarea
+                  ref={sqlRef}
                   aria-label={t('sql.label')}
+                  placeholder={t('sql.placeholder')}
                   spellCheck={false}
                   value={sql}
                   onChange={(e) => setSql(e.target.value)}
@@ -1054,28 +1223,16 @@ function App() {
               {searchAll ? (
                 shownHits &&
                 (shownHits.length > 0 ? (
-                  <table className="hits">
-                    <thead>
-                      <tr>
-                        <th scope="col">{t('hits.table')}</th>
-                        <th scope="col" className="num">
-                          {t('hits.rows')}
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {shownHits.map((h) => (
-                        <tr key={h.table}>
-                          <td>
-                            <button className="table-item" onClick={() => openHit(h.table)}>
-                              {h.table}
-                            </button>
-                          </td>
-                          <td className="num">{h.rows}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  // as Python and Rust: "table (n)"; a click opens the table with the same search
+                  <ul className="hits">
+                    {shownHits.map((h) => (
+                      <li key={h.table}>
+                        <button className="table-item" onClick={() => openHit(h.table)}>
+                          {t('hits.item', h.table, h.rows)}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 ) : (
                   <p className="empty">{t('sidebar.noMatch')}</p>
                 ))
@@ -1093,7 +1250,7 @@ function App() {
                       <tr key={col.name}>
                         <td>{col.name}</td>
                         <td>{col.type}</td>
-                        <td>{col.null}</td>
+                        <td>{nullableText(col.null, t)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1107,14 +1264,13 @@ function App() {
 
             <footer className="info">
               {view === 'sql'
-                ? result && t('info.sql', result.rows.length) + (result.more ? t('info.sqlLimit', limit) : '')
+                ? result && tn('info.sql', result.rows.length, result.rows.length) + (result.more ? t('info.sqlLimit', limit) : '')
                 : searchAll
                   ? shownHits
-                    ? t('info.searchAll', shownHits.length, tableSearch)
+                    ? tn('info.searchAll', shownHits.length, shownHits.length, tableSearch)
                     : searching && progressText(t('job.searching'), progress, t)
-                  : t('info.showing', shownTable, rows.length, rowCount) + (narrowed ? t('info.filtered', totalCount) : '')}
-              {sqlSearching && t('info.searchSql', visibleRows.length, search.trim())}
-              {copied && ` - ${copied}`}
+                  : tn(narrowed ? 'info.found' : 'info.showing', rowCount, shownTable, rows.length, rowCount)}
+              {sqlSearching && tn('info.searchSql', visibleRows.length, visibleRows.length, search.trim())}
             </footer>
           </>
         )}
@@ -1165,11 +1321,11 @@ function App() {
           {shownStatus.text}
         </p>
         {shownStatus.unread > 0 && (
-          <span className="badge" title={t('log.unread', shownStatus.unread)}>
+          <span className="badge" title={tn('log.unread', shownStatus.unread, shownStatus.unread)}>
             {shownStatus.unread}
           </span>
         )}
-        {hiddenCount > 0 && <span className="source">{hiddenCount === 1 ? t('hidden.one') : t('hidden.many', hiddenCount)}</span>}
+        {hiddenCount > 0 && <span className="source">{tn('hidden', hiddenCount, hiddenCount)}</span>}
         {source && (
           <span className="source" title={t('status.sourceTip')}>
             {converted ? t('status.sourceConverted', source) : t('status.source', source)}
@@ -1185,8 +1341,8 @@ function App() {
         </div>
       )}
 
-      {/* header menu as in the Dear ImGui table of the Zig version: fit, the columns with a check mark, show all;
-          the last visible column cannot be hidden here (its header is what opens this menu) */}
+      {/* header menu in the order of Rust (Grid.svelte): fit, fit all, hide, Columns..., show all, then the columns with a
+          check mark; the last visible column cannot be hidden here (its header is what opens this menu) */}
       {menu?.header !== undefined && (
         <div
           key={`${menu.x},${menu.y}`}
@@ -1218,6 +1374,9 @@ function App() {
           <button role="menuitem" onClick={() => setColsOpen(true)}>
             {t('colmenu.columns')}
           </button>
+          <button role="menuitem" disabled={hiddenCount === 0} onClick={() => setHidden(new Set())}>
+            {t('colmenu.showAll')}
+          </button>
           <hr />
           {gridColumns.map((col) => {
             const shown = !hidden.has(col);
@@ -1228,10 +1387,6 @@ function App() {
               </button>
             );
           })}
-          <hr />
-          <button role="menuitem" disabled={hiddenCount === 0} onClick={() => setHidden(new Set())}>
-            {t('colmenu.showAll')}
-          </button>
         </div>
       )}
 
@@ -1279,6 +1434,8 @@ function App() {
 
       {ask && <ConversionDialog name={ask.name} t={t} onAnswer={ask.resolve} />}
 
+      {exportAsk && <ExportAskDialog table={exportAsk.table} found={exportAsk.found} t={t} tn={tn} onAnswer={exportAsk.resolve} />}
+
       {displayWarn && (
         <div className="backdrop">
           <div className="about conversion" role="alertdialog" aria-modal="true" aria-labelledby="display-title">
@@ -1318,7 +1475,7 @@ function App() {
         <div className="backdrop" onClick={(e) => e.target === e.currentTarget && setAbout(null)}>
           <div className="about" role="dialog" aria-modal="true" aria-labelledby="about-title">
             <h2 id="about-title">
-              mdb2sql <span className="version">{about.version}</span>
+              {t('about.title')} <span className="version">{about.version}</span>
             </h2>
             <p className="tagline">{t('about.tagline')}</p>
             <dl>
@@ -1387,6 +1544,32 @@ function ConversionDialog({ name, t, onAnswer }: { name: string; t: T; onAnswer:
           <button onClick={() => onAnswer({ choice: 'delete', remember })}>{t('conv.delete')}</button>
           <button className="end" onClick={() => onAnswer(null)}>
             {t('conv.cancel')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Table export with the search active: the whole table, only the rows found, or Cancel (Esc)
+type ExportAskProps = { table: string; found: number; t: T; tn: TN; onAnswer: (onlyFound: boolean | null) => void };
+function ExportAskDialog({ table, found, t, tn, onAnswer }: ExportAskProps) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onAnswer(null);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  return (
+    <div className="backdrop">
+      <div className="about conversion" role="dialog" aria-modal="true" aria-labelledby="export-ask-title">
+        <h2 id="export-ask-title">{t('exportAsk.title', table)}</h2>
+        <div className="col-actions">
+          <button autoFocus onClick={() => onAnswer(false)}>
+            {t('exportAsk.all')}
+          </button>
+          <button onClick={() => onAnswer(true)}>{tn('exportAsk.found', found, found)}</button>
+          <button className="end" onClick={() => onAnswer(null)}>
+            {t('job.cancel')}
           </button>
         </div>
       </div>

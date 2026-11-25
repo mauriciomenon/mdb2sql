@@ -42,17 +42,17 @@ type App struct {
 
 	// Access file converted to SQLite: the file (temporary until saved or deleted) and the Access file it came from
 	converted, convertedFrom string
-	convChoice              string // "save" or "delete" remembered for this session ("" = ask)
-	convDir                 string // folder of the last "save", used when "save" is remembered
-	convertedFromKey        string               // fileKey of the Access file converted now
-	convCache               map[string]savedConv // session cache: Access fileKey -> SQLite saved from it
-	displayWarn             *DisplayWarning // Linux: X11 missing, running on Wayland (display.go)
+	convChoice               string          // "save" or "delete" remembered for this session ("" = ask)
+	convDir                  string          // folder of the last "save", used when "save" is remembered
+	convertedFromKey         string          // fileKey of the Access file converted now
+	displayWarn              *DisplayWarning // Linux: X11 missing, running on Wayland (display.go)
 
 	jobMu        sync.Mutex
 	cancel       context.CancelFunc // of the running load or export
 	queryCancel  context.CancelFunc // of the running SQL tab query (one at a time)
 	querySeq     int
 	searchCancel context.CancelFunc // of the running "All tables" search
+	countCancel  context.CancelFunc // of the running row count of the table list
 }
 
 // AppInfo alimenta o dialogo Sobre: versao do app e versoes de runtime lidas em execucao
@@ -64,7 +64,11 @@ type AppInfo struct {
 	Go        string `json:"go"`
 	Wails     string `json:"wails"`
 	DuckDB    string `json:"duckdb"`
-	Access    string `json:"access"` // reader an Access file would use now: "Access ODBC", "mdbtools" or ""
+	Access    string `json:"access"`  // reader an Access file would use now: "Access ODBC", "mdbtools" or ""
+	Webview   string `json:"webview"` // what draws the window: "WebView2 158.0.4370.33", "WebKitGTK"
+	// "mdbtools 1.0.1" (embedded) or "mdbtools" (on PATH, MdbtoolsSystem); "" = none
+	Mdbtools       string `json:"mdbtools"`
+	MdbtoolsSystem bool   `json:"mdbtoolsSystem"`
 }
 
 func productVersion() string {
@@ -97,14 +101,18 @@ func (a *App) GetAppInfo() AppInfo {
 	if err != nil {
 		duck = "unknown"
 	}
+	mdbtools, system := backend.MdbtoolsLabel()
 	return AppInfo{
-		Version:   productVersion(),
-		Build:     buildNumber,
-		BuildDate: buildDate,
-		Go:        strings.TrimPrefix(goruntime.Version(), "go"),
-		Wails:     wailsVersion(),
-		DuckDB:    duck,
-		Access:    backend.AccessReader(),
+		Version:        productVersion(),
+		Build:          buildNumber,
+		BuildDate:      buildDate,
+		Go:             strings.TrimPrefix(goruntime.Version(), "go"),
+		Wails:          wailsVersion(),
+		DuckDB:         duck,
+		Access:         backend.AccessReader(),
+		Webview:        webviewVersion(),
+		Mdbtools:       mdbtools,
+		MdbtoolsSystem: system,
 	}
 }
 
@@ -112,6 +120,11 @@ func (a *App) GetAppInfo() AppInfo {
 // !T: The frontend cannot know which file an empty path resolved to (MDB2SQL_DB_PATH or sample)
 func (a *App) DatabaseName() string {
 	return a.dbName
+}
+
+// DatabasePath is the full path of the open file ("" if none): the path field of the top bar shows it
+func (a *App) DatabasePath() string {
+	return a.dbPath
 }
 
 // SourceKind diz por qual leitor o arquivo foi aberto (DuckDB, SQLite, Access ODBC, mdbtools)
@@ -133,14 +146,18 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	if n := backend.CleanStaleConverted(); n > 0 {
-		a.log("log.staleRemoved", n)
+		a.logText(i18n.N("log.staleRemoved", n, n))
 	}
 }
 
 // log sends one line to the Log panel (View > Log) in the current language
 func (a *App) log(key string, args ...any) {
+	a.logText(i18n.T(key, args...))
+}
+
+func (a *App) logText(text string) {
 	if a.ctx != nil { // nil in tests: the Wails runtime only works inside the app
-		runtime.EventsEmit(a.ctx, "log", i18n.T(key, args...))
+		runtime.EventsEmit(a.ctx, "log", text)
 	}
 }
 
@@ -226,7 +243,7 @@ func (a *App) resolveConversion(choice string) (ConversionResult, error) {
 		}
 	}
 	a.closeDatabase()
-	file := a.converted
+	file, from := a.converted, a.convertedFrom
 	a.converted, a.convertedFrom = "", ""
 	if dest == "" {
 		if err := backend.RemoveConverted(file); err != nil {
@@ -240,7 +257,7 @@ func (a *App) resolveConversion(choice string) (ConversionResult, error) {
 		return ConversionResult{Done: true}, fmt.Errorf("%s: %w", dest, err)
 	}
 	a.convDir = filepath.Dir(dest)
-	a.rememberConversion(a.convertedFromKey, dest)
+	a.rememberConversion(from, a.convertedFromKey, dest)
 	a.log("log.convertedSaved", dest)
 	return ConversionResult{Done: true, Saved: dest}, nil
 }
@@ -254,27 +271,35 @@ func fileKey(path string) string {
 	return fmt.Sprintf("%s|%d|%d", strings.ToLower(path), st.Size(), st.ModTime().UnixNano())
 }
 
-// savedConv: a SQLite saved from an Access file in this session, and its own fileKey when saved
-type savedConv struct{ dest, destKey string }
-
-func (a *App) rememberConversion(srcKey, dest string) {
-	if srcKey == "" {
+// rememberConversion keeps in the settings, between runs, the SQLite saved from an Access file: the Access file's
+// fileKey (path, size, date), the saved file and its own fileKey (standard item 22). One entry per Access file.
+func (a *App) rememberConversion(src, srcKey, dest string) {
+	if src == "" || srcKey == "" {
 		return
 	}
-	if a.convCache == nil {
-		a.convCache = map[string]savedConv{}
+	if a.settings.Converted == nil {
+		a.settings.Converted = map[string]SavedConversion{}
 	}
-	a.convCache[srcKey] = savedConv{dest, fileKey(dest)}
+	a.settings.Converted[strings.ToLower(src)] = SavedConversion{Key: srcKey, Dest: dest, DestKey: fileKey(dest)}
+	_ = a.saveSettings() // best effort: unsaved, the next run converts the file again
 }
 
-// savedConversion returns the SQLite saved in this session from this same Access file, if neither changed since
+// savedConversion returns the SQLite saved from this same Access file, in this run or an earlier one, if neither file
+// changed since; a changed one is forgotten, so the file is converted again
 func (a *App) savedConversion(src string) string {
 	if ext := strings.ToLower(filepath.Ext(src)); ext != ".accdb" && ext != ".mdb" {
 		return ""
 	}
-	if s, ok := a.convCache[fileKey(src)]; ok && s.destKey != "" && fileKey(s.dest) == s.destKey {
-		return s.dest
+	id := strings.ToLower(src)
+	s, ok := a.settings.Converted[id]
+	if !ok {
+		return ""
 	}
+	if s.Key != "" && s.Key == fileKey(src) && s.DestKey != "" && fileKey(s.Dest) == s.DestKey {
+		return s.Dest
+	}
+	delete(a.settings.Converted, id)
+	_ = a.saveSettings()
 	return ""
 }
 
@@ -297,6 +322,22 @@ func (a *App) closeDatabase() {
 	a.cancelReads()
 	a.dbManager.Close()
 	a.dbName, a.dbPath = "", ""
+	a.updateTitle()
+}
+
+// titleFor: "{file} - mdb2sql 1.3.0 - Go" with a file open, "mdb2sql 1.3.0 - Go" without (as Python)
+func titleFor(name string) string {
+	if name == "" {
+		return windowTitle()
+	}
+	return name + " - " + windowTitle()
+}
+
+// updateTitle puts the name of the open file in the window title
+func (a *App) updateTitle() {
+	if a.ctx != nil { // nil in tests: the Wails runtime only works inside the app
+		runtime.WindowSetTitle(a.ctx, titleFor(a.dbName))
+	}
 }
 
 // CloseDatabase fecha o arquivo aberto (Arquivo > Fechar); a UI resolve antes um SQLite convertido pendente
@@ -415,16 +456,15 @@ func (a *App) CancelJob() {
 	}
 }
 
-// cancelReads stops the running SQL tab query and "All tables" search, if any: another file or Close replaces the
-// connection they read, and Close waits for them
+// cancelReads stops the running SQL tab query, "All tables" search and table list count, if any: another file or
+// Close replaces the connection they read, and Close waits for them
 func (a *App) cancelReads() {
 	a.jobMu.Lock()
 	defer a.jobMu.Unlock()
-	if a.queryCancel != nil {
-		a.queryCancel()
-	}
-	if a.searchCancel != nil {
-		a.searchCancel()
+	for _, cancel := range []context.CancelFunc{a.queryCancel, a.searchCancel, a.countCancel} {
+		if cancel != nil {
+			cancel()
+		}
 	}
 }
 
@@ -451,6 +491,11 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 	// !T: Prevent path traversal and validate file extension
 	validatedPath, err := a.validateDatabasePath(dbPath)
 	if err != nil {
+		// a wrong path typed in the path bar: the UI has already dropped the open file, so Go closes it too and the
+		// window title loses its name (a converted SQLite still pending stays: it must be saved or deleted first)
+		if a.converted == "" {
+			a.closeDatabase()
+		}
 		return nil, err
 	}
 
@@ -467,8 +512,10 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 	ctx, done := a.startJob()
 	defer done()
 	a.dbName, a.dbPath = "", "" // Open closes the previous database first
+	defer a.updateTitle()       // the new file's name, or none if it failed
 	start := time.Now()
-	// the same Access file (path, size, date) saved as SQLite in this session: open that file, no new conversion
+	// the same Access file (path, size, date) saved as SQLite, in this run or an earlier one: open that file, no new
+	// conversion
 	openPath := validatedPath
 	if saved := a.savedConversion(validatedPath); saved != "" {
 		openPath = saved
@@ -527,6 +574,20 @@ func (a *App) SearchAllTables(search string) ([]backend.TableHits, error) {
 	return a.dbManager.SearchTables(ctx, search, a.progress)
 }
 
+// TableCounts: the row count of each table, in table list order, for the table list (asked after the file opens,
+// so the list shows at once); another file or Close stops it
+func (a *App) TableCounts() ([]int, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	a.jobMu.Lock()
+	if a.countCancel != nil {
+		a.countCancel()
+	}
+	a.countCancel = cancel
+	a.jobMu.Unlock()
+	defer cancel()
+	return a.dbManager.TableCounts(ctx)
+}
+
 // GetTableSchema retorna schema da tabela com tipos de colunas
 // !T: Returns slice of ColumnSchema with name and type for each column
 func (a *App) GetTableSchema(tableName string) ([]backend.ColumnSchema, error) {
@@ -562,6 +623,9 @@ func (a *App) RunQuery(query string, limit int) (backend.QueryResult, error) {
 	}
 	return res, err
 }
+
+// file name the save dialog proposes for the SQL result: query.csv / query.xlsx (standard item 17)
+const queryExportName = "query"
 
 // export file types: catalog key of the name and the pattern
 var exportFilters = map[string][2]string{
@@ -635,16 +699,17 @@ func (a *App) ExportDatabase(format string) (string, error) {
 	})
 }
 
-// ExportTable exporta a tabela atual inteira (format csv ou xlsx)
-func (a *App) ExportTable(table, format string) (string, error) {
+// ExportTable exporta a tabela atual (format csv ou xlsx): inteira, ou com search/filters so as linhas encontradas
+// (com a busca ativa a UI pergunta qual das duas)
+func (a *App) ExportTable(table, format string, filters []backend.Filter, search string) (string, error) {
 	return a.runExport(table, format, func(ctx context.Context, out string) error {
-		return a.dbManager.ExportTable(ctx, table, format, out, a.progress)
+		return a.dbManager.ExportTable(ctx, table, format, out, a.progress, search, filters...)
 	})
 }
 
-// ExportQuery exporta o resultado completo do SQL (format csv ou xlsx)
+// ExportQuery exporta o resultado completo do SQL (format csv ou xlsx); nome proposto query.csv / query.xlsx
 func (a *App) ExportQuery(query, format string) (string, error) {
-	return a.runExport("result", format, func(ctx context.Context, out string) error {
+	return a.runExport(queryExportName, format, func(ctx context.Context, out string) error {
 		return a.dbManager.ExportQuery(ctx, query, format, out, a.progress)
 	})
 }

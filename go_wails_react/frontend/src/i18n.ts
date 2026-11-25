@@ -18,4 +18,11 @@ export function translate(lang: Lang, key: string, ...args: unknown[]): string {
   return s;
 }
 
+// a text with a count: key.one when n is 1 and the catalogs have it ("1 tabela"), else key ("2 tabelas", "0 tabelas")
+export function translateN(lang: Lang, key: string, n: number, ...args: unknown[]): string {
+  const one = `${key}.one`;
+  return translate(lang, n === 1 && (one in CATALOGS[lang] || one in CATALOGS.en) ? one : key, ...args);
+}
+
 export type T = (key: string, ...args: unknown[]) => string;
+export type TN = (key: string, n: number, ...args: unknown[]) => string;

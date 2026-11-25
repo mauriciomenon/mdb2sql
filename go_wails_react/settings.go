@@ -19,6 +19,16 @@ type Settings struct {
 	ShowNull bool   `json:"showNull"` // a NULL cell shows "NULL"; off (default) it stays empty
 	// Data tab search when the app starts: "table" (the open table, default) or "all" (all tables)
 	SearchScope string `json:"searchScope"`
+	// SQLite saved from each Access file (lowercase path), so the same unchanged file opens it without converting
+	Converted map[string]SavedConversion `json:"converted,omitempty"`
+}
+
+// SavedConversion: the Access file's version when converted (fileKey: path, size, date), the SQLite saved from it and
+// that file's own version when saved; a change in either converts again
+type SavedConversion struct {
+	Key     string `json:"key"`
+	Dest    string `json:"dest"`
+	DestKey string `json:"destKey"`
 }
 
 var searchScopes = map[string]bool{"table": true, "all": true}

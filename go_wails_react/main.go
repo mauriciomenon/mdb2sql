@@ -57,10 +57,12 @@ func main() {
 		},
 		// opaque: A is 0-255; A 1 left the GTK window almost transparent on Wayland (blank page in WSLg)
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 255},
-		OnStartup:        app.startup,
-		OnBeforeClose:    app.beforeClose,
-		OnShutdown:       app.shutdown,
-		Windows:          winOpts,
+		// a file dragged onto the window opens (the UI gets the path through runtime.OnFileDrop)
+		DragAndDrop:   &options.DragAndDrop{EnableFileDrop: true},
+		OnStartup:     app.startup,
+		OnBeforeClose: app.beforeClose,
+		OnShutdown:    app.shutdown,
+		Windows:       winOpts,
 		Bind: []interface{}{
 			app,
 		},
