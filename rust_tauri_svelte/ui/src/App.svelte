@@ -467,6 +467,7 @@
       tableText = tableFilter = '';
       sqlResult = null;
       sqlError = '';
+      log = resolveContext(log, 'err.sql'); // erro de SQL do arquivo anterior sai da barra de baixo tambem
       lastSql = '';
       saveSetting(LAST_DIR_KEY, dirOf(opened.path));
       showStatus('status.opened', { name: baseName(opened.path), count: fmt(tables.length) });
@@ -500,6 +501,7 @@
     converted = false;
     sqlResult = null;
     sqlError = '';
+    log = resolveContext(log, 'err.sql');
     lastSql = '';
     resetTable();
     showStatus('status.closed', { name });

@@ -45,6 +45,11 @@ test('SQL tab: error on the Run line, the old grid leaves, hint SELECT * FROM ..
   assert.match(run, /catch \(err\) \{\s*sqlResult = null;\s*lastSql = '';\s*sqlError = String\(err\);\s*showError\(err, 'err\.sql'\);/);
   assert.match(app, /\{#if sqlError\}\s*<span class="sql-error">\{statusLine\(errorLine\(sqlError, 'err\.sql'\)\)\}<\/span>\s*\{:else if sqlResult\}/);
   assert.match(app, /const SQL_HINT = 'SELECT \* FROM \.\.\.';/);
+  // abrir outro arquivo ou fechar tira o erro de SQL da linha do botao e da barra de baixo, juntos
+  for (const name of ['openDatabase', 'closeDatabase']) {
+    const body = app.match(new RegExp(`\\n {2}async function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n {2}\\}`))[0];
+    assert.match(body, /sqlError = '';\s*log = resolveContext\(log, 'err\.sql'\);/, name);
+  }
   assert.match(app, /placeholder=\{SQL_HINT\}/);
 });
 
