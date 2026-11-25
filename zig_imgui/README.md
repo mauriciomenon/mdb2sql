@@ -143,8 +143,11 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   header): every message of the session with its time, in a monospace font one step smaller; select and Ctrl+C, or
   **Copy all**, **Clear**. About 10% of the window high (at least 3 lines, at most 25%), resized by dragging its top
   edge; open/closed state and height are saved; closed by default. While it is closed, the status bar shows the most
-  important message not yet seen in the log (last error in red, else last warning, else the last action) with a
-  count of new ones; clicking it opens the log. Right-click the status bar: **Copy** (the whole text).
+  important message not yet seen in the log (last error in red, else last warning, else the last action) and, on the
+  right, how many errors and warnings are unread; clicking the message opens the log. Right-click the status bar:
+  **Copy** (the whole text). Also on the right, always: the hidden columns of the grid on screen and how the open file
+  was read (`Opened via Access ODBC, converted to SQLite`, `Opened via mdbtools, ...`, `Opened via SQLite`,
+  `Opened via DuckDB`). Opening a file says `Loaded: <file> (<n> tables)`.
 - Numbers are right-aligned in the grids and in the row counts of the table list (headers too); arrows are `←` `→`.
 - **Settings > Theme**: System, Light, Dark. **Settings > Language**: English, Português (Brasil), Español.
   **Settings > Default search scope**: This table, All tables. **Settings > Show NULL** (off by default). All are

@@ -31,6 +31,12 @@ pub fn fmt(buf: []u8, comptime key: []const u8, args: anytype) []const u8 {
     };
 }
 
+// Texto com contagem e plural certo: a chave `key ++ "_one"` quando n == 1 ("1 tabela"), senao `key` ("2 tabelas");
+// as duas recebem os mesmos argumentos
+pub fn fmtCount(buf: []u8, comptime key: []const u8, n: u64, args: anytype) []const u8 {
+    return if (n == 1) fmt(buf, key ++ "_one", args) else fmt(buf, key, args);
+}
+
 pub fn fmtZ(buf: []u8, comptime key: []const u8, args: anytype) [:0]const u8 {
     return switch (lang) {
         inline else => |l| std.fmt.bufPrintSentinel(buf, @field(Catalog(l), key), args, 0) catch "",
@@ -57,6 +63,28 @@ test "the three catalogs have the same keys and no empty text" {
             try t.expectEqual(std.mem.count(u8, base, "{"), std.mem.count(u8, s, "{"));
         }
     }
+}
+
+test "plural: every _one key has its plural key with the same arguments, and fmtCount picks by the count" {
+    @setEvalBranchQuota(100_000);
+    inline for (catalogs) |C| {
+        inline for (comptime keys(C)) |d| {
+            if (comptime std.mem.endsWith(u8, d, "_one")) {
+                const base = d[0 .. d.len - "_one".len];
+                try t.expect(@hasDecl(C, base));
+                try t.expectEqual(std.mem.count(u8, @field(C, base), "{"), std.mem.count(u8, @field(C, d), "{"));
+            }
+        }
+    }
+    defer lang = .en;
+    var b: [128]u8 = undefined;
+    lang = .pt_br;
+    try t.expectEqualStrings("Aberto: a.mdb (1 tabela)", fmtCount(&b, "status_loaded", 1, .{ "a.mdb", 1 }));
+    try t.expectEqualStrings("Aberto: a.mdb (3 tabelas)", fmtCount(&b, "status_loaded", 3, .{ "a.mdb", 3 }));
+    try t.expectEqualStrings("Aberto: a.mdb (0 tabelas)", fmtCount(&b, "status_loaded", 0, .{ "a.mdb", 0 }));
+    lang = .en;
+    try t.expectEqualStrings("1 unread error or warning", fmtCount(&b, "log_unread", 1, .{1}));
+    try t.expectEqualStrings("2 unread errors or warnings", fmtCount(&b, "log_unread", 2, .{2}));
 }
 
 test "translations differ from English where words are involved" {

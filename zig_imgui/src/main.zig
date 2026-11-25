@@ -604,14 +604,38 @@ const Msg = struct {
     }
 
     fn draw(m: *const Msg) void {
-        const red: [3]f32 = if (light_theme) .{ 0.70, 0.15, 0.12 } else .{ 1, 0.48, 0.45 };
-        if (m.is_err) ig.igPushStyleColor_Vec4(ig.ImGuiCol_Text, .{ .x = red[0], .y = red[1], .z = red[2], .w = 1 });
+        if (m.is_err) pushTextColor(errorColor());
         ig.igPushTextWrapPos(0);
         textSlice(m.text());
         ig.igPopTextWrapPos();
         if (m.is_err) ig.igPopStyleColor(1);
     }
 };
+
+// Erro em vermelho, aviso em ambar (mensagens e barra de baixo)
+fn errorColor() [3]f32 {
+    return if (light_theme) .{ 0.70, 0.15, 0.12 } else .{ 1, 0.48, 0.45 };
+}
+
+fn warnColor() [3]f32 {
+    return if (light_theme) .{ 0.62, 0.40, 0.0 } else .{ 0.95, 0.75, 0.30 };
+}
+
+fn pushTextColor(c: [3]f32) void {
+    ig.igPushStyleColor_Vec4(ig.ImGuiCol_Text, .{ .x = c[0], .y = c[1], .z = c[2], .w = 1 });
+}
+
+// Largura do texto como ele e (sem tratar "##" como fim do rotulo)
+fn rawWidth(s: []const u8) f32 {
+    return ig.igCalcTextSize(s.ptr, s.ptr + s.len, false, -1).x;
+}
+
+// Uma linha em `w` px: o que nao cabe vira "..." no fim (cortado num caractere UTF-8 inteiro)
+fn fitLine(buf: []u8, s: []const u8, w: f32) []const u8 {
+    if (rawWidth(s) <= w) return s;
+    const cut = dbm.gridtools.fitPrefix(s, w - rawWidth("..."), rawWidth);
+    return std.fmt.bufPrint(buf, "{s}...", .{cut}) catch s;
+}
 
 fn textSlice(s: []const u8) void {
     ig.igTextUnformatted(s.ptr, s.ptr + s.len);
@@ -1097,17 +1121,38 @@ const App = struct {
         };
     }
 
-    // "Aberto: <arquivo> (<n> tabelas) - ..." no idioma atual; log = false ao so traduzir a mesma mensagem
+    // "Aberto: <arquivo> (<n> tabelas)" no idioma atual; log = false ao so traduzir a mesma mensagem. O leitor fica
+    // fixo a direita da barra de baixo (e vai para o log junto)
     fn setLoadedStatus(app: *App, log: bool) void {
-        const src = app.source orelse return;
+        if (app.source == null) return;
         var buf: [1024]u8 = undefined;
         const name = std.fs.path.basename(zstr(&app.loaded_path));
-        const s = if (src.isAccess())
-            i18n.fmt(&buf, "status_loaded_access", .{ name, app.db.table_names.len, src.label() })
-        else
-            i18n.fmt(&buf, "status_loaded", .{ name, app.db.table_names.len, src.label() });
-        if (log) app.status.setText(false, s) else app.status.replace(false, s);
+        const n = app.db.table_names.len;
+        const s = i18n.fmtCount(&buf, "status_loaded", n, .{ name, n });
+        if (log) {
+            app.status.setText(false, s);
+            var sb: [160]u8 = undefined;
+            logLine(app.sourceText(&sb));
+        } else app.status.replace(false, s);
         app.status.loaded = true;
+    }
+
+    // Modo de leitura do arquivo aberto (direita da barra de baixo): "Aberto via Access ODBC, convertido para
+    // SQLite", "Aberto via mdbtools, ...", "Aberto via SQLite" ou "Aberto via DuckDB"; vazio sem arquivo
+    fn sourceText(app: *const App, buf: []u8) []const u8 {
+        const src = app.source orelse return "";
+        if (app.opening() or !app.db.isOpen()) return "";
+        return if (src.isAccess()) i18n.fmt(buf, "source_via_converted", .{src.label()}) else i18n.fmt(buf, "source_via", .{src.label()});
+    }
+
+    // Colunas ocultas da grade da aba atual (direita da barra de baixo): "1 coluna oculta", "3 colunas ocultas" ou vazio
+    fn hiddenNow(app: *const App, buf: []u8) []const u8 {
+        if (app.opening() or !app.db.isOpen()) return "";
+        return switch (app.tab) {
+            .data => hiddenText(buf, &app.data_sel, if (app.data) |g| g.columns.len else 0),
+            .sql => hiddenText(buf, &app.result_sel, if (app.result) |g| g.columns.len else 0),
+            .schema => "",
+        };
     }
 
     // Tabela recem-carregada (schema + primeira pagina): comeca sem ordenacao, com a busca do pedido (vazia ou a
@@ -1799,14 +1844,34 @@ const App = struct {
         ig.igPopFont();
     }
 
-    // Barra de status (embaixo): seta que abre/recolhe o Log, depois o trabalho em andamento (progresso e Cancelar)
-    // ou a mensagem. Com o Log recolhido: o erro ou aviso ainda nao visto no Log (destacado, com a contagem), senao o
-    // status; clicar na linha abre o Log.
+    // Barra de baixo (a do Go): a esquerda a seta que abre/recolhe o Log e a mensagem (ou o trabalho em andamento,
+    // com progresso e Cancelar); a direita, fixos, os erros/avisos nao lidos do Log, as colunas ocultas da grade atual
+    // e o modo de leitura do arquivo aberto. Com o Log recolhido a mensagem e o erro ou aviso ainda nao visto
+    // (destacado), senao o status; clicar nela abre o Log. Mensagem longa termina em "..." (inteira no tooltip).
     fn drawStatus(app: *App) void {
         const open = app.prefs.log_open;
         if (ig.igArrowButton("##logtoggle", if (open) ig.ImGuiDir_Down else ig.ImGuiDir_Up)) app.setLogOpen(!open);
         itemTooltip(if (open) tr("log_hide") else tr("log_show"));
         ig.igSameLine(0, -1);
+
+        // a direita, medida antes: a mensagem para onde ela comeca
+        const gap = 2 * ig.igGetStyle().*.ItemSpacing.x;
+        const unread = if (open) 0 else alert.unread_err + alert.unread_warn;
+        var ub: [24]u8 = undefined;
+        var hb: [64]u8 = undefined;
+        var sb: [160]u8 = undefined;
+        const right = [_][]const u8{
+            if (unread > 0) std.fmt.bufPrint(&ub, "{d}", .{unread}) catch "" else "",
+            app.hiddenNow(&hb),
+            app.sourceText(&sb),
+        };
+        var right_w: f32 = 0;
+        for (right) |s| if (s.len > 0) {
+            right_w += gap + rawWidth(s);
+        };
+        const right_x = ig.igGetCursorPosX() + ig.igGetContentRegionAvail().x - right_w; // x local do bloco
+        defer drawStatusRight(&right, right_x, gap, unread);
+
         const elapsed = ig.igGetTime() - app.busy_since;
         if (app.slot.busy() and elapsed > 0.15) {
             const r = &app.slot.req;
@@ -1834,30 +1899,49 @@ const App = struct {
             return;
         }
         ig.igAlignTextToFramePadding();
-        const unread = alert.unread_err + alert.unread_warn;
+        // erro em vermelho, aviso em ambar; sem arquivo, "Nenhum banco aberto" apagado
         var shown: []const u8 = app.status.text();
-        if (!open and unread > 0) {
-            // erro em vermelho, aviso em ambar
+        var color: ?[3]f32 = if (app.status.is_err) errorColor() else null;
+        if (unread > 0 and alert.len > 0) {
             shown = alert.buf[0..alert.len];
-            const c: [3]f32 = if (alert.level == .err)
-                (if (light_theme) .{ 0.70, 0.15, 0.12 } else .{ 1, 0.48, 0.45 })
-            else
-                (if (light_theme) .{ 0.62, 0.40, 0.0 } else .{ 0.95, 0.75, 0.30 });
-            ig.igPushStyleColor_Vec4(ig.ImGuiCol_Text, .{ .x = c[0], .y = c[1], .z = c[2], .w = 1 });
-            textSlice(shown);
-            ig.igPopStyleColor(1);
-        } else if (app.status.len == 0) ig.igTextDisabled("%s", tr("no_db").ptr) else app.status.draw();
+            color = if (alert.level == .err) errorColor() else warnColor();
+        }
+        const empty = shown.len == 0;
+        if (empty) shown = tr("no_db");
+        var fb: [1100]u8 = undefined;
+        const line = fitLine(&fb, shown, right_x - ig.igGetCursorPosX() - gap);
+        if (color) |c| pushTextColor(c) else if (empty) ig.igPushStyleColor_U32(ig.ImGuiCol_Text, ig.igGetColorU32_Col(ig.ImGuiCol_TextDisabled, 1));
+        textSlice(line);
+        if (color != null or empty) ig.igPopStyleColor(1);
+        if (line.len != shown.len and ig.igIsItemHovered(0)) tooltip(shown);
         const line_clicked = ig.igIsItemClicked(0);
         // clique direito na linha de status: Copiar (o texto inteiro, como aparece) e Log
         if (ig.igBeginPopupContextItem("##status_menu", ig.ImGuiPopupFlags_MouseButtonRight)) {
             defer ig.igEndPopup();
-            if (ig.igMenuItem_Bool(tr("copy"), null, false, shown.len > 0)) setClipboard(shown);
+            if (ig.igMenuItem_Bool(tr("copy"), null, false, !empty)) setClipboard(shown);
             if (ig.igMenuItem_Bool(tr("log_show"), null, false, !open)) app.setLogOpen(true);
         }
         if (!open and line_clicked) app.setLogOpen(true);
-        if (!open and unread > 1) {
-            ig.igSameLine(0, -1);
-            textT("log_unread", .{unread});
+    }
+
+    // Direita da barra de baixo: nao lidos (com a frase no tooltip), colunas ocultas e o modo de leitura. Durante um
+    // trabalho o bloco so aparece se couber depois do progresso (nunca por cima dele).
+    fn drawStatusRight(right: []const []const u8, right_x: f32, gap: f32, unread: u32) void {
+        const win_x = ig.igGetWindowPos().x - ig.igGetScrollX();
+        if (ig.igGetItemRectMax().x - win_x + gap > right_x + 1) return;
+        var x = right_x;
+        for (right, 0..) |s, i| {
+            if (s.len == 0) continue;
+            x += gap;
+            ig.igSameLine(0, 0);
+            ig.igSetCursorPosX(x);
+            textSlice(s);
+            if (ig.igIsItemHovered(0)) {
+                var tb: [96]u8 = undefined;
+                if (i == 0) tooltip(i18n.fmtCount(&tb, "log_unread", unread, .{unread}));
+                if (i == 2) tooltip(tr("source_tip"));
+            }
+            x += rawWidth(s);
         }
     }
 
@@ -1992,14 +2076,14 @@ const App = struct {
         // contagem na linha de baixo: ao lado dos botoes ela ficava cortada na janela de 1280
         const first = app.page * page_size;
         const shown = if (app.data) |g| g.rows.len else 0;
-        var hidden_buf: [64]u8 = undefined;
         ig.igAlignTextToFramePadding();
-        // nome da tabela e contagem: quebra na borda da janela em vez de ser cortado
+        // nome da tabela e contagem (as colunas ocultas ficam na barra de baixo): quebra na borda da janela em vez de
+        // ser cortado
         ig.igPushTextWrapPos(0);
         textT("page_line", .{
-            app.db.table_names[index],                                                           app.page + 1,                                                                   pages,
-            if (shown == 0) 0 else first + 1,                                                    first + shown,                                                                  app.total,
-            if (app.applied_search[0] != 0 or app.filters.items.len > 0) tr("filtered") else "", hiddenText(&hidden_buf, &app.data_sel, if (app.data) |g| g.columns.len else 0),
+            app.db.table_names[index],        app.page + 1,  pages,
+            if (shown == 0) 0 else first + 1, first + shown, app.total,
+            if (app.applied_search[0] != 0 or app.filters.items.len > 0) tr("filtered") else "",
         });
         ig.igPopTextWrapPos();
 
@@ -2061,14 +2145,10 @@ const App = struct {
         itemTooltip(tr("search_rule"));
         ig.igSameLine(0, -1);
         columnsButton(&app.result_sel);
-        var hidden_buf: [64]u8 = undefined;
-        const hidden = hiddenText(&hidden_buf, &app.result_sel, g.columns.len);
+        // as colunas ocultas ficam na barra de baixo
         if (app.result_rows) |rows| {
             ig.igSameLine(0, -1);
-            textT("rows_match", .{ rows.len, g.rows.len, hidden });
-        } else if (hidden.len > 0) {
-            ig.igSameLine(0, -1);
-            textSlice(hidden[3..]); // sem o " | " do comeco
+            textT("rows_match", .{ rows.len, g.rows.len });
         }
         _ = drawGrid("##result", g, null, &app.result_sel, app.result_rows, .hide, &app.prefs, tr("sql_result"));
     }
@@ -2134,11 +2214,11 @@ fn columnsButton(sel: *GridSel) void {
     itemTooltip(tr("columns_tip"));
 }
 
-// " | 3 columns hidden" ou vazio
+// "1 coluna oculta", "3 colunas ocultas" ou vazio
 fn hiddenText(buf: []u8, sel: *const GridSel, n_cols: usize) []const u8 {
     const n = sel.hiddenCount(n_cols);
     if (n == 0) return "";
-    return if (n == 1) i18n.fmt(buf, "hidden_one", .{}) else i18n.fmt(buf, "hidden_many", .{n});
+    return i18n.fmtCount(buf, "hidden_cols", n, .{n});
 }
 
 const Sort = struct { col: ?usize, desc: bool };

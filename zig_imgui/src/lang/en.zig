@@ -19,16 +19,16 @@ pub const prev = "← Prev";
 pub const next = "Next →";
 pub const columns_button = "Columns...";
 pub const columns_tip = "Hidden columns are still searched and exported.";
-pub const page_line = "{s}: page {d} of {d} | rows {d}-{d} of {d}{s}{s}";
+pub const page_line = "{s}: page {d} of {d} | rows {d}-{d} of {d}{s}";
 pub const filtered = " (filtered)";
-pub const hidden_one = " | 1 column hidden";
-pub const hidden_many = " | {d} columns hidden";
+pub const hidden_cols = "{d} hidden columns";
+pub const hidden_cols_one = "{d} hidden column";
 pub const filters_label = "Filters:";
 pub const remove_filter = "Remove this filter";
 pub const clear_filters = "Clear filters";
 pub const run = "Run (Ctrl+Enter)";
 pub const search_rows = "search the rows shown";
-pub const rows_match = "{d} of {d} rows match{s}";
+pub const rows_match = "{d} of {d} rows match";
 pub const schema_column = "Column";
 pub const schema_type = "Type";
 pub const schema_null = "Nullable";
@@ -116,7 +116,8 @@ pub const converted_deleted = "Converted SQLite deleted";
 pub const log_title = "Log";
 pub const log_hide = "Hide the log (Ctrl+L)";
 pub const log_show = "Show the log (Ctrl+L)";
-pub const log_unread = "({d} new)";
+pub const log_unread = "{d} unread errors or warnings";
+pub const log_unread_one = "{d} unread error or warning";
 
 // work in progress
 pub const busy_converting = "Converting the Access database";
@@ -131,8 +132,11 @@ pub const unit_tables = "tables";
 pub const unit_rows = "rows";
 
 // status line
-pub const status_loaded = "Loaded: {s} ({d} tables) - opened with {s}";
-pub const status_loaded_access = "Loaded: {s} ({d} tables) - read with {s}, converted to SQLite";
+pub const status_loaded = "Loaded: {s} ({d} tables)";
+pub const status_loaded_one = "Loaded: {s} ({d} table)";
+pub const source_via = "Opened via {s}";
+pub const source_via_converted = "Opened via {s}, converted to SQLite";
+pub const source_tip = "Reader used to open the file";
 pub const status_closed = "Closed: {s}";
 pub const status_exported = "Exported {d} {s} to {s}{s}{s}";
 pub const export_cut_cells = " | {d} cells cut to 32,767 characters";

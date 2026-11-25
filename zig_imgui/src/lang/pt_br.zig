@@ -19,16 +19,16 @@ pub const prev = "← Anterior";
 pub const next = "Próxima →";
 pub const columns_button = "Colunas...";
 pub const columns_tip = "Colunas ocultas continuam na pesquisa e na exportação.";
-pub const page_line = "{s}: página {d} de {d} | linhas {d}-{d} de {d}{s}{s}";
+pub const page_line = "{s}: página {d} de {d} | linhas {d}-{d} de {d}{s}";
 pub const filtered = " (filtrado)";
-pub const hidden_one = " | 1 coluna oculta";
-pub const hidden_many = " | {d} colunas ocultas";
+pub const hidden_cols = "{d} colunas ocultas";
+pub const hidden_cols_one = "{d} coluna oculta";
 pub const filters_label = "Filtros:";
 pub const remove_filter = "Remover este filtro";
 pub const clear_filters = "Limpar filtros";
 pub const run = "Executar (Ctrl+Enter)";
 pub const search_rows = "pesquisar nas linhas exibidas";
-pub const rows_match = "{d} de {d} linhas encontradas{s}";
+pub const rows_match = "{d} de {d} linhas encontradas";
 pub const schema_column = "Coluna";
 pub const schema_type = "Tipo";
 pub const schema_null = "Aceita nulo";
@@ -116,7 +116,8 @@ pub const converted_deleted = "SQLite convertido apagado";
 pub const log_title = "Log";
 pub const log_hide = "Recolher o log (Ctrl+L)";
 pub const log_show = "Mostrar o log (Ctrl+L)";
-pub const log_unread = "({d} novos)";
+pub const log_unread = "{d} erros ou avisos não lidos";
+pub const log_unread_one = "{d} erro ou aviso não lido";
 
 // trabalho em andamento
 pub const busy_converting = "Convertendo o banco Access";
@@ -131,8 +132,11 @@ pub const unit_tables = "tabelas";
 pub const unit_rows = "linhas";
 
 // linha de status
-pub const status_loaded = "Aberto: {s} ({d} tabelas) - lido com {s}";
-pub const status_loaded_access = "Aberto: {s} ({d} tabelas) - lido com {s}, convertido para SQLite";
+pub const status_loaded = "Aberto: {s} ({d} tabelas)";
+pub const status_loaded_one = "Aberto: {s} ({d} tabela)";
+pub const source_via = "Aberto via {s}";
+pub const source_via_converted = "Aberto via {s}, convertido para SQLite";
+pub const source_tip = "Leitor usado para abrir o arquivo";
 pub const status_closed = "Fechado: {s}";
 pub const status_exported = "Exportadas {d} {s} para {s}{s}{s}";
 pub const export_cut_cells = " | {d} células cortadas em 32.767 caracteres";

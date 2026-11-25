@@ -19,16 +19,16 @@ pub const prev = "← Anterior";
 pub const next = "Siguiente →";
 pub const columns_button = "Columnas...";
 pub const columns_tip = "Las columnas ocultas siguen en la búsqueda y en la exportación.";
-pub const page_line = "{s}: página {d} de {d} | filas {d}-{d} de {d}{s}{s}";
+pub const page_line = "{s}: página {d} de {d} | filas {d}-{d} de {d}{s}";
 pub const filtered = " (filtrado)";
-pub const hidden_one = " | 1 columna oculta";
-pub const hidden_many = " | {d} columnas ocultas";
+pub const hidden_cols = "{d} columnas ocultas";
+pub const hidden_cols_one = "{d} columna oculta";
 pub const filters_label = "Filtros:";
 pub const remove_filter = "Quitar este filtro";
 pub const clear_filters = "Quitar filtros";
 pub const run = "Ejecutar (Ctrl+Enter)";
 pub const search_rows = "buscar en las filas mostradas";
-pub const rows_match = "{d} de {d} filas coinciden{s}";
+pub const rows_match = "{d} de {d} filas coinciden";
 pub const schema_column = "Columna";
 pub const schema_type = "Tipo";
 pub const schema_null = "Admite nulo";
@@ -116,7 +116,8 @@ pub const converted_deleted = "SQLite convertido eliminado";
 pub const log_title = "Registro";
 pub const log_hide = "Ocultar el registro (Ctrl+L)";
 pub const log_show = "Mostrar el registro (Ctrl+L)";
-pub const log_unread = "({d} nuevos)";
+pub const log_unread = "{d} errores o advertencias sin leer";
+pub const log_unread_one = "{d} error o advertencia sin leer";
 
 // trabajo en curso
 pub const busy_converting = "Convirtiendo la base de datos Access";
@@ -131,8 +132,11 @@ pub const unit_tables = "tablas";
 pub const unit_rows = "filas";
 
 // linea de estado
-pub const status_loaded = "Abierto: {s} ({d} tablas) - leído con {s}";
-pub const status_loaded_access = "Abierto: {s} ({d} tablas) - leído con {s}, convertido a SQLite";
+pub const status_loaded = "Abierto: {s} ({d} tablas)";
+pub const status_loaded_one = "Abierto: {s} ({d} tabla)";
+pub const source_via = "Abierto con {s}";
+pub const source_via_converted = "Abierto con {s}, convertido a SQLite";
+pub const source_tip = "Lector usado para abrir el archivo";
 pub const status_closed = "Cerrado: {s}";
 pub const status_exported = "Exportadas {d} {s} a {s}{s}{s}";
 pub const export_cut_cells = " | {d} celdas cortadas a 32.767 caracteres";
