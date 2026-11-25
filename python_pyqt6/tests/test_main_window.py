@@ -73,10 +73,19 @@ def test_select_sort_search_and_copy(qtbot, window: MainWindow) -> None:
     assert window.info_label.text() == "people: Showing 3 of 3 rows"
     assert _column(window, 0) == ["1", "2", "10"]
     assert window.schema_model.rowCount() == 3
-    # Schema: titulos traduzidos (nao as chaves do backend; o terceiro saia "null"), valores como o backend da
+    # Schema: titulos e nulidade traduzidos (nao as chaves nem o YES/NO do backend), igual nas 4 versoes
     schema = window.schema_model
     assert [schema.headerData(c, Qt.Orientation.Horizontal) for c in range(3)] == ["Column", "Type", "Nullable"]
-    assert [schema.index(r, 2).data() for r in range(3)] == ["NO", "YES", "YES"]
+    assert [schema.index(r, 2).data() for r in range(3)] == ["No", "Yes", "Yes"]
+    # 6 px a mais de cada lado do texto, nas celulas e no cabecalho do Schema (as outras grades nao mudam)
+    from PyQt6.QtWidgets import QStyle
+
+    def margins(view):
+        return [view.style().pixelMetric(m, None, view) for m in (QStyle.PixelMetric.PM_FocusFrameHMargin,
+                                                                  QStyle.PixelMetric.PM_HeaderMargin)]
+    grid, header = margins(window.data_table), margins(window.schema_table)
+    assert [b - a for a, b in zip(grid, header)] == [6, 6]
+    assert window.schema_table.horizontalHeader().style() is window.schema_table.style()
 
     # numeros ordenam como numeros (10 > 2), nao como texto
     window.data_table.sortByColumn(0, Qt.SortOrder.DescendingOrder)

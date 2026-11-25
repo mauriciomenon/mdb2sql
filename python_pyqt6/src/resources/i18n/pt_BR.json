@@ -41,6 +41,8 @@
   "schema.column": "Coluna",
   "schema.type": "Tipo",
   "schema.nullable": "Aceita nulo",
+  "schema.yes": "Sim",
+  "schema.no": "Não",
   "theme.system": "&Sistema",
   "theme.light": "&Claro",
   "theme.dark": "&Escuro",

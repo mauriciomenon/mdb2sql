@@ -21,6 +21,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QGuiApplication, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDockWidget,
@@ -36,11 +37,13 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QProgressDialog,
+    QProxyStyle,
     QPushButton,
     QSizePolicy,
     QSplitter,
     QStackedWidget,
     QStyle,
+    QStyleFactory,
     QTableView,
     QTabWidget,
     QToolBar,
@@ -73,8 +76,8 @@ ROW_LIMITS = (100, 500, 1000)
 MAX_COLUMN_WIDTH = 1200  # trava de seguranca: abaixo disso nenhum valor nem nome de coluna e cortado
 LOG_LINES = 5000
 SEARCH_DELAY_MS = 300
-# grade do Schema: 12 px a mais em cada coluna (texto e cabecalho continuam alinhados a esquerda, juntos)
-SCHEMA_GAP = 12
+# grade do Schema: 6 px a mais de cada lado do texto, nas celulas e no cabecalho (igual nas 4 versoes)
+SCHEMA_PAD = 6
 # onde a pesquisa da aba Data procura (valor gravado em QSettings "search_scope" -> texto)
 SCOPES = {"table": "scope.table", "all": "scope.all"}
 # Configuracoes > Tema: valor gravado em QSettings -> esquema de cores do Qt
@@ -126,6 +129,24 @@ def hidden_text(count: int) -> str:
     return "" if not count else tr("status.hidden_one") if count == 1 else tr("status.hidden_many", count=count)
 
 
+class PaddedStyle(QProxyStyle):
+    """Estilo do app com `pad` px a mais de cada lado do texto das celulas e do cabecalho (grade do Schema).
+
+    !T: Item views place the text PM_FocusFrameHMargin + 1 from each cell edge and headers PM_HeaderMargin from each
+    !T: section edge; raising both moves the text and widens the size hints (fit to contents) on both sides
+    """
+
+    def __init__(self, pad: int) -> None:
+        super().__init__(QStyleFactory.create(QApplication.style().name()))
+        self.pad = pad
+
+    def pixelMetric(self, metric, option=None, widget=None) -> int:  # noqa: N802 (Qt)
+        value = super().pixelMetric(metric, option, widget)
+        if metric in (QStyle.PixelMetric.PM_FocusFrameHMargin, QStyle.PixelMetric.PM_HeaderMargin):
+            return value + self.pad
+        return value
+
+
 class _WorkerSignals(QObject):
     success = pyqtSignal(int, object)
     error = pyqtSignal(int, str)
@@ -166,6 +187,7 @@ class MainWindow(QMainWindow):
         self.current_db_path: Path | None = None
         self.pending_table_name: str | None = None
         self.loaded_table: tuple[str, int] | None = None  # (name, total rows in the table)
+        self.loaded_schema: list[dict[str, Any]] = []  # schema da tabela carregada, como o backend devolve
         self.sql_query: str | None = None  # ultima consulta da aba SQL que deu certo (para exportar)
         # filtros coluna = valor (clique direito) e colunas ocultas: valem para view_table, ate trocar de tabela
         self.view_table: str | None = None
@@ -320,6 +342,10 @@ class MainWindow(QMainWindow):
         self.data_proxy, self.data_table = self._create_table_view(self.table_model, tr("a11y.data"))
         self.schema_model = TableModel(self)
         self.schema_proxy, self.schema_table = self._create_table_view(self.schema_model, tr("a11y.schema"))
+        self.schema_style = PaddedStyle(SCHEMA_PAD)  # !T: setStyle does not take ownership: kept on the window
+        self.schema_style.setParent(self)
+        self.schema_table.setStyle(self.schema_style)
+        self.schema_table.horizontalHeader().setStyle(self.schema_style)
         self.sql_model = TableModel(self)
         self.sql_proxy, self.sql_table = self._create_table_view(self.sql_model, tr("a11y.sql_result"))
         self.set_show_null(self.show_null_action.isChecked())
@@ -1168,8 +1194,8 @@ class MainWindow(QMainWindow):
     def _fit_columns(self, view: QTableView, columns: list[int] | None = None) -> None:
         """Largura das colunas (todas sem `columns`) pelo texto mais longo: cabecalho ou valor de qualquer linha."""
         model: TableModel = view.model().sourceModel()
+        # margem do texto pelo estilo da grade (no Schema, 6 px a mais de cada lado: PaddedStyle)
         padding = 2 * (view.style().pixelMetric(QStyle.PixelMetric.PM_FocusFrameHMargin, None, view) + 1) + 8
-        gap = SCHEMA_GAP if view is self.schema_table else 0
         for column in range(model.columnCount()) if columns is None else columns:
             view.resizeColumnToContents(column)  # !T: Qt takes the larger of the header text and the content
             # !T: Qt measures only the first rows (resize precision); the longest texts of all loaded rows are
@@ -1177,7 +1203,7 @@ class MainWindow(QMainWindow):
             metrics = view.fontMetrics()
             longest = max((metrics.horizontalAdvance(text) for text in model.longest_texts(column)), default=0)
             width = max(view.columnWidth(column), longest + padding)
-            view.setColumnWidth(column, min(width + gap, MAX_COLUMN_WIDTH))
+            view.setColumnWidth(column, min(width, MAX_COLUMN_WIDTH))
 
     def _on_table_loaded(self, request_id: int, result: object) -> None:
         if request_id != self._table_request:
@@ -1190,10 +1216,8 @@ class MainWindow(QMainWindow):
             [column["column_name"] for column in schema],
             [f"{column['column_name']}: {column['column_type']}" for column in schema],
         )
-        # titulos do Schema traduzidos: as chaves do backend (column_name, column_type, null) nao vao para a tela
-        titles = {"column_name": tr("schema.column"), "column_type": tr("schema.type"), "null": tr("schema.nullable")}
-        self.schema_model.set_rows([{titles[k]: v for k, v in column.items()} for column in schema],
-                                   list(titles.values()))
+        self.loaded_schema = schema
+        self._show_schema()
         self.loaded_table = (payload["table_name"], payload["total_rows"])
         self.matched_rows = payload["matched_rows"]
         self.loaded_search = payload["search"]
@@ -1204,6 +1228,15 @@ class MainWindow(QMainWindow):
         self._apply_hidden_columns()  # o reset do modelo mostra todas: oculta de novo as escolhidas
         self._apply_search()
         self._update_export_actions()
+
+    def _show_schema(self) -> None:
+        # titulos e nulidade traduzidos (Coluna / Tipo / Aceita nulo; Sim / Nao): as chaves e o YES/NO do backend nao
+        # vao para a tela
+        titles = {"column_name": tr("schema.column"), "column_type": tr("schema.type"), "null": tr("schema.nullable")}
+        answer = {"YES": tr("schema.yes"), "NO": tr("schema.no")}
+        rows = [{titles[k]: answer.get(v, v) if k == "null" else v for k, v in column.items()}
+                for column in self.loaded_schema]
+        self.schema_model.set_rows(rows, list(titles.values()))
 
     def _on_table_error(self, request_id: int, message: str) -> None:
         if request_id == self._table_request:
