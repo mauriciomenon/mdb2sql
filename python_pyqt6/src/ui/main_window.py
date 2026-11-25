@@ -662,12 +662,15 @@ class MainWindow(QMainWindow):
 
     def _create_menus(self) -> None:
         menu_bar = self.menuBar()
+        # Arquivo igual nas 4 versoes (Zig): Abrir... (Ctrl+O), Exportar >, Fechar, Sair (Ctrl+Q); o F5 (recarregar)
+        # continua como atalho da janela
         file_menu = menu_bar.addMenu(tr("menu.file"))
-        file_menu.addActions([self.open_action, self.reload_action, self.close_db_action])
-        file_menu.addSeparator()
+        file_menu.addAction(self.open_action)
         file_menu.addMenu(self.export_menu)
+        file_menu.addAction(self.close_db_action)
         file_menu.addSeparator()
         file_menu.addAction(self.quit_action)
+        self.addAction(self.reload_action)
 
         edit_menu = menu_bar.addMenu(tr("menu.edit"))
         edit_menu.addActions([self.copy_action, self.copy_row_action, self.copy_row_header_action, self.find_action])

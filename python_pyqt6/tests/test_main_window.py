@@ -165,8 +165,17 @@ def test_decimal_without_scale_shows_as_integer(qtbot, tmp_path: Path) -> None:
 def test_menus_have_export_and_settings_theme(window: MainWindow) -> None:
     titles = [a.text() for a in window.menuBar().actions()]
     assert titles == ["&File", "&Edit", "&View", "&Settings", "&Help"]  # Exportar fica dentro de File
-    file_items = [a.text() for a in _menu(window, "&File").actions()]
-    assert "&Export" in file_items
+    # Arquivo igual nas 4 versoes (Zig): Abrir... (Ctrl+O), Exportar >, Fechar, Sair (Ctrl+Q)
+    from PyQt6.QtGui import QKeySequence
+
+    file_menu = _menu(window, "&File")
+    close_key = QKeySequence.keyBindings(QKeySequence.StandardKey.Close)[0].toString()  # Ctrl+F4 / Ctrl+W
+    assert [(a.text(), a.shortcut().toString()) for a in file_menu.actions() if not a.isSeparator()] == [
+        ("&Open...", "Ctrl+O"), ("&Export", ""), ("&Close", close_key), ("E&xit", "Ctrl+Q")
+    ]
+    assert file_menu.actions()[1].menu() is window.export_menu
+    # F5 (recarregar) continua valendo como atalho da janela, fora dos menus
+    assert window.reload_action in window.actions() and window.reload_action.shortcut().toString() == "F5"
     theme = _menu(window, "&Settings").actions()[0].menu()
     assert [a.text() for a in theme.actions()] == ["&System", "&Light", "&Dark"]
     assert window.export_button.isEnabled()
