@@ -73,6 +73,7 @@ export namespace main {
 	    wails: string;
 	    duckdb: string;
 	    access: string;
+	    webview: string;
 	    mdbtools: string;
 	    mdbtoolsSystem: boolean;
 	
@@ -89,6 +90,7 @@ export namespace main {
 	        this.wails = source["wails"];
 	        this.duckdb = source["duckdb"];
 	        this.access = source["access"];
+	        this.webview = source["webview"];
 	        this.mdbtools = source["mdbtools"];
 	        this.mdbtoolsSystem = source["mdbtoolsSystem"];
 	    }
