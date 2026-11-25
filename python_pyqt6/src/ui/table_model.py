@@ -80,7 +80,7 @@ class TableModel(QAbstractTableModel):
 
     def longest_texts(self, column: int, count: int = 3) -> list[str]:
         """Os textos mais longos (em caracteres) da coluna, como aparecem na grade: candidatos para medir a largura."""
-        # shortcut: runs in the UI thread, ~1.4 s for 10,000 rows x 123 columns (instant at the default 100 rows);
+        # shortcut: runs in the UI thread, ~0.14 s for 1000 rows x 123 columns (the largest "Rows" choice);
         # move it to the table worker if larger "Rows" limits are added
         name = self.columns[column]
         return heapq.nlargest(count, (grid_text(row.get(name), self.null_text) for row in self.rows), key=len)

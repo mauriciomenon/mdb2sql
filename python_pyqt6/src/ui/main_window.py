@@ -2,6 +2,7 @@
 # !T: QMainWindow with toolbar + table sidebar + data/schema/SQL views; database work runs on QThreadPool.
 # !T: Every visible text comes from the language catalog (shared.i18n.tr)
 
+import json
 import re
 import threading
 from datetime import datetime
@@ -9,23 +10,31 @@ from pathlib import Path
 from typing import Any, Callable
 
 from PyQt6.QtCore import (
+    QCoreApplication,
     QEvent,
+    QLibraryInfo,
+    QLocale,
     QObject,
+    QPoint,
     QRunnable,
     QSettings,
     QSortFilterProxyModel,
     Qt,
     QThreadPool,
     QTimer,
+    QTranslator,
     pyqtSignal,
 )
 from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QGuiApplication, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
+    QAbstractButton,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDockWidget,
     QFileDialog,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -36,20 +45,23 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QProgressDialog,
+    QProxyStyle,
     QPushButton,
     QSizePolicy,
     QSplitter,
     QStackedWidget,
     QStyle,
+    QStyleFactory,
     QTableView,
     QTabWidget,
     QToolBar,
     QToolButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from backend.access import quote
 from backend.database_tasks import (
     TablePayload,
     database_path_from_env,
@@ -66,19 +78,22 @@ from shared.i18n import num, tr
 from shared.tsv import rows_to_tsv
 from ui.dialogs import AboutDialog, ColumnsDialog
 from ui.table_model import COPY_ROLE, SORT_ROLE, TableModel, fold, search_words
+from ui.widgets import FlowLayout, PathEdit, SelectionTextDelegate, WrapLabel
 
-# shortcut: search and sort run in the UI thread over the loaded rows, so the limit stops at 10 000;
-# move search to SQL in the backend when bigger limits are needed
-ROW_LIMITS = (100, 1_000, 10_000)
+# linhas carregadas da tabela e do resultado SQL: 100 / 500 / 1000 nas 4 versoes (a pesquisa e os filtros vao no
+# banco, alem delas; ordenar e medir as colunas rodam na thread da tela sobre as carregadas)
+ROW_LIMITS = (100, 500, 1000)
 MAX_COLUMN_WIDTH = 1200  # trava de seguranca: abaixo disso nenhum valor nem nome de coluna e cortado
 LOG_LINES = 5000
 SEARCH_DELAY_MS = 300
-# grade do Schema: 12 px a mais em cada coluna (texto e cabecalho continuam alinhados a esquerda, juntos)
-SCHEMA_GAP = 12
+# grade do Schema: 6 px a mais de cada lado do texto, nas celulas e no cabecalho (igual nas 4 versoes)
+SCHEMA_PAD = 6
 # onde a pesquisa da aba Data procura (valor gravado em QSettings "search_scope" -> texto)
 SCOPES = {"table": "scope.table", "all": "scope.all"}
 # Configuracoes > Tema: valor gravado em QSettings -> esquema de cores do Qt
 THEMES = {"system": Qt.ColorScheme.Unknown, "light": Qt.ColorScheme.Light, "dark": Qt.ColorScheme.Dark}
+# lista de tabelas: linha selecionada com o destaque da paleta (claro e escuro)
+TABLES_STYLE = "QTreeView::item:selected { background: palette(highlight); color: palette(highlighted-text); }"
 # resposta da pergunta sobre o SQLite convertido do Access
 SAVE, DELETE, CANCEL = "save", "delete", "cancel"
 
@@ -98,6 +113,22 @@ def open_filter() -> str:
 
 def file_type(suffix: str) -> str:
     return tr(f"filter{suffix}") + f" (*{suffix})"
+
+
+_qt_texts: QTranslator | None = None
+
+
+def load_qt_texts(language: str) -> None:
+    """Textos do proprio Qt (menu de contexto dos campos, botoes de dialogo) no idioma escolhido; ingles sem arquivo."""
+    global _qt_texts
+    app = QCoreApplication.instance()
+    if app is None:
+        return
+    if _qt_texts is not None:
+        app.removeTranslator(_qt_texts)
+    _qt_texts = QTranslator(app)
+    if _qt_texts.load(QLocale(language), "qtbase", "_", QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):
+        app.installTranslator(_qt_texts)
 
 
 def apply_theme(name: str) -> None:
@@ -122,8 +153,41 @@ def status_line(text: str) -> str:
     return re.sub(r": (?:[A-Z][a-z]+ )+Error: ", ": ", first, count=1)
 
 
-def hidden_text(count: int) -> str:
-    return "" if not count else tr("status.hidden_one") if count == 1 else tr("status.hidden_many", count=count)
+def path_key(path: Path) -> str:
+    """Chave do arquivo nas configuracoes: caminho absoluto, sem diferenca de maiusculas (Windows)."""
+    return str(path.resolve()).lower()
+
+
+def file_key(path: Path) -> str:
+    """Versao do arquivo: tamanho e data de modificacao ('' se nao der para ler)."""
+    try:
+        info = path.stat()
+    except OSError:
+        return ""
+    return f"{info.st_size}|{info.st_mtime_ns}"
+
+
+def counted(key: str, count: int, **values: object) -> str:
+    """Texto com o plural certo: a chave '<key>_one' quando count == 1 ('1 tabela'), '<key>' nos outros casos."""
+    return tr(f"{key}_one" if count == 1 else key, count=num(count), **values)
+
+
+class PaddedStyle(QProxyStyle):
+    """Estilo do app com `pad` px a mais de cada lado do texto das celulas e do cabecalho (grade do Schema).
+
+    !T: Item views place the text PM_FocusFrameHMargin + 1 from each cell edge and headers PM_HeaderMargin from each
+    !T: section edge; raising both moves the text and widens the size hints (fit to contents) on both sides
+    """
+
+    def __init__(self, pad: int) -> None:
+        super().__init__(QStyleFactory.create(QApplication.style().name()))
+        self.pad = pad
+
+    def pixelMetric(self, metric, option=None, widget=None) -> int:  # noqa: N802 (Qt)
+        value = super().pixelMetric(metric, option, widget)
+        if metric in (QStyle.PixelMetric.PM_FocusFrameHMargin, QStyle.PixelMetric.PM_HeaderMargin):
+            return value + self.pad
+        return value
 
 
 class _WorkerSignals(QObject):
@@ -162,10 +226,15 @@ class MainWindow(QMainWindow):
         icon.addFile(str(resource("mdb2sql.png")))
         QGuiApplication.setWindowIcon(icon)
         self.settings = QSettings()
+        # textos fixos da tela (aplicar, chave, sem &): Configuracoes > Idioma troca todos na hora
+        self._texts: list[tuple[Callable[[str], object], str, bool]] = []
         self.manager: DBManager | None = None
         self.current_db_path: Path | None = None
+        self.current_db_key = ""  # tamanho|data do arquivo aberto, lidos ao abrir (Access salvo como SQLite)
         self.pending_table_name: str | None = None
         self.loaded_table: tuple[str, int] | None = None  # (name, total rows in the table)
+        self.loaded_schema: list[dict[str, Any]] = []  # schema da tabela carregada, como o backend devolve
+        self.table_counts: dict[str, int | None] = {}  # linhas de cada tabela (lista de tabelas)
         self.sql_query: str | None = None  # ultima consulta da aba SQL que deu certo (para exportar)
         # filtros coluna = valor (clique direito) e colunas ocultas: valem para view_table, ate trocar de tabela
         self.view_table: str | None = None
@@ -173,6 +242,7 @@ class MainWindow(QMainWindow):
         self.hidden_columns: set[str] = set()
         self.matched_rows = 0  # linhas da tabela que passam nos filtros e na pesquisa
         self.loaded_search = ""  # pesquisa usada na consulta da tabela carregada
+        self.loaded_filters: list[tuple[str, Any]] = []  # filtros usados na consulta da tabela carregada
         self.converted_choice: str | None = None  # "Lembrar nesta sessao" da pergunta do SQLite convertido
         self._table_request = 0
         self._sql_request = 0
@@ -197,7 +267,7 @@ class MainWindow(QMainWindow):
         self.table_filter_timer = QTimer(self)
         self.table_filter_timer.setSingleShot(True)
         self.table_filter_timer.setInterval(SEARCH_DELAY_MS)
-        self.table_filter_timer.timeout.connect(lambda: self._filter_tables(self.table_filter.text()))
+        self.table_filter_timer.timeout.connect(self._filter_tables_now)
 
         self.init_ui()
         if self.session.removed:
@@ -213,7 +283,7 @@ class MainWindow(QMainWindow):
         self._create_central()
         self._create_sidebar()
         self._create_log()
-        self._create_toolbar()
+        self._create_top_bar()
         self._create_menus()
         self._create_status_bar()
         self._update_export_actions()
@@ -223,8 +293,16 @@ class MainWindow(QMainWindow):
         QWidget.setTabOrder(self.table_list, self.search_edit)
         QWidget.setTabOrder(self.search_edit, self.data_table)
 
-    def _action(self, key: str, slot: Callable, shortcut: QKeySequence | str | None = None) -> QAction:
-        action = QAction(tr(key), self)
+    def _t(self, apply: Callable[[str], object], key: str, plain: bool = False) -> None:
+        """Texto fixo da tela pelo catalogo (plain: sem o & do atalho), lembrado para o idioma trocar na hora."""
+        self._texts.append((apply, key, plain))
+        text = tr(key)
+        apply(text.replace("&", "") if plain else text)
+
+    def _action(self, key: str, slot: Callable, shortcut: QKeySequence | str | None = None,
+                checkable: bool = False) -> QAction:
+        action = QAction(self, checkable=checkable)
+        self._t(action.setText, key)
         if shortcut is not None:
             action.setShortcut(QKeySequence(shortcut))
         action.triggered.connect(slot)
@@ -232,19 +310,23 @@ class MainWindow(QMainWindow):
 
     def _create_actions(self) -> None:
         self.open_action = self._action("action.open", self.choose_database, QKeySequence.StandardKey.Open)
-        self.open_action.setToolTip(tr("tip.open"))
+        self._t(self.open_action.setToolTip, "tip.open")
         self.reload_action = self._action("action.reload", self.load_database, "F5")
-        self.reload_action.setToolTip(tr("tip.reload"))
+        self._t(self.reload_action.setToolTip, "tip.reload")
         self.close_db_action = self._action("action.close", self.close_database, QKeySequence.StandardKey.Close)
         self.quit_action = self._action("action.quit", self.close, "Ctrl+Q")
 
-        # Exportar: banco inteiro (.sqlite, .duckdb, .xlsx com uma aba por tabela) e tabela/resultado atual
+        # Exportar (os itens do Rust, nesta ordem nas 4 versoes): banco inteiro para SQLite, DuckDB, Excel (uma aba por
+        # tabela); tabela atual e resultado do SQL para CSV e Excel
         self.export_db_actions = []
         for suffix, key in ((".sqlite", "export.db_sqlite"), (".duckdb", "export.db_duckdb"), (".xlsx", "export.db_xlsx")):
             self.export_db_actions.append(self._action(key, lambda _c=False, s=suffix: self.export_database_as(s)))
-        self.export_result_actions = []
-        for suffix, key in ((".csv", "export.result_csv"), (".xlsx", "export.result_xlsx")):
-            self.export_result_actions.append(self._action(key, lambda _c=False, s=suffix: self.export_result_as(s)))
+        self.export_table_actions = []
+        for suffix, key in ((".csv", "export.table_csv"), (".xlsx", "export.table_xlsx")):
+            self.export_table_actions.append(self._action(key, lambda _c=False, s=suffix: self.export_table_as(s)))
+        self.export_sql_actions = []
+        for suffix, key in ((".csv", "export.sql_csv"), (".xlsx", "export.sql_xlsx")):
+            self.export_sql_actions.append(self._action(key, lambda _c=False, s=suffix: self.export_sql_as(s)))
 
         self.copy_action = self._action("action.copy_value", self.copy_selection, QKeySequence.StandardKey.Copy)
         # !T: Scoped to the tables so Ctrl+C keeps working in the text fields
@@ -259,8 +341,8 @@ class MainWindow(QMainWindow):
         self.clear_filters_action.setEnabled(False)
         # uma acao so para o botao da aba Data e o menu do cabecalho (nada duplicado)
         self.columns_action = self._action("action.columns", self.choose_columns)
-        self.columns_action.setIconText(tr("action.columns"))  # !T: The default iconText drops the "..."
-        self.columns_action.setToolTip(tr("tip.columns"))
+        self._t(self.columns_action.setIconText, "action.columns")  # !T: The default iconText drops the "..."
+        self._t(self.columns_action.setToolTip, "tip.columns")
 
         self.find_action = self._action("action.find", self._focus_search, QKeySequence.StandardKey.Find)
         self.tables_action = self._action("action.go_tables", self._focus_tables, "Ctrl+T")
@@ -268,20 +350,19 @@ class MainWindow(QMainWindow):
         self.schema_tab_action = self._action("tab.schema_menu", lambda: self.tabs.setCurrentIndex(1), "Ctrl+2")
         self.sql_tab_action = self._action("tab.sql_menu", self._focus_sql, "Ctrl+3")
         self.run_sql_action = self._action("action.run_sql", self.run_sql, "Ctrl+Return")
-        self.run_sql_action.setToolTip(tr("tip.run_sql"))
+        self._t(self.run_sql_action.setToolTip, "tip.run_sql")
 
         # Configuracoes > Tema: Sistema, Claro, Escuro (gravado entre execucoes)
         self.theme_group = QActionGroup(self)
         self.theme_actions: dict[str, QAction] = {}
         saved = str(self.settings.value("theme", "system"))
         for name in THEMES:
-            action = QAction(tr(f"theme.{name}"), self, checkable=True)
+            action = self._action(f"theme.{name}", lambda _checked=False, n=name: self.set_theme(n), checkable=True)
             action.setChecked(name == saved)
-            action.triggered.connect(lambda _checked=False, n=name: self.set_theme(n))
             self.theme_group.addAction(action)
             self.theme_actions[name] = action
 
-        # Configuracoes > Idioma: English (padrao), Portugues (Brasil), Espanol; vale ao reabrir
+        # Configuracoes > Idioma: English (padrao), Portugues (Brasil), Espanol; vale na hora (igual nas 4 versoes)
         self.language_group = QActionGroup(self)
         self.language_actions: dict[str, QAction] = {}
         for code in i18n.LANGUAGES:
@@ -299,29 +380,32 @@ class MainWindow(QMainWindow):
         self.default_scope_group = QActionGroup(self)
         self.default_scope_actions: dict[str, QAction] = {}
         for name, key in SCOPES.items():
-            action = QAction(tr(key), self, checkable=True)
+            action = self._action(key, lambda _checked=False: self._search_now(), checkable=True)
             action.setChecked(name == scope)
-            action.triggered.connect(lambda _checked=False: self._search_now())
             self.scope_group.addAction(action)
             self.scope_actions[name] = action
-            default = QAction(tr(key), self, checkable=True)
+            default = self._action(key, lambda _checked=False, n=name: self.set_default_scope(n), checkable=True)
             default.setChecked(name == scope)
-            default.triggered.connect(lambda _checked=False, n=name: self.set_default_scope(n))
             self.default_scope_group.addAction(default)
             self.default_scope_actions[name] = default
 
         # Configuracoes > Exibir NULL (padrao desligado = celula vazia, como antes; gravado entre execucoes)
-        self.show_null_action = QAction(tr("settings.show_null"), self, checkable=True)
+        self.show_null_action = QAction(self, checkable=True)
+        self._t(self.show_null_action.setText, "settings.show_null")
         self.show_null_action.setChecked(self.settings.value("show_null", False, type=bool))
         self.show_null_action.toggled.connect(self.set_show_null)
 
     def _create_central(self) -> None:
         self.table_model = TableModel(self)
-        self.data_proxy, self.data_table = self._create_table_view(self.table_model, tr("a11y.data"))
+        self.data_proxy, self.data_table = self._create_table_view(self.table_model, "a11y.data")
         self.schema_model = TableModel(self)
-        self.schema_proxy, self.schema_table = self._create_table_view(self.schema_model, tr("a11y.schema"))
+        self.schema_proxy, self.schema_table = self._create_table_view(self.schema_model, "a11y.schema")
+        self.schema_style = PaddedStyle(SCHEMA_PAD)  # !T: setStyle does not take ownership: kept on the window
+        self.schema_style.setParent(self)
+        self.schema_table.setStyle(self.schema_style)
+        self.schema_table.horizontalHeader().setStyle(self.schema_style)
         self.sql_model = TableModel(self)
-        self.sql_proxy, self.sql_table = self._create_table_view(self.sql_model, tr("a11y.sql_result"))
+        self.sql_proxy, self.sql_table = self._create_table_view(self.sql_model, "a11y.sql_result")
         self.set_show_null(self.show_null_action.isChecked())
 
         self.sql_edit = QPlainTextEdit()
@@ -331,12 +415,18 @@ class MainWindow(QMainWindow):
         sql_font.setPointSizeF(self.font().pointSizeF())  # monoespacada no tamanho da base (14 px), nao nos 9 pt
         self.sql_edit.setFont(sql_font)
         self.sql_edit.addAction(self.run_sql_action)
-        run_button = QPushButton(tr("button.run"))
-        run_button.setAccessibleName(tr("action.run_sql").replace("&", ""))
-        run_button.setToolTip(self.run_sql_action.toolTip())
+        run_button = QPushButton()
+        self._t(run_button.setText, "button.run")
+        self._t(run_button.setAccessibleName, "action.run_sql", plain=True)
+        self._t(run_button.setToolTip, "tip.run_sql")
         run_button.clicked.connect(self.run_sql)
+        # linha do botao: resultado (linhas) ou erro da ultima consulta
+        self.sql_info = QLabel()
+        self.sql_info.setContentsMargins(6, 0, 0, 0)
+        self.sql_info.setWordWrap(True)
+        self._copy_menu_on(self.sql_info)
         sql_bar = QHBoxLayout()
-        sql_bar.addStretch(1)
+        sql_bar.addWidget(self.sql_info, 1)
         sql_bar.addWidget(run_button)
         editor = QWidget()
         editor_layout = QVBoxLayout(editor)
@@ -350,18 +440,21 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
-        self.tabs.addTab(self._create_data_page(), tr("tab.data"))
-        self.tabs.addTab(self.schema_table, tr("tab.schema"))
+        self.tabs.addTab(self._create_data_page(), "")
+        self.tabs.addTab(self.schema_table, "")
+        self._t(lambda text: self.tabs.setTabText(0, text), "tab.data")
+        self._t(lambda text: self.tabs.setTabText(1, text), "tab.schema")
         self.tabs.addTab(self.sql_page, "SQL")
         # !T: On the tabs for the shortcut scope, on each view for its right-click menu
         copy_actions = [self.copy_action, self.copy_row_action, self.copy_row_header_action]
         self.tabs.addActions(copy_actions)
+        # menu da celula igual nas 4 versoes (Go): na aba Data primeiro os filtros por valor, depois copiar
+        separator = QAction(self)
+        separator.setSeparator(True)
+        self.data_table.addActions([self.filter_value_action, self.clear_filters_action, separator])
         for view in (self.data_table, self.schema_table, self.sql_table):
             view.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
             view.addActions(copy_actions)
-        separator = QAction(self)
-        separator.setSeparator(True)
-        self.data_table.addActions([separator, self.filter_value_action, self.clear_filters_action])
         for view in (self.data_table, self.sql_table):
             view.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             # !T: The slot must not hold the header itself: header wrapper <-> slot is a cycle only the GC sees, and
@@ -370,7 +463,8 @@ class MainWindow(QMainWindow):
                 lambda pos, v=view: self._popup_header_menu(v, pos)
             )
 
-        self.empty_label = QLabel(tr("status.empty"))
+        self.empty_label = QLabel()
+        self._t(self.empty_label.setText, "status.empty")
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_label.setEnabled(False)  # texto esmaecido pela paleta do sistema
 
@@ -380,24 +474,69 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.stack)
 
     def _create_data_page(self) -> QWidget:
-        # barra da aba Data: botao Colunas..., filtros ativos (um botao por filtro, clique remove) e Limpar filtros
+        # aba Dados igual nas 4 versoes, de cima para baixo: uma linha so com a pesquisa (Ctrl+F, estica), Esta
+        # tabela | Todas as tabelas, Linhas e Colunas...; a linha dos filtros por valor (so com filtro); a grade; a
+        # linha da tabela embaixo dela. Nada mais
+        self.search_edit = QLineEdit()
+        self._t(self.search_edit.setPlaceholderText, "search.placeholder")
+        self._t(self.search_edit.setToolTip, "tip.search")
+        self.search_edit.setClearButtonEnabled(True)
+        self._t(self.search_edit.setAccessibleName, "search.name")
+        self._fit_search_minimum()
+        self.search_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.search_edit.textChanged.connect(self._search_edited)
+        self.search_edit.returnPressed.connect(self._search_now)  # Enter: na hora, sem os 300 ms
+        scope = QWidget()  # dois botoes de alternar juntos, um marcado
+        self._t(scope.setAccessibleName, "scope.name")
+        scope_row = QHBoxLayout(scope)
+        scope_row.setContentsMargins(0, 0, 0, 0)
+        scope_row.setSpacing(0)
+        self.scope_buttons = []
+        for action in self.scope_actions.values():
+            button = QToolButton()
+            button.setDefaultAction(action)
+            scope_row.addWidget(button)
+            self.scope_buttons.append(button)
+        # Linhas carregadas da tabela (e do resultado SQL): 100 / 500 / 1000
+        self.limit_combo = QComboBox()
+        self._t(self.limit_combo.setAccessibleName, "rows.name")
+        self._t(self.limit_combo.setToolTip, "tip.rows")
+        for limit in ROW_LIMITS:
+            self.limit_combo.addItem(str(limit), limit)  # 100 / 500 / 1000, sem separador (igual nas 4 versoes)
+        self.limit_combo.currentIndexChanged.connect(self.reload_table)
+        self.limit_label = QLabel()
+        self._t(self.limit_label.setText, "rows.label")
+        self.limit_label.setBuddy(self.limit_combo)
+        rows = QWidget()  # rotulo e lista juntos: a linha nunca quebra entre os dois
+        rows_row = QHBoxLayout(rows)
+        rows_row.setContentsMargins(0, 0, 0, 0)
+        rows_row.addWidget(self.limit_label)
+        rows_row.addWidget(self.limit_combo)
         self.columns_button = QToolButton()
         self.columns_button.setDefaultAction(self.columns_action)
-        self.filter_chips = QHBoxLayout()
+        # janela estreita (720 px) igual ao Go: a barra quebra a linha, nada cortado nem escondido; o campo de busca
+        # estica (sem maximo) e nunca fica menor que 160 px
+        bar = FlowLayout()
+        bar.setContentsMargins(6, 4, 6, 0)
+        bar.addWidget(self.search_edit)
+        bar.addWidget(scope)
+        bar.addWidget(rows)
+        bar.addWidget(self.columns_button)
+
+        # filtros ativos (um botao por filtro, clique remove) e Limpar filtros, numa linha que so aparece com filtro
+        # (tambem quebra a linha)
         self.clear_filters_button = QToolButton()
         self.clear_filters_button.setDefaultAction(self.clear_filters_action)
-        self.clear_filters_button.hide()
-        bar = QHBoxLayout()
-        bar.setContentsMargins(6, 4, 6, 0)
-        bar.addWidget(self.columns_button)
-        bar.addLayout(self.filter_chips)
-        bar.addStretch(1)
-        bar.addWidget(self.clear_filters_button)
+        self.filters_bar = QWidget()
+        self.filter_chips = FlowLayout(self.filters_bar)
+        self.filter_chips.setContentsMargins(6, 0, 6, 0)
+        self.filter_chips.addWidget(self.clear_filters_button)
+        self.filters_bar.hide()
 
         # pesquisa em todas as tabelas: lista "TABELA (linhas encontradas)" no lugar da grade; escolher uma abre
         # essa tabela com a mesma pesquisa
         self.found_list = QListWidget()
-        self.found_list.setAccessibleName(tr("search.found_name"))
+        self._t(self.found_list.setAccessibleName, "search.found_name")
         self.found_list.itemClicked.connect(self.open_found_table)
         self.found_list.itemActivated.connect(self.open_found_table)  # Enter
         self.data_stack = QStackedWidget()
@@ -407,21 +546,37 @@ class MainWindow(QMainWindow):
         self.data_page = QWidget()
         layout = QVBoxLayout(self.data_page)
         layout.setContentsMargins(0, 0, 0, 0)
+        # barra da tabela, embaixo da grade (como o Go): linhas mostradas / encontradas / na tabela, ou a pesquisa em
+        # todas as tabelas
+        self.info_label = QLabel()
+        self.info_label.setContentsMargins(6, 0, 6, 2)
+        self.info_label.setWordWrap(True)  # janela estreita: quebra a linha, nada cortado
+        self._copy_menu_on(self.info_label)
+
         layout.setSpacing(4)
         layout.addLayout(bar)
+        layout.addWidget(self.filters_bar)
         layout.addWidget(self.data_stack)
+        layout.addWidget(self.info_label)
         return self.data_page
 
+    def _fit_search_minimum(self) -> None:
+        # nunca menor que a dica inteira (nada cortado) nem que 160 px; acima disso estica com a janela
+        metrics = self.search_edit.fontMetrics()
+        self.search_edit.setMinimumWidth(max(160, metrics.horizontalAdvance(self.search_edit.placeholderText()) + 40))
+
     def _create_table_view(self, model: TableModel, name: str) -> tuple[QSortFilterProxyModel, QTableView]:
+        # name: chave do catalogo do nome acessivel
         proxy = QSortFilterProxyModel(self)  # so ordena; a pesquisa vai no banco
         proxy.setSourceModel(model)
         proxy.setSortRole(SORT_ROLE)
         proxy.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
 
         view = QTableView()
-        view.setAccessibleName(name)
+        self._t(view.setAccessibleName, name)
         view.setModel(proxy)
         view.setAlternatingRowColors(True)
+        view.setItemDelegate(SelectionTextDelegate(view))  # celula selecionada legivel no tema claro e no escuro
         view.setWordWrap(False)
         view.setHorizontalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
 
@@ -440,25 +595,42 @@ class MainWindow(QMainWindow):
 
     def _create_sidebar(self) -> None:
         self.table_filter = QLineEdit()
-        self.table_filter.setPlaceholderText(tr("tables.filter"))
+        self._t(self.table_filter.setPlaceholderText, "tables.filter")
         self.table_filter.setClearButtonEnabled(True)
-        self.table_filter.setAccessibleName(tr("tables.filter"))
-        self.table_filter.setToolTip(tr("tip.words"))
+        self._t(self.table_filter.setAccessibleName, "tables.filter")
+        self._t(self.table_filter.setToolTip, "tip.words")
         self.table_filter.textChanged.connect(lambda _text: self.table_filter_timer.start())
+        self.table_filter.returnPressed.connect(self._filter_tables_now)  # Enter: na hora, sem os 300 ms
 
-        self.table_list = QListWidget()
-        self.table_list.setAccessibleName(tr("tables.title"))
-        self.table_list.setUniformItemSizes(True)
-        # selecao como faixa de destaque comum (o estilo windows11 desenha so uma barrinha antes do nome, que parece
-        # um cursor de texto); cores da paleta: vale para claro e escuro
-        self.table_list.setStyleSheet(
-            "QListWidget::item:selected { background: palette(highlight); color: palette(highlighted-text); }"
-        )
+        # lista de tabelas com a contagem de linhas ao lado (igual nas 4 versoes, como o Zig): Tabela | Linhas
+        self.table_list = QTreeWidget()
+        self._t(self.table_list.setAccessibleName, "tables.title")
+        self.table_list.setColumnCount(2)
+        self._t(lambda text: self.table_list.headerItem().setText(0, text), "tables.column_table")
+        self._t(lambda text: self.table_list.headerItem().setText(1, text), "tables.column_rows")
+        self.table_list.headerItem().setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.table_list.setRootIsDecorated(False)
+        self.table_list.setUniformRowHeights(True)
+        self.table_list.setAllColumnsShowFocus(True)
+        # selecao como faixa de destaque comum na linha inteira (o estilo windows11 desenha um cinza quase igual ao
+        # fundo); cores da paleta: vale para claro e escuro
+        self.table_list.setStyleSheet(TABLES_STYLE)
+        header = self.table_list.header()
+        header.setSectionsMovable(False)
+        # nome na largura dele; Linhas ocupa o resto ate a borda (a faixa da selecao vai na linha inteira)
+        # !T: Not stretchLastSection: that last section never went below 100 px, wider than the counts, which made
+        # !T: a horizontal scroll and cut the Rows column with the DB4 names
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(16)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         # nome de tabela nunca vira "...": o painel cresce ate o nome mais longo (limite: rolagem horizontal)
         self.table_list.setTextElideMode(Qt.TextElideMode.ElideNone)
-        self.table_list.setHorizontalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.table_list.setHorizontalScrollMode(QTreeWidget.ScrollMode.ScrollPerPixel)
         # !T: Signal emitido quando usuario seleciona outra tabela
-        self.table_list.currentTextChanged.connect(self.on_table_selected)
+        self.table_list.currentItemChanged.connect(
+            lambda current, _previous: self.on_table_selected(current.text(0) if current is not None else "")
+        )
         self.table_list.itemSelectionChanged.connect(self._sync_current_table)
 
         panel = QWidget()
@@ -467,7 +639,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.table_filter)
         layout.addWidget(self.table_list)
 
-        self.tables_dock = QDockWidget(tr("tables.title"), self)
+        self.tables_dock = QDockWidget(self)
+        self._t(self.tables_dock.setWindowTitle, "tables.title")
         self.tables_dock.setObjectName("tablesDock")
         self.tables_dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable)
         self.tables_dock.setWidget(panel)
@@ -479,7 +652,7 @@ class MainWindow(QMainWindow):
         # recolhido por padrao (estado lembrado); recolhido, a barra de status mostra erro > aviso > ultima acao
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
-        self.log_view.setAccessibleName(tr("log.title"))
+        self._t(self.log_view.setAccessibleName, "log.title")
         self.log_view.setMaximumBlockCount(LOG_LINES)
         self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
@@ -493,35 +666,41 @@ class MainWindow(QMainWindow):
 
         # cabecalho do painel: titulo, "Copiar tudo" e a seta que recolhe (sem botoes de flutuar/fechar)
         self.log_copy_button = copy_all = QToolButton()
-        copy_all.setText(tr("log.copy_all"))
+        self._t(copy_all.setText, "log.copy_all")
         copy_all.setAutoRaise(True)
         copy_all.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.log_view.toPlainText()))
         self.log_collapse = QToolButton()
         self.log_collapse.setArrowType(Qt.ArrowType.DownArrow)
         self.log_collapse.setAutoRaise(True)
-        self.log_collapse.setToolTip(tr("log.toggle_tip"))
-        self.log_collapse.setAccessibleName(tr("log.hide"))
+        self._t(self.log_collapse.setToolTip, "log.toggle_tip")
+        self._t(self.log_collapse.setAccessibleName, "log.hide")
         self.log_collapse.clicked.connect(lambda: self.set_log_visible(False))
         header = QWidget()
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(8, 2, 4, 2)
-        header_layout.addWidget(QLabel(tr("log.title")))
+        title = QLabel()
+        self._t(title.setText, "log.title")
+        header_layout.addWidget(title)
         header_layout.addStretch(1)
         header_layout.addWidget(copy_all)
         header_layout.addWidget(self.log_collapse)
 
-        self.log_dock = QDockWidget(tr("log.title"), self)
+        self.log_dock = QDockWidget(self)
+        self._t(self.log_dock.setWindowTitle, "log.title")
         self.log_dock.setObjectName("logDock")
         self.log_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
         self.log_dock.setTitleBarWidget(header)
         self.log_dock.setWidget(panel)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
         self.log_dock.hide()
-        self.log_action = QAction(tr("menu.log"), self, checkable=True)
+        self.log_action = QAction(self, checkable=True)
+        self._t(self.log_action.setText, "menu.log")
         self.log_action.setShortcut(QKeySequence("Ctrl+L"))
         self.log_action.triggered.connect(self.set_log_visible)
         self._latest = {"error": "", "warning": ""}  # ultimo erro e ultimo aviso da sessao
         self._unread = {"error": 0, "warning": 0}  # chegaram com o painel recolhido
+        self._sql_error, self._sql_error_unread = "", False  # erro da ultima consulta SQL (sai quando outra da certo)
+        self._found_summary: tuple[int, str] | None = None  # pesquisa em todas as tabelas: (tabelas, termo)
 
     def log(self, text: str, level: str = "info") -> None:
         """Linha do painel Log; level 'error' ou 'warning' entra na barra de status quando o painel esta recolhido."""
@@ -538,6 +717,7 @@ class MainWindow(QMainWindow):
         self.log_dock.setVisible(bool(visible))
         if visible:
             self._unread = {"error": 0, "warning": 0}
+            self._sql_error_unread = False
             # ~10% da altura (minimo 3 linhas; maximo 25%, em resizeEvent); a borda continua arrastavel
             self.resizeDocks([self.log_dock], [max(self.log_view.minimumHeight() + 32, round(self.height() * 0.10))],
                              Qt.Orientation.Vertical)
@@ -556,11 +736,12 @@ class MainWindow(QMainWindow):
         self.log_unread.setVisible(bool(unread))
         # recolhido: a linha mais importante ainda nao lida (erro destacado > aviso > ultima acao, que ja esta la)
         for level in ("error", "warning"):
-            if self._unread[level]:
+            if self._unread[level] and self._latest[level]:
                 text = self._latest[level]
                 self.status_label.setText(status_line(text))
                 self.status_label.setToolTip(text)
                 self.status_label.setStyleSheet(f"color: {self._alert_color(level)};")
+                self.status_label.setProperty("alert", level)
                 return
 
     def _alert_color(self, level: str) -> str:
@@ -570,97 +751,185 @@ class MainWindow(QMainWindow):
             return "#ff8a80" if dark else "#b3261e"
         return "#ffd180" if dark else "#8a5300"
 
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt)
+        super().changeEvent(event)
+        # tema trocado (Configuracoes > Tema ou o do sistema): tudo acompanha, igual nas 4 versoes
+        if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.ApplicationPaletteChange):
+            # !T: After Qt finished applying the new palette; a child timer dies with the window (a pending call on a
+            # !T: deleted window would raise inside the event loop)
+            if not hasattr(self, "_restyle_timer"):
+                self._restyle_timer = QTimer(self)
+                self._restyle_timer.setSingleShot(True)
+                self._restyle_timer.setInterval(0)
+                self._restyle_timer.timeout.connect(self._restyle)
+            self._restyle_timer.start()
+
+    def _restyle(self) -> None:
+        # !T: A widget style sheet keeps the palette it was polished with: with the windows11 style the table list
+        # !T: stayed dark after Dark -> Light. Setting it again polishes it with the new palette
+        self.table_list.setStyleSheet("")
+        self.table_list.setStyleSheet(TABLES_STYLE)
+        # erro/aviso destacados na cor legivel no tema novo
+        for label in (self.status_label, self.info_label, self.sql_info):
+            level = label.property("alert")
+            if level in ("error", "warning"):
+                label.setStyleSheet(f"color: {self._alert_color(level)};")
+
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt)
         super().resizeEvent(event)
         self.log_dock.setMaximumHeight(max(self.log_view.minimumHeight() + 32, round(self.height() * 0.25)))
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 (Qt)
+        # !T: Checks the event type first: an exception here aborts the process, and the filter already runs while
+        # !T: the window is still being built (status_label does not exist yet)
         # clique na mensagem da barra de status reexibe o log
-        if watched is self.status_label and event.type() == QEvent.Type.MouseButtonRelease:
+        if event.type() == QEvent.Type.MouseButtonRelease and watched is getattr(self, "status_label", None):
             if event.button() == Qt.MouseButton.LeftButton and self.log_dock.isHidden():
                 self.set_log_visible(True)
+        # !T: Text fields take drops of text only; a dragged file over them opens like a drop on the window
+        drag = (QEvent.Type.DragEnter, QEvent.Type.DragMove, QEvent.Type.Drop)
+        if event.type() in drag and self.dropped_file(event) is not None:
+            if event.type() == QEvent.Type.Drop:
+                self.dropEvent(event)
+            else:
+                event.acceptProposedAction()
+            return True
         return super().eventFilter(watched, event)
 
-    def _create_toolbar(self) -> None:
-        toolbar = QToolBar(tr("toolbar.main"), self)
-        toolbar.setObjectName("mainToolbar")
-        toolbar.setMovable(False)
-        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        self.addToolBar(toolbar)
+    def _create_top_bar(self) -> None:
+        # linha de cima igual nas 4 versoes (Zig): caminho do arquivo ocupando a linha (longo: mostra o fim) e
+        # Procurar... / Abrir / Exportar... a direita; arrastar um arquivo para a janela tambem abre
+        self.path_edit = PathEdit()
+        self._t(self.path_edit.setPlaceholderText, "path.hint")
+        self._t(self.path_edit.setAccessibleName, "path.name")
+        self.path_edit.setMinimumWidth(120)
+        self.path_edit.returnPressed.connect(self.open_typed_path)
+        self.browse_button = QPushButton()
+        self._t(self.browse_button.setText, "button.browse")
+        self._t(self.browse_button.setToolTip, "tip.open")
+        self.browse_button.clicked.connect(self.choose_database)
+        self.open_button = QPushButton()
+        self._t(self.open_button.setText, "button.open")
+        self._t(self.open_button.setToolTip, "tip.open_path")
+        self.open_button.clicked.connect(self.open_typed_path)
 
-        toolbar.addAction(self.open_action)
-        toolbar.addAction(self.reload_action)
-
-        # botao Exportar com o mesmo menu de Arquivo > Exportar
-        self.export_menu = QMenu(tr("menu.export"), self)  # o mesmo menu fica em File > Export
+        # Exportar... abre o mesmo menu de Arquivo > Exportar, logo abaixo do botao
+        self.export_menu = QMenu(self)
+        self._t(self.export_menu.setTitle, "menu.export")
         self.export_menu.addActions(self.export_db_actions)
         self.export_menu.addSeparator()
-        self.export_menu.addActions(self.export_result_actions)
-        self.export_button = QToolButton()
-        self.export_button.setText(tr("menu.export").replace("&", ""))
-        self.export_button.setAccessibleName(self.export_button.text())
-        self.export_button.setToolTip(tr("tip.export"))
-        self.export_button.setMenu(self.export_menu)
-        self.export_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        toolbar.addWidget(self.export_button)
-        toolbar.addSeparator()
+        self.export_menu.addActions(self.export_table_actions)
+        self.export_menu.addSeparator()
+        self.export_menu.addActions(self.export_sql_actions)
+        self.export_button = QPushButton()
+        self._t(self.export_button.setText, "button.export")
+        self._t(self.export_button.setToolTip, "tip.export")
+        self.export_button.clicked.connect(
+            lambda: self.export_menu.popup(self.export_button.mapToGlobal(QPoint(0, self.export_button.height())))
+        )
 
-        self.limit_combo = QComboBox()
-        self.limit_combo.setAccessibleName(tr("rows.name"))
-        self.limit_combo.setToolTip(tr("tip.rows"))
-        for limit in ROW_LIMITS:
-            self.limit_combo.addItem(num(limit), limit)
-        self.limit_combo.currentIndexChanged.connect(self.reload_table)
-        limit_label = QLabel(f" {tr('rows.label')} ")
-        limit_label.setBuddy(self.limit_combo)
-        toolbar.addWidget(limit_label)
-        toolbar.addWidget(self.limit_combo)
+        bar = QWidget()
+        bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(6, 4, 6, 4)
+        row.addWidget(self.path_edit, 1)
+        for button in (self.browse_button, self.open_button, self.export_button):
+            row.addWidget(button)
+        toolbar = QToolBar(self)
+        self._t(toolbar.setWindowTitle, "toolbar.main")
+        toolbar.setObjectName("mainToolbar")
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+        toolbar.toggleViewAction().setVisible(False)  # a linha de cima nao some pelo menu de contexto
+        toolbar.addWidget(bar)
+        self.addToolBar(toolbar)
 
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        toolbar.addWidget(spacer)
+        # arquivo arrastado para a janela (ou para um campo de texto dela) abre como o Abrir
+        self.setAcceptDrops(True)
+        for edit in (self.path_edit, self.search_edit, self.table_filter, self.sql_edit.viewport()):
+            edit.installEventFilter(self)
 
-        self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText(tr("search.placeholder"))
-        self.search_edit.setToolTip(tr("tip.words"))
-        self.search_edit.setClearButtonEnabled(True)
-        self.search_edit.setAccessibleName(tr("search.name"))
-        self.search_edit.setMinimumWidth(280)
-        self.search_edit.setMaximumWidth(420)
-        self.search_edit.textChanged.connect(self._search_edited)
-        toolbar.addActions(list(self.scope_actions.values()))  # dois botoes de alternar, um marcado
-        toolbar.addWidget(self.search_edit)
+    @staticmethod
+    def dropped_file(event) -> Path | None:
+        """O arquivo local arrastado (um so), ou None."""
+        urls = event.mimeData().urls() if event.mimeData() is not None else []
+        if len(urls) == 1 and urls[0].isLocalFile():
+            return Path(urls[0].toLocalFile())
+        return None
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 (Qt)
+        if self.dropped_file(event) is not None:
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:  # noqa: N802 (Qt)
+        path = self.dropped_file(event)
+        if path is not None:
+            event.acceptProposedAction()
+            self.path_edit.setText(str(path))
+            QTimer.singleShot(0, self.open_typed_path)  # !T: after the drag ends: the open may ask (Access SQLite)
+
+    def open_typed_path(self) -> None:
+        """Abrir: o caminho do campo (Enter, botao ou arquivo arrastado); vazio, o dialogo de abrir."""
+        text = self.path_edit.text().strip().strip('"')
+        if not text:
+            self.choose_database()
+            return
+        path = Path(text).expanduser()
+        if not path.is_file():  # o banco aberto continua aberto
+            self._set_message(self.status_label, tr("status.not_found", name=text), error=True)
+            return
+        self._open_chosen(path)
+
+    def _set_opening(self, opening: bool) -> None:
+        # abrindo um arquivo: Abrir, Procurar..., Ctrl+O e F5 esperam
+        for item in (self.open_action, self.reload_action, self.browse_button, self.open_button):
+            item.setEnabled(not opening)
+
+    def _open_chosen(self, path: Path) -> None:
+        if self.release_database():  # Access convertido: pergunta antes (Cancelar mantem o aberto)
+            self._remember_dir(path)
+            self.open_database(path)
 
     def _create_menus(self) -> None:
         menu_bar = self.menuBar()
-        file_menu = menu_bar.addMenu(tr("menu.file"))
-        file_menu.addActions([self.open_action, self.reload_action, self.close_db_action])
-        file_menu.addSeparator()
+        # Arquivo igual nas 4 versoes (Zig): Abrir... (Ctrl+O), Exportar >, Fechar, Sair (Ctrl+Q); o F5 (recarregar)
+        # continua como atalho da janela
+        file_menu = menu_bar.addMenu("")
+        self._t(file_menu.setTitle, "menu.file")
+        file_menu.addAction(self.open_action)
         file_menu.addMenu(self.export_menu)
+        file_menu.addAction(self.close_db_action)
         file_menu.addSeparator()
         file_menu.addAction(self.quit_action)
+        self.addAction(self.reload_action)
 
-        edit_menu = menu_bar.addMenu(tr("menu.edit"))
+        edit_menu = menu_bar.addMenu("")
+        self._t(edit_menu.setTitle, "menu.edit")
         edit_menu.addActions([self.copy_action, self.copy_row_action, self.copy_row_header_action, self.find_action])
         edit_menu.addSeparator()
         edit_menu.addActions([self.filter_value_action, self.clear_filters_action])
 
-        view_menu = menu_bar.addMenu(tr("menu.view"))
+        view_menu = menu_bar.addMenu("")
+        self._t(view_menu.setTitle, "menu.view")
         toggle_tables = self.tables_dock.toggleViewAction()
-        toggle_tables.setText(tr("menu.tables_panel"))
+        self._t(toggle_tables.setText, "menu.tables_panel")
         toggle_tables.setShortcut(QKeySequence("Ctrl+B"))
         view_menu.addActions([toggle_tables, self.log_action, self.tables_action])
         view_menu.addSeparator()
         view_menu.addActions([self.data_tab_action, self.schema_tab_action, self.sql_tab_action, self.run_sql_action])
 
-        self.settings_menu = menu_bar.addMenu(tr("menu.settings"))
-        self.settings_menu.addMenu(tr("menu.theme")).addActions(list(self.theme_actions.values()))
-        self.settings_menu.addMenu(tr("menu.language")).addActions(list(self.language_actions.values()))
-        self.settings_menu.addMenu(tr("menu.search_scope")).addActions(list(self.default_scope_actions.values()))
+        self.settings_menu = menu_bar.addMenu("")
+        self._t(self.settings_menu.setTitle, "menu.settings")
+        for key, actions in (("menu.theme", self.theme_actions), ("menu.language", self.language_actions),
+                             ("menu.search_scope", self.default_scope_actions)):
+            submenu = self.settings_menu.addMenu("")
+            self._t(submenu.setTitle, key)
+            submenu.addActions(list(actions.values()))
         self.settings_menu.addAction(self.show_null_action)
 
-        help_menu = menu_bar.addMenu(tr("menu.help"))
-        help_menu.addAction(tr("menu.about"), self.show_about)
+        help_menu = menu_bar.addMenu("")
+        self._t(help_menu.setTitle, "menu.help")
+        self._t(help_menu.addAction("", self.show_about).setText, "menu.about")
 
     def show_about(self) -> None:
         # !T: open() instead of exec(): no nested event loop, so tests and UI Automation do not block
@@ -691,21 +960,49 @@ class MainWindow(QMainWindow):
             model.set_null_text(tr("grid.null") if show else "")
 
     def set_language(self, code: str) -> None:
+        # vale na hora, igual nas 4 versoes: textos, menus, dicas, as barras e os textos do proprio Qt
         self.settings.setValue("language", code)
         self.language_actions[code].setChecked(True)
-        # aviso no idioma escolhido: os textos trocam ao reabrir o app
-        notice = i18n.catalog(code)["status.language_restart"]
-        self._set_message(self.status_label, notice)
+        i18n.set_language(code)
+        load_qt_texts(code)
+        self.retranslate()
+
+    def retranslate(self) -> None:
+        """Textos da tela no idioma atual (as mensagens ja mostradas na barra e no Log ficam como estao)."""
+        for apply, key, plain in self._texts:
+            text = tr(key)
+            apply(text.replace("&", "") if plain else text)
+        self._fit_search_minimum()  # a dica tem outro tamanho
+        for row in range(self.table_list.topLevelItemCount()):
+            item = self.table_list.topLevelItem(row)
+            count = self.table_counts.get(item.text(0))
+            item.setText(1, num(count) if count is not None else "")
+        if self.loaded_schema:
+            self._show_schema()
+            self._fit_columns(self.schema_table)
+        self._refresh_filter_bar()
+        self._show_reader()
+        self._apply_search()
+        if self.manager is not None and not self.table_list.topLevelItemCount():
+            self._set_message(self.info_label, tr("status.no_tables"), log=False)
+        if self.data_stack.currentWidget() is self.found_list and self._found_summary is not None:
+            count, search = self._found_summary
+            self._set_message(self.info_label, counted("status.found", count, search=search), log=False)
+
+    def _copy_menu_on(self, label: QLabel) -> None:
+        # !T: A long message must not widen the window or squeeze the tables panel: the label takes the width it gets
+        # !T: (the full text is in the tooltip, the log and the Copy menu)
+        label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        # clique direito > Copiar (o texto inteiro), e o painel Log com o historico
+        label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        label.customContextMenuRequested.connect(lambda pos, lbl=label: self.status_menu(lbl).popup(lbl.mapToGlobal(pos)))
 
     def _create_status_bar(self) -> None:
-        self.status_label = QLabel()  # o centro da janela ja diz "No database loaded"
-        self.info_label = QLabel(tr("status.ready"))
-        for label in (self.status_label, self.info_label):
-            # clique direito > Copiar (o texto inteiro), e o painel Log com o historico
-            label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            label.customContextMenuRequested.connect(
-                lambda pos, lbl=label: self.status_menu(lbl).popup(lbl.mapToGlobal(pos))
-            )
+        # barra de baixo igual nas 4 versoes (Go): a esquerda a seta do Log e a mensagem; a direita o contador de nao
+        # lidos do Log, as colunas ocultas e como o arquivo foi lido (fixo enquanto ele estiver aberto)
+        # janela estreita: a mensagem longa quebra a linha (a barra cresce so o necessario), nada cortado
+        self.status_label = WrapLabel()  # o centro da janela ja diz "No database loaded"
+        self._copy_menu_on(self.status_label)
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)  # indeterminado: o backend nao informa percentual
         self.progress.setTextVisible(False)
@@ -715,19 +1012,24 @@ class MainWindow(QMainWindow):
         # seta que recolhe/reexibe o painel Log e o contador de erros/avisos nao lidos (so com o painel recolhido)
         self.log_toggle = QToolButton()
         self.log_toggle.setAutoRaise(True)
-        self.log_toggle.setToolTip(tr("log.toggle_tip"))
-        self.log_toggle.setAccessibleName(tr("menu.log").replace("&", ""))
+        self._t(self.log_toggle.setToolTip, "log.toggle_tip")
+        self._t(self.log_toggle.setAccessibleName, "menu.log", plain=True)
         self.log_toggle.clicked.connect(lambda: self.set_log_visible(self.log_dock.isHidden()))
         self.log_unread = QLabel()
-        self.log_unread.setToolTip(tr("log.unread_tip"))
+        self._t(self.log_unread.setToolTip, "log.unread_tip")
         self.status_label.installEventFilter(self)  # clique na mensagem reexibe o log
+        self.hidden_label = QLabel()  # "2 colunas ocultas" da tabela aberta na aba Data
+        self.hidden_label.hide()
+        self.reader_label = QLabel()  # "Aberto via Access ODBC, convertido para SQLite"
+        self._t(self.reader_label.setToolTip, "status.reader_tip")
 
         status_bar = self.statusBar()
         status_bar.addWidget(self.log_toggle)
-        status_bar.addWidget(self.log_unread)
         status_bar.addWidget(self.status_label, 1)
         status_bar.addPermanentWidget(self.progress)
-        status_bar.addPermanentWidget(self.info_label)
+        status_bar.addPermanentWidget(self.log_unread)
+        status_bar.addPermanentWidget(self.hidden_label)
+        status_bar.addPermanentWidget(self.reader_label)
         self.set_log_visible(self.settings.value("log_visible", False, type=bool))  # padrao: recolhido
 
     def status_menu(self, label: QLabel) -> QMenu:
@@ -744,17 +1046,10 @@ class MainWindow(QMainWindow):
         self, label: QLabel, text: str, error: bool = False, log: bool = True, warning: bool = False
     ) -> None:
         level = "error" if error else "warning" if warning else "info"
-        if level != "info" and label is self.info_label:
-            # erro/aviso so a esquerda (seta, contador, linha mais importante): a mesma mensagem nunca aparece duas
-            # vezes; a direita volta para o estado da tabela (linhas, colunas ocultas)
-            label = self.status_label
-            if self.loaded_table is not None:
-                self._apply_search()
-            else:
-                self.info_label.clear()
         label.setText(status_line(text))
         label.setToolTip(text)  # texto inteiro (erro do motor com LINE 1 e ^^^) na dica e no Log
         label.setStyleSheet("" if level == "info" else f"color: {self._alert_color(level)};")
+        label.setProperty("alert", level)  # a cor volta a ser calculada quando o tema muda
         if log and text:
             self.log(text, level)  # depois do texto: com o Log recolhido, um erro nao lido continua na barra
 
@@ -799,12 +1094,35 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentWidget(self.sql_page)
         self.sql_edit.setFocus()
 
+    def _filter_tables_now(self) -> None:
+        self.table_filter_timer.stop()
+        self._filter_tables(self.table_filter.text())
+
     def _filter_tables(self, text: str) -> None:
         words = search_words(text)
-        for row in range(self.table_list.count()):
-            item = self.table_list.item(row)
-            name = fold(item.text())
+        for row in range(self.table_list.topLevelItemCount()):
+            item = self.table_list.topLevelItem(row)
+            name = fold(item.text(0))
             item.setHidden(not all(word in name for word in words))
+
+    def table_names(self) -> list[str]:
+        """Nomes da lista de tabelas, na ordem."""
+        return [self.table_list.topLevelItem(row).text(0) for row in range(self.table_list.topLevelItemCount())]
+
+    def _fill_tables(self, tables: list[str], counts: dict[str, int | None]) -> None:
+        # Tabela | Linhas (numero a direita, com o separador de milhar do idioma; vazio se nao deu para contar)
+        self.table_counts = counts
+        items = []
+        for name in tables:
+            count = counts.get(name)
+            item = QTreeWidgetItem([name, num(count) if count is not None else ""])
+            item.setToolTip(0, name)  # nome inteiro tambem na dica
+            item.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            items.append(item)
+        self.table_list.blockSignals(True)
+        self.table_list.clear()
+        self.table_list.addTopLevelItems(items)
+        self.table_list.blockSignals(False)
 
     def _current_view(self) -> QTableView | None:
         page = self.tabs.currentWidget()
@@ -852,9 +1170,8 @@ class MainWindow(QMainWindow):
     def choose_database(self) -> None:
         start_dir = default_save_dir(self.current_db_path, self.settings.value("last_dir"))
         file_name, _ = QFileDialog.getOpenFileName(self, tr("dialog.open"), str(start_dir), open_filter())
-        if file_name and self.release_database():
-            self._remember_dir(Path(file_name))
-            self.open_database(Path(file_name))
+        if file_name:
+            self._open_chosen(Path(file_name))
 
     def load_database(self):
         # Recarrega o banco atual; sem banco aberto usa a env var ou o caminho default
@@ -866,8 +1183,7 @@ class MainWindow(QMainWindow):
             self._set_message(self.status_label, tr("status.not_found", name=db_path.name), error=True)
             return
 
-        self.open_action.setEnabled(False)
-        self.reload_action.setEnabled(False)
+        self._set_opening(True)
         self._set_message(self.status_label, tr("status.loading", name=db_path.name))
 
         def progress(done: int, total: int, table: str) -> None:
@@ -877,20 +1193,52 @@ class MainWindow(QMainWindow):
 
         self._db_request += 1  # abrir outro arquivo invalida a abertura anterior ainda em andamento
         work_dir = self.session.path
-        self._run(
-            self._db_request,
-            lambda report: (db_path, *open_database(db_path, report, work_dir)),
-            self._on_database_loaded,
-            self._on_database_error,
-            progress,
-        )
+        # o mesmo Access (caminho, tamanho, data) ja convertido e salvo: abre o SQLite salvo, sem converter de novo
+        saved = self.saved_conversion(db_path)
+        def task(report):
+            source_key = file_key(db_path)  # a versao do arquivo que vai ser lida (lembrada se o SQLite for salvo)
+            manager, tables = open_database(saved or db_path, report, work_dir)
+            try:  # linhas de cada tabela para a lista; sem elas a lista abre do mesmo jeito
+                counts = manager.table_counts()
+            except Exception:  # noqa: BLE001 (a contagem e so informativa)
+                counts = {}
+            return db_path, saved, manager, tables, counts, source_key
+
+        self._run(self._db_request, task, self._on_database_loaded, self._on_database_error, progress)
+
+    # --------------------------------- Access convertido e salvo: lembrado entre execucoes (igual nas 4 versoes)
+
+    def _saved_conversions(self) -> dict[str, dict[str, str]]:
+        try:
+            saved = json.loads(str(self.settings.value("converted_files", "{}")))
+        except ValueError:
+            return {}
+        return saved if isinstance(saved, dict) else {}
+
+    def saved_conversion(self, source: Path) -> Path | None:
+        """SQLite salvo deste Access, se nenhum dos dois mudou desde entao (caminho + tamanho + data)."""
+        if source.suffix.lower() not in (".accdb", ".mdb"):
+            return None
+        entry = self._saved_conversions().get(path_key(source))
+        if not isinstance(entry, dict) or not file_key(source) or entry.get("source") != file_key(source):
+            return None
+        dest = Path(str(entry.get("dest", "")))
+        return dest if entry.get("dest_key") and file_key(dest) == entry.get("dest_key") else None
+
+    def _remember_conversion(self, source: Path, source_key: str, dest: Path) -> None:
+        saved = {k: v for k, v in self._saved_conversions().items()
+                 if isinstance(v, dict) and Path(str(v.get("dest", ""))).is_file()}  # sem os apagados
+        saved[path_key(source)] = {"source": source_key, "dest": str(dest), "dest_key": file_key(dest)}
+        self.settings.setValue("converted_files", json.dumps(saved))
 
     def _on_database_loaded(self, request_id: int, result: object) -> None:
-        db_path, manager, tables = result  # type: ignore[misc]
+        db_path, saved, manager, tables, counts, source_key = result  # type: ignore[misc]
         if request_id != self._db_request:
             manager.release()  # abertura antiga terminou depois de outra mais nova: descarta (e o SQLite dela)
             return
-        previous = self.table_list.currentItem().text() if self.table_list.currentItem() else None
+        if saved is not None:
+            self.log(tr("log.reused", name=db_path.name, path=saved))
+        previous = self.table_list.currentItem().text(0) if self.table_list.currentItem() else None
         if db_path != self.current_db_path:
             self._reset_view(None)  # outro arquivo: filtros e colunas ocultas nao valem mais
             # nem a pesquisa da aba Data e o filtro da lista; o escopo volta ao padrao de Configuracoes (4 versoes)
@@ -900,6 +1248,7 @@ class MainWindow(QMainWindow):
             self.table_filter_timer.stop()
             self.scope_actions[self.default_scope()].setChecked(True)
             self.loaded_table = None
+            self.loaded_schema = []
             self.table_model.set_rows([])
             self.schema_model.set_rows([])
         # consultas de tabela e SQL ainda pendentes sao do banco anterior: descartar o que elas devolverem
@@ -911,50 +1260,56 @@ class MainWindow(QMainWindow):
             self.manager.release()
         self.manager = manager
         self.current_db_path = db_path
+        self.current_db_key = source_key
         self.sql_query = None
         self.sql_model.set_rows([])
+        self.sql_info.clear()
         self.setWindowTitle(f"{db_path.name} - {app_title()}")
+        self.path_edit.setText(str(db_path))
         self.stack.setCurrentWidget(self.tabs)
 
-        self.table_list.blockSignals(True)
-        self.table_list.clear()
-        self.table_list.addItems(tables)
-        for row in range(self.table_list.count()):  # nome inteiro tambem na dica
-            self.table_list.item(row).setToolTip(self.table_list.item(row).text())
-        self.table_list.blockSignals(False)
+        self._fill_tables(tables, counts)
         self._fit_tables_panel(tables)
         self._filter_tables(self.table_filter.text())
 
-        # o caminho usado para abrir (Access ODBC, mdbtools, SQLite, DuckDB) fica visivel na barra de status
-        key = "status.loaded_access" if manager.converted else "status.loaded"
-        self._set_message(self.status_label, tr(key, name=db_path.name, count=num(len(tables)), reader=manager.reader))
-        self.open_action.setEnabled(True)
-        self.reload_action.setEnabled(True)
+        # "Aberto: <arquivo> (N tabelas)"; como foi lido (Access ODBC, mdbtools, SQLite, DuckDB) fica fixo a direita
+        self._set_message(self.status_label, counted("status.loaded", len(tables), name=db_path.name))
+        self._show_reader()
+        self._set_opening(False)
         self._update_export_actions()
 
         if tables:
-            # !T: Keep the selected table across a reload; setCurrentRow triggers on_table_selected
-            self.table_list.setCurrentRow(tables.index(previous) if previous in tables else 0)
+            # !T: Keep the selected table across a reload; setCurrentItem triggers on_table_selected
+            self.table_list.setCurrentItem(self.table_list.topLevelItem(tables.index(previous) if previous in tables else 0))
         else:
             self.loaded_table = None
+            self.loaded_schema = []
             self.table_model.set_rows([])
             self.schema_model.set_rows([])
-            self._set_message(self.info_label, tr("status.no_tables"))
+            self._set_message(self.info_label, tr("status.no_tables"), log=False)
         if self.data_stack.currentWidget() is self.found_list:
             self._search_now()  # lista de todas as tabelas: refeita no banco aberto agora
+
+    def _show_reader(self) -> None:
+        manager = self.manager
+        if manager is None:
+            self.reader_label.clear()
+            return
+        key = "status.reader_converted" if manager.converted else "status.reader"
+        self.reader_label.setText(tr(key, reader=manager.reader))
 
     def _on_database_error(self, request_id: int, message: str) -> None:
         if request_id != self._db_request:
             return
         self._set_message(self.status_label, tr("status.error", message=message), error=True)
-        self.open_action.setEnabled(True)
-        self.reload_action.setEnabled(True)
+        self._set_opening(False)
 
     # ------------------------------------------- fechar: SQLite convertido do Access
 
     def ask_converted(self, source: Path) -> tuple[str, bool]:
         """Pergunta o que fazer com o SQLite convertido: (SAVE | DELETE | CANCEL, lembrar nesta sessao)."""
-        box = QMessageBox(QMessageBox.Icon.Question, tr("converted.title"), tr("converted.text", name=source.name),
+        # igual ao Go: titulo, pergunta, "Lembrar nesta sessao", Salvar... / Apagar / Cancelar (sem icone)
+        box = QMessageBox(QMessageBox.Icon.NoIcon, tr("converted.title"), tr("converted.text", name=source.name),
                           QMessageBox.StandardButton.NoButton, self)
         save = box.addButton(tr("converted.save"), QMessageBox.ButtonRole.AcceptRole)
         delete = box.addButton(tr("converted.delete"), QMessageBox.ButtonRole.DestructiveRole)
@@ -982,6 +1337,9 @@ class MainWindow(QMainWindow):
         manager = self.manager
         if manager is None:
             return True
+        # uma abertura ainda em andamento (F5) nao troca o banco durante a pergunta: o resultado dela e descartado
+        self._db_request += 1
+        self._set_opening(False)
         target = None
         if manager.converted is not None and self.current_db_path is not None:
             choice = self.converted_choice
@@ -998,17 +1356,19 @@ class MainWindow(QMainWindow):
                 if target is not None:
                     break
                 choice = None  # cancelou o dialogo de salvar: volta para a pergunta
-        source = self.current_db_path
+        source, source_key, converted = self.current_db_path, self.current_db_key, manager.converted
         self._clear_database()
         try:
             manager.release(target)
         except OSError as exc:
             self._set_message(self.status_label, tr("status.error", message=exc), error=True)
             return True
-        if target is not None:
+        if target is not None and source is not None and converted is not None and target.is_file():
+            # o mesmo Access, sem mudanca, abre direto este SQLite (nesta e nas proximas execucoes)
+            self._remember_conversion(source, source_key, target)
             self._set_message(self.status_label, tr("status.converted_saved", path=target))
-        elif source is not None and source.suffix.lower() in (".accdb", ".mdb"):
-            self.log(tr("log.converted_deleted", name=source.name))
+        elif converted is not None:
+            self.log(tr("log.converted_deleted", name=converted.name))
         return True
 
     def _clear_database(self) -> None:
@@ -1022,6 +1382,7 @@ class MainWindow(QMainWindow):
         self.manager = None
         self.current_db_path = None
         self.loaded_table = None
+        self.loaded_schema = []
         self.sql_query = None
         self._reset_view(None)
         for model in (self.table_model, self.schema_model, self.sql_model):
@@ -1033,8 +1394,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(app_title())
         self.status_label.clear()
         self.info_label.clear()
-        self.open_action.setEnabled(True)
-        self.reload_action.setEnabled(True)
+        self.sql_info.clear()
+        self._apply_search()  # sem tabela: barra da tabela e colunas ocultas vazias
+        self._show_reader()
+        self._set_opening(False)
         self._update_export_actions()
 
     def close_database(self) -> None:
@@ -1056,7 +1419,7 @@ class MainWindow(QMainWindow):
         # table_load_timer sao so da navegacao pela lista com as setas
         item = self.table_list.currentItem()
         if item is not None:
-            self.on_table_selected(item.text())
+            self.on_table_selected(item.text(0))
             self._start_table_worker()
 
     def _search_edited(self) -> None:
@@ -1071,7 +1434,8 @@ class MainWindow(QMainWindow):
         self.search_timer.stop()
         self._found_request += 1  # pesquisa em todas as tabelas ainda rodando: o resultado dela e descartado
         self.found_list.clear()
-        everywhere = self.scope_actions["all"].isChecked() and bool(self.search_edit.text().split())
+        self._found_summary = None
+        everywhere =self.scope_actions["all"].isChecked() and bool(self.search_edit.text().split())
         self.data_stack.setCurrentWidget(self.found_list if everywhere else self.data_table)
         if everywhere:
             self._search_all_tables()
@@ -1098,11 +1462,14 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(tr("search.found_item", table=table, count=num(count)))
             item.setData(Qt.ItemDataRole.UserRole, table)
             self.found_list.addItem(item)
-        self._set_message(self.info_label, tr("status.found", count=num(len(found))), log=False)
+        search = self.search_edit.text().strip()
+        self._found_summary = (len(found), search)  # refeito no idioma novo se o idioma mudar
+        self._set_message(self.info_label, counted("status.found", len(found), search=search), log=False)
 
     def _on_found_error(self, request_id: int, message: str) -> None:
         if request_id == self._found_request:
-            self._set_message(self.info_label, tr("status.error", message=message), error=True)
+            self._set_message(self.status_label, tr("status.error", message=message), error=True)
+            self._apply_search()  # sai o "Pesquisando": a barra da tabela volta para a tabela aberta
 
     def open_found_table(self, item: QListWidgetItem) -> None:
         # a tabela escolhida abre na aba Data com a mesma pesquisa e sem filtros por valor (a grade mostra o numero
@@ -1147,11 +1514,19 @@ class MainWindow(QMainWindow):
         )
 
     def tables_panel_width(self, tables: list[str]) -> int:
-        """Largura do painel para o nome mais longo caber inteiro: 260..35% da janela (acima disso, rolagem)."""
-        metrics = self.table_list.fontMetrics()
+        """Largura do painel para o nome mais longo e a contagem caberem inteiros: 260..35% da janela (acima disso,
+        rolagem)."""
+        tree = self.table_list
+        metrics = tree.fontMetrics()
         longest = max((metrics.horizontalAdvance(name) for name in tables), default=0)
+        # margens do item no estilo atual, medidas na propria lista (o windows11 poe mais que o Fusion)
+        listed = [tree.topLevelItem(i).text(0) for i in range(tree.topLevelItemCount())]
+        shown = max((metrics.horizontalAdvance(name) for name in listed), default=0)
+        padding = tree.sizeHintForColumn(0) - shown if listed else 16
+        rows = max(tree.sizeHintForColumn(1), tree.header().sectionSizeHint(1))  # contagem ou o titulo Linhas
         scrollbar = self.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
-        needed = longest + scrollbar + 2 * self.table_list.frameWidth() + 12 + 16  # item, lista e margens do painel
+        # colunas + barra de rolagem + moldura da lista + margens do painel (6 + 6) + folga
+        needed = longest + padding + rows + scrollbar + 2 * tree.frameWidth() + 12 + 4
         return max(260, min(needed, round(self.width() * 0.35)))
 
     def _fit_tables_panel(self, tables: list[str]) -> None:
@@ -1161,8 +1536,8 @@ class MainWindow(QMainWindow):
     def _fit_columns(self, view: QTableView, columns: list[int] | None = None) -> None:
         """Largura das colunas (todas sem `columns`) pelo texto mais longo: cabecalho ou valor de qualquer linha."""
         model: TableModel = view.model().sourceModel()
+        # margem do texto pelo estilo da grade (no Schema, 6 px a mais de cada lado: PaddedStyle)
         padding = 2 * (view.style().pixelMetric(QStyle.PixelMetric.PM_FocusFrameHMargin, None, view) + 1) + 8
-        gap = SCHEMA_GAP if view is self.schema_table else 0
         for column in range(model.columnCount()) if columns is None else columns:
             view.resizeColumnToContents(column)  # !T: Qt takes the larger of the header text and the content
             # !T: Qt measures only the first rows (resize precision); the longest texts of all loaded rows are
@@ -1170,7 +1545,7 @@ class MainWindow(QMainWindow):
             metrics = view.fontMetrics()
             longest = max((metrics.horizontalAdvance(text) for text in model.longest_texts(column)), default=0)
             width = max(view.columnWidth(column), longest + padding)
-            view.setColumnWidth(column, min(width + gap, MAX_COLUMN_WIDTH))
+            view.setColumnWidth(column, min(width, MAX_COLUMN_WIDTH))
 
     def _on_table_loaded(self, request_id: int, result: object) -> None:
         if request_id != self._table_request:
@@ -1183,12 +1558,11 @@ class MainWindow(QMainWindow):
             [column["column_name"] for column in schema],
             [f"{column['column_name']}: {column['column_type']}" for column in schema],
         )
-        # titulos do Schema traduzidos: as chaves do backend (column_name, column_type, null) nao vao para a tela
-        titles = {"column_name": tr("schema.column"), "column_type": tr("schema.type"), "null": tr("schema.nullable")}
-        self.schema_model.set_rows([{titles[k]: v for k, v in column.items()} for column in schema],
-                                   list(titles.values()))
+        self.loaded_schema = schema
+        self._show_schema()
         self.loaded_table = (payload["table_name"], payload["total_rows"])
         self.matched_rows = payload["matched_rows"]
+        self.loaded_filters = list(payload["filters"])  # os da consulta que deu esta contagem
         self.loaded_search = payload["search"]
 
         for view in (self.data_table, self.schema_table):
@@ -1198,27 +1572,37 @@ class MainWindow(QMainWindow):
         self._apply_search()
         self._update_export_actions()
 
+    def _show_schema(self) -> None:
+        # titulos e nulidade traduzidos (Coluna / Tipo / Aceita nulo; Sim / Nao): as chaves e o YES/NO do backend nao
+        # vao para a tela
+        titles = {"column_name": tr("schema.column"), "column_type": tr("schema.type"), "null": tr("schema.nullable")}
+        answer = {"YES": tr("schema.yes"), "NO": tr("schema.no")}
+        rows = [{titles[k]: answer.get(v, v) if k == "null" else v for k, v in column.items()}
+                for column in self.loaded_schema]
+        self.schema_model.set_rows(rows, list(titles.values()))
+
     def _on_table_error(self, request_id: int, message: str) -> None:
         if request_id == self._table_request:
-            self._set_message(self.info_label, tr("status.table_error", message=message), error=True)
+            self._set_message(self.status_label, tr("status.table_error", message=message), error=True)
+            self._apply_search()  # sai o "Carregando": a barra da tabela volta para a tabela que esta na grade
 
     def _apply_search(self) -> None:
-        # linha da barra de status da aba Data; pesquisa e filtros ja vieram aplicados da consulta ao banco
+        # barra da tabela (aba Data) e colunas ocultas (barra de baixo); pesquisa e filtros ja vieram aplicados da
+        # consulta ao banco
+        hidden = sum(name in self.hidden_columns for name in self.table_model.columns)
+        self.hidden_label.setText(counted("status.hidden", hidden) if hidden else "")
+        self.hidden_label.setVisible(bool(hidden))
         if self.loaded_table is None:
+            self.info_label.clear()
             return
 
         table, total_rows = self.loaded_table
-        loaded = self.table_model.rowCount()
-        total = num(total_rows)
-        if self.filters or self.loaded_search.split():  # contagem feita no banco, alem das linhas carregadas
-            message = tr("status.showing_matched", table=table, loaded=num(loaded), matched=num(self.matched_rows),
-                         total=total)
-        elif not loaded:
-            message = tr("status.zero_rows", table=table)
+        loaded = num(self.table_model.rowCount())
+        if self.loaded_filters or self.loaded_search.split():  # contagem no banco, alem das linhas carregadas
+            message = counted("status.showing_matched", self.matched_rows, table=table, loaded=loaded)
         else:
-            message = tr("status.showing", table=table, loaded=num(loaded), total=total)
-        hidden = sum(name in self.hidden_columns for name in self.table_model.columns)
-        self._set_message(self.info_label, message + hidden_text(hidden), log=False)
+            message = counted("status.showing", total_rows, table=table, loaded=loaded)
+        self._set_message(self.info_label, message, log=False)
 
     # ----------------------------------------------- filtros e colunas ocultas
 
@@ -1258,8 +1642,10 @@ class MainWindow(QMainWindow):
         self.reload_table()  # o filtro vai na consulta: acha linhas alem das carregadas
 
     def _refresh_filter_bar(self) -> None:
-        while self.filter_chips.count():
-            self.filter_chips.takeAt(0).widget().deleteLater()
+        while self.filter_chips.count():  # rotulo e botoes dos filtros; o Limpar filtros volta no fim
+            widget = self.filter_chips.takeAt(0).widget()
+            if widget is not self.clear_filters_button:
+                widget.deleteLater()
         if self.filters:
             self.filter_chips.addWidget(QLabel(tr("filters.many" if len(self.filters) > 1 else "filters.one")))
         for position, (column, value) in enumerate(self.filters):
@@ -1270,7 +1656,8 @@ class MainWindow(QMainWindow):
             chip.setToolTip(tr("filters.remove"))
             chip.clicked.connect(lambda _checked=False, p=position: self.remove_filter(p))
             self.filter_chips.addWidget(chip)
-        self.clear_filters_button.setVisible(bool(self.filters))
+        self.filter_chips.addWidget(self.clear_filters_button)
+        self.filters_bar.setVisible(bool(self.filters))
         self.clear_filters_action.setEnabled(bool(self.filters))
 
     def _apply_hidden_columns(self) -> None:
@@ -1294,7 +1681,8 @@ class MainWindow(QMainWindow):
             if open_dialog.isVisible():  # um dialogo so, mesmo com pedido repetido
                 open_dialog.raise_()
                 return
-        dialog = ColumnsDialog(self.table_model.columns, self.hidden_columns, self)
+        table = self.loaded_table[0] if self.loaded_table else ""
+        dialog = ColumnsDialog(table, self.table_model.columns, self.hidden_columns, self)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.hiddenChanged.connect(self.set_hidden_columns)  # vale na hora; Fechar so fecha
         dialog.open()
@@ -1320,7 +1708,8 @@ class MainWindow(QMainWindow):
         hide.setEnabled(on_column and not last)
         if view is self.data_table:
             menu.addAction(self.columns_action)
-        menu.addAction(tr("columns.show_all_columns"), lambda: self._set_hidden(view, set()))
+        # sem coluna oculta nao ha o que mostrar (igual nas 4 versoes)
+        menu.addAction(tr("columns.show_all_columns"), lambda: self._set_hidden(view, set())).setEnabled(bool(hidden))
         menu.addSeparator()
         for name in names:
             # "&" no nome da coluna e texto, nao atalho
@@ -1340,7 +1729,7 @@ class MainWindow(QMainWindow):
         limit = self.limit_combo.currentData()
         self._sql_request += 1
         self.tabs.setCurrentWidget(self.sql_page)
-        self._set_message(self.info_label, tr("status.sql_running"), log=False)
+        self._set_message(self.sql_info, tr("status.sql_running"), log=False)
         self._run(
             self._sql_request,
             lambda _report: (query, *manager.execute_query(query, limit)),
@@ -1361,39 +1750,68 @@ class MainWindow(QMainWindow):
         if not columns:
             message = tr("status.sql_done")
         else:
-            message = tr("status.sql_first" if more else "status.sql_rows", count=num(len(rows)))
-        self._set_message(self.info_label, message)
+            message = counted("status.sql_first" if more else "status.sql_rows", len(rows))
+        # deu certo: o erro da consulta anterior sai da linha do botao e da barra de baixo (igual nas 4 versoes)
+        if self._sql_error:
+            if self._latest["error"] == self._sql_error:
+                self._latest["error"] = ""
+            if self._sql_error_unread:
+                self._unread["error"] = max(0, self._unread["error"] - 1)
+            self._sql_error = ""
+        self._set_message(self.sql_info, message, log=False)
+        self._set_message(self.status_label, message)
         self._update_export_actions()
 
     def _on_sql_error(self, request_id: int, message: str) -> None:
-        if request_id == self._sql_request:
-            self._set_message(self.info_label, tr("status.sql_error", message=message), error=True)
+        if request_id != self._sql_request:
+            return
+        # o erro limpa a grade da consulta anterior (e o que exportar); o texto do banco vai como vem, depois do
+        # prefixo traduzido
+        self.sql_model.set_rows([])
+        self.sql_query = None
+        self._update_export_actions()
+        text = tr("status.sql_error", message=message)
+        self._sql_error, self._sql_error_unread = text, self.log_dock.isHidden()
+        self._set_message(self.sql_info, text, error=True, log=False)  # na linha do botao Executar
+        self._set_message(self.status_label, text, error=True)
 
     # -------------------------------------------------------------- export
 
     def _update_export_actions(self) -> None:
         for action in self.export_db_actions:
             action.setEnabled(self.manager is not None)
-        for action in self.export_result_actions:
-            action.setEnabled(self.manager is not None and (self.loaded_table is not None or self.sql_query is not None))
+        for action in self.export_table_actions:
+            action.setEnabled(self.manager is not None and self.loaded_table is not None)
+        for action in self.export_sql_actions:
+            action.setEnabled(self.manager is not None and self.sql_query is not None)
         self.export_button.setEnabled(self.manager is not None)
         self.close_db_action.setEnabled(self.manager is not None)
 
-    def current_result(self) -> tuple[str, str] | None:
-        """(consulta, titulo) do que esta na tela: o resultado da aba SQL ou a tabela atual inteira."""
-        if self.tabs.currentWidget() is self.sql_page and self.sql_query:
-            return self.sql_query, "SQL"
-        if self.loaded_table is not None:
-            return f"SELECT * FROM {quote(self.loaded_table[0])}", self.loaded_table[0]
-        if self.sql_query:
-            return self.sql_query, "SQL"
-        return None
+    def found_rows_box(self, count: int) -> tuple[QMessageBox, QAbstractButton, QAbstractButton]:
+        """A pergunta da exportacao (tabela inteira, so as `count` encontradas, Cancelar), sem abrir."""
+        one = "_one" if count == 1 else ""
+        box = QMessageBox(QMessageBox.Icon.NoIcon, tr("export.title"), tr(f"export.ask{one}", count=num(count)),
+                          QMessageBox.StandardButton.NoButton, self)
+        whole = box.addButton(tr("export.whole_table"), QMessageBox.ButtonRole.AcceptRole)
+        found = box.addButton(tr(f"export.found_rows{one}", count=num(count)), QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton(tr("button.cancel"), QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(whole)
+        box.setEscapeButton(cancel)
+        return box, whole, found
+
+    def ask_found_rows(self, count: int) -> bool | None:
+        """A grade mostra parte da tabela (pesquisa ou filtro por valor): exportar a tabela inteira (False) ou so as
+        `count` linhas encontradas (True)? None = Cancelar. Igual nas 4 versoes."""
+        box, whole, found = self.found_rows_box(count)
+        box.exec()
+        return {whole: False, found: True}.get(box.clickedButton())
 
     def _ask_save_path(self, title: str, name: str, suffix: str) -> Path | None:
         # pasta padrao: a do arquivo aberto; sem ele, a ultima pasta usada
         folder = default_save_dir(self.current_db_path, self.settings.value("last_dir"))
         target = folder / f"{name}{suffix}"
-        if self.current_db_path is not None and target == self.current_db_path:
+        reading = {self.current_db_path, Path(self.manager.current_db) if self.manager and self.manager.current_db else None}
+        if target in reading:
             target = folder / f"{name}_export{suffix}"  # nunca sugerir o proprio banco aberto
         file_name, _ = QFileDialog.getSaveFileName(self, title, str(target), file_type(suffix))
         if not file_name:
@@ -1404,25 +1822,53 @@ class MainWindow(QMainWindow):
         self._remember_dir(path)
         return path
 
+    @staticmethod
+    def _dialog_title(action: QAction) -> str:
+        return action.text().replace("&", "").removesuffix("...")  # "Tabela atual para CSV"
+
     def export_database_as(self, suffix: str) -> None:
         if self.manager is None or self.current_db_path is None:
             return
-        out = self._ask_save_path(tr("dialog.export_db"), self.current_db_path.stem, suffix)
+        title = self._dialog_title(self.export_db_actions[(".sqlite", ".duckdb", ".xlsx").index(suffix)])
+        out = self._ask_save_path(title, self.current_db_path.stem, suffix)
         if out is not None:
             manager = self.manager
             self._start_export(out, lambda report, cancel: export_database(manager, out, report, cancel), "tables")
 
-    def export_result_as(self, suffix: str) -> None:
-        current = self.current_result()
-        if self.manager is None or current is None:
+    def export_table_as(self, suffix: str) -> None:
+        # a tabela atual inteira; com a grade mostrando parte dela (pesquisa ou filtro por valor) pergunta: inteira ou
+        # so as linhas encontradas (pesquisa e filtros, o que a grade conta)
+        if self.manager is None or self.loaded_table is None:
             return
-        query, title = current
-        name = title if title != "SQL" else f"{self.current_db_path.stem}_sql" if self.current_db_path else "sql"
-        out = self._ask_save_path(tr("dialog.export_result"), name, suffix)
+        # o que a grade conta, lido antes da pergunta (a tela pode mudar enquanto ela esta aberta)
+        table, filters, search = self.loaded_table[0], list(self.loaded_filters), self.loaded_search
+        found = self.ask_found_rows(self.matched_rows) if search.split() or filters else False
+        if found is None:
+            return
+        if not found:
+            filters, search = [], ""
+        title = self._dialog_title(self.export_table_actions[(".csv", ".xlsx").index(suffix)])
+        out = self._ask_save_path(title, table, suffix)
+        if out is not None:
+            manager = self.manager
+
+            def task(report, cancel):
+                query, params = manager.select_table(table, filters, search)
+                return export_result(manager, query, table, out, report, cancel, params)
+
+            self._start_export(out, task, "rows")
+
+    def export_sql_as(self, suffix: str) -> None:
+        # o resultado inteiro da ultima consulta da aba SQL que deu certo, em query.csv / query.xlsx (nas 4 versoes)
+        if self.manager is None or self.sql_query is None:
+            return
+        query = self.sql_query
+        title = self._dialog_title(self.export_sql_actions[(".csv", ".xlsx").index(suffix)])
+        out = self._ask_save_path(title, "query", suffix)
         if out is not None:
             manager = self.manager
             self._start_export(
-                out, lambda report, cancel: export_result(manager, query, title, out, report, cancel), "rows"
+                out, lambda report, cancel: export_result(manager, query, "query", out, report, cancel), "rows"
             )
 
     def _start_export(self, out: Path, task: Callable, unit: str) -> None:
@@ -1449,13 +1895,13 @@ class MainWindow(QMainWindow):
             dialog.canceled.disconnect(cancel.set)
             dialog.close()
             dialog.deleteLater()  # nao acumula dialogos "Export" escondidos
-            self._set_message(self.info_label, message, error=error, warning=warning)
+            self._set_message(self.status_label, message, error=error, warning=warning)
 
         def cancelled_or_done(_request_id: int, count: object) -> None:
             if count is None:
                 finished(tr("export.cancelled", name=out.name), warning=True)
             else:
-                finished(tr(f"export.done_{unit}", count=num(count), path=out))  # type: ignore[arg-type]
+                finished(counted(f"export.done_{unit}", count, path=out))  # type: ignore[arg-type]
 
         def run(report):
             try:

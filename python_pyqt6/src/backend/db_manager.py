@@ -126,6 +126,7 @@ class DBManager:
         self.current_db: Optional[str] = None
         self.reader = ""  # caminho usado para abrir: Access ODBC, mdbtools, SQLite ou DuckDB
         self.converted: Optional[Path] = None  # SQLite convertido do Access (pasta propria, apagada em release())
+        self.sqlite_file: Optional[str] = None  # o arquivo SQLite lido (o proprio .sqlite ou o convertido do Access)
         self._tables: Optional[List[str]] = None
         self._cursors: set[duckdb.DuckDBPyConnection] = set()  # em uso (outras threads); close() interrompe e espera
         self._idle = threading.Condition()
@@ -177,6 +178,7 @@ class DBManager:
             except BaseException:
                 self.release()
                 raise
+            self.sqlite_file = sqlite_path
         self.current_db = validated_path
 
     @staticmethod
@@ -281,6 +283,12 @@ class DBManager:
         columns = [column["column_name"] for column in self.get_table_schema(table_name)] if search.split() else []
         return where_clause(filters, columns, search)
 
+    def select_table(self, table_name: str, filters: Filters = (), search: str = "") -> tuple[str, list[Any]]:
+        """SELECT da tabela inteira com os filtros e a pesquisa (o que a grade mostra) e os parametros."""
+        self._validate_table_name(table_name)
+        where, params = self._where(table_name, filters, search)
+        return f"SELECT * FROM {quote(table_name)}{where}", params
+
     def query_table(
         self, table_name: str, limit: int = 100, filters: Filters = (), search: str = ""
     ) -> List[Dict[str, Any]]:
@@ -290,13 +298,11 @@ class DBManager:
         if not self.conn:
             return []
 
-        self._validate_table_name(table_name)
-
         # SELECT com LIMIT para nao carregar tabela inteira
         # !T: Plain Python values, not pandas: DECIMAL(10,0) stays 1 (pandas would show 1.0) and NULL stays None
-        where, params = self._where(table_name, filters, search)
+        select, params = self.select_table(table_name, filters, search)
         with self.cursor() as cursor:
-            cursor.execute(f"SELECT * FROM {quote(table_name)}{where} LIMIT {int(limit)}", params)
+            cursor.execute(f"{select} LIMIT {int(limit)}", params)
             columns = [column[0] for column in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
@@ -350,6 +356,37 @@ class DBManager:
                 found.append((table, count))
         return found
 
+    def table_counts(self) -> Dict[str, Optional[int]]:
+        """Linhas de cada tabela (lista de tabelas com a contagem, igual nas 4 versoes); None se nao deu para contar.
+
+        !T: A SQLite file (also the one converted from Access) is counted by sqlite3 straight from the file: through
+        !T: the attached DuckDB views the 287 tables of DB4 took 5.9 s, sqlite3 0.3 s. DuckDB files count in one
+        !T: UNION ALL query (0.16 s); a table that fails is counted alone and becomes None
+        """
+        tables = self.list_tables()
+        if self.sqlite_file is not None:
+            lite = sqlite3.connect(Path(self.sqlite_file).as_uri() + "?mode=ro", uri=True)
+            try:
+                return {table: self._count_or_none(lambda t=table: lite.execute(f"SELECT COUNT(*) FROM {quote(t)}"))
+                        for table in tables}
+            finally:
+                lite.close()
+        with self.cursor() as cursor:
+            try:
+                union = " UNION ALL ".join(f"SELECT {i}, COUNT(*) FROM {quote(t)}" for i, t in enumerate(tables))
+                counts = dict(cursor.execute(union).fetchall()) if tables else {}
+                return {table: counts.get(i) for i, table in enumerate(tables)}
+            except duckdb.Error:
+                return {table: self._count_or_none(lambda t=table: cursor.execute(f"SELECT COUNT(*) FROM {quote(t)}"))
+                        for table in tables}
+
+    @staticmethod
+    def _count_or_none(run: Callable[[], Any]) -> Optional[int]:
+        try:
+            return run().fetchone()[0]
+        except (sqlite3.Error, duckdb.Error):
+            return None
+
     def get_row_count(self, table_name: str, filters: Filters = (), search: str = "") -> int:
         """
         Retorna numero total de linhas em uma tabela (com filtros/pesquisa: so as que passam neles).
@@ -382,6 +419,7 @@ class DBManager:
             self.conn = None
         self.current_db = None
         self.reader = ""
+        self.sqlite_file = None
         self._tables = None
 
     def release(self, save_to: Optional[Path] = None) -> None:

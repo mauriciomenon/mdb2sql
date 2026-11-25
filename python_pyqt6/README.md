@@ -27,88 +27,108 @@ More info > Run anyway.
   mdbtools programs and `libmdb`). When the Microsoft Access ODBC driver "Microsoft Access Driver (*.mdb, *.accdb)"
   (64 bits, from 64-bit Office or the free Access Database Engine) is installed, it is used instead because it is
   faster. To force one: environment variable `MDB2SQL_ACCESS_READER=mdbtools` or `MDB2SQL_ACCESS_READER=odbc`.
-- The status bar says which reader opened the file: `via mdbtools`, `via Access ODBC`, `via SQLite` or `via DuckDB`.
+- The right end of the status bar says how the file was read: `Opened via mdbtools, converted to SQLite`,
+  `Opened via Access ODBC, converted to SQLite`, `Opened via SQLite` or `Opened via DuckDB`.
 
 ## Use
 
-Open a file with File > Open Database (Ctrl+O), by passing the path on the command line
-(`mdb2sql.exe "C:\data\base.accdb"`), or with the environment variable `MDB2SQL_DB_PATH` and F5.
+The top line holds the path of the open file (a path longer than the field shows its end, the file name) and the
+buttons Browse..., Open and Export.... Open a file with Browse... or File > Open... (Ctrl+O), by typing or pasting
+its path in the field and pressing Enter or Open, by dragging it onto the window, by passing the path on the
+command line (`mdb2sql.exe "C:\data\base.accdb"`), or with the environment variable `MDB2SQL_DB_PATH` and F5
+(F5 reloads the open file).
 
 **Access files** are converted once, when opened, into a SQLite file in a temporary folder, and the program reads
-from there (status bar: "Converting ... table N of M", then `... via mdbtools, converted to SQLite`). The SQLite
+from there (status bar: "Converting ... table N of M", then `Loaded: <file> (N tables)`; the right end says
+`Opened via mdbtools, converted to SQLite`). The SQLite
 keeps the column types (integer, decimal, double, text, date, true/false, binary) and NULLs. A 115 MB `.accdb`
 with 287 tables takes 20-35 s by mdbtools and 8-18 s by ODBC (Intel Core Ultra 7 258V, 8 cores; the time is mostly
 one big table, 36,754 rows x 123 columns, in mdb-export). The source file is
 never changed.
-When the file is closed (File > Close Database, Ctrl+W), another file is opened or the program is closed, it asks
+When the file is closed (File > Close, Ctrl+W), another file is opened or the program is closed, it asks
 what to do with the converted SQLite:
 
-- **Save SQLite...**: choose where; the default is next to the Access file, with the same name and `.sqlite`. The
+- **Save...**: choose where; the default is next to the Access file, with the same name and `.sqlite`. The
   saved file is a normal SQLite database (any SQLite tool opens it; this program opens it as SQLite).
 - **Delete**: the temporary file is removed.
-- **Cancel** (also Esc or the window X): nothing is closed. Enter chooses Save SQLite...; cancelling the save
+- **Cancel** (also Esc or the window X): nothing is closed. Enter chooses Save...; cancelling the save
   dialog returns to the question.
 
-"Remember for this session" skips the question until the program is closed. Temporary files are never left behind:
+"Remember for this session" skips the question until the program is closed. A saved SQLite is remembered in the
+settings with the path, size and date of the Access file and of the SQLite: opening the same Access file again
+opens that SQLite at once, without converting or asking when it is closed, also in later runs; if either file
+changed or the SQLite was deleted, the Access file is converted again. Temporary files are never left behind:
 the folder of the session is removed on exit, and the folder of a session that crashed is removed at the next start
 (`%TEMP%\mdb2sql-python-pyqt6\`, `/tmp/mdb2sql-python-pyqt6/` on Linux).
 
-Left panel: list of tables with a filter box (Ctrl+T goes to the list); all words, any order, no case or accents.
+Left panel: list of tables with the row count of each one (Table | Rows), and a filter box (Ctrl+T goes to the
+list); all words, any order, no case or accents, applied 300 ms after the last key or at once with Enter.
 Names are never cut: the panel opens as wide as the longest name (up to 35% of the window, then it scrolls).
 Tabs:
 
-- **Data** (Ctrl+1): first rows of the selected table; "Rows" in the toolbar sets how many (100 by default, 1,000,
-  10,000). Click a header to sort the loaded rows (numbers sort as numbers; third click returns to the original
-  order). Search box (Ctrl+F) searches the **whole table in the database**, not only the loaded rows: a row stays
-  when one of its cells has all the words typed, in any order, ignoring case and accents (`tension de campo`
-  finds `EXCITACIÓN TENSIÓN DE CAMPO`; words that are only in different cells do not match; `tensao` does not find
-  `TENSIÓN`, there is no fuzzy match). The status bar says how many rows match
-  (`Showing 25 of 25 matching rows (36,754 rows in table)`). Columns fit the header name and the longest loaded
-  value, so nothing is cut with "..." (only above 1,200 px; the tooltip shows the full text; header tooltip: name
-  and type).
-  - **Columns...** (button above the grid): check boxes in a grid that follows the dialog width (1 to 6 per row,
-    4 at the default window size), a search field on top, "Show all" / "Hide all" (only the columns the search
-    shows) and "Close"; each change applies at once. With several boxes selected, checking one checks them all.
-    Right-click on a column header: "Hide this column", "Columns...", "Show all". The status bar shows
-    "N hidden columns". Hidden columns last until another table or file is selected. Search still looks at every
-    column and exports still write every column.
-  - **Filter by This Value** (right-click on a cell, or Edit menu): only the rows where that column has exactly that
+- **Data** (Ctrl+1): first rows of the selected table. Click a header to sort the loaded rows (numbers sort as
+  numbers; third click returns to the original order). One line above the grid holds the search field (Ctrl+F),
+  "This table | All tables", "Rows" (rows loaded from the table and from the SQL result: 100 by default, 500,
+  1000) and Columns...; in a narrow window it wraps to a second line. The
+  search runs 300 ms after the last key, or at once with Enter, over the **whole table in the database**, not only
+  the loaded rows: a row stays when one of its cells has all the words typed, in any order, ignoring case and
+  accents (`tension de campo` finds `EXCITACIÓN TENSIÓN DE CAMPO`; words that are only in different cells do not
+  match; `tensao` does not find `TENSIÓN`, there is no fuzzy match). "All tables" lists the tables with matching
+  rows as `table (n)`; choosing one opens it with the same search and no value filter. The line under the grid
+  says how many rows are shown (`RANGER_SOSTAT: showing 25 of 25 rows found` with a search or value filter).
+  Columns fit the header name and the longest loaded value, so nothing is cut with "..." (only above 1,200 px; the
+  tooltip shows the full text; header tooltip: name and type).
+  - **Columns...**: check boxes in a grid that follows the dialog width (1 to 6 per row,
+    4 at the default window size), a filter field on top, "Show all" / "Hide all" (only the columns the filter
+    shows) and "Close"; each change applies at once; one column always stays visible. With several boxes selected,
+    checking one checks them all. Right-click on a column header: "Size column to fit", "Size all columns to fit",
+    "Hide this column", "Columns...", "Show all columns" (only with a hidden column) and the list of the columns
+    with a check mark. The right end of the status bar shows "N hidden columns". Hidden columns last until another
+    table or file is selected. Search still looks at every column and exports still write every column.
+  - **Filter by this value** (right-click on a cell, or Edit menu): only the rows where that column has exactly that
     value (an empty NULL cell filters `IS NULL`), in the database query. Several filters add up (AND) and combine
-    with the search. Each active filter is a button above the grid (`SUBNAM = 'U02' ×`, click to remove it);
-    "Clear Filters" removes all. Selecting another table clears them. Exports are not filtered.
-- **Schema** (Ctrl+2): columns, types and nullability.
+    with the search. Each active filter is a button in a line above the grid (`SUBNAM = 'U02' ×`, click to remove
+    it); "Clear filters" removes all. Selecting another table clears them.
+- **Schema** (Ctrl+2): columns, types and nullability (Yes / No), 6 px more on each side of the text.
 - **SQL** (Ctrl+3): free SQL (DuckDB dialect) over the open database, run with Ctrl+Enter or Run. Shows up to
-  the "Rows" limit. Table names with spaces or symbols go in double quotes: `SELECT * FROM "My Table"`.
+  the "Rows" limit. Table names with spaces or symbols go in double quotes: `SELECT * FROM "My Table"`. The line of
+  the Run button shows the result (`SQL result: 3 rows`) or the error; an error clears the previous result, and the
+  next query that works clears the error there and in the status bar.
 
 Menus:
 
-- **File**: Open Database, Reload (F5), Close Database (Ctrl+W), Export (submenu, also the Export button in the
-  toolbar), Quit (Ctrl+Q).
+- **File**: Open... (Ctrl+O), Export (submenu, also the Export... button at the top), Close (Ctrl+W), Exit (Ctrl+Q).
   - Database to SQLite / Database to DuckDB: every table, with its types (an Access file copies its converted
     SQLite).
   - Database to Excel (one sheet per table): sheet name = table name, cleaned of `[]:*?/\` and cut to the
     31-character Excel limit (repeated names get `~2`, `~3`); header in row 1; a table with more than 1,048,575 rows
     continues in sheets `<name> (2)`, `<name> (3)`, ...
-  - Current Table/Result to CSV / to Excel: the whole current table (not only the loaded rows) or, when the SQL tab
-    is open, the whole SQL result. CSV is UTF-8 with BOM, comma separated.
+  - Current table to CSV / to Excel: the whole current table (not only the loaded rows). When the grid shows part of the
+    table (a search or a value filter) it asks first: "Whole table" or "Only the N rows found" (the rows the grid counts, value filters included).
+  - SQL result to CSV / to Excel: the whole result of the last query that ran; default name `query.csv` /
+    `query.xlsx`. CSV is UTF-8 with BOM, comma separated.
   - The save dialog opens in the folder of the open database (after that, the last folder used). Exports run in the
     background with a progress window; Cancel stops and deletes the partial file.
   - Writing `.mdb`/`.accdb` is not offered: there is no reliable free library that writes Access files.
-- **Edit**: Copy Value (Ctrl+C), Copy Row (Ctrl+Shift+C), Copy Row with Header, Find in Table (Ctrl+F), Filter by
-  This Value, Clear Filters. Copy is also on the right-click menu of every grid. Copied rows are TAB-separated:
-  they paste as columns in Excel.
-- **View**: Tables Panel (Ctrl+B), Log (Ctrl+L), Go to Table List (Ctrl+T), Data / Schema / SQL tabs, Run SQL.
+- **Edit**: Copy value (Ctrl+C), Copy row (Ctrl+Shift+C), Copy row with header, Find in the table (Ctrl+F), Filter
+  by this value, Clear filters. Right-click on a cell of the Data grid: Filter by this value and Clear filters first,
+  then the three copy items (the other grids: copy only). Copied rows are TAB-separated: they paste as columns in
+  Excel.
+- **View**: Tables panel (Ctrl+B), Log (Ctrl+L), Go to the table list (Ctrl+T), Data / Schema / SQL tabs, Run SQL.
   The **Log** panel, at the bottom (about 10% of the height, drag the edge to resize), lists the messages of the
   session with the time in a smaller fixed font (selectable, Ctrl+C, "Copy all"). It starts collapsed and keeps
   the last state; the arrow in its header and the arrow at the left of the status bar collapse and expand it. While
   it is collapsed, the status bar shows the most important message (last error in red, then last warning, then
-  the last action) and the number of errors and warnings not seen yet; a click on the message opens the log.
-  Right-click on the status bar: Copy (the whole message) and Log. Numeric columns and their headers are right-aligned.
-- **Settings > Theme**: System, Light or Dark. **Settings > Language**: English (default), Português (Brasil),
-  Español; applies when the program is reopened. Both are saved (Windows registry `HKCU\Software\MDB2SQL`,
+  the last action) and, at its right end, the number of errors and warnings not seen yet; a click on the message
+  opens the log. Right-click on the status bar: Copy (the whole message) and Log. Numeric columns and their headers
+  are right-aligned.
+- **Settings**: Theme (System, Light or Dark; switching changes the whole window), Language (English by default,
+  Português (Brasil), Español; applies at once), Default search scope (This table or All tables) and Show NULL
+  (off by default: a NULL cell is empty). All are saved (Windows registry `HKCU\Software\MDB2SQL`,
   Linux `~/.config/MDB2SQL/MDB2SQL.conf`).
-- **Help > About**: name, version, build number and date, stack and library versions, the Access reader in use
-  ("Embedded mdbtools", or "Access ODBC driver (Windows); embedded mdbtools as fallback"), author, license, links.
+- **Help > About mdb2sql**: name, version, Build (number and date), Stack (Python and PyQt6 versions), Window (Qt
+  version), Databases (SQLite and DuckDB versions), Access reading ("Embedded mdbtools 1.0.1", or "Access ODBC
+  driver (installed); fallback: embedded mdbtools 1.0.1"), Author, License, links.
 
 The window title is short, `mdb2sql 1.3.0 - Python` (with a file open, `<file> - mdb2sql 1.3.0 - Python`).
 Changes of each version: [CHANGELOG.md](CHANGELOG.md).
@@ -160,7 +180,7 @@ the same files made by another converter as reference.
   Access file must be in the Windows ANSI code page.
 - SQLite stores decimals as REAL: values with more than 15 significant digits lose the last digits (Access Currency
   up to 100 billion with 4 decimals is exact). The program shows them again as DECIMAL(p,s).
-- Sort works on the loaded rows (100 by default, at most 10,000); search and filters run on the whole table.
+- Sort works on the loaded rows (100 by default, at most 1000); search and filters run on the whole table.
 - The SQL tab works on the open copy: on Access, the converted SQLite is read-only and new tables go to memory
   (they are not saved; they do go into an export). DuckDB and SQLite files are opened read-only.
 - Excel limits: text longer than 32,767 characters is cut; dates before 1900 are written as text.

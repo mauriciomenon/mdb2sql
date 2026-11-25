@@ -1,16 +1,16 @@
-# Dados do dialogo Sobre: nome, versao (fonte unica: pyproject.toml), numero e data do build, funcao, stack,
-# leitor de Access, autor, licenca e links do codigo
+# Dados do dialogo Sobre (as linhas do Rust): nome, versao (fonte unica: pyproject.toml), build, stack, janela,
+# bancos, leitura do Access, autor, licenca e links do codigo
 # !T: The version comes from pyproject.toml; the frozen exe carries it in VERSION and the build number/date in
 # !T: BUILD (both written by mdb2sql.spec); outside the exe the build is "dev"
 
 import platform
+import re
 import sqlite3
 import sys
 import tomllib
 from pathlib import Path
 
 import duckdb
-import xlsxwriter
 from PyQt6.QtCore import PYQT_VERSION_STR, qVersion
 
 from backend.access import odbc_available
@@ -52,32 +52,31 @@ def build_info() -> str:
     return "build dev"
 
 
+def mdbtools_version() -> str:
+    """Versao do mdbtools que vai no pacote (primeira linha de VERSION.txt: 'mdbtools 1.0.1 ...'); '' sem ele."""
+    version = bundled("mdbtools") / "VERSION.txt"
+    if not version.is_file():
+        return ""
+    found = re.search(r"mdbtools\s+([\w.]+)", version.read_text(encoding="utf-8", errors="replace"))
+    return found[1] if found else "?"
+
+
 def access_engine() -> str:
-    # o leitor em uso: o driver ODBC e opcional (so aparece quando existe); o mdbtools vai dentro do pacote
+    # como o Access e lido (textos do Rust): o driver ODBC e opcional (so aparece quando existe); o mdbtools vai
+    # dentro do pacote
+    mdbtools = mdbtools_version()
     if odbc_available():
-        return tr("about.reader_odbc")
-    return tr("about.reader_mdbtools") if (bundled("mdbtools") / "VERSION.txt").is_file() else tr("about.mdbtools_missing")
-
-
-def pyodbc_version() -> str:
-    # Linux sem unixODBC (libodbc) nao carrega o pyodbc; o Access vai pelo mdbtools
-    try:
-        import pyodbc
-    except ImportError:
-        return "-"
-    return pyodbc.version
+        return tr("about.access_odbc", version=mdbtools) if mdbtools else tr("about.access_odbc_only")
+    return tr("about.access_mdbtools", version=mdbtools) if mdbtools else tr("about.mdbtools_missing")
 
 
 def about_fields() -> list[tuple[str, str]]:
-    """Linhas (rotulo, valor) do Sobre, na ordem em que aparecem."""
-    libraries = (
-        f"SQLite {sqlite3.sqlite_version}, DuckDB {duckdb.__version__}, XlsxWriter {xlsxwriter.__version__},"
-        f" pyodbc {pyodbc_version()}"
-    )
+    """Linhas (rotulo, valor) do Sobre, na ordem em que aparecem (igual nas 4 versoes: as do Rust)."""
     return [
         (tr("about.build"), build_info().removeprefix("build ")),
-        ("Stack", f"Python {platform.python_version()} + PyQt6 {PYQT_VERSION_STR} (Qt {qVersion()})"),
-        (tr("about.libraries"), libraries),
+        (tr("about.stack"), f"Python {platform.python_version()} + PyQt6 {PYQT_VERSION_STR}"),
+        (tr("about.window"), f"Qt {qVersion()}"),
+        (tr("about.databases"), f"SQLite {sqlite3.sqlite_version}, DuckDB {duckdb.__version__}"),
         (tr("about.access"), access_engine()),
         (tr("about.author"), "Mauricio Menon"),
         (tr("about.license"), tr("about.license_text")),

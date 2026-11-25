@@ -40,7 +40,7 @@ def test_converted_prompt_esc_and_x_cancel_enter_saves(qtbot, monkeypatch, key, 
 
     QTimer.singleShot(0, answer)
     assert win.ask_converted(Path("db.accdb")) == (expected, False)
-    assert seen == ["Save SQLite..."]
+    assert seen == ["Save..."]
 
 
 def test_cancelling_the_save_dialog_returns_to_the_prompt(qtbot, monkeypatch) -> None:
@@ -77,8 +77,9 @@ def _converted_files(win: MainWindow) -> list[Path]:
 @needs_mdbtools
 def test_access_opens_through_one_sqlite_conversion(access_window: MainWindow) -> None:
     win = access_window
-    assert win.status_label.text() == "Loaded: sample.mdb (2 tables) via mdbtools, converted to SQLite"
-    assert [win.table_list.item(i).text() for i in range(2)] == ["empty table", "points"]
+    assert win.status_label.text() == "Loaded: sample.mdb (2 tables)"
+    assert win.reader_label.text() == "Opened via mdbtools, converted to SQLite"
+    assert win.table_names() == ["empty table", "points"]
     assert [p.name for p in _converted_files(win)] == ["sample.sqlite"]
 
 
@@ -100,9 +101,10 @@ def test_close_asks_and_deletes_or_saves_or_cancels(qtbot, access_window: MainWi
     assert asked == [source, source]
     assert win.manager is None and win.stack.currentWidget() is win.empty_label
     assert target.is_file() and _converted_files(win) == []
-    assert win.status_label.text() == f"SQLite saved: {target}"
+    assert win.status_label.text() == f"Saved the converted file to {target}"
 
-    # Apagar, lembrado nesta sessao: a proxima vez nao pergunta
+    # Apagar, lembrado nesta sessao: a proxima vez nao pergunta (o SQLite salvo foi apagado: converte de novo)
+    target.unlink()
     win.open_database(source)
     qtbot.waitUntil(lambda: win.manager is not None and win._busy == 0, timeout=60000)
     monkeypatch.setattr(win, "ask_converted", lambda path: asked.append(path) or (mw.DELETE, True))
@@ -111,7 +113,81 @@ def test_close_asks_and_deletes_or_saves_or_cancels(qtbot, access_window: MainWi
     qtbot.waitUntil(lambda: win.manager is not None and win._busy == 0, timeout=60000)
     assert win.release_database() and _converted_files(win) == []
     assert len(asked) == 3 and win.converted_choice == mw.DELETE
-    assert "SQLite converted from sample.mdb deleted" in win.log_view.toPlainText()
+    assert "Deleted the converted file sample.sqlite" in win.log_view.toPlainText()
+
+
+@needs_mdbtools
+def test_saved_conversion_opens_without_asking_again(qtbot, access_window: MainWindow, tmp_path: Path, monkeypatch):
+    # igual nas 4 versoes: o mesmo Access (caminho, tamanho, data) ja salvo como SQLite abre o salvo, sem converter
+    # nem perguntar ao fechar, tambem na proxima execucao; mudou o Access ou o SQLite, converte de novo
+    import os
+
+    win = access_window
+    source = win.current_db_path
+    target = source.with_suffix(".sqlite")  # o padrao do Salvar...: ao lado do Access
+    asked = []
+    monkeypatch.setattr(win, "ask_converted", lambda path: asked.append(path) or (mw.SAVE, False))
+    monkeypatch.setattr(win, "ask_converted_target", lambda path: target)
+    assert win.release_database() and target.is_file() and asked == [source]
+
+    win.open_database(source)
+    qtbot.waitUntil(lambda: win.manager is not None and win.loaded_table is not None and win._busy == 0, timeout=60000)
+    assert win.manager.converted is None and win.manager.reader == "SQLite" and _converted_files(win) == []
+    assert win.windowTitle().startswith("sample.mdb - ")
+    assert f"sample.mdb: opened the SQLite saved from it ({target})" in win.log_view.toPlainText()
+    assert win.release_database() and asked == [source]  # nada a salvar: nao pergunta
+
+    again = MainWindow()  # proxima execucao: lembrado nas configuracoes
+    qtbot.addWidget(again)
+    assert again.saved_conversion(source) == target
+    # lendo o SQLite salvo, Exportar > Banco para SQLite nunca sugere o proprio arquivo que esta aberto
+    win.open_database(source)
+    qtbot.waitUntil(lambda: win.manager is not None and win.loaded_table is not None and win._busy == 0, timeout=60000)
+    suggested = []
+    monkeypatch.setattr(mw.QFileDialog, "getSaveFileName", lambda *a: suggested.append(Path(a[2])) or ("", ""))
+    win._ask_save_path("t", target.stem, ".sqlite")
+    assert suggested == [target.with_name("sample_export.sqlite")]
+    assert win.release_database()
+    # o SQLite salvo mudou: converte de novo; o Access mudou: tambem
+    os.utime(target, ns=(target.stat().st_atime_ns, target.stat().st_mtime_ns + 10**9))
+    assert again.saved_conversion(source) is None
+    os.utime(source, ns=(source.stat().st_atime_ns, source.stat().st_mtime_ns + 10**9))
+    assert again.saved_conversion(source) is None
+    win.open_database(source)
+    qtbot.waitUntil(lambda: win.manager is not None and win._busy == 0, timeout=60000)
+    assert win.manager.converted is not None and len(_converted_files(win)) == 1
+
+
+@needs_mdbtools
+def test_saved_key_is_the_one_read_when_the_access_file_opened(qtbot, access_window: MainWindow, tmp_path: Path,
+                                                               monkeypatch) -> None:
+    # o Access mudou enquanto estava aberto: o SQLite salvo tem o conteudo antigo e nao e reaproveitado
+    import os
+
+    win = access_window
+    source = win.current_db_path
+    target = tmp_path / "kept.sqlite"
+    os.utime(source, ns=(source.stat().st_atime_ns, source.stat().st_mtime_ns + 10**9))
+    monkeypatch.setattr(win, "ask_converted", lambda path: (mw.SAVE, False))
+    monkeypatch.setattr(win, "ask_converted_target", lambda path: target)
+    assert win.release_database() and target.is_file()
+    assert win.saved_conversion(source) is None
+
+
+@needs_mdbtools
+def test_close_during_a_reload_keeps_one_database_and_saves_the_one_asked(qtbot, access_window: MainWindow,
+                                                                         tmp_path: Path, monkeypatch) -> None:
+    # F5 ainda convertendo e Fechar: a pergunta vale para o banco aberto; a recarga em andamento e descartada
+    win = access_window
+    source = win.current_db_path
+    target = tmp_path / "kept.sqlite"
+    monkeypatch.setattr(win, "ask_converted", lambda path: (mw.SAVE, False))
+    monkeypatch.setattr(win, "ask_converted_target", lambda path: target)
+    win.load_database()  # F5: conversao nova em andamento
+    assert win.release_database() and target.is_file()
+    qtbot.waitUntil(lambda: win._busy == 0, timeout=60000)
+    assert win.manager is None and _converted_files(win) == []  # a recarga terminou depois e foi descartada
+    assert win.saved_conversion(source) == target and win.loaded_schema == []
 
 
 @needs_mdbtools
@@ -152,8 +228,8 @@ def test_log_panel_keeps_the_messages_and_copies(qtbot, people_db: Path) -> None
     win.log_action.trigger()
     assert win.log_dock.isVisible()
     lines = win.log_view.toPlainText().splitlines()
-    assert re.fullmatch(r"\d\d:\d\d:\d\d  Loading: people\.duckdb", lines[0])
-    assert lines[1].endswith("Loaded: people.duckdb (2 tables) via DuckDB")
+    assert re.fullmatch(r"\d\d:\d\d:\d\d  Opening: people\.duckdb", lines[0])
+    assert lines[1].endswith("Loaded: people.duckdb (2 tables)")
     assert win.log_view.isReadOnly()  # selecionavel; Ctrl+C do proprio campo
 
     win.log_copy_button.click()  # Copiar tudo
@@ -163,7 +239,7 @@ def test_log_panel_keeps_the_messages_and_copies(qtbot, people_db: Path) -> None
     menu = win.status_menu(win.status_label)
     assert [a.text() for a in menu.actions()] == ["&Copy", "&Log"]
     menu.actions()[0].trigger()
-    assert QApplication.clipboard().text() == "Loaded: people.duckdb (2 tables) via DuckDB"
+    assert QApplication.clipboard().text() == "Loaded: people.duckdb (2 tables)"
 
 
 def test_log_panel_collapsed_shows_the_most_important_line(qtbot) -> None:
@@ -180,14 +256,15 @@ def test_log_panel_collapsed_shows_the_most_important_line(qtbot) -> None:
     assert win.log_view.minimumHeight() >= 3 * win.log_view.fontMetrics().lineSpacing()
 
     # erro > aviso > ultima acao: com o painel recolhido, o erro fica na barra (destacado) mesmo depois de outra acao
-    win._set_message(win.info_label, "SQL error: boom", error=True)
-    win._set_message(win.info_label, "Export cancelled: x.csv not written", warning=True)
+    win._set_message(win.status_label, "SQL error: boom", error=True)
+    win._set_message(win.status_label, "Export cancelled: x.csv not written", warning=True)
     for n in range(40):  # historico maior que o painel: ao abrir, o fim (a linha mais nova) fica visivel
         win.log(f"line {n}")
-    win._set_message(win.status_label, "Loaded: a.duckdb (1 tables) via DuckDB")
+    win._set_message(win.status_label, "Loaded: a.duckdb (1 table)")
     assert win.status_label.text() == "SQL error: boom" and "color" in win.status_label.styleSheet()
-    assert "SQL error" not in win.info_label.text() and "Export cancelled" not in win.info_label.text()  # uma vez so
     assert win.log_unread.text() == "(2)" and not win.log_unread.isHidden()
+    # o contador fica a direita, a mensagem a esquerda (barra de baixo igual ao Go)
+    assert win.log_unread.x() > win.status_label.x()
 
     # clique na mensagem reexibe o log e zera os nao lidos; a seta do cabecalho recolhe; estado lembrado
     qtbot.mouseClick(win.status_label, Qt.MouseButton.LeftButton)
@@ -206,25 +283,71 @@ def test_log_panel_collapsed_shows_the_most_important_line(qtbot) -> None:
     assert not again.log_dock.isHidden()
 
 
-def test_language_is_saved_and_applies_on_next_start(qtbot) -> None:
+def test_language_applies_at_once_and_is_saved(qtbot, people_db: Path) -> None:
+    # igual nas 4 versoes: Configuracoes > Idioma troca os textos na hora (antes so ao reabrir), e fica gravado
     win = MainWindow()
     qtbot.addWidget(win)
+    win.show()
+    win.open_database(people_db)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
     settings_menu = win.settings_menu.actions()[1].menu()
     assert [a.text() for a in settings_menu.actions()] == ["English", "Português (Brasil)", "Español"]
     assert win.language_actions["en"].isChecked()
 
-    win.language_actions["pt_BR"].trigger()
-    assert QSettings().value("language") == "pt_BR"
-    assert win.status_label.text() == "O idioma muda ao reabrir o mdb2sql"  # aviso ja no idioma escolhido
+    try:
+        win.language_actions["pt_BR"].trigger()
+        assert QSettings().value("language") == "pt_BR"
+        assert [a.text() for a in win.menuBar().actions()] == ["&Arquivo", "&Editar", "E&xibir", "&Configurações",
+                                                               "Aj&uda"]
+        assert win.open_action.text() == "&Abrir..." and win.browse_button.text() == "Procurar..."
+        assert win.tabs.tabText(0) == "Dados" and win.tables_dock.windowTitle() == "Tabelas"
+        assert win.table_list.headerItem().text(1) == "Linhas" and win.limit_label.text() == "&Linhas"
+        assert win.search_edit.placeholderText() == "Pesquisar na tabela inteira"
+        assert win.info_label.text() == "empty_table: mostrando 0 de 0 linhas"  # a barra da tabela tambem
+        assert win.reader_label.text() == "Aberto via DuckDB"
+        assert [win.schema_model.headerData(c, Qt.Orientation.Horizontal) for c in range(3)] == [
+            "Coluna", "Tipo", "Aceita nulo"]
+        assert [a.text() for a in win.header_menu(0).actions()][:2] == ["Ajustar coluna", "Ajustar todas as colunas"]
+        assert [win.limit_combo.itemText(i) for i in range(3)] == ["100", "500", "1000"]  # o mesmo texto nas 4
 
-    i18n.set_language(str(QSettings().value("language")))  # o que main() faz ao abrir
-    again = MainWindow()
-    qtbot.addWidget(again)
-    assert [a.text() for a in again.menuBar().actions()] == [
-        "&Arquivo", "&Editar", "E&xibir", "&Configurações", "Aj&uda"
-    ]
-    assert again.language_actions["pt_BR"].isChecked() and again.empty_label.text() == "Nenhum banco aberto"
-    assert again.limit_combo.itemText(2) == "10.000"
+        i18n.set_language(str(QSettings().value("language")))  # o que main() faz ao abrir: lembrado
+        again = MainWindow()
+        qtbot.addWidget(again)
+        assert again.language_actions["pt_BR"].isChecked() and again.empty_label.text() == "Nenhum banco aberto"
+        win.language_actions["es"].trigger()
+        assert win.menuBar().actions()[0].text() == "&Archivo" and win.tabs.tabText(0) == "Datos"
+        # o separador de milhar da contagem da lista e as larguras do Schema tambem acompanham
+        win._fill_tables(["big", "empty_table", "people"], {"big": 1234, "empty_table": 0, "people": 3})
+        win.language_actions["en"].trigger()
+        assert win.table_list.topLevelItem(0).text(1) == "1,234"
+        win.language_actions["pt_BR"].trigger()
+        assert win.table_list.topLevelItem(0).text(1) == "1.234"
+        header = win.schema_table.horizontalHeader()
+        assert win.schema_table.columnWidth(2) >= header.fontMetrics().horizontalAdvance("Aceita nulo")
+        win._fill_tables([], {})  # arquivo sem tabelas: "Nenhuma tabela" tambem troca
+        win.language_actions["es"].trigger()
+        assert win.info_label.text() == "Ninguna tabla"
+    finally:
+        win.set_language("en")  # os textos do Qt (qtbase) voltam ao ingles para os outros testes
+    assert win.menuBar().actions()[0].text() == "&File" and win.info_label.text() == "No tables"
+
+
+# nomes proprios e siglas que podem vir com maiuscula no meio da frase
+PROPER = {"SQLite", "DuckDB", "Excel", "CSV", "UTF-8", "Access", "ODBC", "SQL", "NULL", "X11", "Wayland", "DISPLAY",
+          "WAYLAND_DISPLAY", "GPL", "Ctrl+O", "Ctrl+F", "Ctrl+L", "Ctrl+Enter", "Enter", "F5", "Windows", "Brasil",
+          "MDB2SQL_ACCESS_READER", "Log", "X"}
+
+
+def test_texts_have_no_title_case() -> None:
+    # igual nas 4 versoes (redacao do Go): so a primeira palavra com maiuscula ("Abrir banco", nao "Abrir Banco")
+    title_case = []
+    for code in i18n.LANGUAGES:
+        for key, text in i18n.catalog(code).items():
+            words = [w.rstrip(".") for w in re.findall(r"[\w+./-]+", text.replace("&", "")) if w.rstrip(".")]
+            capitals = [w for w in words[1:] if w[0].isupper() and w not in PROPER and not w.isupper()]
+            if capitals and not key.startswith("language."):
+                title_case.append((code, key, text))
+    assert title_case == []
 
 
 def _placeholders(text: str) -> set[str]:
@@ -239,10 +362,13 @@ def test_catalogs_have_the_same_keys_and_placeholders() -> None:
         for key, text in catalog.items():
             assert _placeholders(text) == _placeholders(catalogs["en"][key]), (code, key)
     # toda chave usada no codigo existe (as montadas com f-string conferidas pelos prefixos)
-    used = set()
+    used, plural = set(), set()
     for path in (p for p in SRC.rglob("*.py") if p.name != "i18n.py"):
         used |= set(re.findall(r'tr\("([\w.]+)"', path.read_text(encoding="utf-8")))
+        plural |= set(re.findall(r'counted\(\s*"([\w.]+)"', path.read_text(encoding="utf-8")))
     assert used - keys == set()
+    # plural certo: "1 tabela" / "2 tabelas" (counted escolhe <chave>_one quando o numero e 1)
+    assert plural and {f"{key}_one" for key in plural} | plural <= keys | {"status.sql_first_one"}
     for prefix, names in (("theme.", mw.THEMES), ("language.", i18n.LANGUAGES), ("filter.", ("sqlite", "duckdb",
                                                                                              "xlsx", "csv")),
                           ("export.done_", ("tables", "rows"))):
@@ -253,8 +379,8 @@ def test_catalogs_have_the_same_keys_and_placeholders() -> None:
 
 # textos que nao sao traduzidos: nomes de produto, codigo SQL e numeros
 # (Sobre: versoes, autor, links; botoes internos do Qt, traduzidos pelo qtbase_<idioma>.qm)
-NOT_TEXT = re.compile(r"(SQL|SELECT \* FROM \.\.\.|[\d,.]+|mdb2sql [\d.]+( - Python)?|GitHub|GitLab|Stack|"
-                      r"Python .*|SQLite [\d.]+, DuckDB .*|dev|Mauricio Menon|(GitHub |GitLab )?https://\S+|"
+NOT_TEXT = re.compile(r"(SQL|SELECT \* FROM \.\.\.|[\d,.]+|mdb2sql [\d.]+( - Python)?|GitHub|GitLab|"
+                      r"Python .*|Qt [\d.]+|SQLite [\d.]+, DuckDB .*|dev|Mauricio Menon|(GitHub |GitLab )?https://\S+|"
                       r"<a href=.*|Scroll Left|Scroll Right|Float|Close)")
 
 
@@ -305,7 +431,7 @@ def test_no_ui_text_outside_the_catalogs(qtbot, people_db: Path, monkeypatch) ->
             bare = inner
         # o que sobra fora das marcas so pode ser dado (nome de tabela/coluna/arquivo, valor) ou nome de produto
         # (o menu do cabecalho lista as colunas da tabela aberta: code, label)
-        leftover = re.sub(r"people\.duckdb|people|empty_table|label = 'Ana'|code|label|×|via DuckDB|[\s:;()\-]", "", bare)
+        leftover = re.sub(r"people\.duckdb|people|empty_table|label = 'Ana'|code|label|×|[\s:;()\-]", "", bare)
         if leftover and not NOT_TEXT.fullmatch(text.replace("&", "").strip()):
             outside.append((kind, text))
     assert outside == [], "\n".join(map(repr, outside))

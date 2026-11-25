@@ -145,9 +145,9 @@ class ColumnsDialog(QDialog):
 
     hiddenChanged = pyqtSignal(object)  # set[str] com as colunas ocultas
 
-    def __init__(self, columns: list[str], hidden: set[str], parent: QWidget | None = None) -> None:
+    def __init__(self, table: str, columns: list[str], hidden: set[str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(tr("columns.title"))
+        self.setWindowTitle(tr("columns.title", table=table))  # "Colunas de <tabela>" nas 4 versoes
 
         self.search = QLineEdit()
         self.search.setPlaceholderText(tr("columns.search"))

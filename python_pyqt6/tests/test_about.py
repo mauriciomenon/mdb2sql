@@ -39,15 +39,21 @@ def test_title_is_short_and_uses_the_single_version_source() -> None:
 def test_about_fields() -> None:
     fields = dict(about.about_fields())
 
-    assert list(fields) == ["Build", "Stack", "Libraries", "Access", "Author", "License"]
+    # as linhas do Sobre do Rust, igual nas 4 versoes
+    assert list(fields) == ["Build", "Stack", "Window", "Databases", "Access reading", "Author", "License"]
     assert fields["Build"] == "dev"
-    assert re.fullmatch(r"Python [\d.]+\S* \+ PyQt6 [\d.]+ \(Qt [\d.]+\)", fields["Stack"])
-    assert re.fullmatch(r"SQLite [\d.]+, DuckDB [\d.]+\S*, XlsxWriter [\d.]+, pyodbc ([\d.]+|-)", fields["Libraries"])
-    # o leitor em uso; o driver ODBC e opcional e nunca aparece como "nao instalado"
-    expected = "Access ODBC driver (Windows); embedded mdbtools as fallback" if odbc_available() else (
-        "Embedded mdbtools" if (bundled("mdbtools") / "VERSION.txt").is_file() else "mdbtools not bundled (source run)"
-    )
-    assert fields["Access"] == expected and "not installed" not in fields["Access"]
+    assert re.fullmatch(r"Python [\d.]+\S* \+ PyQt6 [\d.]+", fields["Stack"])
+    assert re.fullmatch(r"Qt [\d.]+", fields["Window"])
+    assert re.fullmatch(r"SQLite [\d.]+, DuckDB [\d.]+\S*", fields["Databases"])
+    # como o Access e lido; o driver ODBC e opcional e nunca aparece como "nao instalado"
+    mdbtools = about.mdbtools_version()
+    assert mdbtools == ("1.0.1" if (bundled("mdbtools") / "VERSION.txt").is_file() else "")
+    if odbc_available():
+        expected = f"Access ODBC driver (installed); fallback: embedded mdbtools {mdbtools}" if mdbtools else (
+            "Access ODBC driver (installed)")
+    else:
+        expected = f"Embedded mdbtools {mdbtools}" if mdbtools else "mdbtools not bundled (source run)"
+    assert fields["Access reading"] == expected and "not installed" not in fields["Access reading"]
     assert fields["Author"] == "Mauricio Menon"
     assert about.LINKS == (("GitHub", GITHUB), ("GitLab", GITLAB))
     assert "@" not in "".join(fields.values())
@@ -68,7 +74,7 @@ def test_version_from_frozen_bundle(tmp_path, monkeypatch) -> None:
 def test_every_dialog_has_an_explicit_default_button_and_esc_closes(qtbot) -> None:
     # REGRA_VISUAL: botao explicito (OK/Fechar), Enter = botao padrao, Esc = fechar; nunca so o X
     _, notice = decide({"WAYLAND_DISPLAY": "wayland-0"}, "ID=debian\n", [])
-    for dialog, label in ((AboutDialog(), "OK"), (ColumnsDialog(["a"], set()), "Close"),
+    for dialog, label in ((AboutDialog(), "OK"), (ColumnsDialog("t", ["a"], set()), "Close"),
                           (DisplayWarning(notice), "OK")):
         qtbot.addWidget(dialog)
         dialog.show()
@@ -84,7 +90,7 @@ def test_help_menu_opens_about_with_clickable_links(qtbot) -> None:
     win.show_about()
 
     box = win.findChild(AboutDialog)
-    assert box.windowTitle() == "About"
+    assert box.windowTitle() == "About mdb2sql"  # titulo do Zig, igual nas 4 versoes
     assert box.title.text() == "mdb2sql 1.3.0"
     texts = [label.text() for label in box.findChildren(QLabel)]
     assert "Build:" in texts and "dev" in texts and "License:" in texts
