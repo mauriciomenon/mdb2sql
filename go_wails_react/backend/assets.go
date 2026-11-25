@@ -122,6 +122,27 @@ func mdbtool(name string) (string, error) {
 	return exec.LookPath(name)
 }
 
+// MdbtoolsLabel names the mdbtools the app would use, for Help > About: "mdbtools 1.0.1" (version from the embedded
+// VERSION.txt, "mdbtools 1.0.1 (8eedb1b) - Windows amd64...") or "mdbtools"; system = found on PATH, not embedded;
+// "" = no mdbtools at all
+func MdbtoolsLabel() (label string, system bool) {
+	if hasAsset("mdb-tables" + exeSuffix) {
+		data, _ := fs.ReadFile(embedded, "embedded/VERSION.txt")
+		return mdbtoolsVersionLabel(string(data)), false
+	}
+	if mdbtoolsAvailable() {
+		return "mdbtools", true
+	}
+	return "", false
+}
+
+func mdbtoolsVersionLabel(versionTxt string) string {
+	if f := strings.Fields(versionTxt); len(f) > 1 && f[0] == "mdbtools" {
+		return "mdbtools " + f[1]
+	}
+	return "mdbtools"
+}
+
 func mdbtoolsAvailable() bool {
 	for _, n := range mdbtoolsNames {
 		if !hasAsset(n+exeSuffix) && !onPath(n) {

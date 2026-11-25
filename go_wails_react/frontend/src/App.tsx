@@ -18,7 +18,17 @@ type Progress = { done: number; total: number; label: string };
 type Conversion = { done: boolean; saved: string };
 // Linux without X11 (display.go): three short lines, the install command and the README help link
 type DisplayWarning = { text: string; missing: string; distro: string; command: string; help: string };
-export type AppInfo = { version: string; build?: string; buildDate?: string; go: string; wails: string; duckdb: string; access?: string };
+export type AppInfo = {
+  version: string;
+  build?: string;
+  buildDate?: string;
+  go: string;
+  wails: string;
+  duckdb: string;
+  access?: string; // reader an Access file would use now: "Access ODBC", "mdbtools" or ""
+  mdbtools?: string; // "mdbtools 1.0.1" (embedded) or "mdbtools" (on PATH: mdbtoolsSystem); "" = none
+  mdbtoolsSystem?: boolean;
+};
 export type Filter = { column: string; value: unknown }; // column = exact value, applied in the database query
 
 declare global {
@@ -78,16 +88,31 @@ const THEMES: Theme[] = ['system', 'light', 'dark'];
 const SCOPES: Scope[] = ['table', 'all'];
 const VIEWS: View[] = ['data', 'schema', 'sql']; // tab order: Ctrl+1, Ctrl+2, Ctrl+3
 
-// Linhas (rotulo, valor) do dialogo Sobre; versao de wails.json, numero/data do build gravados pelo build, runtimes
-// lidos em execucao. Valor que comeca com https:// vira link aberto no navegador padrao.
-export function aboutRows(info: AppInfo, t: T): [string, string][] {
+// Window row of About: the WebView2 version from the user agent (Edg/<version>); WebKitGTK on Linux
+export function webviewName(userAgent: string): string {
+  const edge = /\bEdg\/([\d.]+)/.exec(userAgent);
+  return edge ? `WebView2 ${edge[1]}` : /AppleWebKit/.test(userAgent) ? 'WebKitGTK' : '';
+}
+
+// How an Access file is read now: the ODBC driver (embedded mdbtools as fallback), mdbtools only, or nothing
+function accessReading(info: AppInfo, t: T): string {
+  const mdb = info.mdbtools ?? '';
+  if (info.access === 'Access ODBC') return mdb ? t('about.accessOdbc', mdb) : t('about.accessOdbcOnly');
+  if (info.access === 'mdbtools') return t(info.mdbtoolsSystem ? 'about.accessSystem' : 'about.accessEmbedded', mdb);
+  return t('about.reader.none');
+}
+
+// Linhas (rotulo, valor) do dialogo Sobre, as do Rust (Build, Stack, Janela, Bancos, Leitura do Access, Autor,
+// Licenca, links); versao de wails.json, numero/data do build gravados pelo build, runtimes lidos em execucao. Valor
+// que comeca com https:// vira link aberto no navegador padrao.
+export function aboutRows(info: AppInfo, t: T, userAgent = navigator.userAgent): [string, string][] {
   const v = (s: string) => s.replace(/^v/, '');
-  const reader = info.access === 'Access ODBC' ? 'about.reader.odbc' : info.access === 'mdbtools' ? 'about.reader.mdbtools' : 'about.reader.none';
   return [
     [t('about.build'), info.build ? `${info.build} (${info.buildDate})` : 'dev'],
     [t('about.stack'), `Go ${info.go} + Wails ${v(info.wails)} + React ${reactVersion}`],
-    [t('about.database'), `DuckDB ${v(info.duckdb)}`],
-    [t('about.accessReader'), t(reader)],
+    [t('about.window'), webviewName(userAgent)],
+    [t('about.engines'), `DuckDB ${v(info.duckdb)}`], // SQLite files are read by DuckDB (its sqlite extension)
+    [t('about.access'), accessReading(info, t)],
     [t('about.author'), 'Mauricio Menon'],
     [t('about.license'), t('about.licenseText')],
     ['GitHub', 'https://github.com/mauriciomenon/mdb2sql'],
@@ -1463,7 +1488,7 @@ function App() {
         <div className="backdrop" onClick={(e) => e.target === e.currentTarget && setAbout(null)}>
           <div className="about" role="dialog" aria-modal="true" aria-labelledby="about-title">
             <h2 id="about-title">
-              mdb2sql <span className="version">{about.version}</span>
+              {t('about.title')} <span className="version">{about.version}</span>
             </h2>
             <p className="tagline">{t('about.tagline')}</p>
             <dl>

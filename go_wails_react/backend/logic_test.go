@@ -186,6 +186,19 @@ func fixtureDB(t *testing.T) string {
 	return path
 }
 
+// Help > About names the embedded mdbtools with the version of its VERSION.txt (standard item 21, as Rust)
+func TestMdbtoolsVersionLabel(t *testing.T) {
+	for text, want := range map[string]string{
+		"mdbtools 1.0.1 (8eedb1b) - Windows amd64, static, no iconv/GLib.\r\n": "mdbtools 1.0.1",
+		"":               "mdbtools",
+		"something else": "mdbtools",
+	} {
+		if got := mdbtoolsVersionLabel(text); got != want {
+			t.Errorf("%q: %q, want %q", text, got, want)
+		}
+	}
+}
+
 // standard item 6: the table list shows each table's row count (as Zig), in table list order; a cancel stops it
 func TestTableCounts(t *testing.T) {
 	m := NewDBManager()

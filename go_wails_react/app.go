@@ -66,6 +66,9 @@ type AppInfo struct {
 	Wails     string `json:"wails"`
 	DuckDB    string `json:"duckdb"`
 	Access    string `json:"access"` // reader an Access file would use now: "Access ODBC", "mdbtools" or ""
+	// "mdbtools 1.0.1" (embedded) or "mdbtools" (on PATH, MdbtoolsSystem); "" = none
+	Mdbtools       string `json:"mdbtools"`
+	MdbtoolsSystem bool   `json:"mdbtoolsSystem"`
 }
 
 func productVersion() string {
@@ -98,14 +101,17 @@ func (a *App) GetAppInfo() AppInfo {
 	if err != nil {
 		duck = "unknown"
 	}
+	mdbtools, system := backend.MdbtoolsLabel()
 	return AppInfo{
-		Version:   productVersion(),
-		Build:     buildNumber,
-		BuildDate: buildDate,
-		Go:        strings.TrimPrefix(goruntime.Version(), "go"),
-		Wails:     wailsVersion(),
-		DuckDB:    duck,
-		Access:    backend.AccessReader(),
+		Version:        productVersion(),
+		Build:          buildNumber,
+		BuildDate:      buildDate,
+		Go:             strings.TrimPrefix(goruntime.Version(), "go"),
+		Wails:          wailsVersion(),
+		DuckDB:         duck,
+		Access:         backend.AccessReader(),
+		Mdbtools:       mdbtools,
+		MdbtoolsSystem: system,
 	}
 }
 
