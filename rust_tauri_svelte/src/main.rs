@@ -39,6 +39,9 @@ struct AppState {
 #[derive(Serialize)]
 struct Opened {
     path: String,
+    // arquivo lido de fato: o mesmo `path`, ou o SQLite salvo quando o Access foi reaberto por ele (a exportacao nao sugere
+    // gravar por cima dele)
+    file: String,
     tables: Vec<String>,
     rows: Vec<i64>,
     source: String,
@@ -74,9 +77,11 @@ fn startup_path() -> String {
 // NIVEL BASICO: LoadDatabase abre o banco (.accdb/.mdb, .sqlite/.sqlite3/.db, .duckdb)
 // Caminho vazio: MDB2SQL_DB_PATH ou data/sample.duckdb. A interface resolve antes o SQLite convertido do
 // banco anterior (salvar/apagar); se sobrou algum, ele e apagado quando o novo banco abre.
+// saved: o SQLite salvo deste mesmo Access, sem mudanca nos dois (a interface conferiu as chaves de file_key): e ele que
+// abre, sem converter de novo nem perguntar ao fechar; titulo e caminho na tela continuam os do Access
 // NIVEL TECNICO: async so a long Access import runs off the main thread; progress goes as events
 #[tauri::command(async)]
-fn load_database(app: AppHandle, db_path: String, state: State<'_, AppState>) -> Result<Opened, String> {
+fn load_database(app: AppHandle, db_path: String, saved: Option<String>, state: State<'_, AppState>) -> Result<Opened, String> {
     let manager = state.db_manager.lock().unwrap();
     let path = if db_path.is_empty() {
         match std::env::var("MDB2SQL_DB_PATH") {
@@ -86,15 +91,19 @@ fn load_database(app: AppHandle, db_path: String, state: State<'_, AppState>) ->
     } else {
         db_path
     };
-    let connected = manager.connect(&path, &mut |step, done, total, item| {
+    let connected = manager.connect(saved.as_deref().unwrap_or(&path), &mut |step, done, total, item| {
         let _ = app.emit("open-progress", OpenProgress { step, done, total, item });
     })?;
     let has_converted = connected.converted.is_some();
     *state.converted.lock().unwrap() = connected.converted;
-    let opened = manager.current_path().unwrap_or(path);
+    let opened = match saved {
+        Some(_) => manager.validate_database_path(&path).unwrap_or(path),
+        None => manager.current_path().unwrap_or(path),
+    };
     show_title(&app, Some(&opened));
     let tables = manager.list_tables()?;
     Ok(Opened {
+        file: manager.current_path().unwrap_or_else(|| opened.clone()),
         path: opened,
         rows: manager.table_rows(&tables)?,
         tables,
@@ -135,6 +144,13 @@ fn save_converted(path: String, overwrite: bool, state: State<'_, AppState>) -> 
 #[tauri::command(async)]
 fn discard_converted(state: State<'_, AppState>) {
     state.converted.lock().unwrap().take();
+}
+
+// NIVEL BASICO: Chave do arquivo (caminho, tamanho e data) para reconhecer o Access ja convertido e salvo; null se o
+// arquivo nao existe
+#[tauri::command(async)]
+fn file_key(path: String) -> Option<String> {
+    converted::file_key(Path::new(&path))
 }
 
 // NIVEL BASICO: Sai do app depois que a interface resolveu o SQLite convertido
@@ -344,6 +360,7 @@ fn main() {
             close_database,
             save_converted,
             discard_converted,
+            file_key,
             exit_app,
             display_warning,
             get_table_data,

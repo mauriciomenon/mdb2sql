@@ -788,6 +788,29 @@ mod tests {
         assert!(!own.exists() && other.exists());
     }
 
+    // padrao item 22: a chave (caminho, tamanho, data) reconhece o mesmo arquivo sem mudanca entre execucoes; mudou o
+    // conteudo ou a data, a chave muda e o Access e convertido de novo
+    #[test]
+    fn file_key_changes_when_the_file_changes() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("Banco.accdb");
+        std::fs::write(&path, b"abc").unwrap();
+        let key = converted::file_key(&path).expect("key of an existing file");
+        assert_eq!(converted::file_key(&path), Some(key.clone()), "same file, same key");
+        // o mesmo arquivo por outro caminho (relativo, com ..) da a mesma chave
+        let other_way = dir.path().join("sub").join("..").join("Banco.accdb");
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        assert_eq!(converted::file_key(&other_way), Some(key.clone()));
+        assert!(key.contains("|3|"), "{key}"); // tamanho em bytes
+        if cfg!(windows) {
+            assert_eq!(key, key.to_lowercase(), "Windows: path in lowercase");
+        }
+        std::fs::write(&path, b"abcd").unwrap();
+        assert_ne!(converted::file_key(&path), Some(key), "changed file, new key");
+        assert_eq!(converted::file_key(&dir.path().join("missing.accdb")), None);
+        assert_eq!(converted::file_key(dir.path()), None, "a folder has no key");
+    }
+
     // nomes de temporario reservados de forma exclusiva: chamadas seguidas nunca repetem nem reaproveitam arquivo
     #[test]
     fn temporary_names_are_reserved_exclusively() {

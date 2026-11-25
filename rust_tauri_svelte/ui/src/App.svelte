@@ -26,7 +26,7 @@
     withFilter,
   } from './grid.js';
   import { LANGS, describe, translator } from './i18n.js';
-  import { baseName, defaultSaveDir, dirOf, joinPath, stem, suggestedName } from './paths.js';
+  import { baseName, defaultSaveDir, dirOf, joinPath, savedEntry, stem, suggestedName, withSaved } from './paths.js';
 
   const LIMITS = [100, 500, 1000];
   // null devolve a janela (barra de titulo e webview) ao tema do sistema
@@ -65,6 +65,10 @@
   const LOG_KEY = 'mdb2sql.log'; // 'open' = painel de log aberto (padrao: recolhido)
   const NULL_KEY = 'mdb2sql.showNull'; // 'on' = celula NULL mostra "NULL" (padrao, sem valor gravado: vazia)
   const SCOPE_KEY = 'mdb2sql.searchScope'; // 'all' = a pesquisa comeca em Todas as tabelas (padrao: Esta tabela)
+  // Access ja convertido e salvo: { [chave do Access]: { dest, destKey } } com as chaves de file_key (caminho, tamanho,
+  // data). Fica entre execucoes; as 50 mais recentes
+  const SAVED_KEY = 'mdb2sql.savedSqlite';
+  const SAVED_MAX = 50;
   // escopo da pesquisa da aba Data: seletor junto ao campo e Settings > Escopo padrao da busca
   const SCOPES = [
     ['table', 'scope.table'],
@@ -180,6 +184,8 @@
   let rememberChoice = $state(false);
   let answer = null; // resolve da pergunta aberta
   let lastSqliteDir = '';
+  let convertedKey = null; // chave do Access convertido agora (file_key ao abrir): o SQLite salvo dele fica lembrado
+  let readFile = ''; // arquivo lido de fato (o SQLite salvo, quando o Access abriu por ele): a exportacao nao o sugere
 
   let visibleTables = $derived.by(() => {
     const words = searchWords(tableFilter);
@@ -350,6 +356,7 @@
             choice = null;
             continue;
           }
+          await rememberSaved(convertedKey, saved);
           showStatus('status.sqliteSaved', { path: saved });
         } else {
           await invoke('discard_converted');
@@ -363,7 +370,31 @@
     }
     if (rememberChoice) remembered = choice;
     converted = false;
+    convertedKey = null;
     return true;
+  }
+
+  // NIVEL BASICO: SQLite salvo de cada Access (entre execucoes, como o Go): chave do Access -> { dest, destKey }
+  function savedList() {
+    try {
+      const list = JSON.parse(loadSetting(SAVED_KEY) || '{}');
+      return list && typeof list === 'object' ? list : {};
+    } catch {
+      return {}; // gravado estragado: como se nada tivesse sido salvo
+    }
+  }
+
+  // o SQLite salvo deste Access, se nenhum dos dois mudou (caminho, tamanho e data); senao null e o Access e convertido
+  async function savedSqlite(accessKey) {
+    const entry = savedEntry(savedList(), accessKey);
+    if (!entry) return null;
+    return (await invoke('file_key', { path: entry.dest })) === entry.destKey ? entry.dest : null;
+  }
+
+  // lembra o SQLite salvo do Access convertido; uma versao antiga do mesmo Access sai da lista
+  async function rememberSaved(accessKey, dest) {
+    const destKey = accessKey && (await invoke('file_key', { path: dest }));
+    if (destKey) saveSetting(SAVED_KEY, JSON.stringify(withSaved(savedList(), accessKey, dest, destKey, SAVED_MAX)));
   }
 
   // NIVEL BASICO: Grava o SQLite convertido: dialogo de salvar na pasta do arquivo de origem, <nome>.sqlite.
@@ -383,7 +414,7 @@
     }
     path = await invoke('plugin:dialog|save', {
       options: {
-        title: t('convert.title'),
+        title: t('convert.saveTitle'),
         defaultPath: path,
         filters: [{ name: t('save.sqlite'), extensions: ['sqlite'] }],
       },
@@ -418,12 +449,17 @@
     busy = true;
     showStatus('status.opening');
     try {
-      const opened = await invoke('load_database', { dbPath: path });
+      // Access ja convertido e salvo, sem mudanca: abre o SQLite salvo (nada de converter nem perguntar de novo)
+      const accessKey = /\.(mdb|accdb)$/i.test(path) ? await invoke('file_key', { path }) : null;
+      const saved = await savedSqlite(accessKey);
+      const opened = await invoke('load_database', { dbPath: path, saved });
       tables = opened.tables;
       tableRows = new Map(opened.tables.map((name, i) => [name, opened.rows[i]]));
       openedPath = opened.path;
+      readFile = opened.file;
       source = opened.source;
       converted = opened.converted;
+      convertedKey = opened.converted ? accessKey : null;
       dbPath = opened.path;
       clearTimeout(tableTimer);
       tableText = tableFilter = '';
@@ -432,6 +468,7 @@
       lastSql = '';
       saveSetting(LAST_DIR_KEY, dirOf(opened.path));
       showStatus('status.opened', { name: baseName(opened.path), count: fmt(tables.length) });
+      if (saved) note('info', { key: 'status.reused', values: { name: baseName(opened.path), path: saved } });
       note('info', { key: 'status.via', values: { source } });
       resetTable();
       if (tables.length > 0) await openTable(tables[0]);
@@ -455,6 +492,7 @@
     tables = [];
     tableRows = new Map();
     openedPath = '';
+    readFile = '';
     source = '';
     converted = false;
     sqlResult = null;
@@ -707,7 +745,7 @@
       const path = await invoke('plugin:dialog|save', {
         options: {
           title: label,
-          defaultPath: joinPath(dir, suggestedName(base, format, openedPath)),
+          defaultPath: joinPath(dir, suggestedName(base, format, readFile)),
           filters: [{ name: t(`save.${format}`), extensions: [format] }],
         },
       });
@@ -1009,8 +1047,9 @@
     }}
   >
     <button type="button" class="dialog-x" aria-label={t('common.cancel')} title={t('common.cancel')} onclick={() => reply('cancel')}>×</button>
+    <!-- como o dialogo do Go: titulo "SQLite convertido" e a pergunta com o nome do arquivo -->
     <h2 id="convert-title">{t('convert.title')}</h2>
-    <p class="file">{`${stem(openedPath)}.sqlite`}</p>
+    <p class="file">{t('convert.text', { name: `${stem(openedPath)}.sqlite` })}</p>
     <label class="remember"><input type="checkbox" bind:checked={rememberChoice} /> {t('convert.remember')}</label>
     <div class="actions">
       <button type="button" class="save" onclick={() => reply('save')}>{t('convert.save')}</button>
@@ -1921,7 +1960,6 @@
 
   dialog.convert .file {
     margin: 6px 0 12px;
-    color: var(--muted);
   }
 
   dialog.convert .remember {

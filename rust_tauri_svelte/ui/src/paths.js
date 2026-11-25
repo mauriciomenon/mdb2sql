@@ -38,6 +38,21 @@ export function safeFileName(text) {
   return (text || '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'export';
 }
 
+// NIVEL BASICO: SQLite salvo de cada Access, entre execucoes: { [chave do Access]: { dest, destKey } }, chaves de
+// file_key no backend ("caminho|bytes|data"). Entrada deste Access, ou null
+export function savedEntry(list, accessKey) {
+  const entry = accessKey ? list?.[accessKey] : null;
+  return entry?.dest && entry.destKey ? entry : null;
+}
+
+// lista nova com o SQLite salvo deste Access: a versao antiga do mesmo Access (mesmo caminho) sai; ficam as `max` mais
+// recentes
+export function withSaved(list, accessKey, dest, destKey, max) {
+  const samePath = accessKey.slice(0, accessKey.indexOf('|') + 1);
+  const kept = Object.entries(list ?? {}).filter(([key]) => !key.startsWith(samePath));
+  return Object.fromEntries([...kept, [accessKey, { dest, destKey }]].slice(-max));
+}
+
 // "<base>.<ext>"; se esse for o proprio arquivo aberto, "<base> (export).<ext>" para nao sugerir sobrescreve-lo
 export function suggestedName(base, ext, openedPath) {
   const clean = safeFileName(base);

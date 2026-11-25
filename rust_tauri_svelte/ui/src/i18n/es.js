@@ -60,7 +60,9 @@ export default {
   'common.close': 'Cerrar',
   'common.cancel': 'Cancelar',
 
-  'convert.title': '¿Guardar el SQLite convertido?',
+  'convert.title': 'SQLite convertido',
+  'convert.text': '¿Guardar el archivo SQLite convertido desde Access ({name})?',
+  'convert.saveTitle': 'Guardar el SQLite convertido',
   'convert.save': 'Guardar...',
   'convert.delete': 'Eliminar',
   'convert.remember': 'Recordar en esta sesión',
@@ -173,6 +175,7 @@ export default {
   'status.hiddenMany': '{count} columnas ocultas',
   'status.closed': 'Base de datos cerrada',
   'status.sqliteSaved': 'SQLite convertido guardado: {path}',
+  'status.reused': '{name}: abierto el SQLite guardado de él ({path})',
   'status.sqliteDeleted': 'SQLite convertido eliminado',
   'status.logCopied': 'Registro copiado',
 

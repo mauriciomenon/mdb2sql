@@ -49,8 +49,8 @@ O botao **Export...** ao lado de **Open** abre a mesma lista de exportacao do me
 **Access**: o arquivo e lido uma vez (num DuckDB em memoria, que e o motor da tela) e gravado uma vez num **SQLite
 temporario** com os mesmos dados e tipos (inteiro, decimal exato, texto, data, booleano e binario, e os NULL); nada e
 convertido duas vezes. A barra de status mostra a etapa (lendo o Access, gravando o SQLite) e depois "Opened via mdbtools → SQLite" (ou "Access ODBC → SQLite").
-Ao **fechar o banco** (File > Close), **abrir outro** ou **sair**, o app pergunta
-**Save the converted SQLite?**:
+Ao **fechar o banco** (File > Close), **abrir outro** ou **sair**, o app pergunta (**Converted SQLite file**:
+"Save the SQLite file converted from Access (`<nome>.sqlite`)?"):
 - **Save...**: dialogo de salvar na pasta do Access, nome `<nome do Access>.sqlite`; o SQLite fica onde voce escolher
   e pode ser aberto depois direto (bem mais rapido que reler o Access);
 - **Delete**: apaga o temporario;
@@ -58,6 +58,10 @@ Ao **fechar o banco** (File > Close), **abrir outro** ou **sair**, o app pergunt
 
 "Remember for this session" repete a escolha sem perguntar ate fechar o app (Save grava na ultima pasta usada; se
 ja existir um arquivo com o nome, abre o dialogo). Se o app cair, o temporario e apagado na proxima abertura.
+
+**Access ja salvo**: abrir de novo o mesmo .accdb/.mdb (mesmo caminho, tamanho e data) abre o SQLite salvo dele, sem
+converter nem perguntar ao fechar, tambem depois de fechar e abrir o app (a lista fica nas preferencias); se o Access
+ou o SQLite salvo mudou, o Access e convertido de novo.
 
 SQLite e Access ficam num DuckDB em memoria enquanto o banco esta aberto (motor das consultas, filtros e
 exportacao); arquivos DuckDB sao abertos direto, so leitura.
@@ -157,7 +161,8 @@ faltar e so o servidor X (XWayland):
 - Windows `%TEMP%\mdb2sql-rust-tauri-svelte\`, Linux `~/.cache/mdb2sql-rust-tauri-svelte/`: o SQLite convertido
   do Access enquanto ele esta aberto (apagado ou movido quando voce responde a pergunta; sobra de queda e apagada na
   abertura seguinte) e o CSV de trabalho do mdbtools durante a leitura.
-- Dados do webview e preferencias (tema, idioma, ultima pasta): Windows `%LOCALAPPDATA%\com.mdb2sql.app\`, Linux
+- Dados do webview e preferencias (tema, idioma, ultima pasta, os SQLite salvos de cada Access: caminho, tamanho e
+  data): Windows `%LOCALAPPDATA%\com.mdb2sql.app\`, Linux
   `~/.local/share/com.mdb2sql.app/`.
 - So os arquivos que voce exportar ou salvar. O banco aberto nunca e alterado.
 
