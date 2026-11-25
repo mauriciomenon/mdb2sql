@@ -1963,7 +1963,13 @@ const App = struct {
         ig.igPushID_Int(@intCast(index));
         defer ig.igPopID();
 
-        ig.igSetNextItemWidth(264);
+        // a busca ocupa o que sobra da linha depois do seletor e (em "Esta tabela") de Anterior/Proxima/Colunas;
+        // com largura fixa sobrava linha vazia. Minimo de 10 letras: janela estreita, os botoes descem
+        const gap = ig.igGetStyle().*.ItemSpacing.x;
+        const scope_w = buttonWidth(tr("scope_table")) + buttonWidth(tr("scope_all")) + gap;
+        // +2 gaps de folga: sameLineIfFits mede pela borda da janela, um pouco antes da borda deste painel
+        const pager_w = if (app.scope == .table) buttonWidth(tr("prev")) + buttonWidth(tr("next")) + buttonWidth(tr("columns_button")) + 5 * gap else 0;
+        ig.igSetNextItemWidth(@max(ig.igGetFontSize() * 10, ig.igGetContentRegionAvail().x - scope_w - pager_w));
         // busca 300 ms depois da ultima tecla; Enter busca na hora
         if (ig.igInputTextWithHint("##search", tr("search"), &app.search, app.search.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) {
             app.runSearch();
@@ -2057,7 +2063,8 @@ const App = struct {
         ig.igSameLine(0, -1);
         if (running) ig.igTextDisabled("%s", tr("busy_running").ptr) else app.sql_msg.draw();
         const g = if (app.result) |*x| x else return;
-        ig.igSetNextItemWidth(400);
+        // o filtro ocupa a linha ate o botao Colunas (com 400 px fixos sobrava linha vazia)
+        ig.igSetNextItemWidth(ig.igGetContentRegionAvail().x - buttonWidth(tr("columns_button")) - ig.igGetStyle().*.ItemSpacing.x);
         if (ig.igInputTextWithHint("##rfilter", tr("search_rows"), &app.result_filter, app.result_filter.len + 1, 0, null, null)) app.refilter();
         itemTooltip(tr("search_rule"));
         ig.igSameLine(0, -1);
