@@ -64,18 +64,18 @@ the folder of the session is removed on exit, and the folder of a session that c
 Left panel: list of tables with the row count of each one (Table | Rows), and a filter box (Ctrl+T goes to the
 list); all words, any order, no case or accents, applied 300 ms after the last key or at once with Enter.
 Names are never cut: the panel opens as wide as the longest name (up to 35% of the window, then it scrolls).
-Tabs ("Rows", at the right of the tabs, sets how many rows of the table or of the SQL result are loaded: 100 by
-default, 500, 1000):
+Tabs:
 
 - **Data** (Ctrl+1): first rows of the selected table. Click a header to sort the loaded rows (numbers sort as
-  numbers; third click returns to the original order). The bar above the grid has the search field (Ctrl+F),
-  "This table | All tables" next to it and Columns...; in a narrow window the bar wraps to a second line. The
+  numbers; third click returns to the original order). One line above the grid holds the search field (Ctrl+F),
+  "This table | All tables", "Rows" (rows loaded from the table and from the SQL result: 100 by default, 500,
+  1000) and Columns...; in a narrow window it wraps to a second line. The
   search runs 300 ms after the last key, or at once with Enter, over the **whole table in the database**, not only
   the loaded rows: a row stays when one of its cells has all the words typed, in any order, ignoring case and
   accents (`tension de campo` finds `EXCITACIÓN TENSIÓN DE CAMPO`; words that are only in different cells do not
   match; `tensao` does not find `TENSIÓN`, there is no fuzzy match). "All tables" lists the tables with matching
   rows as `table (n)`; choosing one opens it with the same search and no value filter. The line under the grid
-  says how many rows are shown and match (`RANGER_SOSTAT: showing 25 of 25 rows matching (36,754 in the table)`).
+  says how many rows are shown (`RANGER_SOSTAT: showing 25 of 25 rows found` with a search or value filter).
   Columns fit the header name and the longest loaded value, so nothing is cut with "..." (only above 1,200 px; the
   tooltip shows the full text; header tooltip: name and type).
   - **Columns...**: check boxes in a grid that follows the dialog width (1 to 6 per row,
@@ -103,8 +103,8 @@ Menus:
   - Database to Excel (one sheet per table): sheet name = table name, cleaned of `[]:*?/\` and cut to the
     31-character Excel limit (repeated names get `~2`, `~3`); header in row 1; a table with more than 1,048,575 rows
     continues in sheets `<name> (2)`, `<name> (3)`, ...
-  - Current table to CSV / to Excel: the whole current table (not only the loaded rows). With a search active it
-    asks first: "Whole table" or "Only the N rows found" (the rows the grid counts, value filters included).
+  - Current table to CSV / to Excel: the whole current table (not only the loaded rows). When the grid shows part of the
+    table (a search or a value filter) it asks first: "Whole table" or "Only the N rows found" (the rows the grid counts, value filters included).
   - SQL result to CSV / to Excel: the whole result of the last query that ran; default name `query.csv` /
     `query.xlsx`. CSV is UTF-8 with BOM, comma separated.
   - The save dialog opens in the folder of the open database (after that, the last folder used). Exports run in the

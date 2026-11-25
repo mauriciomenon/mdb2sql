@@ -445,22 +445,6 @@ class MainWindow(QMainWindow):
         self._t(lambda text: self.tabs.setTabText(0, text), "tab.data")
         self._t(lambda text: self.tabs.setTabText(1, text), "tab.schema")
         self.tabs.addTab(self.sql_page, "SQL")
-        # Linhas (da tabela e do resultado SQL) a direita das abas: visivel em todas
-        self.limit_combo = QComboBox()
-        self._t(self.limit_combo.setAccessibleName, "rows.name")
-        self._t(self.limit_combo.setToolTip, "tip.rows")
-        for limit in ROW_LIMITS:
-            self.limit_combo.addItem(str(limit), limit)  # 100 / 500 / 1000, sem separador (igual nas 4 versoes)
-        self.limit_combo.currentIndexChanged.connect(self.reload_table)
-        self.limit_label = QLabel()
-        self._t(self.limit_label.setText, "rows.label")
-        self.limit_label.setBuddy(self.limit_combo)
-        corner = QWidget()
-        corner_row = QHBoxLayout(corner)
-        corner_row.setContentsMargins(6, 0, 6, 0)
-        corner_row.addWidget(self.limit_label)
-        corner_row.addWidget(self.limit_combo)
-        self.tabs.setCornerWidget(corner, Qt.Corner.TopRightCorner)
         # !T: On the tabs for the shortcut scope, on each view for its right-click menu
         copy_actions = [self.copy_action, self.copy_row_action, self.copy_row_header_action]
         self.tabs.addActions(copy_actions)
@@ -490,7 +474,9 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.stack)
 
     def _create_data_page(self) -> QWidget:
-        # barra da aba Data: pesquisa (Ctrl+F) com Esta tabela | Todas as tabelas junto ao campo e Colunas...
+        # aba Dados igual nas 4 versoes, de cima para baixo: uma linha so com a pesquisa (Ctrl+F, estica), Esta
+        # tabela | Todas as tabelas, Linhas e Colunas...; a linha dos filtros por valor (so com filtro); a grade; a
+        # linha da tabela embaixo dela. Nada mais
         self.search_edit = QLineEdit()
         self._t(self.search_edit.setPlaceholderText, "search.placeholder")
         self._t(self.search_edit.setToolTip, "tip.search")
@@ -511,6 +497,21 @@ class MainWindow(QMainWindow):
             button.setDefaultAction(action)
             scope_row.addWidget(button)
             self.scope_buttons.append(button)
+        # Linhas carregadas da tabela (e do resultado SQL): 100 / 500 / 1000
+        self.limit_combo = QComboBox()
+        self._t(self.limit_combo.setAccessibleName, "rows.name")
+        self._t(self.limit_combo.setToolTip, "tip.rows")
+        for limit in ROW_LIMITS:
+            self.limit_combo.addItem(str(limit), limit)  # 100 / 500 / 1000, sem separador (igual nas 4 versoes)
+        self.limit_combo.currentIndexChanged.connect(self.reload_table)
+        self.limit_label = QLabel()
+        self._t(self.limit_label.setText, "rows.label")
+        self.limit_label.setBuddy(self.limit_combo)
+        rows = QWidget()  # rotulo e lista juntos: a linha nunca quebra entre os dois
+        rows_row = QHBoxLayout(rows)
+        rows_row.setContentsMargins(0, 0, 0, 0)
+        rows_row.addWidget(self.limit_label)
+        rows_row.addWidget(self.limit_combo)
         self.columns_button = QToolButton()
         self.columns_button.setDefaultAction(self.columns_action)
         # janela estreita (720 px) igual ao Go: a barra quebra a linha, nada cortado nem escondido; o campo de busca
@@ -519,6 +520,7 @@ class MainWindow(QMainWindow):
         bar.setContentsMargins(6, 4, 6, 0)
         bar.addWidget(self.search_edit)
         bar.addWidget(scope)
+        bar.addWidget(rows)
         bar.addWidget(self.columns_button)
 
         # filtros ativos (um botao por filtro, clique remove) e Limpar filtros, numa linha que so aparece com filtro
@@ -1597,8 +1599,7 @@ class MainWindow(QMainWindow):
         table, total_rows = self.loaded_table
         loaded = num(self.table_model.rowCount())
         if self.loaded_filters or self.loaded_search.split():  # contagem no banco, alem das linhas carregadas
-            message = counted("status.showing_matched", self.matched_rows, table=table, loaded=loaded,
-                              total=num(total_rows))
+            message = counted("status.showing_matched", self.matched_rows, table=table, loaded=loaded)
         else:
             message = counted("status.showing", total_rows, table=table, loaded=loaded)
         self._set_message(self.info_label, message, log=False)

@@ -126,7 +126,7 @@ def test_select_sort_search_and_copy(qtbot, window: MainWindow) -> None:
     assert window._table_request == request + 1 and not window.table_load_timer.isActive()
     qtbot.waitUntil(lambda: window.data_proxy.rowCount() == 1, timeout=5000)
     assert _column(window, 1) == ["carla"]
-    assert window.info_label.text() == "people: showing 1 of 1 row matching (3 in the table)"
+    assert window.info_label.text() == "people: showing 1 of 1 row found"
 
     window.data_table.selectAll()
     window.copy_selection()
@@ -211,7 +211,8 @@ def test_narrow_window_wraps_the_data_bar_and_the_search_stretches(qtbot, window
     # quebra a linha exatamente quando a barra inteira nao cabe na largura da aba Data
     spacing = 6
     needed = (window.search_edit.minimumWidth() + window.scope_buttons[0].parentWidget().sizeHint().width()
-              + window.columns_button.sizeHint().width() + 2 * spacing + 12)
+              + window.limit_combo.parentWidget().sizeHint().width() + window.columns_button.sizeHint().width()
+              + 3 * spacing + 12)
     wrapped = window.columns_button.y() > window.search_edit.geometry().bottom()
     assert wrapped == (needed > window.data_page.width())
     window.resize(1600, 800)  # mais largura: a mesma barra volta para uma linha so
@@ -220,6 +221,26 @@ def test_narrow_window_wraps_the_data_bar_and_the_search_stretches(qtbot, window
     for toolbar in window.findChildren(QToolBar):  # nada escondido no "»" da barra de cima
         extension = toolbar.findChild(QAbstractButton, "qt_toolbar_ext_button")
         assert extension is None or not extension.isVisible()
+
+
+def test_data_tab_has_one_line_then_filters_grid_and_table_line(qtbot, window: MainWindow) -> None:
+    # aba Dados igual nas 4 (item 24): busca | Esta tabela | Todas as tabelas | Linhas | Colunas... numa linha so
+    # (1280 px), a linha dos filtros so com filtro, a grade e a linha da tabela embaixo; nada mais
+    _select_table(qtbot, window, "people")
+    window.resize(1280, 800)
+    QApplication.processEvents()
+    line = [window.search_edit, *window.scope_buttons, window.limit_label, window.limit_combo, window.columns_button]
+    xs = [w.mapTo(window.data_page, w.rect().topLeft()).x() for w in line]
+    centers = {w.mapTo(window.data_page, w.rect().center()).y() // 8 for w in line}
+    assert xs == sorted(xs) and len(centers) == 1  # nesta ordem, na mesma linha
+    assert window.tabs.cornerWidget(Qt.Corner.TopRightCorner) is None  # Linhas nao fica mais ao lado das abas
+    page = window.data_page.layout()
+    widgets = [page.itemAt(i).widget() or page.itemAt(i).layout() for i in range(page.count())]
+    assert widgets[1:] == [window.filters_bar, window.data_stack, window.info_label]
+    assert window.filters_bar.isHidden()
+    _reloaded(qtbot, window, lambda: window.add_filter("name", "Ana"))
+    assert not window.filters_bar.isHidden()
+    assert window.info_label.text() == "people: showing 1 of 1 row found"
 
 
 def test_long_bottom_bar_message_wraps_instead_of_being_cut(qtbot, window: MainWindow) -> None:
@@ -436,7 +457,7 @@ def test_search_all_tables_and_open_one(qtbot, window: MainWindow) -> None:
                     and window._busy == 0, timeout=30000)
     assert window.scope_actions["table"].isChecked() and window.data_stack.currentWidget() is window.data_table
     assert _column(window, 1) == ["Ana"]
-    assert window.info_label.text() == "people: showing 1 of 1 row matching (3 in the table)"
+    assert window.info_label.text() == "people: showing 1 of 1 row found"
 
     # sem resultado: lista vazia; escopo padrao em Configuracoes, gravado e ja valendo na tela
     window.default_scope_actions["all"].trigger()
@@ -846,7 +867,7 @@ def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None
     # a pesquisa continua olhando todas as colunas (7.25 esta na coluna oculta) e exportar leva todas
     window.search_edit.setText("7.25")
     qtbot.waitUntil(lambda: window.data_proxy.rowCount() == 1, timeout=5000)
-    assert window.info_label.text() == "people: showing 1 of 1 row matching (3 in the table)"
+    assert window.info_label.text() == "people: showing 1 of 1 row found"
     assert window.manager.select_table("people") == ('SELECT * FROM "people"', [])  # exportar: todas as colunas
     _reloaded(qtbot, window, window.search_edit.clear)
 
@@ -1047,7 +1068,7 @@ def test_right_click_filter_runs_in_the_database(qtbot, points_window: MainWindo
 
     # U18A nao esta nas 100 linhas carregadas: o filtro vai na consulta e acha as 50
     _reloaded(qtbot, win, lambda: win.add_filter("sigla", "U18A"))
-    assert win.info_label.text() == "points: showing 50 of 50 rows matching (300 in the table)"
+    assert win.info_label.text() == "points: showing 50 of 50 rows found"
     assert set(_column(win, 1)) == {"U18A"}
     assert _chips(win) == ["Filter:", "sigla = 'U18A'  ×"]
 
@@ -1055,20 +1076,20 @@ def test_right_click_filter_runs_in_the_database(qtbot, points_window: MainWindo
     win.data_table.setCurrentIndex(win.data_proxy.index(0, 2))
     _reloaded(qtbot, win, win.filter_value_action.trigger)
     assert win.filters == [("sigla", "U18A"), ("obs", None)]
-    assert win.info_label.text() == "points: showing 25 of 25 rows matching (300 in the table)"
+    assert win.info_label.text() == "points: showing 25 of 25 rows found"
     assert _chips(win) == ["Filters:", "sigla = 'U18A'  ×", "obs IS NULL  ×"]
     assert win.clear_filters_action.isEnabled() and not win.filters_bar.isHidden()
 
     # a pesquisa de palavras combina com o filtro, nas linhas carregadas
     win.search_edit.setText("298")
     qtbot.waitUntil(lambda: win.data_proxy.rowCount() == 1, timeout=5000)
-    assert win.info_label.text() == "points: showing 1 of 1 row matching (300 in the table)"
+    assert win.info_label.text() == "points: showing 1 of 1 row found"
     _reloaded(qtbot, win, win.search_edit.clear)  # a pesquisa vai no banco: limpar recarrega a tabela
 
     # remover um a um (botao do filtro) e limpar
     _reloaded(qtbot, win, win.filter_chips.itemAt(1).widget().click)
     assert win.filters == [("obs", None)]
-    assert win.info_label.text() == "points: showing 100 of 150 rows matching (300 in the table)"  # limite Rows vale
+    assert win.info_label.text() == "points: showing 100 of 150 rows found"  # limite Rows vale
     _reloaded(qtbot, win, win.clear_filters_button.click)
     assert win.filters == [] and _chips(win) == []
     assert win.info_label.text() == "points: showing 100 of 300 rows"
