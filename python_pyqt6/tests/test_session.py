@@ -253,8 +253,8 @@ def test_catalogs_have_the_same_keys_and_placeholders() -> None:
 
 # textos que nao sao traduzidos: nomes de produto, codigo SQL e numeros
 # (Sobre: versoes, autor, links; botoes internos do Qt, traduzidos pelo qtbase_<idioma>.qm)
-NOT_TEXT = re.compile(r"(SQL|SELECT \* FROM \.\.\.|[\d,.]+|mdb2sql [\d.]+( - Python)?|GitHub|GitLab|Stack|"
-                      r"Python .*|SQLite [\d.]+, DuckDB .*|dev|Mauricio Menon|(GitHub |GitLab )?https://\S+|"
+NOT_TEXT = re.compile(r"(SQL|SELECT \* FROM \.\.\.|[\d,.]+|mdb2sql [\d.]+( - Python)?|GitHub|GitLab|"
+                      r"Python .*|Qt [\d.]+|SQLite [\d.]+, DuckDB .*|dev|Mauricio Menon|(GitHub |GitLab )?https://\S+|"
                       r"<a href=.*|Scroll Left|Scroll Right|Float|Close)")
 
 
