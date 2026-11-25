@@ -117,10 +117,10 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   Changing the term, the scope, the table or the file stops the running search and its result is dropped. The default
   is in **Settings > Default search scope**; opening a file clears the search and the table filter and goes back to
   it.
-- **Columns...** (Data tab and SQL result): one check box per column, a box to find a column by name, **Show all** and
-  **Hide all** (with text in the find box they act only on the columns listed). Right-click a column header:
-  **Size column to fit**, **Size all columns to fit**, **Hide this column**, **Show all columns**, **Columns...** and
-  the list of columns with a check mark (a click shows or hides it; the menu stays open). The last visible column
+- **Columns...** (Data tab and SQL result; dialog "Columns of <table>"): one check box per column, a box to find a
+  column by name, **Show all** and **Hide all** (with text in the find box they act only on the columns listed).
+  Right-click a column header: **Size column to fit**, **Size all columns to fit**, **Hide this column**,
+  **Columns...**, **Show all columns** (disabled with no hidden column) and the list of columns with a check mark (a click shows or hides it; the menu stays open). The last visible column
   cannot be hidden. Hidden columns last while the table is open, are not saved, and are still searched and exported.
 - **Filter by this value** (right-click a cell of the Data tab): exact `column = value` filter in the database
   query; several add up (AND) and combine with the search; each is a button above the grid (click to remove).

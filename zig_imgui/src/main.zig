@@ -1936,7 +1936,7 @@ const App = struct {
                 // um pouco mais de espaco entre as colunas (so o horizontal das celulas, +6 px de cada lado)
                 const pad = ig.igGetStyle().*.CellPadding;
                 ig.igPushStyleVar_Vec2(ig.ImGuiStyleVar_CellPadding, .{ .x = pad.x * 2, .y = pad.y });
-                _ = drawGrid("##schema", &shown, null, &app.schema_sel, null, .plain, &app.prefs);
+                _ = drawGrid("##schema", &shown, null, &app.schema_sel, null, .plain, &app.prefs, "");
                 ig.igPopStyleVar(1);
             }
         }
@@ -2025,7 +2025,7 @@ const App = struct {
         }
 
         app.data_sel.has_filters = app.filters.items.len > 0;
-        if (app.data) |*g| if (drawGrid("##data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null, .filter, &app.prefs)) |s| {
+        if (app.data) |*g| if (drawGrid("##data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null, .filter, &app.prefs, app.db.table_names[index])) |s| {
             app.sort_col = s.col;
             app.sort_desc = s.desc;
             app.page = 0;
@@ -2070,7 +2070,7 @@ const App = struct {
             ig.igSameLine(0, -1);
             textSlice(hidden[3..]); // sem o " | " do comeco
         }
-        _ = drawGrid("##result", g, null, &app.result_sel, app.result_rows, .hide, &app.prefs);
+        _ = drawGrid("##result", g, null, &app.result_sel, app.result_rows, .hide, &app.prefs, tr("sql_result"));
     }
 
     // Escopo da busca ao lado da caixa: "Esta tabela" | "Todas as tabelas", dois segmentos colados; o escolhido com
@@ -2195,8 +2195,9 @@ fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool, heade
 // `rows` limita e ordena as linhas mostradas (filtro); null = todas.
 // Clique seleciona a celula; Ctrl+C copia o valor; o clique direito abre o menu da celula (copiar, filtrar).
 // Com `mode` != .plain o clique direito no cabecalho abre o menu do cabecalho: ajustar a largura, ocultar e mostrar
-// colunas. NULL aparece como "NULL" ou como celula vazia (Configuracoes > Exibir NULL).
-fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, rows: ?[]const usize, mode: GridMode, prefs: *settings.Settings) ?Sort {
+// colunas. NULL aparece como "NULL" ou como celula vazia (Configuracoes > Exibir NULL). `owner`: tabela ou resultado,
+// no titulo do dialogo Colunas.
+fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, rows: ?[]const usize, mode: GridMode, prefs: *settings.Settings, owner: []const u8) ?Sort {
     const n_cols: usize = @min(g.columns.len, max_grid_cols);
     if (n_cols == 0) return null;
     const can_hide = mode != .plain;
@@ -2309,7 +2310,8 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
     if (!can_hide) return changed;
 
     // Cabecalho: este menu abre depois do menu padrao do ImGui (TableHeader) no mesmo quadro e toma o lugar dele.
-    // Ajustar a largura (como o menu padrao), ocultar e mostrar; a ultima coluna visivel nao pode ser ocultada.
+    // Ordem do Rust: Ajustar coluna, Ajustar todas, Ocultar esta coluna, Colunas..., Mostrar todas (sem coluna oculta,
+    // desabilitado) e a lista das colunas; a ultima coluna visivel nao pode ser ocultada.
     if (open_header) _ = ig.igOpenPopup_Str("##header", 0);
     if (ig.igBeginPopup("##header", 0)) {
         defer ig.igEndPopup();
@@ -2318,8 +2320,8 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         if (ig.igMenuItem_Bool(tr("fit_all_columns"), null, false, true)) ig.igTableSetColumnWidthAutoAll(table);
         ig.igSeparator();
         if (ig.igMenuItem_Bool(tr("hide_column"), null, false, visible > 1)) sel.hidden.set(sel.header_col);
-        if (ig.igMenuItem_Bool(tr("show_all_columns"), null, false, visible < n_cols)) sel.hidden = .empty;
         if (ig.igMenuItem_Bool(tr("columns_button"), null, false, true)) sel.open_columns = true;
+        if (ig.igMenuItem_Bool(tr("show_all_columns"), null, false, visible < n_cols)) sel.hidden = .empty;
         ig.igSeparator();
         // uma linha por coluna, marcada se visivel: clicar alterna e o menu continua aberto (varias de uma vez)
         ig.igPushItemFlag(ig.ImGuiItemFlags_AutoClosePopups, false);
@@ -2332,9 +2334,10 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         }
     }
 
-    // "Colunas": dialogo no centro da janela, uma caixa por coluna; marcar e desmarcar varias e fechar
-    var tb: [96]u8 = undefined;
-    const dialog_title = idLabel(&tb, "columns_title", "columns");
+    // "Colunas de <tabela>": dialogo no centro da janela, uma caixa por coluna; marcar e desmarcar varias e fechar
+    var nb: [400]u8 = undefined;
+    var tb: [420]u8 = undefined;
+    const dialog_title = std.fmt.bufPrintSentinel(&tb, "{s}###columns", .{i18n.fmt(&nb, "columns_title", .{owner})}, 0) catch "###columns";
     if (sel.open_columns) {
         sel.open_columns = false;
         sel.col_filter[0] = 0;

@@ -167,10 +167,13 @@ test "tr and fmt follow the current language" {
     lang = .en;
     try t.expectEqualStrings("File", tr("menu_file"));
     try t.expectEqualStrings("3 of 7 shown", fmt(&b, "columns_shown", .{ 3, 7 }));
+    try t.expectEqualStrings("Columns of Tipos", fmt(&b, "columns_title", .{"Tipos"}));
     lang = .pt_br;
     try t.expectEqualStrings("Arquivo", tr("menu_file"));
     try t.expectEqualStrings("3 de 7 visíveis", fmt(&b, "columns_shown", .{ 3, 7 }));
+    try t.expectEqualStrings("Colunas de Tipos", fmt(&b, "columns_title", .{"Tipos"}));
     lang = .es;
     try t.expectEqualStrings("Archivo", tr("menu_file"));
     try t.expectEqualStrings("3 de 7 visibles", fmt(&b, "columns_shown", .{ 3, 7 }));
+    try t.expectEqualStrings("Columnas de Tipos", fmt(&b, "columns_title", .{"Tipos"}));
 }

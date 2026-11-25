@@ -48,7 +48,8 @@ pub const hide_column = "Ocultar esta coluna";
 pub const show_all_columns = "Mostrar todas as colunas";
 pub const show_all = "Mostrar todas";
 pub const hide_all = "Ocultar todas";
-pub const columns_title = "Colunas";
+pub const columns_title = "Colunas de {s}";
+pub const sql_result = "Resultado SQL";
 pub const find_column = "procurar coluna";
 pub const columns_shown = "{d} de {d} visíveis";
 

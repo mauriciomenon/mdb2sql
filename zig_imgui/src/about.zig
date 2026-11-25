@@ -102,6 +102,10 @@ test "cell menu as in Go: value filters, then copy value, row and row with heade
     try std.testing.expect(std.mem.indexOf(u8, @embedFile("main.zig"), "copy_header") == null);
 }
 
+test "header menu as in Rust: fit, fit all, hide, Columns..., show all, then the column list" {
+    try expectOrder("igBeginPopup(\"##header\"", &.{ "tr(\"fit_column\")", "tr(\"fit_all_columns\")", "tr(\"hide_column\")", "tr(\"columns_button\")", "tr(\"show_all_columns\")", "for (g.columns[0..n_cols]" });
+}
+
 test "license: GPL v2 or later in About (three languages), LICENSE file is the GPL v2 text" {
     try std.testing.expectEqualStrings("GPL v2 or later (GPL-2.0-or-later)", i18n.catalogs[0].about_license_text);
     try std.testing.expectEqualStrings("GPL v2 ou posterior (GPL-2.0-or-later)", i18n.catalogs[1].about_license_text);
