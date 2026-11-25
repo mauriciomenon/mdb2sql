@@ -300,7 +300,7 @@ def test_sql_tab_runs_query_and_copies(qtbot, window: MainWindow) -> None:
     window.sql_table.setCurrentIndex(window.sql_proxy.index(0, 1))
     window.copy_action.trigger()
     assert QApplication.clipboard().text() == "carla"
-    assert window.current_result() == (window.sql_query, "SQL")
+    assert window.sql_query.startswith("SELECT id") and all(a.isEnabled() for a in window.export_sql_actions)
 
     window.sql_edit.setPlainText("SELECT * FROM missing_table")
     window.run_sql()
@@ -327,21 +327,78 @@ def test_export_actions_write_files_next_to_source(qtbot, window: MainWindow, pe
 
     monkeypatch.setattr(QFileDialog, "getSaveFileName", fake_save)
     _select_table(qtbot, window, "people")
+    assert not any(a.isEnabled() for a in window.export_sql_actions)  # sem consulta SQL ainda
+    window.sql_edit.setPlainText("SELECT name FROM people")
+    window.run_sql()
+    qtbot.waitUntil(lambda: window.sql_model.rowCount() == 3 and window._busy == 0, timeout=30000)
 
-    for action in window.export_db_actions + window.export_result_actions:
+    # os itens do Rust, nesta ordem (igual nas 4 versoes): banco SQLite, DuckDB, Excel; tabela CSV, Excel; SQL CSV, Excel
+    actions = window.export_db_actions + window.export_table_actions + window.export_sql_actions
+    assert [a.text().replace("&", "") for a in actions] == [
+        "Database to SQLite (.sqlite)...", "Database to DuckDB (.duckdb)...",
+        "Database to Excel (.xlsx, one sheet per table)...", "Current table to CSV...", "Current table to Excel (.xlsx)...",
+        "SQL result to CSV...", "SQL result to Excel (.xlsx)...",
+    ]
+    for action in actions:
         action.trigger()
         qtbot.waitUntil(lambda: window.info_label.text().startswith("Export"), timeout=60000)
         assert window.info_label.text().startswith("Exported"), window.info_label.text()
         window.info_label.setText("")
 
-    # pasta sugerida = pasta do banco aberto; o proprio banco nunca e sugerido
-    assert [Path(s).parent for s in asked] == [people_db.parent] * 5
-    assert Path(asked[1]).name == "people_export.duckdb"
-    assert Path(asked[3]).name == "people.csv"
+    # pasta sugerida = pasta do banco aberto; o proprio banco nunca e sugerido; resultado SQL = query.csv (nas 4)
+    assert [Path(s).parent for s in asked] == [people_db.parent] * 7
+    assert [Path(s).name for s in asked] == ["people.sqlite", "people_export.duckdb", "people.xlsx", "people.csv",
+                                             "people.xlsx", "query.csv", "query.xlsx"]
     assert sorted(p.name for p in people_db.parent.glob("out.*")) == ["out.csv", "out.duckdb", "out.sqlite", "out.xlsx"]
     assert QSettings().value("last_dir") == str(people_db.parent)
     # cada exportacao fecha e apaga o seu dialogo "Export": nenhum fica acumulado na janela
     qtbot.waitUntil(lambda: not window.findChildren(QProgressDialog), timeout=5000)
+
+
+def test_export_with_active_search_asks_whole_table_or_found_rows(qtbot, window: MainWindow, people_db: Path,
+                                                                  monkeypatch) -> None:
+    # igual nas 4 versoes: com pesquisa ativa, "Tabela inteira" ou "So as N linhas encontradas" (Cancelar nao grava)
+    import csv
+
+    out = people_db.parent / "found.csv"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_a: (str(out), ""))
+    _select_table(qtbot, window, "people")
+    answers = []
+    monkeypatch.setattr(window, "ask_found_rows", lambda: answers.pop(0))
+
+    def exported() -> list[list[str]]:
+        window.info_label.setText("")
+        window.export_table_actions[0].trigger()
+        qtbot.waitUntil(lambda: window.info_label.text().startswith("Export"), timeout=60000)
+        with open(out, encoding="utf-8-sig", newline="") as handle:
+            return list(csv.reader(handle))[1:]
+
+    assert len(exported()) == 3  # sem pesquisa: nao pergunta, a tabela inteira
+    _reloaded(qtbot, window, lambda: window.search_edit.setText("ana"))
+    answers[:] = [True]
+    assert exported() == [["1", "Ana", "9.5"]] and answers == []
+    answers[:] = [False]
+    assert len(exported()) == 3
+    answers[:] = [None]  # Cancelar
+    out.unlink()
+    window.export_table_actions[0].trigger()
+    assert not out.exists() and answers == []
+
+    # o texto da pergunta no plural certo: 1 linha
+    from PyQt6.QtCore import QTimer
+
+    seen = []
+
+    def answer() -> None:
+        box = QApplication.activeModalWidget()
+        seen.extend([box.text(), *(b.text() for b in box.buttons())])
+        box.reject()
+
+    monkeypatch.undo()
+    QTimer.singleShot(0, answer)
+    assert window.ask_found_rows() is None  # fechar a pergunta = Cancelar
+    assert seen[0] == "Export the whole table or only the 1 row found?"
+    assert sorted(seen[1:]) == sorted(["Whole table", "Only the 1 row found", "Cancel"])
 
 
 def _texts(items) -> list[str]:
@@ -507,7 +564,7 @@ def test_columns_dialog_hides_several_at_once(qtbot, window: MainWindow) -> None
     window.search_edit.setText("7.25")
     qtbot.waitUntil(lambda: window.data_proxy.rowCount() == 1, timeout=5000)
     assert window.info_label.text() == "people: Showing 1 of 1 matching rows (3 rows in table) - 2 hidden columns"
-    assert window.current_result() == ('SELECT * FROM "people"', "people")
+    assert window.manager.select_table("people") == ('SELECT * FROM "people"', [])  # exportar: todas as colunas
     _reloaded(qtbot, window, window.search_edit.clear)
 
     # recarregar a mesma tabela (limite) mantem; o dialogo abre com o estado atual; "Mostrar todas" volta

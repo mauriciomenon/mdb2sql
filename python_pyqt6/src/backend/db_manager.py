@@ -281,6 +281,12 @@ class DBManager:
         columns = [column["column_name"] for column in self.get_table_schema(table_name)] if search.split() else []
         return where_clause(filters, columns, search)
 
+    def select_table(self, table_name: str, filters: Filters = (), search: str = "") -> tuple[str, list[Any]]:
+        """SELECT da tabela inteira com os filtros e a pesquisa (o que a grade mostra) e os parametros."""
+        self._validate_table_name(table_name)
+        where, params = self._where(table_name, filters, search)
+        return f"SELECT * FROM {quote(table_name)}{where}", params
+
     def query_table(
         self, table_name: str, limit: int = 100, filters: Filters = (), search: str = ""
     ) -> List[Dict[str, Any]]:
@@ -290,13 +296,11 @@ class DBManager:
         if not self.conn:
             return []
 
-        self._validate_table_name(table_name)
-
         # SELECT com LIMIT para nao carregar tabela inteira
         # !T: Plain Python values, not pandas: DECIMAL(10,0) stays 1 (pandas would show 1.0) and NULL stays None
-        where, params = self._where(table_name, filters, search)
+        select, params = self.select_table(table_name, filters, search)
         with self.cursor() as cursor:
-            cursor.execute(f"SELECT * FROM {quote(table_name)}{where} LIMIT {int(limit)}", params)
+            cursor.execute(f"{select} LIMIT {int(limit)}", params)
             columns = [column[0] for column in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
 

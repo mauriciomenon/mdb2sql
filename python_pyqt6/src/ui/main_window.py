@@ -53,7 +53,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from backend.access import quote
 from backend.database_tasks import (
     TablePayload,
     database_path_from_env,
@@ -275,13 +274,17 @@ class MainWindow(QMainWindow):
         self.close_db_action = self._action("action.close", self.close_database, QKeySequence.StandardKey.Close)
         self.quit_action = self._action("action.quit", self.close, "Ctrl+Q")
 
-        # Exportar: banco inteiro (.sqlite, .duckdb, .xlsx com uma aba por tabela) e tabela/resultado atual
+        # Exportar (os itens do Rust, nesta ordem nas 4 versoes): banco inteiro para SQLite, DuckDB, Excel (uma aba por
+        # tabela); tabela atual e resultado do SQL para CSV e Excel
         self.export_db_actions = []
         for suffix, key in ((".sqlite", "export.db_sqlite"), (".duckdb", "export.db_duckdb"), (".xlsx", "export.db_xlsx")):
             self.export_db_actions.append(self._action(key, lambda _c=False, s=suffix: self.export_database_as(s)))
-        self.export_result_actions = []
-        for suffix, key in ((".csv", "export.result_csv"), (".xlsx", "export.result_xlsx")):
-            self.export_result_actions.append(self._action(key, lambda _c=False, s=suffix: self.export_result_as(s)))
+        self.export_table_actions = []
+        for suffix, key in ((".csv", "export.table_csv"), (".xlsx", "export.table_xlsx")):
+            self.export_table_actions.append(self._action(key, lambda _c=False, s=suffix: self.export_table_as(s)))
+        self.export_sql_actions = []
+        for suffix, key in ((".csv", "export.sql_csv"), (".xlsx", "export.sql_xlsx")):
+            self.export_sql_actions.append(self._action(key, lambda _c=False, s=suffix: self.export_sql_as(s)))
 
         self.copy_action = self._action("action.copy_value", self.copy_selection, QKeySequence.StandardKey.Copy)
         # !T: Scoped to the tables so Ctrl+C keeps working in the text fields
@@ -638,7 +641,9 @@ class MainWindow(QMainWindow):
         self.export_menu = QMenu(tr("menu.export"), self)  # o mesmo menu fica em File > Export
         self.export_menu.addActions(self.export_db_actions)
         self.export_menu.addSeparator()
-        self.export_menu.addActions(self.export_result_actions)
+        self.export_menu.addActions(self.export_table_actions)
+        self.export_menu.addSeparator()
+        self.export_menu.addActions(self.export_sql_actions)
         self.export_button = QToolButton()
         self.export_button.setText(tr("menu.export").replace("&", ""))
         self.export_button.setAccessibleName(self.export_button.text())
@@ -1466,20 +1471,27 @@ class MainWindow(QMainWindow):
     def _update_export_actions(self) -> None:
         for action in self.export_db_actions:
             action.setEnabled(self.manager is not None)
-        for action in self.export_result_actions:
-            action.setEnabled(self.manager is not None and (self.loaded_table is not None or self.sql_query is not None))
+        for action in self.export_table_actions:
+            action.setEnabled(self.manager is not None and self.loaded_table is not None)
+        for action in self.export_sql_actions:
+            action.setEnabled(self.manager is not None and self.sql_query is not None)
         self.export_button.setEnabled(self.manager is not None)
         self.close_db_action.setEnabled(self.manager is not None)
 
-    def current_result(self) -> tuple[str, str] | None:
-        """(consulta, titulo) do que esta na tela: o resultado da aba SQL ou a tabela atual inteira."""
-        if self.tabs.currentWidget() is self.sql_page and self.sql_query:
-            return self.sql_query, "SQL"
-        if self.loaded_table is not None:
-            return f"SELECT * FROM {quote(self.loaded_table[0])}", self.loaded_table[0]
-        if self.sql_query:
-            return self.sql_query, "SQL"
-        return None
+    def ask_found_rows(self) -> bool | None:
+        """Pesquisa ativa na tabela: exportar a tabela inteira (False) ou so as linhas encontradas (True)? None =
+        Cancelar. Igual nas 4 versoes."""
+        count = self.matched_rows
+        one = "_one" if count == 1 else ""
+        box = QMessageBox(QMessageBox.Icon.NoIcon, tr("export.title"), tr(f"export.ask{one}", count=num(count)),
+                          QMessageBox.StandardButton.NoButton, self)
+        whole = box.addButton(tr("export.whole_table"), QMessageBox.ButtonRole.AcceptRole)
+        found = box.addButton(tr(f"export.found_rows{one}", count=num(count)), QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton(tr("button.cancel"), QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(whole)
+        box.setEscapeButton(cancel)
+        box.exec()
+        return {whole: False, found: True}.get(box.clickedButton())
 
     def _ask_save_path(self, title: str, name: str, suffix: str) -> Path | None:
         # pasta padrao: a do arquivo aberto; sem ele, a ultima pasta usada
@@ -1496,25 +1508,51 @@ class MainWindow(QMainWindow):
         self._remember_dir(path)
         return path
 
+    @staticmethod
+    def _dialog_title(action: QAction) -> str:
+        return action.text().replace("&", "").removesuffix("...")  # "Tabela atual para CSV"
+
     def export_database_as(self, suffix: str) -> None:
         if self.manager is None or self.current_db_path is None:
             return
-        out = self._ask_save_path(tr("dialog.export_db"), self.current_db_path.stem, suffix)
+        title = self._dialog_title(self.export_db_actions[(".sqlite", ".duckdb", ".xlsx").index(suffix)])
+        out = self._ask_save_path(title, self.current_db_path.stem, suffix)
         if out is not None:
             manager = self.manager
             self._start_export(out, lambda report, cancel: export_database(manager, out, report, cancel), "tables")
 
-    def export_result_as(self, suffix: str) -> None:
-        current = self.current_result()
-        if self.manager is None or current is None:
+    def export_table_as(self, suffix: str) -> None:
+        # a tabela atual inteira; com pesquisa ativa pergunta: inteira ou so as linhas encontradas (com os filtros,
+        # o que a grade mostra)
+        if self.manager is None or self.loaded_table is None:
             return
-        query, title = current
-        name = title if title != "SQL" else f"{self.current_db_path.stem}_sql" if self.current_db_path else "sql"
-        out = self._ask_save_path(tr("dialog.export_result"), name, suffix)
+        table = self.loaded_table[0]
+        found = self.ask_found_rows() if self.loaded_search.split() else False
+        if found is None:
+            return
+        filters, search = (list(self.filters), self.loaded_search) if found else ([], "")
+        title = self._dialog_title(self.export_table_actions[(".csv", ".xlsx").index(suffix)])
+        out = self._ask_save_path(title, table, suffix)
+        if out is not None:
+            manager = self.manager
+
+            def task(report, cancel):
+                query, params = manager.select_table(table, filters, search)
+                return export_result(manager, query, table, out, report, cancel, params)
+
+            self._start_export(out, task, "rows")
+
+    def export_sql_as(self, suffix: str) -> None:
+        # o resultado inteiro da ultima consulta da aba SQL que deu certo, em query.csv / query.xlsx (nas 4 versoes)
+        if self.manager is None or self.sql_query is None:
+            return
+        query = self.sql_query
+        title = self._dialog_title(self.export_sql_actions[(".csv", ".xlsx").index(suffix)])
+        out = self._ask_save_path(title, "query", suffix)
         if out is not None:
             manager = self.manager
             self._start_export(
-                out, lambda report, cancel: export_result(manager, query, title, out, report, cancel), "rows"
+                out, lambda report, cancel: export_result(manager, query, "query", out, report, cancel), "rows"
             )
 
     def _start_export(self, out: Path, task: Callable, unit: str) -> None:

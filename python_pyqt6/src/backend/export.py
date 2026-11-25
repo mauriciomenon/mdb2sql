@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Callable, Iterable, Iterator
+from typing import Any, Callable, Iterable, Iterator, Sequence
 
 import xlsxwriter
 
@@ -212,14 +212,18 @@ def export_result(
     out: Path,
     progress: Progress,
     cancel: threading.Event | None = None,
+    params: Sequence[Any] = (),
 ) -> int:
-    """Grava o resultado de query (tabela atual ou SQL) em out (.csv UTF-8 com BOM ou .xlsx); devolve as linhas."""
+    """Grava o resultado de query (tabela atual ou SQL) em out (.csv UTF-8 com BOM ou .xlsx); devolve as linhas.
+
+    params: valores dos ? de query (tabela com a pesquisa e os filtros: so as linhas encontradas)
+    """
     suffix = out.suffix.lower()
     if suffix not in RESULT_FORMATS:
         raise ValueError(tr("error.export_format", suffix=suffix))
     written = 0
     with _staged(out, cancel) as temp, manager.cursor() as cursor:
-        cursor.execute(query)
+        cursor.execute(query, list(params))
         if cursor.description is None:
             raise ValueError(tr("error.no_rows"))
         header = [c[0] for c in cursor.description]
