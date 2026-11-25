@@ -292,7 +292,10 @@ test('each grid context menu lists an action once', () => {
   const grid = markup('./Grid.svelte');
   const [header, cell] = grid.split('{:else if menu}');
   assert.deepEqual(buttonLabels(header), ['Size column to fit', 'Size all columns to fit', 'Hide this column', 'Columns...', 'Show all columns']);
-  assert.deepEqual(buttonLabels(cell), ['Copy value', 'Copy row', 'Copy row with header', 'Filter by this value', 'Clear filters']);
+  // padrao item 14 (= Go): primeiro os filtros por valor (so na aba Data), depois copiar celula / linha / com cabecalho
+  assert.deepEqual(buttonLabels(cell), ['Filter by this value', 'Clear filters', 'Copy value', 'Copy row', 'Copy row with header']);
+  assert.ok(cell.indexOf('{#if actions}') < cell.indexOf("t('grid.filterValue')") && cell.indexOf('{/if}') < cell.indexOf("t('grid.copyValue')"));
+  assert.match(cell, /use:focusNow onclick=\{\(\) => copy\('value'\)\}/);
 });
 
 // item 11 do dono, como o menu do cabecalho do ImGui: Ajustar coluna/todas em toda grade (a borda do cabecalho

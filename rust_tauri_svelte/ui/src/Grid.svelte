@@ -184,19 +184,20 @@
     {/if}
   </div>
 {:else if menu}
+  <!-- como o menu da celula do Go: na aba Data primeiro os filtros por valor, depois copiar (foco em Copiar valor) -->
   <div class="menu" role="menu" aria-label={t('grid.cell')} style="left: {menu.x}px; top: {menu.y}px" use:keepInside>
+    {#if actions}
+      <button type="button" role="menuitem" onclick={() => act('filter', selected.col, selected.row[selected.col])}>
+        {t('grid.filterValue')}
+      </button>
+      <button type="button" role="menuitem" disabled={!actions.filtered} onclick={() => act('clearFilters')}>{t('grid.clearFilters')}</button>
+      <div class="separator" role="separator"></div>
+    {/if}
     <button type="button" role="menuitem" use:focusNow onclick={() => copy('value')}>
       {t('grid.copyValue')} <kbd>{t('grid.copyKey')}</kbd>
     </button>
     <button type="button" role="menuitem" onclick={() => copy('row')}>{t('grid.copyRow')}</button>
     <button type="button" role="menuitem" onclick={() => copy('row-header')}>{t('grid.copyRowHeader')}</button>
-    {#if actions}
-      <div class="separator" role="separator"></div>
-      <button type="button" role="menuitem" onclick={() => act('filter', selected.col, selected.row[selected.col])}>
-        {t('grid.filterValue')}
-      </button>
-      <button type="button" role="menuitem" disabled={!actions.filtered} onclick={() => act('clearFilters')}>{t('grid.clearFilters')}</button>
-    {/if}
   </div>
 {/if}
 
