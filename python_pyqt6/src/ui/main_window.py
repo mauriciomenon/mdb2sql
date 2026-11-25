@@ -613,8 +613,13 @@ class MainWindow(QMainWindow):
         self.table_list.setStyleSheet(TABLES_STYLE)
         header = self.table_list.header()
         header.setSectionsMovable(False)
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        header.setStretchLastSection(True)  # Linhas vai ate a borda: a faixa da selecao ocupa a linha inteira
+        # nome na largura dele; Linhas ocupa o resto ate a borda (a faixa da selecao vai na linha inteira)
+        # !T: Not stretchLastSection: that last section never went below 100 px, wider than the counts, which made
+        # !T: a horizontal scroll and cut the Rows column with the DB4 names
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(16)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         # nome de tabela nunca vira "...": o painel cresce ate o nome mais longo (limite: rolagem horizontal)
         self.table_list.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.table_list.setHorizontalScrollMode(QTreeWidget.ScrollMode.ScrollPerPixel)
@@ -1506,13 +1511,17 @@ class MainWindow(QMainWindow):
     def tables_panel_width(self, tables: list[str]) -> int:
         """Largura do painel para o nome mais longo e a contagem caberem inteiros: 260..35% da janela (acima disso,
         rolagem)."""
-        metrics = self.table_list.fontMetrics()
+        tree = self.table_list
+        metrics = tree.fontMetrics()
         longest = max((metrics.horizontalAdvance(name) for name in tables), default=0)
-        counts = [num(n) for n in self.table_counts.values() if n is not None]
-        rows = max([metrics.horizontalAdvance(text) for text in (*counts, tr("tables.column_rows"))])
+        # margens do item no estilo atual, medidas na propria lista (o windows11 poe mais que o Fusion)
+        listed = [tree.topLevelItem(i).text(0) for i in range(tree.topLevelItemCount())]
+        shown = max((metrics.horizontalAdvance(name) for name in listed), default=0)
+        padding = tree.sizeHintForColumn(0) - shown if listed else 16
+        rows = max(tree.sizeHintForColumn(1), tree.header().sectionSizeHint(1))  # contagem ou o titulo Linhas
         scrollbar = self.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
-        # texto + margens de cada coluna, lista e painel
-        needed = longest + rows + 2 * 16 + scrollbar + 2 * self.table_list.frameWidth() + 16
+        # colunas + barra de rolagem + moldura da lista + margens do painel (6 + 6) + folga
+        needed = longest + padding + rows + scrollbar + 2 * tree.frameWidth() + 12 + 4
         return max(260, min(needed, round(self.width() * 0.35)))
 
     def _fit_tables_panel(self, tables: list[str]) -> None:

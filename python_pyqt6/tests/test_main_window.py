@@ -74,6 +74,28 @@ def test_open_lists_tables_and_loads_first(window: MainWindow) -> None:
     assert window.progress.isHidden()
 
 
+def test_table_list_shows_name_and_count_without_scrolling(qtbot, tmp_path: Path) -> None:
+    # nomes como os do DB4 e contagem de milhares: o painel abre com as duas colunas inteiras (a coluna Linhas
+    # nao fica cortada atras de uma rolagem horizontal)
+    import duckdb
+
+    db_file = tmp_path / "db4like.duckdb"
+    with duckdb.connect(str(db_file)) as conn:
+        for name in ("RANGER_SOACCU", "RANGER_SOANLG", "RANGER_SOM_AIN_DAY", "RANGER_SOSTAT"):
+            conn.execute(f"CREATE TABLE {name} AS SELECT i FROM range(4460) r(i)")
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.resize(1280, 800)
+    win.show()
+    win.open_database(db_file)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
+    tree = win.table_list
+    qtbot.waitUntil(lambda: tree.horizontalScrollBar().maximum() == 0, timeout=3000)
+    assert tree.topLevelItem(0).text(1) == "4,460"
+    assert tree.columnWidth(1) >= tree.sizeHintForColumn(1)
+    assert tree.columnWidth(0) >= tree.sizeHintForColumn(0)
+
+
 def test_select_sort_search_and_copy(qtbot, window: MainWindow) -> None:
     _select_table(qtbot, window, "people")
     assert window.info_label.text() == "people: showing 3 of 3 rows"
