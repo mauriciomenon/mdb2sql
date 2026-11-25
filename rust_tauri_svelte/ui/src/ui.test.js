@@ -229,6 +229,17 @@ test('table and column names are never cut with an ellipsis', () => {
   assert.doesNotMatch(markup('./App.svelte'), /<select[^>]*size=/); // a lista nativa cortava nomes longos
 });
 
+// padrao item 8 (= Go): a 720 px a barra da aba Data quebra a linha (nada cortado, sem rolagem horizontal); a busca estica
+// sem largura maxima (base 160 px, como o Go)
+test('narrow window: the Data bar wraps and the search stretches', () => {
+  const css = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
+  assert.match(css, /\n {2}\.table-bar \{[^}]*flex-wrap: wrap;/);
+  const search = css.match(/\n {2}\.table-bar \.search \{([^}]*)\}/)[1];
+  assert.match(search, /flex: 1 1 160px;/);
+  assert.match(search, /min-width: 160px;/);
+  assert.doesNotMatch(search, /max-width|400px/);
+});
+
 test('the table name above the grid is never squeezed', () => {
   const css = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
   assert.match(css, /\.table-bar h2,\s*\.table-bar \.columns-button\s*\{\s*flex-shrink:\s*0;/);

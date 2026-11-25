@@ -1853,10 +1853,12 @@
     padding: 3px 6px;
   }
 
+  /* janela estreita (720 px): a barra quebra a linha como a do Go; nada cortado, nada de rolagem horizontal */
   .table-bar {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
-    gap: 12px;
+    gap: 6px 12px;
     color: var(--muted);
     font-size: 12px;
   }
@@ -1941,14 +1943,14 @@
     color: var(--muted);
   }
 
-  /* a busca encolhe antes de empurrar o botao ou quebrar a barra */
+  /* a busca estica ate o fim da linha (sem largura maxima); com menos de 160 px vai para a linha de baixo (como o Go) */
   .table-bar .search {
-    flex: 0 1 400px;
-    min-width: 140px;
+    flex: 1 1 160px;
+    min-width: 160px;
     padding: 3px 8px;
   }
 
-  /* contagem numa linha so: a busca encolhe antes (ate 140 px) */
+  /* contagem numa linha so: sem lugar, ela desce inteira */
   .table-bar > span {
     white-space: nowrap;
   }
