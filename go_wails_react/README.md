@@ -38,7 +38,7 @@ Changes in 1.3.0:
   integers `INTEGER`, Currency/Decimal `DECIMAL(p,s)`, Single `REAL`, Double `DOUBLE`, Date/Time `DATETIME`,
   Yes/No `BOOLEAN` (0/1), text `TEXT`, OLE/binary `BLOB` (also through mdbtools, which 1.2.0 turned into hex
   text), NULL kept. Database > SQLite export writes the same typed tables.
-- When an Access file was converted, closing it (File > Close database), opening another file or exiting asks
+- When an Access file was converted, closing it (File > Close), opening another file or exiting asks
   once: "Save..." (save dialog, next to the Access file by default, name `<file>.sqlite`), "Delete" or
   "Cancel"; "Remember for this session" keeps the answer until the program closes (a remembered "Save" goes
   to the same folder and never overwrites: `<file> (2).sqlite`). Converted files left by a crash are deleted at
@@ -66,8 +66,8 @@ Changes in 1.3.0:
   open), Enter is Save, and cancelling the file dialog of Save asks again.
 - Every dialog has its own OK/Close/Cancel button; Enter is the default button and Esc closes (the progress
   window: Esc is Cancel).
-- Reopening the same Access file (same path, size and date) after saving its SQLite in this session opens that
-  SQLite at once, without a new conversion.
+- Reopening the same Access file (same path, size and date) after saving its SQLite opens that SQLite at once,
+  without a new conversion, also in a later run (kept in the settings); a changed file is converted again.
 - Names are never cut with "...": long table names in the list and long column names in "Columns..." wrap
   to a second line; the status bar wraps too.
 - Debian 13 amd64 build (`.deb` and `.zip`) with mdbtools inside.
@@ -95,40 +95,52 @@ accents, own icon, excelize 2.11.1.
 
 ## How to use
 
-Open a file with File > Open database (the dialog lists Access, SQLite and DuckDB files), on the command line
-(`mdb2sql.exe "C:\data\DB4.accdb"`, or drag the file onto the exe) or with `MDB2SQL_DB_PATH`.
+Open a file with the path bar on top (type the path, then Open or Enter; a long path shows its end; Browse...
+opens the file dialog; with the field empty, Open opens `MDB2SQL_DB_PATH` or the sample), File > Open... (Ctrl+O,
+the dialog lists Access, SQLite and DuckDB files), by dropping the file on the window, on the command line
+(`mdb2sql.exe "C:\data\DB4.accdb"`, or drag the file onto the exe) or with `MDB2SQL_DB_PATH`. The status bar says
+"Loaded: DB4.accdb (287 tables)" (pt-BR "Aberto: ...") and the window title starts with the file name.
 
-- Left: the tables; "Filter N tables" narrows the list (same word rule as the search) after a 300 ms pause in
-  typing; Enter applies it at once.
+- Left: the tables with their row count; "Filter N tables" narrows the list (same word rule as the search) after
+  a 300 ms pause in typing; Enter applies it at once.
 - Right, three tabs:
   - Data: the first rows of the table (Rows: 100, 500 or 1000). "Search the whole table" keeps the rows with
     one cell containing every word typed, in any order, ignoring case and accents, over the whole table in the
     database: `tension de campo` finds "EXCITACION TENSION DE CAMPO" even beyond the first rows; there is no
     fuzzy match (`tensao` does not find "TENSION"). It runs after a 300 ms pause in typing (Enter: at once).
-    Beside it, This table | All tables: All tables lists the tables with matching rows (same rule) and how many;
-    a click opens that table with the same search and no value filters. The default is in Settings > Default
-    search scope. Opening another file empties the search and the table list filter and returns to that default.
-  - Schema: column names, types and nullability.
-  - SQL: any DuckDB SQL over the open database; Run or Ctrl+Enter; the search field filters its loaded result.
+    Beside it, This table | All tables: All tables lists the tables with matching rows (same rule) as
+    `table (n)`; a click opens that table with the same search and no value filters. The default is in Settings >
+    Default search scope. Opening another file empties the search and the table list filter and returns to that
+    default.
+  - Schema: column names, types and nullability (Yes/No).
+  - SQL: any DuckDB SQL over the open database (the field starts empty); Run or Ctrl+Enter; the search field
+    filters its loaded result. A query that runs fine takes an earlier SQL error off the status bar.
 - Click a cell; Ctrl+C copies the value. Right-click a cell: Filter by this value, Clear filters, Copy value,
   Copy row, Copy row with header (TAB-separated, pastes into Excel in columns).
 - A NULL cell is empty; Settings > Show NULL (off by default) shows NULL there. Display only: copy, search and
   exports are the same either way.
 - Filter by a value: a `WHERE column = value` (`IS NULL` for a NULL cell) in the database query; filters on
-  several columns add up (AND) and show as removable chips. Exports ignore filters and search.
+  several columns add up (AND) and show as removable chips. With the search or a filter on, exporting the current
+  table asks: the whole table or only the rows found.
 - Columns...: one checkbox per column, a field to filter the list; "Show all" and "Hide all" act on the
-  listed columns only, and one column always stays visible. Right-click a Data column header: Size column to fit, Size all columns to fit, Hide this
-  column, Columns..., the columns with a check mark (a click shows or hides one; the last visible one stays) and
-  Show all columns. Dragging the right edge of a header resizes the column; fit returns it to its content.
+  listed columns only, and one column always stays visible. Right-click a Data column header: Size column to fit,
+  Size all columns to fit, Hide this column, Columns..., Show all columns, then the columns with a check mark (a
+  click shows or hides one; the last visible one stays). Dragging the right edge of a header resizes the column;
+  fit returns it to its content.
   Hidden columns and widths last while the table is open.
 - Status bar: the last message, or the last unread error or warning while the log is collapsed (click: opens
   the log; right-click > Copy), and the reader used ("Opened via mdbtools,
   converted to SQLite", "Opened via SQLite"...).
 
-Menus: File (Open database..., Open sample data, Close database, Exit), Export (Database as SQLite / DuckDB /
-Excel; Current table as CSV / Excel; SQL result as CSV / Excel; all with progress and Cancel; a failed export
-leaves no half file), View (Log), Settings (Theme: System, Light, Dark; Language; Default search scope: This
-table, All tables; Show NULL), Help (About).
+Menus: File (Open... Ctrl+O, Export >, Close, Exit Ctrl+Q), View (Log), Settings (Theme: System, Light, Dark;
+Language; Default search scope: This table, All tables; Show NULL), Help (About). File > Export and the Export...
+button of the path bar open the same list: Database to SQLite / DuckDB / Excel; Current table to CSV / Excel; SQL
+result to CSV / Excel (proposed name `query.csv`); all with progress and Cancel; a failed export leaves no half
+file.
+
+Shortcuts: Ctrl+O (open), Ctrl+F (search), F5 (open the file again; nothing open: `MDB2SQL_DB_PATH` or the
+sample), Ctrl+Q (exit), Ctrl+1 / Ctrl+2 / Ctrl+3 (Data, Schema, SQL), Ctrl+L (log), Ctrl+Enter (run the SQL),
+Ctrl+C (copy the cell).
 
 Opening Access: the progress window counts the tables; Cancel (or Esc) stops it. The 287-table NMR5 test file
 (115 MB) takes about 10 s with the ODBC driver and about 33 s with mdbtools on Windows (Intel Core Ultra 7 258V, 8
