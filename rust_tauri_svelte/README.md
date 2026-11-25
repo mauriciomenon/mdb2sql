@@ -70,12 +70,14 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
 - **Tables** (esquerda): lista de tabelas com o nome inteiro (nome longo quebra a linha) e as linhas de cada uma
   (colunas **Table** e **Rows**); **Filter N tables** filtra por nome (300 ms depois da ultima tecla, como a pesquisa
   da aba Data; Enter filtra na hora). Clique ou setas (Home/End) abrem a tabela.
-- Aba **Data**: as primeiras linhas (quantas: **Rows**, 100/500/1000) e o total. A **pesquisa** (**Search the whole
+- Aba **Data**, de cima para baixo (igual nas 4 versoes): uma linha com a pesquisa, **This table | All tables**,
+  **Rows** (100/500/1000) e **Columns...**; os filtros por valor, quando houver; a grade; embaixo dela
+  "<tabela>: showing X of Y rows". A **pesquisa** (**Search the whole
   table**) roda no banco, na **tabela inteira** (todas as linhas e colunas, nao so as carregadas): a linha aparece
   quando uma mesma celula tem todas as palavras, em qualquer ordem, sem diferenciar maiusculas nem acentos
   (`tension de campo` acha `EXCITACION TENSION DE CAMPO`, RTUNO 50 / PNTNO 9 de RANGER_SOANLG no DB4, fora das 100
   primeiras linhas; `tensao` acha `TENSÃO` mas nao `TENSION`: nao ha busca aproximada). A contagem vira
-  "N of M found (T in the table)". A pesquisa roda 300 ms depois da ultima tecla (Enter: na hora).
+  "<tabela>: showing X of Y rows found". A pesquisa roda 300 ms depois da ultima tecla (Enter: na hora).
 - Ao lado da pesquisa, **This table | All tables**: em **All tables** o termo e procurado em todas as tabelas (mesma
   regra, nas colunas de texto) e aparece a lista das tabelas com o numero de linhas achadas; escolher uma abre essa
   tabela com a mesma pesquisa. O escopo padrao fica em **Settings > Default search scope** (DB4, 287 tabelas: ~1 s

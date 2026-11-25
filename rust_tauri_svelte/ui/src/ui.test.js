@@ -208,7 +208,7 @@ test('Data search scope: two-option selector next to the field and its default i
   assert.match(app, /const SCOPES = \[\s*\['table', 'scope\.table'\],\s*\['all', 'scope\.all'\],\s*\];/);
   assert.deepEqual([en['scope.table'], en['scope.all']], ['This table', 'All tables']);
   const ui = markup('./App.svelte');
-  const bar = ui.slice(ui.indexOf('{#if everywhere}'), ui.indexOf('class="search"'));
+  const bar = ui.match(/<div class="table-bar data-bar">[\s\S]*?\n {8}<\/div>/)[0];
   assert.match(bar, /<div class="scope" role="radiogroup" aria-label=\{t\('scope\.label'\)\}>\s*\{#each SCOPES as \[id, key\]\}/);
   assert.match(bar, /role="radio" aria-checked=\{scope === id\}[^>]*onclick=\{\(\) => setScope\(id\)\}/);
   assert.doesNotMatch(bar, /checkbox/);
@@ -325,6 +325,29 @@ test('table and column names are never cut with an ellipsis', () => {
   assert.match(css, /\.table-list \[role='option'\] \{[^}]*overflow-wrap: anywhere;/);
   assert.match(css, /\.column-list label span \{[^}]*overflow-wrap: anywhere;/);
   assert.doesNotMatch(markup('./App.svelte'), /<select[^>]*size=/); // a lista nativa cortava nomes longos
+});
+
+// padrao item 24: aba Dados de cima para baixo: (a) busca | Esta tabela | Todas as tabelas | Linhas [100] | Colunas...
+// numa linha; (b) filtros so com filtro; (c) a grade (ou as tabelas achadas); (d) "{tabela}: mostrando X de Y linhas"
+// embaixo. Sem nome nem contagem acima da grade; Linhas sai da linha das abas
+test('Data tab layout: search line, filters, grid, count line', () => {
+  const ui = markup('./App.svelte');
+  const data = ui.slice(ui.indexOf('<div class="table-bar data-bar">'), ui.indexOf('</main>'));
+  const bar = data.match(/<div class="table-bar data-bar">[\s\S]*?\n {8}<\/div>/)[0];
+  const order = ['class="search"', 'class="scope"', '{@render rowLimit()}', "t('columns.button')"].map((s) => bar.indexOf(s));
+  assert.ok(order.every((v, i) => v >= 0 && (i === 0 || v > order[i - 1])), order.join(','));
+  assert.doesNotMatch(bar, /<h2|t\('data\.showing/);
+  const at = ['class="table-bar data-bar"', '{#if filters.length}', '<Grid', '<p class="table-info">'].map((s) => data.indexOf(s));
+  assert.ok(at.every((v, i) => v >= 0 && (i === 0 || v > at[i - 1])), at.join(','));
+  assert.match(data, /<p class="table-info">[\s\S]*t\('data\.showingMatches', \{ table: selectedTable, shown: fmt\(rows\.length\), matching: fmt\(matchCount\) \}\)[\s\S]*t\('data\.showing', \{ table: selectedTable, shown: fmt\(rows\.length\), total: fmt\(rowCount\) \}\)/);
+  const tabs = ui.match(/<div class="tabs"[\s\S]*?<\/div>/)[0];
+  assert.doesNotMatch(tabs, /<select|rowLimit|limit\.label/);
+  assert.equal(count(ui, '{@render rowLimit()}'), 2); // aba Dados e linha do Executar da aba SQL
+  assert.equal(en['data.showing'], '{table}: showing {shown} of {total} {total|row|rows}');
+  // 1280 px: a linha inteira cabe (a busca estica e nada tem margem automatica empurrando para a linha de baixo)
+  const css = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
+  assert.doesNotMatch(css.match(/\n {2}\.table-bar \.scope \{[^}]*\}/)[0], /margin-left: auto/);
+  assert.doesNotMatch(css.match(/\n {2}\.table-bar \.columns-button \{[^}]*\}/)[0], /margin-left: auto/);
 });
 
 // padrao item 8 (= Go): a 720 px a barra da aba Data quebra a linha (nada cortado, sem rolagem horizontal); a busca estica

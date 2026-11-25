@@ -102,8 +102,8 @@ export default {
   'sql.noRows': 'No rows',
 
   'data.noTable': 'No table open',
-  'data.showing': '{shown} of {total} {total|row|rows}, {columns} {columns|column|columns}',
-  'data.showingMatches': '{shown} of {matching} found ({total} in the table), {columns} {columns|column|columns}',
+  'data.showing': '{table}: showing {shown} of {total} {total|row|rows}',
+  'data.showingMatches': '{table}: showing {shown} of {matching} {matching|row found|rows found}',
   'data.rows': 'Rows of {table}',
   'data.allHidden': 'No visible column',
   'data.noMatch': 'No row matches.',

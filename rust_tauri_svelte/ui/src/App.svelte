@@ -1211,14 +1211,17 @@
         {#each TABS as [id, key]}
           <button type="button" role="tab" aria-selected={tab === id} class:active={tab === id} onclick={() => (tab = id)}>{t(key)}</button>
         {/each}
-        <span class="spacer"></span>
+      </div>
+
+      <!-- Linhas [100]: na linha da busca da aba Dados e na linha do Executar da aba SQL (uma por vez na tela) -->
+      {#snippet rowLimit()}
         <label for="row-limit">{t('limit.label')}</label>
         <select id="row-limit" bind:value={limit} onchange={() => openTable(selectedTable)}>
           {#each LIMITS as option}
             <option value={option}>{option}</option>
           {/each}
         </select>
-      </div>
+      {/snippet}
 
       {#if tab === 'sql'}
         <div class="sql">
@@ -1235,6 +1238,7 @@
             {:else if sqlResult}
               <span>{t('sql.summary', { rows: fmt(sqlResult.rows.length) + (sqlResult.truncated ? '+' : ''), columns: sqlResult.columns.length })}</span>
             {/if}
+            <span class="limit">{@render rowLimit()}</span>
           </div>
         </div>
         {#if sqlResult?.columns.length}
@@ -1261,24 +1265,10 @@
         />
         {/key}
       {:else}
-        <div class="table-bar">
-          {#if everywhere}
-            <span>{!found ? t('found.searching') : found.tables ? t('found.summary', { count: fmt(found.tables.length) }) : ''}</span>
-          {:else}
-            <h2>{selectedTable}</h2>
-            <span>
-              {search.trim() || filters.length
-                ? t('data.showingMatches', { shown: fmt(rows.length), matching: fmt(matchCount), total: fmt(rowCount), columns: columns.length })
-                : t('data.showing', { shown: fmt(rows.length), total: fmt(rowCount), columns: columns.length })}
-            </span>
-            <button type="button" class="secondary columns-button" title={t('columns.tip')} onclick={() => columnsDialog.showModal()}>{t('columns.button')}</button>
-          {/if}
-          <!-- escopo da pesquisa: controle segmentado de duas opcoes (o padrao vem de Settings) -->
-          <div class="scope" role="radiogroup" aria-label={t('scope.label')}>
-            {#each SCOPES as [id, key]}
-              <button type="button" role="radio" aria-checked={scope === id} class:active={scope === id} onclick={() => setScope(id)}>{t(key)}</button>
-            {/each}
-          </div>
+        <!-- aba Dados igual nas 4 versoes (padrao item 24): (a) busca | Esta tabela | Todas as tabelas | Linhas | Colunas...
+             numa linha (estreita, quebra como o Go); (b) filtros por valor, so quando houver; (c) a grade (ou as tabelas
+             achadas); (d) a contagem embaixo. Nada mais nesta area -->
+        <div class="table-bar data-bar">
           <input
             class="search"
             type="search"
@@ -1288,6 +1278,14 @@
             aria-label={t('search.label')}
             placeholder={t('search.placeholder')}
           />
+          <!-- escopo da pesquisa: controle segmentado de duas opcoes (o padrao vem de Settings) -->
+          <div class="scope" role="radiogroup" aria-label={t('scope.label')}>
+            {#each SCOPES as [id, key]}
+              <button type="button" role="radio" aria-checked={scope === id} class:active={scope === id} onclick={() => setScope(id)}>{t(key)}</button>
+            {/each}
+          </div>
+          <span class="limit">{@render rowLimit()}</span>
+          <button type="button" class="secondary columns-button" title={t('columns.tip')} onclick={() => columnsDialog.showModal()}>{t('columns.button')}</button>
         </div>
         {#if everywhere}
           <!-- Todas as tabelas: as tabelas com linhas achadas; escolher uma abre ela com a mesma pesquisa -->
@@ -1333,6 +1331,16 @@
         />
         {/key}
         {/if}
+        <!-- (d) "{tabela}: mostrando X de Y linhas" (com busca ou filtro, das encontradas); em Todas as tabelas, o resumo -->
+        <p class="table-info">
+          {#if everywhere}
+            {!found ? t('found.searching') : found.tables ? t('found.summary', { count: fmt(found.tables.length) }) : ''}
+          {:else if search.trim() || filters.length}
+            {t('data.showingMatches', { table: selectedTable, shown: fmt(rows.length), matching: fmt(matchCount) })}
+          {:else}
+            {t('data.showing', { table: selectedTable, shown: fmt(rows.length), total: fmt(rowCount) })}
+          {/if}
+        </p>
       {/if}
     </main>
   </div>
@@ -2092,20 +2100,40 @@
     border-bottom-color: var(--accent);
   }
 
-  .tabs .spacer {
-    flex: 1;
-  }
-
-  .tabs select {
-    padding: 3px 6px;
-  }
-
   /* janela estreita (720 px): a barra quebra a linha como a do Go; nada cortado, nada de rolagem horizontal */
   .table-bar {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
     gap: 6px 12px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  /* linha da busca da aba Dados: campos e botoes alinhados pelo meio */
+  .table-bar.data-bar {
+    align-items: center;
+  }
+
+  /* Linhas [100]: rotulo e lista juntos; na aba SQL, no fim da linha do Executar */
+  .limit {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .limit select {
+    padding: 3px 6px;
+  }
+
+  .sql .limit {
+    margin-left: auto;
+  }
+
+  /* contagem embaixo da grade: uma linha, no texto apagado das outras contagens */
+  .table-info {
+    margin: 0;
     color: var(--muted);
     font-size: 12px;
   }
@@ -2118,7 +2146,6 @@
   }
 
   .table-bar .columns-button {
-    margin-left: auto;
     padding: 3px 10px;
     font-weight: 400;
   }
@@ -2127,14 +2154,9 @@
   .table-bar .scope {
     display: inline-flex;
     flex-shrink: 0;
-    margin-left: auto;
     border: 1px solid var(--border);
     border-radius: 6px;
     overflow: hidden;
-  }
-
-  .table-bar .columns-button + .scope {
-    margin-left: 0;
   }
 
   .scope button {

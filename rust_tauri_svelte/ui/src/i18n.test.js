@@ -146,6 +146,7 @@ test('texts of the same item match the Go catalog in the 3 languages', (t) => {
     ['tables.filter', { count: 3 }, 'sidebar.filter', [3]],
     ['status.query', { rows: 5 }, 'info.sql', [5]],
     ['log.unread', { count: 2 }, 'log.unread', [2]],
+    ['data.showing', { table: 'T', shown: 1, total: 2 }, 'info.showing', ['T', 1, 2]],
   ];
   for (const [code] of LANGS) {
     const tr = translator(code);
@@ -162,8 +163,10 @@ test('counts agree in number', () => {
   const es = translator('es');
   assert.equal(pt('schema.columns', { count: 1 }), '1 coluna');
   assert.equal(pt('schema.columns', { count: 0 }), '0 colunas');
-  assert.equal(pt('data.showing', { shown: 1, total: 1, columns: 2 }), '1 de 1 linha, 2 colunas');
-  assert.equal(pt('data.showing', { shown: '1', total: '1.234', columns: 1 }), '1 de 1.234 linhas, 1 coluna');
+  assert.equal(pt('data.showing', { table: 'T', shown: 1, total: 1 }), 'T: mostrando 1 de 1 linha');
+  assert.equal(pt('data.showing', { table: 'T', shown: '1', total: '1.234' }), 'T: mostrando 1 de 1.234 linhas');
+  assert.equal(pt('data.showingMatches', { table: 'T', shown: 1, matching: 1 }), 'T: mostrando 1 de 1 linha encontrada');
+  assert.equal(es('data.showingMatches', { table: 'T', shown: 10, matching: 10 }), 'T: mostrando 10 de 10 filas encontradas');
   assert.equal(en('sql.summary', { rows: '1', columns: 3 }), '1 row, 3 columns');
   assert.equal(en('sql.summary', { rows: '100+', columns: 1 }), '100+ rows, 1 column');
   assert.equal(es('found.summary', { count: 1 }), '1 tabla con filas encontradas');

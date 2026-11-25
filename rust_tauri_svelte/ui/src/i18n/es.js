@@ -102,8 +102,8 @@ export default {
   'sql.noRows': 'Sin filas',
 
   'data.noTable': 'Ninguna tabla abierta',
-  'data.showing': '{shown} de {total} {total|fila|filas}, {columns} {columns|columna|columnas}',
-  'data.showingMatches': '{shown} de {matching} {matching|encontrada|encontradas} ({total} en la tabla), {columns} {columns|columna|columnas}',
+  'data.showing': '{table}: mostrando {shown} de {total} {total|fila|filas}',
+  'data.showingMatches': '{table}: mostrando {shown} de {matching} {matching|fila encontrada|filas encontradas}',
   'data.rows': 'Filas de {table}',
   'data.allHidden': 'Ninguna columna visible',
   'data.noMatch': 'Ninguna fila coincide.',
