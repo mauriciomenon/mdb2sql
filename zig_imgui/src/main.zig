@@ -2033,23 +2033,23 @@ const App = struct {
         ig.igPushID_Int(@intCast(index));
         defer ig.igPopID();
 
-        // a busca ocupa o que sobra da linha depois do seletor e (em "Esta tabela") de Linhas e Colunas...;
-        // com largura fixa sobrava linha vazia. Minimo de 10 letras: janela estreita, os botoes descem
+        // a busca ocupa o que sobra da linha depois do seletor e (em "Esta tabela") de Linhas e Colunas...; minimo de
+        // 8 letras. Janela estreita (720 px): Linhas e Colunas descem, depois o seletor (nada cortado)
         const st = ig.igGetStyle();
         const gap = st.*.ItemSpacing.x;
-        const scope_w = buttonWidth(tr("scope_table")) + buttonWidth(tr("scope_all")) + gap;
+        const selector_w = buttonWidth(tr("scope_table")) + buttonWidth(tr("scope_all"));
         const rows_l = tr("rows_label");
         const combo_w = textWidth("0000") + ig.igGetFrameHeight() + 2 * st.*.FramePadding.x;
         const limit_w = textWidth(rows_l) + gap + combo_w;
-        // +2 gaps de folga: sameLineIfFits mede pela borda da janela, um pouco antes da borda deste painel
+        // +2 gaps de folga em cada parte: sameLineIfFits mede pela borda da janela, um pouco antes da borda do painel
         const tail_w = if (app.scope == .table) limit_w + buttonWidth(tr("columns_button")) + 4 * gap else 0;
-        ig.igSetNextItemWidth(@max(ig.igGetFontSize() * 10, ig.igGetContentRegionAvail().x - scope_w - tail_w));
+        ig.igSetNextItemWidth(dbm.gridtools.searchWidth(ig.igGetContentRegionAvail().x, ig.igGetFontSize() * 8, selector_w + 3 * gap, tail_w));
         // busca 300 ms depois da ultima tecla; Enter busca na hora
         if (ig.igInputTextWithHint("##search", tr("search"), &app.search, app.search.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) {
             app.runSearch();
         } else if (ig.igIsItemEdited()) app.search_wait.edited(ig.igGetTime());
         itemTooltip(tr("search_rule"));
-        ig.igSameLine(0, -1);
+        sameLineIfFits(selector_w, -1);
         app.scopeSelector();
         if (app.scope == .all) return app.drawGlobal();
         // Linhas: 100 / 500 / 1000 primeiras linhas (da busca e dos filtros, na ordem da grade); o rotulo e a lista
