@@ -52,6 +52,7 @@ declare global {
           GetSearchScope?: () => Promise<Scope>;
           SetSearchScope?: (scope: Scope) => Promise<void>;
           SearchAllTables?: (search: string) => Promise<TableHits[]>;
+          TableCounts?: () => Promise<number[]>;
           PendingConversion?: () => Promise<string>;
           RememberedChoice?: () => Promise<string>;
           ResolveConversion?: (choice: string, remember: boolean) => Promise<Conversion>;
@@ -192,6 +193,7 @@ function App() {
   const t: T = (key, ...args) => translate(langRef.current, key, ...args);
   const tn: TN = (key, n, ...args) => translateN(langRef.current, key, n, ...args); // "1 tabela", "2 tabelas"
   const [tables, setTables] = useState<string[]>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({}); // rows of each table (table list, as Zig)
   const [dbName, setDbName] = useState('');
   const [pathText, setPathText] = useState(''); // path field of the top bar (Open/Enter opens it)
   const [pathFocused, setPathFocused] = useState(false);
@@ -254,6 +256,7 @@ function App() {
   const tableReq = useRef(0);
   const sqlReq = useRef(0);
   const searchReq = useRef(0);
+  const countReq = useRef(0);
   const loadedFind = useRef(''); // search of the last table request
   const [shownFind, setShownFind] = useState(''); // search of the rows shown in the Data tab
   const [shownTable, setShownTable] = useState(''); // table of the rows shown (the counts below belong to it)
@@ -531,8 +534,10 @@ function App() {
     tableReq.current++;
     sqlReq.current++;
     searchReq.current++;
+    countReq.current++;
     setQuerying(false);
     setTables([]);
+    setCounts({});
     setSelectedTable('');
     setRows([]);
     setSchema([]);
@@ -640,6 +645,11 @@ function App() {
       setConverted(!!(await bridge.PendingConversion?.()));
       setDbName(name);
       setTables(tableList);
+      // the row counts come after the list (a file with many tables shows at once); another file drops them
+      const req = ++countReq.current;
+      Promise.resolve(bridge.TableCounts?.())
+        .then((c) => req === countReq.current && c && setCounts(Object.fromEntries(tableList.map((tb, i) => [tb, c[i]]))))
+        .catch((err) => req === countReq.current && fail(err));
       // another file starts clean: no table list filter, no Data search, the search scope of Settings
       setFilter('');
       setTableFilter('');
@@ -1041,16 +1051,25 @@ function App() {
           onKeyDown={(e) => e.key === 'Enter' && setTableFilter(filter)}
           disabled={tables.length === 0}
         />
+        {/* as Zig: the table name and its row count */}
+        {tables.length > 0 && (
+          <div className="table-head">
+            <span>{t('sidebar.table')}</span>
+            <span>{t('sidebar.rows')}</span>
+          </div>
+        )}
         <ul>
           {visibleTables.map((table) => (
             <li key={table}>
               <button
                 className="table-item"
                 title={table}
+                aria-label={table}
                 aria-current={table === selectedTable ? 'true' : undefined}
                 onClick={() => loadTable(table, limit)}
               >
-                {table}
+                <span className="name">{table}</span>
+                {table in counts && <span className="count">{counts[table]}</span>}
               </button>
             </li>
           ))}

@@ -609,6 +609,24 @@ func (m *DBManager) rowCount(ctx context.Context, tableName string, search strin
 	return count, nil
 }
 
+// TableCounts is the row count of every table, in table list order (the table list shows it, as Zig); ctx stops it
+func (m *DBManager) TableCounts(ctx context.Context) ([]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.conn == nil {
+		return nil, fmt.Errorf("no database connected")
+	}
+	counts := make([]int, len(m.tableList))
+	for i, table := range m.tableList {
+		n, err := m.rowCount(ctx, table, "")
+		if err != nil {
+			return nil, err
+		}
+		counts[i] = n
+	}
+	return counts, nil
+}
+
 // TableHits is one table of the "All tables" search and how many of its rows match
 type TableHits struct {
 	Table string `json:"table"`

@@ -354,7 +354,8 @@ button.primary {
 }
 
 .table-item {
-  display: block;
+  display: flex;
+  gap: 8px;
   width: 100%;
   padding: 5px 8px;
   border: 0;
@@ -362,6 +363,24 @@ button.primary {
   text-align: left;
   /* the whole name is shown: a long one wraps to a second line, never "..." */
   overflow-wrap: anywhere;
+}
+
+/* table list as Zig: name on the left, its row count on the right */
+.table-head {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 8px;
+  color: var(--muted);
+}
+
+.table-item .name {
+  flex: 1;
+  min-width: 0;
+}
+
+.table-item .count {
+  flex: none;
+  font-variant-numeric: tabular-nums;
 }
 
 .table-item:hover {

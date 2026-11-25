@@ -154,6 +154,8 @@
   "sidebar.filter": "Filter {0} tables",
   "sidebar.label": "Tables",
   "sidebar.noMatch": "No table matches.",
+  "sidebar.rows": "Rows",
+  "sidebar.table": "Table",
   "sql.cancel": "Cancel",
   "sql.error": "SQL query error: {0}",
   "sql.label": "SQL",

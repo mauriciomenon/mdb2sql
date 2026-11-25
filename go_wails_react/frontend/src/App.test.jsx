@@ -158,6 +158,31 @@ describe('App IPC flow', () => {
     await waitFor(() => expect(Quit).toHaveBeenCalled());
   });
 
+  // standard item 6: the table list shows each table's row count, as Zig; the counts of a closed file never show
+  it('shows the row count of each table in the table list', async () => {
+    let late;
+    const TableCounts = vi
+      .fn()
+      .mockImplementationOnce(async () => [2, 3])
+      .mockImplementationOnce(() => new Promise((resolve) => (late = resolve)));
+    const CloseDatabase = vi.fn(async () => {});
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, TableCounts, CloseDatabase } } } });
+    render(<App />);
+    openDefault();
+    await screen.findByText('Alpha');
+    const list = screen.getByRole('navigation', { name: 'Tables' });
+    await waitFor(() => expect(within(list).getByRole('button', { name: 'RANGER_SOGEN' }).textContent).toBe('RANGER_SOGEN3'));
+    expect(within(list).getByRole('button', { name: 'RANGER_SOACCU' }).querySelector('.count').textContent).toBe('2');
+    expect(list.querySelector('.table-head').textContent).toBe('TableRows');
+
+    openDefault(); // the second count answers after the file was closed: dropped
+    await waitFor(() => expect(TableCounts).toHaveBeenCalledTimes(2));
+    menu('File', 'Close');
+    await waitFor(() => expect(CloseDatabase).toHaveBeenCalled());
+    await act(async () => late([7, 8]));
+    expect(list.querySelector('.count')).toBeNull();
+  });
+
   it('does nothing when the dialog is cancelled', async () => {
     const SelectDatabase = vi.fn(async () => '');
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, SelectDatabase } } } });

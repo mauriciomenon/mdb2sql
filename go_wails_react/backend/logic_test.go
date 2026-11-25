@@ -186,6 +186,31 @@ func fixtureDB(t *testing.T) string {
 	return path
 }
 
+// standard item 6: the table list shows each table's row count (as Zig), in table list order; a cancel stops it
+func TestTableCounts(t *testing.T) {
+	m := NewDBManager()
+	if err := m.Connect(fixtureDB(t)); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	tables, _ := m.ListTables()
+	counts, err := m.TableCounts(context.Background())
+	if err != nil || len(counts) != len(tables) {
+		t.Fatalf("counts %v for %v: %v", counts, tables, err)
+	}
+	want := map[string]int{"Pontos A": 3, "seven": 7, "vazia": 0}
+	for i, table := range tables {
+		if counts[i] != want[table] {
+			t.Errorf("%s: %d rows, want %d", table, counts[i], want[table])
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := m.TableCounts(ctx); err == nil {
+		t.Error("a cancelled count must fail")
+	}
+}
+
 func TestExportXLSXSplitsSheets(t *testing.T) {
 	old := MaxExcelDataRows
 	MaxExcelDataRows = 3

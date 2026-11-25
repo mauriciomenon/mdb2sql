@@ -154,6 +154,8 @@
   "sidebar.filter": "Filtrar {0} tablas",
   "sidebar.label": "Tablas",
   "sidebar.noMatch": "Ninguna tabla coincide.",
+  "sidebar.rows": "Filas",
+  "sidebar.table": "Tabla",
   "sql.cancel": "Cancelar",
   "sql.error": "Error en la consulta SQL: {0}",
   "sql.label": "SQL",

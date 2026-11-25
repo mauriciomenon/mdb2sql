@@ -53,6 +53,7 @@ type App struct {
 	queryCancel  context.CancelFunc // of the running SQL tab query (one at a time)
 	querySeq     int
 	searchCancel context.CancelFunc // of the running "All tables" search
+	countCancel  context.CancelFunc // of the running row count of the table list
 }
 
 // AppInfo alimenta o dialogo Sobre: versao do app e versoes de runtime lidas em execucao
@@ -436,16 +437,15 @@ func (a *App) CancelJob() {
 	}
 }
 
-// cancelReads stops the running SQL tab query and "All tables" search, if any: another file or Close replaces the
-// connection they read, and Close waits for them
+// cancelReads stops the running SQL tab query, "All tables" search and table list count, if any: another file or
+// Close replaces the connection they read, and Close waits for them
 func (a *App) cancelReads() {
 	a.jobMu.Lock()
 	defer a.jobMu.Unlock()
-	if a.queryCancel != nil {
-		a.queryCancel()
-	}
-	if a.searchCancel != nil {
-		a.searchCancel()
+	for _, cancel := range []context.CancelFunc{a.queryCancel, a.searchCancel, a.countCancel} {
+		if cancel != nil {
+			cancel()
+		}
 	}
 }
 
@@ -547,6 +547,20 @@ func (a *App) SearchAllTables(search string) ([]backend.TableHits, error) {
 	a.jobMu.Unlock()
 	defer cancel()
 	return a.dbManager.SearchTables(ctx, search, a.progress)
+}
+
+// TableCounts: the row count of each table, in table list order, for the table list (asked after the file opens,
+// so the list shows at once); another file or Close stops it
+func (a *App) TableCounts() ([]int, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	a.jobMu.Lock()
+	if a.countCancel != nil {
+		a.countCancel()
+	}
+	a.countCancel = cancel
+	a.jobMu.Unlock()
+	defer cancel()
+	return a.dbManager.TableCounts(ctx)
 }
 
 // GetTableSchema retorna schema da tabela com tipos de colunas
