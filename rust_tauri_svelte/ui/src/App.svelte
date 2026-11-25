@@ -735,6 +735,54 @@
     if (await copyText(logText)) showStatus('status.logCopied');
   }
 
+  // NIVEL BASICO: Atalhos, os mesmos nas 4 versoes: Ctrl+O abrir, Ctrl+F pesquisar, F5 recarregar o banco, Ctrl+Q sair,
+  // Ctrl+1/2/3 abas, Ctrl+L log, Ctrl+Enter rodar o SQL (aba SQL); Ctrl+C na grade copia a celula (Grid.svelte).
+  // Com um dialogo aberto so valem as teclas dele; F5 nunca recarrega a pagina do webview (a tela voltaria do zero)
+  function shortcut(e) {
+    if (e.key === 'Escape') (openMenu = null), (statusMenu = null);
+    if (e.key === 'F5') e.preventDefault();
+    if (document.querySelector('dialog[open]') || e.altKey) return;
+    if (e.key === 'F5' && !e.ctrlKey) return reload();
+    if (!e.ctrlKey) return;
+    const actions = {
+      o: () => !busy && browse(),
+      f: focusSearch,
+      q: quit,
+      l: () => setLog(!logOpen),
+      1: () => (tab = 'data'),
+      2: () => (tab = 'schema'),
+      3: focusSql,
+      enter: () => tab === 'sql' && runSql(),
+    };
+    const act = actions[e.key.toLowerCase()];
+    if (!act) return;
+    e.preventDefault();
+    act();
+  }
+
+  // F5: abre de novo o banco aberto (rele a lista de tabelas); sem banco aberto, o caminho do campo
+  function reload() {
+    if (busy) return;
+    if (openedPath) dbPath = openedPath;
+    if (dbPath.trim()) openDatabase();
+  }
+
+  // Ctrl+F: aba Data com o campo de pesquisa em foco e o texto selecionado (sem tabela aberta nao ha campo)
+  async function focusSearch() {
+    tab = 'data';
+    await tick();
+    const field = document.querySelector('input.search');
+    field?.focus();
+    field?.select();
+  }
+
+  // Ctrl+3: aba SQL com o editor em foco
+  async function focusSql() {
+    tab = 'sql';
+    await tick();
+    document.querySelector('.sql textarea')?.focus();
+  }
+
   // menu perto da borda: puxa para dentro da janela
   const keepInside = (node) => {
     const box = node.getBoundingClientRect();
@@ -1062,7 +1110,6 @@
             aria-label={t('sql.label')}
             spellcheck="false"
             placeholder={'SELECT * FROM "' + (selectedTable || 'table') + '" LIMIT 10'}
-            onkeydown={(e) => e.ctrlKey && e.key === 'Enter' && runSql()}
           ></textarea>
           <div class="table-bar">
             <button type="button" title={t('sql.runTip')} onclick={runSql} disabled={busy || !openedPath || !sql.trim()}>{t('sql.run')}</button>
@@ -1213,16 +1260,7 @@
   {/if}
 </div>
 
-<svelte:window
-  onclick={() => ((openMenu = null), (statusMenu = null))}
-  onkeydown={(e) => {
-    if (e.key === 'Escape') (openMenu = null), (statusMenu = null);
-    if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'l') {
-      e.preventDefault();
-      setLog(!logOpen);
-    }
-  }}
-/>
+<svelte:window onclick={() => ((openMenu = null), (statusMenu = null))} onkeydown={shortcut} />
 
 <style>
   /* NIVEL BASICO: Cores em variaveis; o tema (Settings > Theme) troca o esquema da janela */

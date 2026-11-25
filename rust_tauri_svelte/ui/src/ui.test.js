@@ -68,6 +68,26 @@ test('File menu: Open..., Export submenu, Close, Exit', () => {
   assert.match(appFunction('quit'), /if \(await settleConverted\(\)\) await invoke\('exit_app'\);/);
 });
 
+// padrao item 20 (= Python): Ctrl+O, Ctrl+F, F5, Ctrl+Q, Ctrl+1/2/3, Ctrl+L, Ctrl+Enter e Ctrl+C (grade); F5 nunca
+// recarrega a pagina do webview; com dialogo aberto os atalhos da janela nao valem
+test('keyboard shortcuts of the 4 stacks', () => {
+  const code = appFunction('shortcut');
+  const keys = [...code.matchAll(/\n\s+(\w+): /g)].map((m) => m[1]);
+  assert.deepEqual(keys, ['o', 'f', 'q', 'l', '1', '2', '3', 'enter']);
+  assert.match(code, /o: \(\) => !busy && browse\(\),/);
+  assert.match(code, /f: focusSearch,/);
+  assert.match(code, /q: quit,/);
+  assert.match(code, /3: focusSql,/);
+  assert.match(code, /enter: \(\) => tab === 'sql' && runSql\(\),/);
+  assert.match(code, /if \(e\.key === 'F5'\) e\.preventDefault\(\);\s*if \(document\.querySelector\('dialog\[open\]'\) \|\| e\.altKey\) return;\s*if \(e\.key === 'F5' && !e\.ctrlKey\) return reload\(\);/);
+  assert.match(appFunction('reload'), /if \(openedPath\) dbPath = openedPath;\s*if \(dbPath\.trim\(\)\) openDatabase\(\);/);
+  assert.match(markup('./App.svelte'), /<svelte:window onclick=\{[^}]*\} onkeydown=\{shortcut\} \/>/);
+  // Ctrl+Enter so pela janela (o editor tinha o seu e rodaria duas vezes)
+  assert.doesNotMatch(markup('./App.svelte').match(/<textarea\s+bind:value=\{sql\}[\s\S]*?<\/textarea>/)[0], /onkeydown/);
+  const grid = readFileSync(new URL('./Grid.svelte', import.meta.url), 'utf8');
+  assert.match(grid, /event\.ctrlKey && event\.key\.toLowerCase\(\) === 'c' && selected/);
+});
+
 // padrao item 1 (topo = Zig): so o campo do caminho e Procurar... Abrir Exportar... (sem titulo nem rotulo); caminho
 // longo mostra o fim (o comeco sai com "..."); arquivo arrastado para a janela abre
 test('top bar: path field, Browse..., Open, Export... and drag and drop', () => {
@@ -329,7 +349,7 @@ test('log panel collapses and expands in one click and remembers the choice', ()
   assert.match(app, /saveSetting\(LOG_KEY, open \? 'open' : 'closed'\)/);
   assert.equal(count(app, 'onclick={() => setLog(false)}'), 1); // seta do cabecalho do log
   assert.equal(count(app, 'onclick={() => setLog(!logOpen)}'), 2); // View > Log e seta da barra de status
-  assert.match(app, /e\.ctrlKey && !e\.altKey && e\.key\.toLowerCase\(\) === 'l'/);
+  assert.match(appFunction('shortcut'), /\n\s*l: \(\) => setLog\(!logOpen\),/);
   assert.match(app, /onclick=\{\(\) => setLog\(true\)\}>\{headline\.text\}/);
   const css = app.match(/<style>([\s\S]*)<\/style>/)[1];
   assert.match(css, /\.log textarea \{[^}]*height: 10vh;[^}]*min-height: calc\(3 \* 1\.4em \+ 10px\);[^}]*max-height: 25vh;[^}]*font-size: 11px;/);

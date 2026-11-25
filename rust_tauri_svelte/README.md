@@ -125,6 +125,9 @@ as escolhas ficam gravadas e valem na hora.
 DuckDB, leitor do Access, autor, licenca e os links do codigo no GitHub e no GitLab (o app so pode abrir esses dois
 enderecos).
 
+**Atalhos**: `Ctrl+O` abrir, `Ctrl+F` pesquisar na aba Data, `F5` abrir de novo o banco, `Ctrl+Q` sair, `Ctrl+1`/`2`/`3`
+abas Data/Schema/SQL, `Ctrl+L` log, `Ctrl+Enter` rodar o SQL, `Ctrl+C` copiar a celula escolhida.
+
 **Variaveis de ambiente** (opcionais): `MDB2SQL_DB_PATH` = banco aberto ao iniciar;
 `MDB2SQL_ACCESS_READER=mdbtools` (ou `odbc`) forca o leitor de .mdb/.accdb.
 
