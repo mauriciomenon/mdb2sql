@@ -125,7 +125,9 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   cannot be hidden. Hidden columns last while the table is open, are not saved, and are still searched and exported.
 - **Filter by this value** (right-click a cell of the Data tab): exact `column = value` filter in the database
   query; several add up (AND) and combine with the search; each is a button above the grid (click to remove).
-- **Schema** tab: column, type, nullable. **SQL** tab: any SQL, **Run** (Ctrl+Enter), first 10,000 rows shown.
+- **Schema** tab: column, type, nullable (Yes / No in the screen language, also in its export).
+- **SQL** tab: any SQL (the empty box shows `SELECT * FROM ...`), **Run** (Ctrl+Enter), first 10,000 rows shown; a
+  run that works clears the previous error next to the button and in the status bar, an error clears the old grid.
 - **Search rule**: the text is split into words; a row matches when one cell holds every word, in any order,
   ignoring case and accents (`Tensión campo` finds `EXCITACION TENSION DE CAMPO`; `tensao` does not: there is no
   fuzzy matching).

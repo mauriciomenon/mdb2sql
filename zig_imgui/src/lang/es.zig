@@ -29,6 +29,7 @@ pub const remove_filter = "Quitar este filtro";
 pub const clear_filters = "Quitar filtros";
 pub const run = "Ejecutar (Ctrl+Enter)";
 pub const search_rows = "buscar en las filas mostradas";
+pub const sql_hint = "SELECT * FROM ...";
 pub const rows_match = "{d} de {d} filas coinciden";
 pub const schema_column = "Columna";
 pub const schema_type = "Tipo";

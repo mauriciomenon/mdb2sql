@@ -43,6 +43,62 @@ pub const Log = struct {
     }
 };
 
+pub const Level = enum { info, warn, err };
+
+// !T: What the status bar shows while the Log is collapsed: the last unread error, else the last unread warning (a
+// warning never hides an unread error), and the unread counts. Errors of the SQL tab are marked: a later successful
+// run takes them off the bar (the log keeps them).
+pub const Alert = struct {
+    level: Level = .info,
+    buf: [1024]u8 = undefined,
+    len: usize = 0,
+    unread_err: u32 = 0,
+    unread_warn: u32 = 0,
+    sql_err: u32 = 0, // dos erros nao lidos, os da aba SQL
+    from_sql: bool = false, // o texto atual e um erro da aba SQL
+
+    pub fn add(a: *Alert, level: Level, s: []const u8, from_sql: bool) void {
+        if (level == .info) return;
+        if (level == .err) {
+            a.unread_err += 1;
+            if (from_sql) a.sql_err += 1;
+        } else a.unread_warn += 1;
+        if (level == .warn and a.unread_err > 0) return;
+        a.level = level;
+        a.from_sql = from_sql and level == .err;
+        a.len = @min(s.len, a.buf.len);
+        @memcpy(a.buf[0..a.len], s[0..a.len]);
+        for (a.buf[0..a.len]) |*ch| if (ch.* == '\n' or ch.* == '\r') {
+            ch.* = ' '; // uma linha na barra
+        };
+    }
+
+    pub fn text(a: *const Alert) []const u8 {
+        return a.buf[0..a.len];
+    }
+
+    pub fn unread(a: *const Alert) u32 {
+        return a.unread_err + a.unread_warn;
+    }
+
+    // Log aberto: tudo esta a vista
+    pub fn markRead(a: *Alert) void {
+        a.unread_err = 0;
+        a.unread_warn = 0;
+        a.sql_err = 0;
+    }
+
+    // SQL rodado com sucesso: os erros do SQL anterior saem da barra e da contagem
+    pub fn clearSql(a: *Alert) void {
+        a.unread_err -|= a.sql_err;
+        a.sql_err = 0;
+        if (!a.from_sql) return;
+        a.from_sql = false;
+        a.len = 0;
+        a.level = .info;
+    }
+};
+
 // Hora local "HH:MM:SS"
 pub fn localTime(buf: *[8]u8) []const u8 {
     var h: u32 = 0;
@@ -74,6 +130,31 @@ extern "c" fn time(t: ?*c_long) c_long;
 extern "c" fn localtime_r(t: *const c_long, out: *Tm) ?*Tm;
 
 const t = std.testing;
+
+test "status bar alert: last error wins over warnings; a successful SQL run clears its own errors only" {
+    var a: Alert = .{};
+    a.add(.info, "Loaded", false);
+    try t.expectEqual(0, a.unread());
+    a.add(.warn, "aviso", false);
+    try t.expectEqualStrings("aviso", a.text());
+    a.add(.err, "Erro na consulta SQL: syntax error", true);
+    a.add(.warn, "outro aviso", false); // nao esconde o erro
+    try t.expectEqualStrings("Erro na consulta SQL: syntax error", a.text());
+    try t.expectEqual(3, a.unread());
+    // SQL certo depois: o erro do SQL sai da barra e da contagem; os avisos continuam contados
+    a.clearSql();
+    try t.expectEqualStrings("", a.text());
+    try t.expectEqual(2, a.unread());
+    // erro de outra origem nao e apagado por um SQL certo
+    a.add(.err, "Erro no banco: x", false);
+    a.clearSql();
+    try t.expectEqualStrings("Erro no banco: x", a.text());
+    try t.expectEqual(3, a.unread());
+    a.markRead();
+    try t.expectEqual(0, a.unread());
+    a.add(.err, "linha 1\nlinha 2", true);
+    try t.expectEqualStrings("linha 1 linha 2", a.text());
+}
 
 test "log lines carry the time, stay one line each and drop the oldest past the limit" {
     var l: Log = .{};

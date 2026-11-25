@@ -29,6 +29,7 @@ pub const remove_filter = "Remove this filter";
 pub const clear_filters = "Clear filters";
 pub const run = "Run (Ctrl+Enter)";
 pub const search_rows = "search the rows shown";
+pub const sql_hint = "SELECT * FROM ...";
 pub const rows_match = "{d} of {d} rows match";
 pub const schema_column = "Column";
 pub const schema_type = "Type";

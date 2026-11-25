@@ -533,34 +533,24 @@ fn logLine(s: []const u8) void {
 }
 
 // Com o Log recolhido a barra de status mostra a linha mais importante ainda nao vista no Log: ultimo erro >
-// ultimo aviso > o status normal (ultima acao). Abrir o Log zera os contadores.
-const Level = enum { info, warn, err };
-var alert: struct { level: Level = .info, buf: [1024]u8 = undefined, len: usize = 0, unread_err: u32 = 0, unread_warn: u32 = 0 } = .{};
+// ultimo aviso > o status normal (ultima acao). Abrir o Log zera os contadores; um SQL certo tira os erros do SQL.
+const Level = dbm.log.Level;
+var alert: dbm.log.Alert = .{};
 
 fn logEvent(level: Level, s: []const u8) void {
-    logEventShort(level, s, s);
+    logEventShort(level, s, s, false);
 }
 
-// `full` vai para o log (texto inteiro do motor, sem cortar); `short` e a linha da barra de status
-fn logEventShort(level: Level, full: []const u8, short: []const u8) void {
+// `full` vai para o log (texto inteiro do motor, sem cortar); `short` e a linha da barra de status; `from_sql`: erro
+// da aba SQL (sai da barra quando um SQL roda certo)
+fn logEventShort(level: Level, full: []const u8, short: []const u8, from_sql: bool) void {
     var hb: [8]u8 = undefined;
     session_log.add(log_gpa, dbm.log.localTime(&hb), full);
-    const s = short;
-    if (level == .info) return;
-    if (level == .err) alert.unread_err += 1 else alert.unread_warn += 1;
-    // um aviso nao esconde um erro ainda nao visto
-    if (level == .warn and alert.unread_err > 0) return;
-    alert.level = level;
-    alert.len = @min(s.len, alert.buf.len);
-    @memcpy(alert.buf[0..alert.len], s[0..alert.len]);
-    for (alert.buf[0..alert.len]) |*ch| if (ch.* == '\n') {
-        ch.* = ' '; // uma linha na barra de status
-    };
+    alert.add(level, short, from_sql);
 }
 
 fn markLogRead() void {
-    alert.unread_err = 0;
-    alert.unread_warn = 0;
+    alert.markRead();
 }
 
 const Msg = struct {
@@ -568,6 +558,7 @@ const Msg = struct {
     len: usize = 0,
     is_err: bool = false,
     loaded: bool = false, // e a mensagem "Aberto: ..." (refeita ao trocar o idioma)
+    sql: bool = false, // a linha do botao Executar: os erros dela saem da barra de baixo quando um SQL roda certo
 
     // Texto do catalogo com argumentos; vai tambem para o log da sessao
     fn set(m: *Msg, is_err: bool, comptime key: []const u8, args: anytype) void {
@@ -577,7 +568,7 @@ const Msg = struct {
     // Texto pronto (mensagem do banco ou de outro texto ja traduzido)
     fn setText(m: *Msg, is_err: bool, s: []const u8) void {
         m.replace(is_err, s);
-        logEvent(if (is_err) .err else .info, m.buf[0..m.len]);
+        logEventShort(if (is_err) .err else .info, m.buf[0..m.len], m.buf[0..m.len], m.sql);
     }
 
     // Erro do motor: uma linha na tela com o prefixo traduzido (key = "err_sql" ou "err_db"); o texto inteiro no log
@@ -585,7 +576,7 @@ const Msg = struct {
         var b: [1024]u8 = undefined;
         m.replace(true, i18n.fmt(&b, key, .{dbm.errorSummary(full)}));
         var fb: [1100]u8 = undefined;
-        logEventShort(.err, i18n.fmt(&fb, key, .{full}), m.buf[0..m.len]);
+        logEventShort(.err, i18n.fmt(&fb, key, .{full}), m.buf[0..m.len], m.sql);
     }
 
     // So troca o texto (sem nova linha no log): a mesma mensagem refeita em outro idioma
@@ -811,7 +802,7 @@ const App = struct {
     sql: [8192:0]u8 = @splat(0),
     result: ?dbm.Grid = null,
     result_sql: [8192:0]u8 = @splat(0), // SQL que gerou `result` (a exportacao roda de novo, sem limite)
-    sql_msg: Msg = .{},
+    sql_msg: Msg = .{ .sql = true },
     result_filter: [128:0]u8 = @splat(0), // filtro sobre as linhas carregadas do resultado
     result_rows: ?[]usize = null, // indices das linhas que casam; null = sem filtro
     tab: Tab = .data,
@@ -1078,7 +1069,9 @@ const App = struct {
                 app.applied_search = app.slot.req.search;
             },
             .sql => {
+                // erro: a grade velha some; certo: o erro anterior sai da linha do botao e da barra de baixo
                 app.clearResult();
+                if (out.err == null) alert.clearSql();
                 if (out.result) |g| {
                     app.result = g;
                     out.result = null;
@@ -1850,7 +1843,7 @@ const App = struct {
 
         // a direita, medida antes: a mensagem para onde ela comeca
         const gap = 2 * ig.igGetStyle().*.ItemSpacing.x;
-        const unread = if (open) 0 else alert.unread_err + alert.unread_warn;
+        const unread = if (open) 0 else alert.unread();
         var ub: [24]u8 = undefined;
         var hb: [64]u8 = undefined;
         var sb: [160]u8 = undefined;
@@ -1897,7 +1890,7 @@ const App = struct {
         var shown: []const u8 = app.status.text();
         var color: ?[3]f32 = if (app.status.is_err) errorColor() else null;
         if (unread > 0 and alert.len > 0) {
-            shown = alert.buf[0..alert.len];
+            shown = alert.text();
             color = if (alert.level == .err) errorColor() else warnColor();
         }
         const empty = shown.len == 0;
@@ -2131,7 +2124,8 @@ const App = struct {
     }
 
     fn drawSql(app: *App) void {
-        const enter = ig.igInputTextMultiline("##sql", &app.sql, app.sql.len + 1, .{ .x = -1, .y = ig.igGetTextLineHeight() * 7 }, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null);
+        // campo vazio com a dica "SELECT * FROM ..." (o do Python); InputTextMultiline nao aceita dica, InputTextEx sim
+        const enter = ig.igInputTextEx("##sql", tr("sql_hint"), &app.sql, app.sql.len + 1, .{ .x = -1, .y = ig.igGetTextLineHeight() * 7 }, ig.ImGuiInputTextFlags_Multiline | ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null);
         const running = app.slot.busyWith(.sql);
         ig.igBeginDisabled(running);
         if (button(tr("run")) or enter) app.want_run = true;
