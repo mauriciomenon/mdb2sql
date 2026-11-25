@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,10 @@ func TestGetAppInfo(t *testing.T) {
 	}
 	if !regexp.MustCompile(`^v\d+\.\d+\.\d+`).MatchString(info.DuckDB) {
 		t.Fatalf("unexpected DuckDB version %q", info.DuckDB)
+	}
+	// About > Janela: the full WebView2 version (Windows 11 has the runtime), not the 158.0.0.0 of the user agent
+	if goruntime.GOOS == "windows" && !regexp.MustCompile(`^WebView2 \d+\.\d+\.\d+\.\d+$`).MatchString(info.Webview) {
+		t.Fatalf("unexpected window engine %q", info.Webview)
 	}
 }
 

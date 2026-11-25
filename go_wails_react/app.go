@@ -64,7 +64,8 @@ type AppInfo struct {
 	Go        string `json:"go"`
 	Wails     string `json:"wails"`
 	DuckDB    string `json:"duckdb"`
-	Access    string `json:"access"` // reader an Access file would use now: "Access ODBC", "mdbtools" or ""
+	Access    string `json:"access"`  // reader an Access file would use now: "Access ODBC", "mdbtools" or ""
+	Webview   string `json:"webview"` // what draws the window: "WebView2 158.0.4370.33", "WebKitGTK"
 	// "mdbtools 1.0.1" (embedded) or "mdbtools" (on PATH, MdbtoolsSystem); "" = none
 	Mdbtools       string `json:"mdbtools"`
 	MdbtoolsSystem bool   `json:"mdbtoolsSystem"`
@@ -109,6 +110,7 @@ func (a *App) GetAppInfo() AppInfo {
 		Wails:          wailsVersion(),
 		DuckDB:         duck,
 		Access:         backend.AccessReader(),
+		Webview:        webviewVersion(),
 		Mdbtools:       mdbtools,
 		MdbtoolsSystem: system,
 	}

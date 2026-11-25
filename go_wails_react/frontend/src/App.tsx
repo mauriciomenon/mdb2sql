@@ -26,6 +26,7 @@ export type AppInfo = {
   wails: string;
   duckdb: string;
   access?: string; // reader an Access file would use now: "Access ODBC", "mdbtools" or ""
+  webview?: string; // what draws the window: "WebView2 158.0.4370.33" (runtime API), "WebKitGTK"
   mdbtools?: string; // "mdbtools 1.0.1" (embedded) or "mdbtools" (on PATH: mdbtoolsSystem); "" = none
   mdbtoolsSystem?: boolean;
 };
@@ -88,12 +89,6 @@ const THEMES: Theme[] = ['system', 'light', 'dark'];
 const SCOPES: Scope[] = ['table', 'all'];
 const VIEWS: View[] = ['data', 'schema', 'sql']; // tab order: Ctrl+1, Ctrl+2, Ctrl+3
 
-// Window row of About: the WebView2 version from the user agent (Edg/<version>); WebKitGTK on Linux
-export function webviewName(userAgent: string): string {
-  const edge = /\bEdg\/([\d.]+)/.exec(userAgent);
-  return edge ? `WebView2 ${edge[1]}` : /AppleWebKit/.test(userAgent) ? 'WebKitGTK' : '';
-}
-
 // How an Access file is read now: the ODBC driver (embedded mdbtools as fallback), mdbtools only, or nothing
 function accessReading(info: AppInfo, t: T): string {
   const mdb = info.mdbtools ?? '';
@@ -105,12 +100,12 @@ function accessReading(info: AppInfo, t: T): string {
 // Linhas (rotulo, valor) do dialogo Sobre, as do Rust (Build, Stack, Janela, Bancos, Leitura do Access, Autor,
 // Licenca, links); versao de wails.json, numero/data do build gravados pelo build, runtimes lidos em execucao. Valor
 // que comeca com https:// vira link aberto no navegador padrao.
-export function aboutRows(info: AppInfo, t: T, userAgent = navigator.userAgent): [string, string][] {
+export function aboutRows(info: AppInfo, t: T): [string, string][] {
   const v = (s: string) => s.replace(/^v/, '');
   return [
     [t('about.build'), info.build ? `${info.build} (${info.buildDate})` : 'dev'],
     [t('about.stack'), `Go ${info.go} + Wails ${v(info.wails)} + React ${reactVersion}`],
-    [t('about.window'), webviewName(userAgent)],
+    [t('about.window'), info.webview ?? ''],
     [t('about.engines'), `DuckDB ${v(info.duckdb)}`], // SQLite files are read by DuckDB (its sqlite extension)
     [t('about.access'), accessReading(info, t)],
     [t('about.author'), 'Mauricio Menon'],

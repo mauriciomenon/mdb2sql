@@ -2,7 +2,7 @@ import React from 'react';
 import { readFileSync } from 'node:fs';
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { vi, beforeEach } from 'vitest';
-import App, { aboutRows, clampLogHeight, columnCellWidth, filterLabel, gridText, LOG_MIN, logLine, nullableText, progressText, rowToTsv, searchRows, statusLine, tsvField, webviewName, withFilter } from './App.tsx';
+import App, { aboutRows, clampLogHeight, columnCellWidth, filterLabel, gridText, LOG_MIN, logLine, nullableText, progressText, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
 import { CATALOGS, LANGS, translate, translateN } from './i18n';
 
 const tables = ['RANGER_SOACCU', 'RANGER_SOGEN'];
@@ -213,7 +213,7 @@ describe('App IPC flow', () => {
 
   it('shows Help > About with version, build, full stack and the two links opened in the browser', async () => {
     const GetAppInfo = vi.fn(async () => ({
-      version: '1.3.0', build: '412', buildDate: '2026-11-17', go: '1.26.10', wails: 'v2.13.0', duckdb: 'v2.0.0', access: 'Access ODBC', mdbtools: 'mdbtools 1.0.1',
+      version: '1.3.0', build: '412', buildDate: '2026-11-17', go: '1.26.10', wails: 'v2.13.0', duckdb: 'v2.0.0', access: 'Access ODBC', mdbtools: 'mdbtools 1.0.1', webview: 'WebView2 158.0.4370.33',
     }));
     const BrowserOpenURL = vi.fn();
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetAppInfo } } }, runtime: { BrowserOpenURL } });
@@ -228,9 +228,10 @@ describe('App IPC flow', () => {
     expect(dialog.querySelector('.tagline').textContent).toMatch(/Microsoft Access, SQLite and DuckDB/);
     const rowsShown = [...dialog.querySelectorAll('dl > div')].map((el) => [el.querySelector('dt').textContent, el.querySelector('dd').textContent]);
     expect(rowsShown.map(([label]) => label)).toEqual(['Build', 'Stack', 'Window', 'Databases', 'Access reading', 'Author', 'License', 'GitHub', 'GitLab']);
-    expect(rowsShown.filter(([label]) => label !== 'Window')).toEqual([
+    expect(rowsShown).toEqual([
       ['Build', '412 (2026-11-17)'],
       ['Stack', `Go 1.26.10 + Wails 2.13.0 + React ${React.version}`],
+      ['Window', 'WebView2 158.0.4370.33'],
       ['Databases', 'DuckDB 2.0.0'],
       ['Access reading', 'Access ODBC driver (installed); fallback: embedded mdbtools 1.0.1'],
       ['Author', 'Mauricio Menon'],
@@ -251,16 +252,14 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     const pt = (key, ...args) => translate('pt-BR', key, ...args);
-    const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.3595.53';
-    const dev = Object.fromEntries(aboutRows({ version: '1.3.0', go: '1', wails: '2', duckdb: '3', access: 'mdbtools', mdbtools: 'mdbtools 1.0.1' }, pt, ua));
+    const dev = Object.fromEntries(aboutRows({ version: '1.3.0', go: '1', wails: '2', duckdb: '3', access: 'mdbtools', mdbtools: 'mdbtools 1.0.1', webview: 'WebKitGTK' }, pt));
     expect(dev.Build).toBe('dev');
-    expect(dev.Janela).toBe('WebView2 142.0.3595.53');
+    expect(dev.Janela).toBe('WebKitGTK');
     expect(dev['Leitura do Access']).toBe('mdbtools 1.0.1 embutido');
     expect(dev['Licença']).toBe('GPL v2 ou posterior');
-    const sys = Object.fromEntries(aboutRows({ version: '1', go: '1', wails: '2', duckdb: '3', access: 'mdbtools', mdbtools: 'mdbtools', mdbtoolsSystem: true }, pt, ''));
+    const sys = Object.fromEntries(aboutRows({ version: '1', go: '1', wails: '2', duckdb: '3', access: 'mdbtools', mdbtools: 'mdbtools', mdbtoolsSystem: true }, pt));
     expect(sys['Leitura do Access']).toBe('mdbtools do sistema');
-    expect(Object.fromEntries(aboutRows({ version: '1', go: '1', wails: '2', duckdb: '3', access: '' }, pt, ''))['Leitura do Access']).toBe('Indisponível neste computador');
-    expect(webviewName('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko)')).toBe('WebKitGTK');
+    expect(Object.fromEntries(aboutRows({ version: '1', go: '1', wails: '2', duckdb: '3', access: '' }, pt))['Leitura do Access']).toBe('Indisponível neste computador');
     expect(pt('about.title')).toBe('Sobre o mdb2sql');
   });
 
