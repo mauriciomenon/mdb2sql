@@ -44,6 +44,13 @@ func TestGetAppInfo(t *testing.T) {
 	if got := windowTitle(); got != "mdb2sql 1.3.0 - Go" {
 		t.Fatalf("window title must carry the wails.json version, got %q", got)
 	}
+	// standard item 3: the open file's name in front of the title, as Python
+	if got := titleFor("DB4.accdb"); got != "DB4.accdb - mdb2sql 1.3.0 - Go" {
+		t.Fatalf("title with a file open: %q", got)
+	}
+	if got := titleFor(""); got != "mdb2sql 1.3.0 - Go" {
+		t.Fatalf("title without a file: %q", got)
+	}
 	if !regexp.MustCompile(`^\d+\.\d+`).MatchString(info.Go) {
 		t.Fatalf("unexpected Go version %q", info.Go)
 	}

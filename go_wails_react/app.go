@@ -302,6 +302,22 @@ func (a *App) closeDatabase() {
 	a.cancelReads()
 	a.dbManager.Close()
 	a.dbName, a.dbPath = "", ""
+	a.updateTitle()
+}
+
+// titleFor: "{file} - mdb2sql 1.3.0 - Go" with a file open, "mdb2sql 1.3.0 - Go" without (as Python)
+func titleFor(name string) string {
+	if name == "" {
+		return windowTitle()
+	}
+	return name + " - " + windowTitle()
+}
+
+// updateTitle puts the name of the open file in the window title
+func (a *App) updateTitle() {
+	if a.ctx != nil { // nil in tests: the Wails runtime only works inside the app
+		runtime.WindowSetTitle(a.ctx, titleFor(a.dbName))
+	}
 }
 
 // CloseDatabase fecha o arquivo aberto (Arquivo > Fechar); a UI resolve antes um SQLite convertido pendente
@@ -472,6 +488,7 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 	ctx, done := a.startJob()
 	defer done()
 	a.dbName, a.dbPath = "", "" // Open closes the previous database first
+	defer a.updateTitle()       // the new file's name, or none if it failed
 	start := time.Now()
 	// the same Access file (path, size, date) saved as SQLite in this session: open that file, no new conversion
 	openPath := validatedPath
