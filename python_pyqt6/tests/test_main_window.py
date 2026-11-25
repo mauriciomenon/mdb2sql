@@ -571,9 +571,10 @@ def test_export_actions_write_files_next_to_source(qtbot, window: MainWindow, pe
     qtbot.waitUntil(lambda: not window.findChildren(QProgressDialog), timeout=5000)
 
 
-def test_export_with_active_search_asks_whole_table_or_found_rows(qtbot, window: MainWindow, people_db: Path,
-                                                                  monkeypatch) -> None:
-    # igual nas 4 versoes: com pesquisa ativa, "Tabela inteira" ou "So as N linhas encontradas" (Cancelar nao grava)
+def test_export_of_a_subset_asks_whole_table_or_found_rows(qtbot, window: MainWindow, people_db: Path,
+                                                           monkeypatch) -> None:
+    # igual nas 4 versoes: a grade mostra parte da tabela (pesquisa ou filtro por valor): "Tabela inteira" ou "So as N
+    # linhas encontradas" (Cancelar nao grava)
     import csv
 
     out = people_db.parent / "found.csv"
@@ -596,7 +597,18 @@ def test_export_with_active_search_asks_whole_table_or_found_rows(qtbot, window:
         with open(out, encoding="utf-8-sig", newline="") as handle:
             return list(csv.reader(handle))[1:]
 
-    assert len(exported()) == 3  # sem pesquisa: nao pergunta, a tabela inteira
+    assert len(exported()) == 3 and asked == []  # a grade mostra a tabela toda: nao pergunta
+    # so filtro por valor, sem pesquisa: pergunta tambem
+    _reloaded(qtbot, window, lambda: window.add_filter("name", "Bruno"))
+    answers[:] = [True]
+    assert exported() == [["2", "Bruno", ""]] and asked == [1]
+    window.filters.clear()
+    answers[:] = [False]
+    assert len(exported()) == 3 and asked == [1, 1]
+    window.filters.clear()
+    _reloaded(qtbot, window, window.reload_table)  # a grade volta para a tabela toda
+    asked.clear()
+    # so pesquisa
     _reloaded(qtbot, window, lambda: window.search_edit.setText("ana"))
     answers[:] = [True]
     assert exported() == [["1", "Ana", "9.5"]] and answers == [] and asked == [1]

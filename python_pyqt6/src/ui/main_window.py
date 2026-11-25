@@ -27,6 +27,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QGuiApplication, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
+    QAbstractButton,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -1783,9 +1784,8 @@ class MainWindow(QMainWindow):
         self.export_button.setEnabled(self.manager is not None)
         self.close_db_action.setEnabled(self.manager is not None)
 
-    def ask_found_rows(self, count: int) -> bool | None:
-        """Pesquisa ativa na tabela: exportar a tabela inteira (False) ou so as `count` linhas encontradas (True)?
-        None = Cancelar. Igual nas 4 versoes."""
+    def found_rows_box(self, count: int) -> tuple[QMessageBox, QAbstractButton, QAbstractButton]:
+        """A pergunta da exportacao (tabela inteira, so as `count` encontradas, Cancelar), sem abrir."""
         one = "_one" if count == 1 else ""
         box = QMessageBox(QMessageBox.Icon.NoIcon, tr("export.title"), tr(f"export.ask{one}", count=num(count)),
                           QMessageBox.StandardButton.NoButton, self)
@@ -1794,6 +1794,12 @@ class MainWindow(QMainWindow):
         cancel = box.addButton(tr("button.cancel"), QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(whole)
         box.setEscapeButton(cancel)
+        return box, whole, found
+
+    def ask_found_rows(self, count: int) -> bool | None:
+        """A grade mostra parte da tabela (pesquisa ou filtro por valor): exportar a tabela inteira (False) ou so as
+        `count` linhas encontradas (True)? None = Cancelar. Igual nas 4 versoes."""
+        box, whole, found = self.found_rows_box(count)
         box.exec()
         return {whole: False, found: True}.get(box.clickedButton())
 
@@ -1827,13 +1833,13 @@ class MainWindow(QMainWindow):
             self._start_export(out, lambda report, cancel: export_database(manager, out, report, cancel), "tables")
 
     def export_table_as(self, suffix: str) -> None:
-        # a tabela atual inteira; com pesquisa ativa pergunta: inteira ou so as linhas encontradas (com os filtros,
-        # o que a grade mostra)
+        # a tabela atual inteira; com a grade mostrando parte dela (pesquisa ou filtro por valor) pergunta: inteira ou
+        # so as linhas encontradas (pesquisa e filtros, o que a grade conta)
         if self.manager is None or self.loaded_table is None:
             return
         # o que a grade conta, lido antes da pergunta (a tela pode mudar enquanto ela esta aberta)
         table, filters, search = self.loaded_table[0], list(self.loaded_filters), self.loaded_search
-        found = self.ask_found_rows(self.matched_rows) if search.split() else False
+        found = self.ask_found_rows(self.matched_rows) if search.split() or filters else False
         if found is None:
             return
         if not found:
