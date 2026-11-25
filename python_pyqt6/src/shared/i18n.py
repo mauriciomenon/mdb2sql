@@ -1,5 +1,5 @@
 # Textos da interface: um catalogo JSON por idioma (resources/i18n/<codigo>.json, mesmas chaves). Ingles e o padrao;
-# Configuracoes > Idioma grava a escolha (QSettings "language") e vale ao reabrir o app.
+# Configuracoes > Idioma grava a escolha (QSettings "language") e vale na hora (MainWindow.retranslate).
 # !T: tr("key", name=...) formats the text with str.format; a missing key raises KeyError (caught by the tests)
 
 import json

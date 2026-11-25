@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QCoreApplication, QLibraryInfo, QLocale, QSettings, Qt, QTranslator
+from PyQt6.QtCore import QCoreApplication, QSettings, Qt
 from PyQt6.QtWidgets import QApplication
 
 from backend.database_tasks import database_path_from_env
@@ -16,7 +16,7 @@ from shared import i18n
 from shared.display import Notice, linux_choice
 from shared.i18n import tr
 from ui.dialogs import DisplayWarning
-from ui.main_window import MainWindow, apply_theme
+from ui.main_window import MainWindow, apply_theme, load_qt_texts
 
 # !T: sys.argv permite passar argumentos via linha de comando
 # !T: QApplication gerencia event loop, temas, recursos do sistema
@@ -60,10 +60,8 @@ def main():
         app.setStyle("Fusion")
     # Configuracoes > Tema gravado na execucao anterior (sistema, claro ou escuro)
     apply_theme(str(QSettings().value("theme", "system")))
-    # os textos do proprio Qt (menu de contexto dos campos) no idioma escolhido
-    qt_texts = QTranslator(app)
-    if qt_texts.load(QLocale(language), "qtbase", "_", QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):
-        app.installTranslator(qt_texts)
+    # os textos do proprio Qt (menu de contexto dos campos) no idioma escolhido; trocam junto com Configuracoes > Idioma
+    load_qt_texts(language)
 
     # Cria e mostra janela principal
     window = MainWindow()

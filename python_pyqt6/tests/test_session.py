@@ -241,25 +241,42 @@ def test_log_panel_collapsed_shows_the_most_important_line(qtbot) -> None:
     assert not again.log_dock.isHidden()
 
 
-def test_language_is_saved_and_applies_on_next_start(qtbot) -> None:
+def test_language_applies_at_once_and_is_saved(qtbot, people_db: Path) -> None:
+    # igual nas 4 versoes: Configuracoes > Idioma troca os textos na hora (antes so ao reabrir), e fica gravado
     win = MainWindow()
     qtbot.addWidget(win)
+    win.show()
+    win.open_database(people_db)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
     settings_menu = win.settings_menu.actions()[1].menu()
     assert [a.text() for a in settings_menu.actions()] == ["English", "Português (Brasil)", "Español"]
     assert win.language_actions["en"].isChecked()
 
-    win.language_actions["pt_BR"].trigger()
-    assert QSettings().value("language") == "pt_BR"
-    assert win.status_label.text() == "O idioma muda ao reabrir o mdb2sql"  # aviso ja no idioma escolhido
+    try:
+        win.language_actions["pt_BR"].trigger()
+        assert QSettings().value("language") == "pt_BR"
+        assert [a.text() for a in win.menuBar().actions()] == ["&Arquivo", "&Editar", "E&xibir", "&Configurações",
+                                                               "Aj&uda"]
+        assert win.open_action.text() == "&Abrir..." and win.browse_button.text() == "Procurar..."
+        assert win.tabs.tabText(0) == "Dados" and win.tables_dock.windowTitle() == "Tabelas"
+        assert win.table_list.headerItem().text(1) == "Linhas" and win.limit_label.text() == "&Linhas:"
+        assert win.search_edit.placeholderText() == "Pesquisar na tabela (Ctrl+F)"
+        assert win.info_label.text() == "empty_table: mostrando 0 de 0 linhas"  # a barra da tabela tambem
+        assert win.reader_label.text() == "Aberto via DuckDB"
+        assert [win.schema_model.headerData(c, Qt.Orientation.Horizontal) for c in range(3)] == [
+            "Coluna", "Tipo", "Aceita nulo"]
+        assert [a.text() for a in win.header_menu(0).actions()][:2] == ["Ajustar coluna", "Ajustar todas as colunas"]
+        assert [win.limit_combo.itemText(i) for i in range(3)] == ["100", "500", "1000"]  # o mesmo texto nas 4
 
-    i18n.set_language(str(QSettings().value("language")))  # o que main() faz ao abrir
-    again = MainWindow()
-    qtbot.addWidget(again)
-    assert [a.text() for a in again.menuBar().actions()] == [
-        "&Arquivo", "&Editar", "E&xibir", "&Configurações", "Aj&uda"
-    ]
-    assert again.language_actions["pt_BR"].isChecked() and again.empty_label.text() == "Nenhum banco aberto"
-    assert [again.limit_combo.itemText(i) for i in range(3)] == ["100", "500", "1000"]  # o mesmo texto nas 4
+        i18n.set_language(str(QSettings().value("language")))  # o que main() faz ao abrir: lembrado
+        again = MainWindow()
+        qtbot.addWidget(again)
+        assert again.language_actions["pt_BR"].isChecked() and again.empty_label.text() == "Nenhum banco aberto"
+        win.language_actions["es"].trigger()
+        assert win.menuBar().actions()[0].text() == "&Archivo" and win.tabs.tabText(0) == "Datos"
+    finally:
+        win.set_language("en")  # os textos do Qt (qtbase) voltam ao ingles para os outros testes
+    assert win.menuBar().actions()[0].text() == "&File" and win.info_label.text() == "empty_table: showing 0 of 0 rows"
 
 
 def _placeholders(text: str) -> set[str]:

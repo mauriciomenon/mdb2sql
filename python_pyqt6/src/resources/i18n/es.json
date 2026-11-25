@@ -133,7 +133,6 @@
   "status.sql_first": "Resultado SQL: las primeras {count} filas",
   "status.sql_done": "Instrucción ejecutada (sin filas de resultado)",
   "status.sql_error": "Error en la consulta SQL: {message}",
-  "status.language_restart": "El idioma cambia al volver a abrir mdb2sql",
   "status.converted_saved": "Archivo convertido guardado en {path}",
   "filters.one": "Filtro:",
   "filters.many": "Filtros:",

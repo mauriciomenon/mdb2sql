@@ -133,7 +133,6 @@
   "status.sql_first": "SQL result: the first {count} rows",
   "status.sql_done": "Statement executed (no result rows)",
   "status.sql_error": "SQL query error: {message}",
-  "status.language_restart": "Language changes when mdb2sql is reopened",
   "status.converted_saved": "Saved the converted file to {path}",
   "filters.one": "Filter:",
   "filters.many": "Filters:",
