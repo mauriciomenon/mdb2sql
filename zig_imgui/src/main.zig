@@ -125,6 +125,10 @@ const Capture = struct {
     save_end: bool = false, // MDB2SQL_CAPTURE_SAVE=1: o passo final responde Salvar em vez de Apagar
     saved_path: ?[]const u8 = null, // Salvar: o arquivo que tem de existir (do gpa)
     esc_frames: u32 = 0, // passo exit_esc: quadros desde o pedido de saida; Esc solto aos 12
+    wrong: std.ArrayList(u8) = .empty, // conferencias que falharam (a captura segue; saida 2 no fim)
+    hidden_before: usize = 0, // click_cell: colunas ocultas antes do clique
+    cleared: bool = false, // global_clear: o termo foi apagado com a busca rodando
+    hit_rows: u64 = 0, // open_hit: linhas que a busca global listou para a tabela
 
     fn size(c: *const Capture) [2]u32 {
         const s = dbm.capture.plan[@min(c.step, dbm.capture.plan.len - 1)];
@@ -133,8 +137,9 @@ const Capture = struct {
 
     // Nada rodando nem pedido, banco aberto com uma tabela: pronto para o proximo estado
     fn ready(app: *const App) bool {
-        if (app.slot.busy() or app.want_open or app.want_reload or app.want_run or app.want_select != null or
-            app.want_filter != null or app.want_unfilter != null or app.want_clear_filters or app.choice != null) return false;
+        if (app.slot.busy() or app.want_open or app.want_reload or app.want_run or app.want_select != null or app.want_global or
+            app.search_wait.due != null or app.want_filter != null or app.want_unfilter != null or app.want_clear_filters or
+            app.choice != null) return false;
         return app.db.isOpen() and app.selected != null;
     }
 
@@ -156,6 +161,14 @@ const Capture = struct {
 
     // Antes de app.update(): pede o estado do passo atual quando nada esta rodando
     fn before(c: *Capture, app: *App) void {
+        // global_clear: o termo e apagado com a busca rodando, como o usuario apagando a caixa
+        if (c.applied and c.step < dbm.capture.plan.len and dbm.capture.plan[c.step].action == .global_clear and
+            !c.cleared and app.slot.busyWith(.search_all))
+        {
+            c.cleared = true;
+            app.search[0] = 0;
+            app.search_wait.edited(ig.igGetTime());
+        }
         while (true) {
             if (c.step == dbm.capture.plan.len or c.applied) return;
             if (!app.slot.busy() and !app.want_open and !app.db.isOpen()) {
@@ -229,6 +242,50 @@ const Capture = struct {
                 .lang_es => .es,
                 else => .en,
             },
+            .click_cell => {
+                // o que o clique numa celula faz (a captura nao tem mouse)
+                c.hidden_before = app.data_sel.hiddenCount(app.col_names.len);
+                app.data_sel.pick(0, 0);
+            },
+            .global_late, .global_clear, .global => {
+                if (action == .global_late and indexOf(app.db.table_names, cap.late_table) == null) {
+                    c.skip(app.gpa, "table " ++ cap.late_table ++ " not found");
+                    return false;
+                }
+                // termo digitado com o escopo Todas as tabelas
+                app.scope = .all;
+                copyZ(&app.search, if (action == .global_late) cap.late_term else cap.filter_value);
+                app.runSearch();
+                c.cleared = false;
+            },
+            .open_hit => {
+                // o acerto da tabela aberta (que tem o filtro por valor do passo d_filter)
+                const g = app.global orelse {
+                    c.skip(app.gpa, "no global search result");
+                    return false;
+                };
+                const hit = for (g.hits) |h| {
+                    if (h.table == app.selected) break h;
+                } else {
+                    c.skip(app.gpa, "the open table is not in the global search result");
+                    return false;
+                };
+                c.hit_rows = hit.rows;
+                app.pickGlobal(hit.table, &g.term);
+            },
+            .reopen => {
+                if (app.converted != null) {
+                    c.skip(app.gpa, "an Access file asks before closing");
+                    return false;
+                }
+                // filtro da lista de tabelas, busca e escopo diferentes do padrao; depois abre de novo o mesmo arquivo
+                copyZ(&app.table_filter, "SOX");
+                app.table_filter_applied = app.table_filter;
+                copyZ(&app.search, cap.filter_value);
+                app.scope = .all;
+                app.setPath(zstr(&app.loaded_path));
+                app.want_open = true;
+            },
             .prompt, .prompt_delete => {
                 if (app.converted == null) {
                     c.skip(app.gpa, "not an Access file (nothing was converted)");
@@ -291,6 +348,7 @@ const Capture = struct {
                 return true;
             }
         }
+        c.check(app);
         c.save(app.gpa, io) catch |e| {
             c.failed = @errorName(e);
             return true;
@@ -299,6 +357,29 @@ const Capture = struct {
         c.applied = false;
         c.settle = 0;
         return c.step == dbm.capture.plan.len;
+    }
+
+    // O que o estado assentado tem de mostrar; null = certo
+    fn check(c: *Capture, app: *const App) void {
+        const cap = dbm.capture;
+        switch (cap.plan[c.step].action) {
+            .click_cell => if (app.data_sel.hiddenCount(app.col_names.len) != c.hidden_before) c.note(app.gpa, "clicking a cell showed the hidden columns again"),
+            .global_late => {
+                const g = app.global orelse return c.note(app.gpa, "no global search result");
+                for (g.hits) |h| if (std.mem.eql(u8, app.db.table_names[h.table], cap.late_table)) return;
+                c.note(app.gpa, "the table after the 10,000th catalog column is missing from the result");
+            },
+            .global_clear => if (!c.cleared) c.note(app.gpa, "the search ended before the term could be cleared") else if (app.global != null) c.note(app.gpa, "the old result came back after the term was cleared"),
+            .open_hit => if (app.filters.items.len > 0 or app.total != c.hit_rows) c.note(app.gpa, "the opened table does not show the row count listed"),
+            .reopen => if (app.table_filter[0] != 0 or app.table_filter_applied[0] != 0 or app.search[0] != 0 or app.scope != app.prefs.search_scope)
+                c.note(app.gpa, "the reopened file kept the table filter, the search or the scope"),
+            else => {},
+        }
+    }
+
+    // Conferencia que falhou: listada em capture_error.txt, a captura continua
+    fn note(c: *Capture, gpa: std.mem.Allocator, why: []const u8) void {
+        c.wrong.print(gpa, "{s}: {s}\n", .{ dbm.capture.plan[c.step].name, why }) catch {};
     }
 
     fn save(c: *Capture, gpa: std.mem.Allocator, io: std.Io) !void {
@@ -316,17 +397,18 @@ const Capture = struct {
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = png });
     }
 
-    // Erro vai para <pasta>/capture_error.txt (o exe de release do Windows nao tem console); pulados em
-    // capture_skipped.txt
+    // Erro (ou as conferencias que falharam) vai para <pasta>/capture_error.txt (o exe de release do Windows nao tem
+    // console); pulados em capture_skipped.txt
     fn report(c: *Capture, gpa: std.mem.Allocator, io: std.Io) void {
         defer c.skipped.deinit(gpa);
+        defer c.wrong.deinit(gpa);
         defer if (c.saved_path) |p| gpa.free(p);
         if (c.skipped.items.len > 0) {
             const path = std.fs.path.join(gpa, &.{ c.out_dir, "capture_skipped.txt" }) catch return;
             defer gpa.free(path);
             std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = c.skipped.items }) catch {};
         }
-        const why = c.failed orelse return;
+        const why = c.failed orelse if (c.wrong.items.len > 0) c.wrong.items else return;
         const path = std.fs.path.join(gpa, &.{ c.out_dir, "capture_error.txt" }) catch return;
         defer gpa.free(path);
         std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = why }) catch {};
@@ -797,15 +879,23 @@ const App = struct {
         app.global = null;
     }
 
-    // Busca da caixa da aba Data no escopo atual (Enter ou 300 ms depois da ultima tecla)
+    // Busca da caixa da aba Data no escopo atual (Enter ou 300 ms depois da ultima tecla). Todas as tabelas: a lista
+    // anterior some ate o resultado do termo novo chegar
     fn runSearch(app: *App) void {
         app.search_wait.due = null;
         if (app.scope == .table) {
             app.page = 0;
             app.want_reload = true;
-        } else if (std.mem.indexOfNone(u8, zstr(&app.search), &std.ascii.whitespace) == null) {
-            app.clearGlobal();
-        } else app.want_global = true;
+            return;
+        }
+        app.clearGlobal();
+        app.want_global = std.mem.indexOfNone(u8, zstr(&app.search), &std.ascii.whitespace) != null;
+    }
+
+    // A busca global com este termo ainda e a que a tela pede: escopo Todas as tabelas, o mesmo texto na caixa e
+    // nenhum arquivo para abrir. Senao o resultado e descartado e a busca em andamento para.
+    fn wantsGlobal(app: *const App, term: *const [256:0]u8) bool {
+        return app.scope == .all and !app.want_open and std.mem.eql(u8, zstr(term), zstr(&app.search));
     }
 
     // Seletor da aba Data ou Configuracoes: o texto da caixa ainda nao aplicado neste escopo e buscado agora
@@ -819,14 +909,14 @@ const App = struct {
         if (!done) app.runSearch();
     }
 
-    // Tabela escolhida no resultado da busca global: abre na aba Data com a mesma busca
+    // Tabela escolhida no resultado da busca global: abre na aba Data com a mesma busca e sem filtros por valor, para
+    // mostrar o numero listado (outra tabela ja abre sem eles)
     fn pickGlobal(app: *App, table: usize, term: *const [256:0]u8) void {
         app.scope = .table;
         app.search = term.*;
         app.search_wait.due = null;
         if (app.selected == table) {
-            app.page = 0;
-            app.want_reload = true;
+            app.want_clear_filters = true; // update() limpa e recarrega da pagina 1
         } else {
             app.want_select = table;
             app.select_search = true;
@@ -911,6 +1001,13 @@ const App = struct {
                 app.clearTable();
                 app.clearResult();
                 app.clearGlobal();
+                // arquivo novo comeca sem o filtro da lista de tabelas e sem a busca da aba Data, no escopo de Settings
+                app.table_filter = @splat(0);
+                app.table_filter_applied = @splat(0);
+                app.table_filter_wait.due = null;
+                app.search = @splat(0);
+                app.search_wait.due = null;
+                app.scope = app.prefs.search_scope;
                 app.sql_msg.len = 0;
                 app.tables_w = 0;
                 app.opened +%= 1;
@@ -940,10 +1037,14 @@ const App = struct {
                 app.clearTable();
                 app.takeTable(&out, zstr(&app.slot.req.search));
             },
-            .search_all => if (out.err == null) {
-                app.clearGlobal();
-                app.global = .{ .term = app.slot.req.search, .hits = out.hits };
-                out.hits = &.{};
+            .search_all => {
+                // termo apagado ou trocado, outro escopo, tabela ou arquivo: resultado velho (ou o Cancelar dele) some
+                if (!app.wantsGlobal(&app.slot.req.search)) return;
+                app.clearGlobal(); // falha: lista vazia e o erro na barra de status
+                if (out.err == null) {
+                    app.global = .{ .term = app.slot.req.search, .hits = out.hits };
+                    out.hits = &.{};
+                }
             },
             .reload => if (out.err == null) {
                 if (app.data) |*old| old.deinit();
@@ -985,7 +1086,7 @@ const App = struct {
         if (out.kind == .open) {
             if (app.start_search.len > 0 and app.selected != null) {
                 copyZ(&app.search, app.start_search);
-                app.want_reload = true;
+                app.runSearch(); // no escopo de Settings: esta tabela ou todas
             }
             app.start_search = "";
         }
@@ -1165,6 +1266,10 @@ const App = struct {
         }
         app.want_browse = false;
 
+        // busca global que a tela nao quer mais: para entre uma tabela e outra (o DuckDB interrompe a consulta), para a
+        // busca nova ou a outra acao nao esperarem por ela
+        if (app.slot.busyWith(.search_all) and !app.slot.progress.cancel.load(.monotonic) and !app.wantsGlobal(&app.slot.req.search))
+            app.slot.cancel();
         if (app.slot.busy()) return; // um trabalho por vez; os pedidos abaixo ficam para depois
         if (app.choice) |ch| {
             app.choice = null;
@@ -2051,6 +2156,12 @@ const GridSel = struct {
     want_filter: bool = false, // menu da celula: filtrar pelo valor da celula selecionada
     want_clear: bool = false, // menu da celula: limpar filtros
 
+    // Clique (esquerdo ou direito) na celula: so a selecao muda (refazer o GridSel inteiro mostrava as ocultas de novo)
+    fn pick(sel: *GridSel, row: usize, col: usize) void {
+        sel.row = row;
+        sel.col = col;
+    }
+
     fn hiddenCount(sel: *const GridSel, n_cols: usize) usize {
         var n: usize = 0;
         for (0..@min(n_cols, max_grid_cols)) |c| n += @intFromBool(sel.hidden.isSet(c));
@@ -2153,9 +2264,9 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
                 ig.igPushID_Int(@intCast(r * n_cols + c));
                 const selected = sel.row == r and sel.col == c;
                 // rotulo vazio: a area clicavel e a celula toda e o texto vem logo depois
-                if (ig.igSelectable_Bool("##cell", selected, 0, .{ .x = 0, .y = 0 })) sel.* = .{ .row = r, .col = c };
+                if (ig.igSelectable_Bool("##cell", selected, 0, .{ .x = 0, .y = 0 })) sel.pick(r, c);
                 if (ig.igIsItemHovered(0) and ig.igIsMouseClicked_Bool(1, false)) {
-                    sel.* = .{ .row = r, .col = c };
+                    sel.pick(r, c);
                     open_menu = true;
                 }
                 if (selected and sel.popup) {
@@ -2529,8 +2640,8 @@ fn run(init: std.process.Init) !void {
         capture = .{ .out_dir = o.out_dir, .fbo = try Fbo.load(), .save_end = save_end };
     }
     defer if (capture) |*c| {
+        if (c.failed != null or c.wrong.items.len > 0) capture_failed = true;
         c.report(init.gpa, init.io);
-        if (c.failed != null) capture_failed = true;
     };
 
     while (!app.quit) {

@@ -35,7 +35,11 @@ pub fn parse(args: []const []const u8) error{Usage}!?Options {
 // prompt: pergunta do SQLite convertido (fechar o arquivo); prompt_delete: responde Apagar e confere que o
 // temporario sumiu. Os passos de idioma trocam o idioma da tela (a captura comeca em ingles).
 // display_warning: aviso do Linux sem X11 na abertura (pulado quando nao ha aviso).
-pub const Action = enum { display_warning, log_error, log_error_open, exit_esc, show, filter, columns, close_columns, other_table, about, log, settings_menu, lang_en, lang_pt_br, lang_es, prompt, prompt_delete };
+// click_cell, global*, open_hit, reopen: estados conferidos (a conferencia que falha vai para capture_error.txt e a
+// captura segue): clique numa celula com colunas ocultas, busca em todas as tabelas (global_late: tabela depois da
+// coluna 10.000 do catalogo; global_clear: termo apagado com a busca rodando), acerto da tabela aberta com filtro por
+// valor e o mesmo arquivo aberto de novo.
+pub const Action = enum { display_warning, log_error, log_error_open, exit_esc, show, filter, columns, close_columns, other_table, about, log, settings_menu, lang_en, lang_pt_br, lang_es, prompt, prompt_delete, click_cell, global_late, global_clear, global, open_hit, reopen };
 pub const Step = struct { name: []const u8, action: Action, w: u32, h: u32 };
 pub const default_size = [2]u32{ 1280, 800 }; // tamanho em que o programa abre
 pub const max_size = [2]u32{ 1920, 1129 }; // area de trabalho de 1920x1200 menos a barra de tarefas e o titulo
@@ -44,6 +48,9 @@ pub const filter_column = "SUBNAM";
 pub const filter_value = "U02";
 pub const first_table = "RANGER_SOSTAT";
 pub const second_table = "RANGER_SOANLG";
+// no DB4 (287 tabelas; 10.364 colunas no .duckdb) ELSUL esta em 3 tabelas; a RANGER_SOXAGC vem depois da coluna 10.000
+pub const late_term = "ELSUL";
+pub const late_table = "RANGER_SOXAGC";
 
 pub const plan = [_]Step{
     .{ .name = "0_display_warning", .action = .display_warning, .w = default_size[0], .h = default_size[1] },
@@ -54,6 +61,11 @@ pub const plan = [_]Step{
     .{ .name = "a_max", .action = .show, .w = max_size[0], .h = max_size[1] },
     .{ .name = "c_columns_max", .action = .columns, .w = max_size[0], .h = max_size[1] },
     .{ .name = "f_narrow", .action = .close_columns, .w = narrow_size[0], .h = narrow_size[1] },
+    .{ .name = "m_hidden_click", .action = .click_cell, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "m_global_late", .action = .global_late, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "m_global_cleared", .action = .global_clear, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "n_global", .action = .global, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "n_hit_opened", .action = .open_hit, .w = default_size[0], .h = default_size[1] },
     .{ .name = "e_soanlg", .action = .other_table, .w = default_size[0], .h = default_size[1] },
     .{ .name = "e_soanlg_max", .action = .other_table, .w = max_size[0], .h = max_size[1] },
     .{ .name = "g_log", .action = .log, .w = default_size[0], .h = default_size[1] },
@@ -73,6 +85,7 @@ pub const plan = [_]Step{
     // erro real (SQL errado) com o Log recolhido (a barra mostra o erro) e depois aberto
     .{ .name = "l_log_collapsed_error", .action = .log_error, .w = default_size[0], .h = default_size[1] },
     .{ .name = "l_log_open_error", .action = .log_error_open, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "o_reopened", .action = .reopen, .w = default_size[0], .h = default_size[1] },
     // Apagar; com MDB2SQL_CAPTURE_SAVE=1, Salvar (na pasta das capturas, <origem>.sqlite)
     .{ .name = "k_closed", .action = .prompt_delete, .w = default_size[0], .h = default_size[1] },
 };

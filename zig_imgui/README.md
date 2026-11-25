@@ -113,8 +113,10 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   Access, SQLite and DuckDB alike, before the paging: the row count and pages follow it.
 - Next to the search box, **This table** | **All tables**: with **All tables** the text is searched in every table
   (same rule and same query as the table search) and the Data tab lists the tables with the number of rows found;
-  clicking one opens that table with the same search, showing that same number of rows. The default is in
-  **Settings > Default search scope**.
+  clicking one opens that table with the same search and without value filters, showing that same number of rows.
+  Changing the term, the scope, the table or the file stops the running search and its result is dropped. The default
+  is in **Settings > Default search scope**; opening a file clears the search and the table filter and goes back to
+  it.
 - **Columns...** (Data tab and SQL result): one check box per column, a box to find a column by name, **Show all** and
   **Hide all** (with text in the find box they act only on the columns listed). Right-click a column header:
   **Size column to fit**, **Size all columns to fit**, **Hide this column**, **Show all columns**, **Columns...** and

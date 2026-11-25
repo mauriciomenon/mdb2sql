@@ -156,8 +156,9 @@ pub fn searchAll(db: *dbm.Db, gpa: Allocator, term: []const u8, progress: *expor
     errdefer hits.deinit(gpa);
     if (std.mem.indexOfNone(u8, term, &std.ascii.whitespace) == null) return hits.toOwnedSlice(gpa);
     const names = db.table_names;
-    var cols = try db.run("SELECT table_name, column_name FROM duckdb_columns() WHERE database_name = current_database() " ++
-        "AND schema_name = current_schema() ORDER BY table_name, column_index", &.{});
+    // o catalogo inteiro: com o teto do SQL livre (max_rows) as tabelas depois da coluna 10.000 ficavam de fora
+    var cols = try db.runMax("SELECT table_name, column_name FROM duckdb_columns() WHERE database_name = current_database() " ++
+        "AND schema_name = current_schema() ORDER BY table_name, column_index", &.{}, std.math.maxInt(usize));
     defer cols.deinit();
     var text: std.ArrayList([]const u8) = .empty; // colunas da tabela
     defer text.deinit(gpa);
@@ -583,6 +584,35 @@ test "search in every table: a SQLite file finds what the DuckDB file finds" {
             try t.expectEqual(c[1], if (hits.len == 1) hits[0].rows else 0);
         }
     }
+}
+
+// O DB4 real passa de 10.000 colunas: o catalogo inteiro entra na busca, nao so as max_rows primeiras linhas
+test "search in every table reads the whole column catalog, beyond max_rows columns" {
+    var db = dbm.testDb();
+    defer db.close();
+    try db.start();
+    // 100 tabelas de 100 colunas = 10.000 linhas do catalogo antes de "z"
+    var sql: std.ArrayList(u8) = .empty;
+    defer sql.deinit(t.allocator);
+    for (0..100) |i| {
+        sql.clearRetainingCapacity();
+        try sql.print(t.allocator, "CREATE TABLE t{d:0>3} (", .{i});
+        for (0..100) |col| try sql.print(t.allocator, "{s}c{d} INTEGER", .{ if (col > 0) ", " else "", col });
+        try sql.appendSlice(t.allocator, ")\x00");
+        try db.exec(sql.items[0 .. sql.items.len - 1 :0]);
+    }
+    try db.exec("CREATE TABLE z AS SELECT 'needle' AS note");
+    try db.refreshTables();
+    var p: exporter.Progress = .{};
+    const hits = try searchAll(&db, t.allocator, "needle", &p);
+    defer t.allocator.free(hits);
+    try t.expectEqual(1, hits.len);
+    try t.expectEqualStrings("z", db.table_names[hits[0].table]);
+    // tabela que falha na contagem: a busca devolve o erro (a UI mostra), nunca um resultado pela metade
+    try db.exec("CREATE VIEW zz AS SELECT CAST(error('broken view') AS VARCHAR) AS s");
+    try db.refreshTables();
+    try t.expectError(error.DuckDb, searchAll(&db, t.allocator, "needle", &p));
+    try t.expect(std.mem.indexOf(u8, db.lastError(), "broken view") != null);
 }
 
 fn out_table(db: *dbm.Db, name: []const u8) usize {
