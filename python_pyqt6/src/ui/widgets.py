@@ -95,7 +95,8 @@ class FlowLayout(QLayout):
     @staticmethod
     def _expands(item: QLayoutItem) -> bool:
         widget = item.widget()
-        return widget is not None and bool(widget.sizePolicy().horizontalPolicy() & QSizePolicy.PolicyFlag.ExpandFlag)
+        flag = QSizePolicy.PolicyFlag.ExpandFlag.value
+        return widget is not None and bool(widget.sizePolicy().horizontalPolicy().value & flag)
 
     def _width(self, item: QLayoutItem) -> int:
         # quem estica entra com a largura minima; os outros com a largura que pedem

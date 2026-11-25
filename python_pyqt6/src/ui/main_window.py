@@ -70,7 +70,7 @@ from shared.i18n import num, tr
 from shared.tsv import rows_to_tsv
 from ui.dialogs import AboutDialog, ColumnsDialog
 from ui.table_model import COPY_ROLE, SORT_ROLE, TableModel, fold, search_words
-from ui.widgets import PathEdit
+from ui.widgets import FlowLayout, PathEdit
 
 # linhas carregadas da tabela e do resultado SQL: 100 / 500 / 1000 nas 4 versoes (a pesquisa e os filtros vao no
 # banco, alem delas; ordenar e medir as colunas rodam na thread da tela sobre as carregadas)
@@ -385,6 +385,7 @@ class MainWindow(QMainWindow):
         # linha do botao: resultado (linhas) ou erro da ultima consulta
         self.sql_info = QLabel()
         self.sql_info.setContentsMargins(6, 0, 0, 0)
+        self.sql_info.setWordWrap(True)
         self._copy_menu_on(self.sql_info)
         sql_bar = QHBoxLayout()
         sql_bar.addWidget(self.sql_info, 1)
@@ -453,7 +454,7 @@ class MainWindow(QMainWindow):
         self.search_edit.setToolTip(tr("tip.words"))
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.setAccessibleName(tr("search.name"))
-        self.search_edit.setMinimumWidth(160)
+        self._fit_search_minimum()
         self.search_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.search_edit.textChanged.connect(self._search_edited)
         self.search_edit.returnPressed.connect(self._search_now)  # Enter: na hora, sem os 300 ms
@@ -462,28 +463,30 @@ class MainWindow(QMainWindow):
         scope_row = QHBoxLayout(scope)
         scope_row.setContentsMargins(0, 0, 0, 0)
         scope_row.setSpacing(0)
+        self.scope_buttons = []
         for action in self.scope_actions.values():
             button = QToolButton()
             button.setDefaultAction(action)
             scope_row.addWidget(button)
+            self.scope_buttons.append(button)
         self.columns_button = QToolButton()
         self.columns_button.setDefaultAction(self.columns_action)
-        bar = QHBoxLayout()
+        # janela estreita (720 px) igual ao Go: a barra quebra a linha, nada cortado nem escondido; o campo de busca
+        # estica (sem maximo) e nunca fica menor que 160 px
+        bar = FlowLayout()
         bar.setContentsMargins(6, 4, 6, 0)
-        bar.addWidget(self.search_edit, 1)
+        bar.addWidget(self.search_edit)
         bar.addWidget(scope)
         bar.addWidget(self.columns_button)
 
         # filtros ativos (um botao por filtro, clique remove) e Limpar filtros, numa linha que so aparece com filtro
-        self.filter_chips = QHBoxLayout()
+        # (tambem quebra a linha)
         self.clear_filters_button = QToolButton()
         self.clear_filters_button.setDefaultAction(self.clear_filters_action)
         self.filters_bar = QWidget()
-        filters_row = QHBoxLayout(self.filters_bar)
-        filters_row.setContentsMargins(6, 0, 6, 0)
-        filters_row.addLayout(self.filter_chips)
-        filters_row.addStretch(1)
-        filters_row.addWidget(self.clear_filters_button)
+        self.filter_chips = FlowLayout(self.filters_bar)
+        self.filter_chips.setContentsMargins(6, 0, 6, 0)
+        self.filter_chips.addWidget(self.clear_filters_button)
         self.filters_bar.hide()
 
         # pesquisa em todas as tabelas: lista "TABELA (linhas encontradas)" no lugar da grade; escolher uma abre
@@ -503,6 +506,7 @@ class MainWindow(QMainWindow):
         # todas as tabelas
         self.info_label = QLabel()
         self.info_label.setContentsMargins(6, 0, 6, 2)
+        self.info_label.setWordWrap(True)  # janela estreita: quebra a linha, nada cortado
         self._copy_menu_on(self.info_label)
 
         layout.setSpacing(4)
@@ -511,6 +515,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.data_stack)
         layout.addWidget(self.info_label)
         return self.data_page
+
+    def _fit_search_minimum(self) -> None:
+        # nunca menor que a dica inteira (nada cortado) nem que 160 px; acima disso estica com a janela
+        metrics = self.search_edit.fontMetrics()
+        self.search_edit.setMinimumWidth(max(160, metrics.horizontalAdvance(self.search_edit.placeholderText()) + 40))
 
     def _create_table_view(self, model: TableModel, name: str) -> tuple[QSortFilterProxyModel, QTableView]:
         proxy = QSortFilterProxyModel(self)  # so ordena; a pesquisa vai no banco
@@ -1466,8 +1475,10 @@ class MainWindow(QMainWindow):
         self.reload_table()  # o filtro vai na consulta: acha linhas alem das carregadas
 
     def _refresh_filter_bar(self) -> None:
-        while self.filter_chips.count():
-            self.filter_chips.takeAt(0).widget().deleteLater()
+        while self.filter_chips.count():  # rotulo e botoes dos filtros; o Limpar filtros volta no fim
+            widget = self.filter_chips.takeAt(0).widget()
+            if widget is not self.clear_filters_button:
+                widget.deleteLater()
         if self.filters:
             self.filter_chips.addWidget(QLabel(tr("filters.many" if len(self.filters) > 1 else "filters.one")))
         for position, (column, value) in enumerate(self.filters):
@@ -1478,6 +1489,7 @@ class MainWindow(QMainWindow):
             chip.setToolTip(tr("filters.remove"))
             chip.clicked.connect(lambda _checked=False, p=position: self.remove_filter(p))
             self.filter_chips.addWidget(chip)
+        self.filter_chips.addWidget(self.clear_filters_button)
         self.filters_bar.setVisible(bool(self.filters))
         self.clear_filters_action.setEnabled(bool(self.filters))
 

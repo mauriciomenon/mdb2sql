@@ -149,6 +149,57 @@ def test_top_bar_path_open_and_drop(qtbot, window: MainWindow, people_db: Path, 
     assert window.search_edit.text() == ""  # o arquivo nao virou texto da pesquisa
 
 
+def test_narrow_window_wraps_the_data_bar_and_the_search_stretches(qtbot, window: MainWindow) -> None:
+    # janela estreita (720 px) igual ao Go: a barra quebra a linha, nada cortado nem num menu "»"; o campo de busca
+    # estica sem maximo (eram 420 px)
+    from PyQt6.QtWidgets import QToolBar
+
+    def inside(widget) -> bool:
+        right = widget.mapTo(window.data_page, widget.rect().topRight()).x()
+        return widget.isVisible() and 0 <= widget.mapTo(window.data_page, widget.rect().topLeft()).x() and \
+            right < window.data_page.width()
+
+    window.resize(1600, 800)
+    qtbot.waitUntil(lambda: window.search_edit.width() > 420, timeout=3000)
+    assert window.search_edit.maximumWidth() > 10_000
+    window.resize(720, 800)
+    qtbot.waitUntil(lambda: window.width() == 720, timeout=3000)
+    QApplication.processEvents()
+    for widget in (window.search_edit, window.columns_button, *window.scope_buttons):
+        assert inside(widget), widget
+    assert window.search_edit.width() >= 160
+    for toolbar in window.findChildren(QToolBar):  # nada escondido no "»" da barra de cima
+        extension = toolbar.findChild(QAbstractButton, "qt_toolbar_ext_button")
+        assert extension is None or not extension.isVisible()
+
+
+def test_flow_layout_wraps_and_gives_the_spare_width_to_the_search(qtbot) -> None:
+    from PyQt6.QtWidgets import QLineEdit, QPushButton, QSizePolicy
+
+    from ui.widgets import FlowLayout
+
+    host = QWidget()
+    qtbot.addWidget(host)
+    layout = FlowLayout(host)
+    search = QLineEdit()
+    search.setMinimumWidth(160)
+    search.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    buttons = [QPushButton(text) for text in ("one", "two")]
+    for button in buttons:
+        button.setFixedWidth(100)
+    for widget in (search, *buttons):
+        layout.addWidget(widget)
+    host.show()
+    host.resize(600, 200)
+    QApplication.processEvents()
+    assert search.width() == 600 - 200 - 2 * layout.spacing() and buttons[0].y() < search.geometry().bottom()  # 1 linha
+    host.resize(250, 200)  # 160 + 6 + 100 nao cabe
+    QApplication.processEvents()
+    assert search.width() == 250 and buttons[0].y() > search.geometry().bottom()  # quebrou: o campo fica sozinho
+    assert buttons[1].x() > buttons[0].x() and buttons[1].y() == buttons[0].y()
+    assert layout.heightForWidth(250) > layout.heightForWidth(600)
+
+
 def test_table_filter_hides_non_matching(qtbot, window: MainWindow) -> None:
     # filtro da lista e pesquisa da aba Data: 300 ms depois da ultima tecla, igual nas 4 versoes
     assert window.table_filter_timer.interval() == window.search_timer.interval() == 300
@@ -822,8 +873,11 @@ def points_window(qtbot, tmp_path: Path) -> MainWindow:
 
 
 def _chips(win: MainWindow) -> list[str]:
+    # rotulo e botoes dos filtros (o Limpar filtros fica no fim da mesma linha)
     layout = win.filter_chips
-    return [layout.itemAt(i).widget().text() for i in range(layout.count())]
+    widgets = [layout.itemAt(i).widget() for i in range(layout.count())]
+    assert widgets[-1] is win.clear_filters_button
+    return [widget.text() for widget in widgets[:-1]]
 
 
 def test_right_click_filter_runs_in_the_database(qtbot, points_window: MainWindow) -> None:
