@@ -121,10 +121,11 @@ export default {
 
   'schema.columns': '{count} {count|column|columns}',
   'schema.label': 'Schema of {table}',
-  'schema.number': '#',
   'schema.column': 'Column',
   'schema.type': 'Type',
   'schema.nullable': 'Nullable',
+  'schema.yes': 'Yes',
+  'schema.no': 'No',
 
   'grid.cell': 'Cell',
   'grid.columnMenu': 'Column {name}',

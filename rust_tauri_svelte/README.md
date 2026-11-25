@@ -87,7 +87,7 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
 - **Filter by this value** (botao direito numa celula da aba Data): coluna = valor exato na consulta ao banco
   (`WHERE "coluna" = ?`; celula vazia de NULL vira `IS NULL`). Varios filtros somam (E); os ativos aparecem acima
   da grade (`Filter: SIGLA = 'U9A' x`) com **Clear filters**. Filtros e pesquisa valem juntos.
-- Aba **Schema**: colunas da tabela, tipo e se aceita nulo.
+- Aba **Schema**: colunas da tabela, tipo e se aceita nulo (Yes/No no idioma da tela).
 - Aba **SQL**: SQL livre do DuckDB sobre as tabelas abertas (ex.: `SELECT * FROM "RANGER_SOSTAT" WHERE RTUNO = 2`);
   **Run SQL** ou `Ctrl+Enter`. A grade mostra ate o Row limit; a exportacao do resultado leva todas as linhas.
 - **Grade**: clique seleciona a celula; `Ctrl+C` copia o valor; botao direito (ou a tecla de menu) abre **Copy

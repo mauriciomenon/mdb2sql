@@ -77,7 +77,12 @@ test('Schema titles name the nullability column, never just NULL', () => {
   assert.deepEqual(titles('en'), ['Column', 'Type', 'Nullable']);
   assert.deepEqual(titles('pt-BR'), ['Coluna', 'Tipo', 'Aceita nulo']);
   assert.deepEqual(titles('es'), ['Columna', 'Tipo', 'Admite nulo']);
-  assert.match(read('./App.svelte'), /'schema\.type', 'schema\.nullable'\]\.map/);
+  // padrao item 15: sem a coluna "#" e a nulidade traduzida (o backend manda YES/NO)
+  assert.match(read('./App.svelte'), /\['schema\.column', 'schema\.type', 'schema\.nullable'\]\.map/);
+  assert.ok(!('schema.number' in CATALOGS.en));
+  assert.match(read('./App.svelte'), /t\(c\.null === 'NO' \? 'schema\.no' : 'schema\.yes'\)/);
+  const yesNo = (code) => [CATALOGS[code]['schema.yes'], CATALOGS[code]['schema.no']];
+  assert.deepEqual([yesNo('pt-BR'), yesNo('es'), yesNo('en')], [['Sim', 'Não'], ['Sí', 'No'], ['Yes', 'No']]);
 });
 
 test('license line of the About says GPL v2 or later in each language', () => {

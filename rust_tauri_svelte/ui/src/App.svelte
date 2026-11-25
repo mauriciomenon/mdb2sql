@@ -185,8 +185,14 @@
     const words = searchWords(columnSearch);
     return columns.filter((col) => hasAllWords(fold(col.name), words));
   });
-  let schemaColumns = $derived(
-    ['schema.number', 'schema.column', 'schema.type', 'schema.nullable'].map((key) => ({ name: t(key), type: '' }))
+  // Schema: Coluna, Tipo, Aceita nulo (sem a coluna "#"); a nulidade traduzida (Sim/Nao, Yes/No, Si/No)
+  let schemaColumns = $derived(['schema.column', 'schema.type', 'schema.nullable'].map((key) => ({ name: t(key), type: '' })));
+  let schemaRows = $derived(
+    columns.map((c) =>
+      Object.fromEntries(
+        [c.name, c.type, t(c.null === 'NO' ? 'schema.no' : 'schema.yes')].map((value, k) => [schemaColumns[k].name, value])
+      )
+    )
   );
   // aviso de X11 em 3 linhas curtas (dialogo e log): situacao, o fato (sem rotulo "Falta:"), comando da distro (sem comando em
   // distro desconhecida)
@@ -1133,7 +1139,7 @@
         <Grid
           --cell-x="16px"
           columns={schemaColumns}
-          rows={columns.map((c, i) => Object.fromEntries([i + 1, c.name, c.type, c.null].map((v, k) => [schemaColumns[k].name, v])))}
+          rows={schemaRows}
           label={t('schema.label', { table: selectedTable })}
           emptyText={t('data.empty')}
           {t}
