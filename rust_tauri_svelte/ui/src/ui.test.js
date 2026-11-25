@@ -135,7 +135,9 @@ test('keyboard shortcuts of the 4 stacks', () => {
   assert.match(code, /f: focusSearch,/);
   assert.match(code, /q: quit,/);
   assert.match(code, /3: focusSql,/);
-  assert.match(code, /enter: \(\) => tab === 'sql' && runSql\(\),/);
+  // Ctrl+Enter e Arquivo > Abrir... valem como o botao de cada um: nada durante uma abertura ou consulta
+  assert.match(code, /enter: \(\) => tab === 'sql' && !busy && openedPath && runSql\(\),/);
+  assert.match(markup('./App.svelte'), /role="menuitem" disabled=\{busy\} onclick=\{browse\}/);
   assert.match(code, /if \(e\.key === 'F5'\) e\.preventDefault\(\);\s*if \(document\.querySelector\('dialog\[open\]'\) \|\| e\.altKey\) return;\s*if \(e\.key === 'F5' && !e\.ctrlKey\) return reload\(\);/);
   assert.match(appFunction('reload'), /if \(openedPath\) dbPath = openedPath;\s*if \(dbPath\.trim\(\)\) openDatabase\(\);/);
   assert.match(markup('./App.svelte'), /<svelte:window onclick=\{[^}]*\} onkeydown=\{shortcut\} \/>/);

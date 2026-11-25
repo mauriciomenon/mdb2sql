@@ -838,7 +838,7 @@
       1: () => (tab = 'data'),
       2: () => (tab = 'schema'),
       3: focusSql,
-      enter: () => tab === 'sql' && runSql(),
+      enter: () => tab === 'sql' && !busy && openedPath && runSql(), // como o botao Executar
     };
     const act = actions[e.key.toLowerCase()];
     if (!act) return;
@@ -893,7 +893,7 @@
       {#if openMenu === 'file'}
         <!-- como o menu Arquivo do Zig: Abrir..., Exportar > (submenu), Fechar, Sair -->
         <div class="dropdown" role="menu" aria-label={t('menu.file')}>
-          <button type="button" role="menuitem" onclick={browse} onmouseenter={() => (exportSub = false)}>
+          <button type="button" role="menuitem" disabled={busy} onclick={browse} onmouseenter={() => (exportSub = false)}>
             {t('file.open')} <kbd>{t('file.openKey')}</kbd>
           </button>
           <div class="submenu-root" role="none" onmouseenter={() => (exportSub = true)} onmouseleave={() => (exportSub = false)}>
