@@ -1100,7 +1100,7 @@ const App = struct {
                     if (g.truncated)
                         app.sql_msg.set(false, "sql_more_rows", .{ g.rows.len, g.rows.len })
                     else
-                        app.sql_msg.set(false, "sql_rows_cols", .{ g.rows.len, g.columns.len });
+                        app.sql_msg.setText(false, sqlRowsCols(&app.sql_msg.buf, g.rows.len, g.columns.len));
                 }
             },
             .export_ => if (out.err == null) {
@@ -1111,8 +1111,8 @@ const App = struct {
                 var cols_buf: [96]u8 = undefined;
                 const cells_s = if (p.cut_cells > 0) i18n.fmt(&cells_buf, "export_cut_cells", .{p.cut_cells}) else "";
                 const cols_s = if (p.cut_cols > 0) i18n.fmt(&cols_buf, "export_cut_cols", .{p.cut_cols}) else "";
-                const unit = if (r.export_kind.countsTables()) tr("unit_tables") else tr("unit_rows");
-                app.status.set(cells_s.len + cols_s.len > 0, "status_exported", .{ out.exported, unit, std.fs.path.basename(r.destPath()), cells_s, cols_s });
+                const unit = if (r.export_kind.countsTables()) i18n.trCount("unit_tables", out.exported) else i18n.trCount("unit_rows", out.exported);
+                app.status.setText(cells_s.len + cols_s.len > 0, i18n.fmtCount(&app.status.buf, "status_exported", out.exported, .{ out.exported, unit, std.fs.path.basename(r.destPath()), cells_s, cols_s }));
             },
         }
         if (out.err) |e| return app.fail(if (out.kind == .sql) &app.sql_msg else &app.status, e);
@@ -2006,7 +2006,7 @@ const App = struct {
             if (total > 0 and (r.kind == .open or r.kind == .export_ or r.kind == .search_all)) {
                 ig.igSameLine(0, -1);
                 var buf: [64]u8 = undefined;
-                const unit = if (r.kind != .export_ or r.export_kind.countsTables()) tr("unit_tables") else tr("unit_rows");
+                const unit = if (r.kind != .export_ or r.export_kind.countsTables()) i18n.trCount("unit_tables", total) else i18n.trCount("unit_rows", total);
                 const overlay = i18n.fmtZ(&buf, "progress_overlay", .{ done, total, unit });
                 const frac: f32 = @floatCast(@as(f64, @floatFromInt(@min(done, total))) / @as(f64, @floatFromInt(total)));
                 ig.igProgressBar(frac, .{ .x = 240, .y = 0 }, overlay);
@@ -2065,7 +2065,8 @@ const App = struct {
     fn drawTables(app: *App) void {
         ig.igSetNextItemWidth(-1);
         // filtra 300 ms depois da ultima tecla; Enter filtra na hora
-        if (ig.igInputTextWithHint("##filter", tr("filter_tables"), &app.table_filter, app.table_filter.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) {
+        var hb: [96]u8 = undefined;
+        if (ig.igInputTextWithHint("##filter", i18n.fmtCountZ(&hb, "filter_tables", app.db.table_names.len, .{app.db.table_names.len}), &app.table_filter, app.table_filter.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) {
             app.table_filter_wait.due = null;
             app.table_filter_applied = app.table_filter;
         } else if (ig.igIsItemEdited()) app.table_filter_wait.edited(ig.igGetTime());
@@ -2283,7 +2284,8 @@ const App = struct {
         // as colunas ocultas ficam na barra de baixo
         if (app.result_rows) |rows| {
             ig.igSameLine(0, -1);
-            textT("rows_match", .{ rows.len, g.rows.len });
+            var mb: [96]u8 = undefined;
+            textSlice(i18n.fmtCount(&mb, "rows_match", g.rows.len, .{ rows.len, g.rows.len }));
         }
         _ = drawGrid("##result", g, null, &app.result_sel, app.result_rows, .hide, &app.prefs, tr("sql_result"), 0);
     }

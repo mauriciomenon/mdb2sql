@@ -6,17 +6,18 @@ pub const browse = "Browse...";
 pub const open = "Open";
 pub const export_button = "Export...";
 pub const no_db = "No database loaded";
-pub const filter_tables = "filter tables";
-pub const search_rule = "All words, any order, ignoring case and accents";
+pub const filter_tables = "Filter {d} tables";
+pub const filter_tables_one = "Filter {d} table";
+pub const search_rule = "All words, any order, in one cell; ignores case and accents";
 pub const col_table = "Table";
 pub const col_rows = "Rows";
 pub const tab_data = "Data";
 pub const tab_schema = "Schema";
 pub const tab_sql = "SQL";
 pub const select_table = "Select a table";
-pub const search = "search";
+pub const search = "Search the whole table";
 pub const columns_button = "Columns...";
-pub const columns_tip = "Hidden columns are still searched and exported.";
+pub const columns_tip = "Search and export use every column";
 pub const rows_label = "Rows";
 pub const rows_showing = "{s}: showing {d} of {d} rows";
 pub const rows_showing_one = "{s}: showing {d} of {d} row";
@@ -28,9 +29,10 @@ pub const filters_label = "Filters:";
 pub const remove_filter = "Remove this filter";
 pub const clear_filters = "Clear filters";
 pub const run = "Run (Ctrl+Enter)";
-pub const search_rows = "search the rows shown";
 pub const sql_hint = "SELECT * FROM ...";
+pub const search_rows = "Search the loaded result";
 pub const rows_match = "{d} of {d} rows match";
+pub const rows_match_one = "{d} of {d} row matches";
 pub const schema_column = "Column";
 pub const schema_type = "Type";
 pub const schema_null = "Nullable";
@@ -55,7 +57,7 @@ pub const show_all = "Show all";
 pub const hide_all = "Hide all";
 pub const columns_title = "Columns of {s}";
 pub const sql_result = "SQL result";
-pub const find_column = "find a column";
+pub const find_column = "Filter columns";
 pub const columns_shown = "{d} of {d} shown";
 
 // menus
@@ -124,14 +126,14 @@ pub const converted_deleted = "Converted SQLite deleted";
 
 // Log window
 pub const log_title = "Log";
-pub const log_hide = "Hide the log (Ctrl+L)";
+pub const log_hide = "Collapse the log (Ctrl+L)";
 pub const log_show = "Show the log (Ctrl+L)";
 pub const log_unread = "{d} unread errors or warnings";
 pub const log_unread_one = "{d} unread error or warning";
 
 // work in progress
 pub const busy_converting = "Converting the Access database";
-pub const busy_opening = "Opening database";
+pub const busy_opening = "Opening the database";
 pub const busy_loading = "Loading table";
 pub const busy_running = "Running query";
 pub const busy_searching = "Searching all tables";
@@ -139,7 +141,9 @@ pub const busy_exporting = "Exporting";
 pub const busy_elapsed = "{s} {d:.1} s";
 pub const progress_overlay = "{d} / {d} {s}";
 pub const unit_tables = "tables";
+pub const unit_tables_one = "table";
 pub const unit_rows = "rows";
+pub const unit_rows_one = "row";
 
 // status line
 pub const status_loaded = "Loaded: {s} ({d} tables)";
@@ -149,10 +153,14 @@ pub const source_via_converted = "Opened via {s}, converted to SQLite";
 pub const source_tip = "Reader used to open the file";
 pub const status_closed = "Closed: {s}";
 pub const status_exported = "Exported {d} {s} to {s}{s}{s}";
+pub const status_exported_one = "Exported {d} {s} to {s}{s}{s}";
 pub const export_cut_cells = " | {d} cells cut to 32,767 characters";
 pub const export_cut_cols = " | {d} columns past 16,384 left out";
 pub const sql_more_rows = "More than {d} rows: showing the first {d} (the export writes all of them)";
-pub const sql_rows_cols = "{d} rows, {d} columns";
+pub const sql_rows = "{d} rows";
+pub const sql_rows_one = "{d} row";
+pub const sql_cols = "{d} columns";
+pub const sql_cols_one = "{d} column";
 pub const source_access_odbc = "Access ODBC";
 pub const source_access_mdbtools = "mdbtools";
 

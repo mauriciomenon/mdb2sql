@@ -107,6 +107,52 @@ test "plural: every _one key has its plural key with the same arguments, and fmt
     lang = .en;
     try t.expectEqualStrings("1 unread error or warning", fmtCount(&b, "log_unread", 1, .{1}));
     try t.expectEqualStrings("2 unread errors or warnings", fmtCount(&b, "log_unread", 2, .{2}));
+    // SQL, exportacao e progresso
+    lang = .pt_br;
+    try t.expectEqualStrings("1 linha", fmtCount(&b, "sql_rows", 1, .{1}));
+    try t.expectEqualStrings("1 coluna", fmtCount(&b, "sql_cols", 1, .{1}));
+    try t.expectEqualStrings("1 de 1 linha encontrada", fmtCount(&b, "rows_match", 1, .{ 1, 1 }));
+    try t.expectEqualStrings("Exportada 1 linha para T.csv", fmtCount(&b, "status_exported", 1, .{ 1, trCount("unit_rows", 1), "T.csv", "", "" }));
+    try t.expectEqualStrings("Exportadas 3 tabelas para T.sqlite", fmtCount(&b, "status_exported", 3, .{ 3, trCount("unit_tables", 3), "T.sqlite", "", "" }));
+}
+
+test "Schema nullable column: YES/NO in the screen language, again after a language change" {
+    defer lang = .en;
+    lang = .pt_br;
+    try t.expectEqualStrings("Sim", yesNo("YES"));
+    try t.expectEqualStrings("Não", yesNo("NO"));
+    lang = .es;
+    try t.expectEqualStrings("Sí", yesNo("Sim")); // o texto ja traduzido, refeito no idioma novo
+    try t.expectEqualStrings("No", yesNo("Não"));
+    lang = .en;
+    try t.expectEqualStrings("Yes", yesNo("Sí"));
+    try t.expectEqualStrings("No", yesNo("No"));
+    try t.expectEqualStrings("PRI", yesNo("PRI"));
+}
+
+test "texts as in the Go catalog (the reference wording), in the three languages" {
+    const want = .{
+        .{ "search_rule", "All words, any order, in one cell; ignores case and accents", "Todas as palavras, em qualquer ordem, na mesma célula; ignora maiúsculas e acentos", "Todas las palabras, en cualquier orden, en la misma celda; ignora mayúsculas y acentos" },
+        .{ "columns_tip", "Search and export use every column", "Pesquisa e exportação usam todas as colunas", "La búsqueda y la exportación usan todas las columnas" },
+        .{ "find_column", "Filter columns", "Filtrar colunas", "Filtrar columnas" },
+        .{ "search", "Search the whole table", "Pesquisar na tabela inteira", "Buscar en toda la tabla" },
+        .{ "clear_filters", "Clear filters", "Limpar filtros", "Quitar filtros" },
+        .{ "menu_search_scope", "Default search scope", "Escopo padrão da busca", "Alcance predeterminado de la búsqueda" },
+        .{ "menu_log", "Log", "Log", "Log" },
+        .{ "converted_remember", "Remember for this session", "Lembrar nesta sessão", "Recordar en esta sesión" },
+    };
+    inline for (want) |w| {
+        inline for (0..3) |l| try t.expectEqualStrings(w[l + 1], @field(catalogs[l], w[0]));
+    }
+    // sem Title Case nas frases (so a primeira letra maiuscula)
+    inline for (catalogs) |C| {
+        inline for (.{ "search", "find_column", "menu_search_scope", "copy_row_header", "show_all_columns" }) |k| {
+            const s: []const u8 = @field(C, k);
+            var it = std.mem.tokenizeScalar(u8, s, ' ');
+            _ = it.next();
+            while (it.next()) |word| try t.expect(!std.ascii.isUpper(word[0]) or std.mem.eql(u8, word, "NULL"));
+        }
+    }
 }
 
 test "translations differ from English where words are involved" {
