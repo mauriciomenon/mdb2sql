@@ -36,7 +36,8 @@ pub const schema_null = "Aceita nulo";
 pub const null_text = "NULL";
 pub const scope_table = "Esta tabela";
 pub const scope_all = "Todas as tabelas";
-pub const global_found = "\"{s}\" encontrado em {d} tabelas";
+pub const global_found = "{d} tabelas com linhas que contêm \"{s}\"";
+pub const global_found_one = "{d} tabela com linhas que contêm \"{s}\"";
 
 // menus da grade e dialogo Colunas
 pub const filter_by_value = "Filtrar por este valor";

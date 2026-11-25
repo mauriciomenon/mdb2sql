@@ -52,6 +52,7 @@ fn keys(comptime C: type) []const [:0]const u8 {
 }
 
 test "the three catalogs have the same keys and no empty text" {
+    @setEvalBranchQuota(100_000);
     inline for (catalogs) |C| {
         try t.expectEqual(keys(catalogs[0]).len, keys(C).len);
         inline for (comptime keys(catalogs[0])) |d| {
@@ -198,6 +199,10 @@ test "Data tab count line: shown of matching rows, the table total when narrowed
     try t.expectEqualStrings("T: mostrando 100 de 604 linhas correspondentes (36754 na tabela)", fmtCount(&b, "rows_found", 604, .{ "T", 100, 604, 36754 }));
     lang = .es;
     try t.expectEqualStrings("T: mostrando 0 de 0 filas", fmtCount(&b, "rows_showing", 0, .{ "T", 0, 0 }));
+    // Todas as tabelas
+    lang = .pt_br;
+    try t.expectEqualStrings("1 tabela com linhas que contêm \"campo\"", fmtCount(&b, "global_found", 1, .{ 1, "campo" }));
+    try t.expectEqualStrings("3 tabelas com linhas que contêm \"ELSUL\"", fmtCount(&b, "global_found", 3, .{ 3, "ELSUL" }));
 }
 
 test "tr and fmt follow the current language" {

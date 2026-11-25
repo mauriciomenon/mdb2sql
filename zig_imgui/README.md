@@ -113,8 +113,8 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   runs 300 ms after the last key (Enter: at once), in the database over the **whole table** (every column), for
   Access, SQLite and DuckDB alike, before the row limit: the row count follows it.
 - Next to the search box, **This table** | **All tables**: with **All tables** the text is searched in every table
-  (same rule and same query as the table search) and the Data tab lists the tables with the number of rows found;
-  clicking one opens that table with the same search and without value filters, showing that same number of rows.
+  (same rule and same query as the table search) and the Data tab shows `<n> tables with rows matching "<text>"` and
+  the list `<table> (<rows found>)`; clicking one opens that table with the same search and without value filters, showing that same number of rows.
   Changing the term, the scope, the table or the file stops the running search and its result is dropped. The default
   is in **Settings > Default search scope**; opening a file clears the search and the table filter and goes back to
   it.

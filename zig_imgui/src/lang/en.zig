@@ -36,7 +36,8 @@ pub const schema_null = "Nullable";
 pub const null_text = "NULL";
 pub const scope_table = "This table";
 pub const scope_all = "All tables";
-pub const global_found = "\"{s}\" found in {d} tables";
+pub const global_found = "{d} tables with rows matching \"{s}\"";
+pub const global_found_one = "{d} table with rows matching \"{s}\"";
 
 // grid menus and Columns dialog
 pub const filter_by_value = "Filter by this value";

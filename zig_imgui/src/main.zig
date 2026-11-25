@@ -2175,35 +2175,25 @@ const App = struct {
         }
     }
 
-    // Busca em todas as tabelas: as tabelas com linhas encontradas; clicar abre a tabela com a mesma busca
+    // Busca em todas as tabelas: "<n> tabelas com linhas que contem ..." e a lista "tabela (linhas)" (Python e Rust);
+    // clicar abre a tabela com a mesma busca
     fn drawGlobal(app: *App) void {
         const g = if (app.global) |*x| x else return;
         ig.igAlignTextToFramePadding();
-        textT("global_found", .{ zstr(&g.term), g.hits.len });
+        var hb: [400]u8 = undefined;
+        textSlice(i18n.fmtCount(&hb, "global_found", g.hits.len, .{ g.hits.len, zstr(&g.term) }));
         if (g.hits.len == 0) return;
-        const flags = ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_ScrollY | ig.ImGuiTableFlags_BordersInnerV | ig.ImGuiTableFlags_SizingFixedFit;
-        if (!ig.igBeginTable("##global", 2, flags, .{ .x = 0, .y = 0 }, 0)) return;
-        defer ig.igEndTable();
-        ig.igTableSetupScrollFreeze(0, 1);
-        ig.igTableSetupColumn(tr("col_table"), 0, 0, 0);
-        ig.igTableSetupColumn(tr("col_rows"), 0, 0, 0);
-        ig.igTableNextRow(ig.ImGuiTableRowFlags_Headers, ig.igTableGetHeaderRowHeight());
-        if (ig.igTableSetColumnIndex(0)) ig.igTableHeader(tr("col_table"));
-        if (ig.igTableSetColumnIndex(1)) _ = rightHeader(tr("col_rows"), 0);
+        defer ig.igEndChild();
+        if (!ig.igBeginChild_Str("##global", .{ .x = 0, .y = 0 }, ig.ImGuiChildFlags_Borders, 0)) return;
         for (g.hits, 0..) |h, i| {
             if (h.table >= app.db.table_names.len) continue;
-            ig.igTableNextRow(0, 0);
-            _ = ig.igTableNextColumn();
             ig.igPushID_Int(@intCast(i));
-            if (ig.igSelectable_Bool("##g", false, ig.ImGuiSelectableFlags_SpanAllColumns, .{ .x = 0, .y = 0 })) app.pickGlobal(h.table, &g.term);
+            // "##" + PushID: o rotulo fica vazio e o texto (que nao termina em 0 e pode ter "#") vai por textSlice
+            if (ig.igSelectable_Bool("##g", false, 0, .{ .x = 0, .y = 0 })) app.pickGlobal(h.table, &g.term);
             ig.igPopID();
             ig.igSameLine(0, 0);
-            textSlice(app.db.table_names[h.table]);
-            _ = ig.igTableNextColumn();
-            var nb: [24]u8 = undefined;
-            const n = std.fmt.bufPrint(&nb, "{d}", .{h.rows}) catch "";
-            rightAlign(textWidth(n), 0);
-            textSlice(n);
+            var ib: [600]u8 = undefined;
+            textSlice(std.fmt.bufPrint(&ib, "{s} ({d})", .{ app.db.table_names[h.table], h.rows }) catch app.db.table_names[h.table]);
         }
     }
 };
