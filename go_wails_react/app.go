@@ -42,11 +42,11 @@ type App struct {
 
 	// Access file converted to SQLite: the file (temporary until saved or deleted) and the Access file it came from
 	converted, convertedFrom string
-	convChoice              string // "save" or "delete" remembered for this session ("" = ask)
-	convDir                 string // folder of the last "save", used when "save" is remembered
-	convertedFromKey        string               // fileKey of the Access file converted now
-	convCache               map[string]savedConv // session cache: Access fileKey -> SQLite saved from it
-	displayWarn             *DisplayWarning // Linux: X11 missing, running on Wayland (display.go)
+	convChoice               string               // "save" or "delete" remembered for this session ("" = ask)
+	convDir                  string               // folder of the last "save", used when "save" is remembered
+	convertedFromKey         string               // fileKey of the Access file converted now
+	convCache                map[string]savedConv // session cache: Access fileKey -> SQLite saved from it
+	displayWarn              *DisplayWarning      // Linux: X11 missing, running on Wayland (display.go)
 
 	jobMu        sync.Mutex
 	cancel       context.CancelFunc // of the running load or export
@@ -112,6 +112,11 @@ func (a *App) GetAppInfo() AppInfo {
 // !T: The frontend cannot know which file an empty path resolved to (MDB2SQL_DB_PATH or sample)
 func (a *App) DatabaseName() string {
 	return a.dbName
+}
+
+// DatabasePath is the full path of the open file ("" if none): the path field of the top bar shows it
+func (a *App) DatabasePath() string {
+	return a.dbPath
 }
 
 // SourceKind diz por qual leitor o arquivo foi aberto (DuckDB, SQLite, Access ODBC, mdbtools)

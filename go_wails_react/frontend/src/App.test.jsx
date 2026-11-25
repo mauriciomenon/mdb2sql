@@ -81,6 +81,47 @@ describe('App IPC flow', () => {
     expect(schemaTable.className).toBe('schema'); // wider cell padding than the data grid (App.css)
   });
 
+  // standard item 1: the path bar of Zig (field + Browse... Open Export...); a file dropped on the window opens
+  it('opens the path typed in the top bar, the one picked by Browse... and a dropped file', async () => {
+    const SelectDatabase = vi.fn(async () => 'C:\\data\\picked.sqlite');
+    const DatabasePath = vi.fn(async () => 'C:\\resolved\\sample.duckdb');
+    let drop;
+    const OnFileDrop = vi.fn((cb, useDropTarget) => {
+      drop = cb;
+      expect(useDropTarget).toBe(false); // the whole window takes the drop
+    });
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SelectDatabase } } }, runtime: { OnFileDrop } });
+    render(<App />);
+    const field = screen.getByRole('textbox', { name: 'Database file (.accdb, .mdb, .sqlite, .duckdb)' });
+    expect(screen.getByRole('button', { name: 'Export...' })).toBeDisabled(); // nothing open yet
+
+    fireEvent.change(field, { target: { value: '  C:\\data\\typed.duckdb ' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('C:\\data\\typed.duckdb'));
+    await screen.findByText('Alpha');
+    expect(field).toHaveValue('C:\\data\\typed.duckdb');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Browse...' }));
+    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('C:\\data\\picked.sqlite'));
+    await waitFor(() => expect(field).toHaveValue('C:\\data\\picked.sqlite'));
+
+    await act(async () => {
+      drop(10, 10, ['C:\\data\\dropped.mdb']);
+    });
+    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('C:\\data\\dropped.mdb'));
+    await waitFor(() => expect(field).toHaveValue('C:\\data\\dropped.mdb'));
+
+    // an empty field opens the default database; the field then shows the file Go resolved
+    window.go.main.App.DatabasePath = DatabasePath;
+    fireEvent.change(field, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith(''));
+    await waitFor(() => expect(field).toHaveValue('C:\\resolved\\sample.duckdb'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
+    expect(within(screen.getByRole('menu', { name: 'Export' })).getByRole('menuitem', { name: en('export.dbSqlite') })).toBeEnabled();
+  });
+
   it('does nothing when the dialog is cancelled', async () => {
     const SelectDatabase = vi.fn(async () => '');
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, SelectDatabase } } } });
@@ -840,7 +881,8 @@ describe('App IPC flow', () => {
     }
     const dupes = all.filter((n, i) => all.indexOf(n) !== i);
     expect(dupes).toEqual([]);
-    expect(all.filter((n) => /export/i.test(n))).toEqual(['Export']); // one Export entry point
+    // the Export menu and the Export... button of the path bar (standard item 1, as Zig) open the same list
+    expect(all.filter((n) => /export/i.test(n))).toEqual(['Export', 'Export...']);
     expect(all).toContain('Database as Excel (.xlsx, one sheet per table)');
     expect(all).toContain('Clear filters');
     expect(all).toContain('Columns...');

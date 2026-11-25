@@ -2,7 +2,7 @@
 // !T: Single-screen viewer talking to Go through the Wails IPC bridge (window.go.main.App). Every visible text comes
 // from the catalogs in ../../i18n (see i18n.ts)
 
-import { Fragment, useEffect, useMemo, useRef, useState, version as reactVersion } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, version as reactVersion } from 'react';
 import './App.css';
 import { LANGS, translate, type Lang, type T } from './i18n';
 
@@ -12,7 +12,7 @@ export type Theme = 'system' | 'light' | 'dark';
 type View = 'data' | 'schema' | 'sql';
 type Scope = 'table' | 'all'; // Data tab search: the open table or all tables
 type TableHits = { table: string; rows: number };
-type MenuName = 'file' | 'export' | 'view' | 'settings' | 'help';
+type MenuName = 'file' | 'export' | 'exportBar' | 'view' | 'settings' | 'help';
 type QueryResult = { columns: string[]; rows: Row[]; more: boolean };
 type Progress = { done: number; total: number; label: string };
 type Conversion = { done: boolean; saved: string };
@@ -32,6 +32,7 @@ declare global {
           GetTableSchema?: (tableName: string) => Promise<Column[]>;
           SelectDatabase?: () => Promise<string>;
           DatabaseName?: () => Promise<string>;
+          DatabasePath?: () => Promise<string>;
           SourceKind?: () => Promise<string>;
           StartupPath?: () => Promise<string>;
           GetAppInfo?: () => Promise<AppInfo>;
@@ -63,6 +64,8 @@ declare global {
       BrowserOpenURL?: (url: string) => void;
       ClipboardSetText?: (text: string) => Promise<boolean>;
       EventsOn?: (name: string, cb: (data: any) => void) => () => void;
+      OnFileDrop?: (cb: (x: number, y: number, paths: string[]) => void, useDropTarget: boolean) => void;
+      OnFileDropOff?: () => void;
       Quit?: () => void;
     };
   }
@@ -188,6 +191,10 @@ function App() {
   const t: T = (key, ...args) => translate(langRef.current, key, ...args);
   const [tables, setTables] = useState<string[]>([]);
   const [dbName, setDbName] = useState('');
+  const [pathText, setPathText] = useState(''); // path field of the top bar (Open/Enter opens it)
+  const [pathFocused, setPathFocused] = useState(false);
+  const pathRef = useRef<HTMLInputElement>(null);
+  const [pathElided, setPathElided] = useState(false); // path longer than the field: its start is hidden
   const [source, setSource] = useState('');
   const [converted, setConverted] = useState(false);
   const [filter, setFilter] = useState('');
@@ -234,6 +241,8 @@ function App() {
   // "save or delete the converted SQLite" question; resolve gets the answer (null = cancel)
   const [ask, setAsk] = useState<{ name: string; resolve: (a: { choice: string; remember: boolean } | null) => void } | null>(null);
   const started = useRef(false);
+  // the functions of the latest render, for listeners registered once (file drop, keyboard shortcuts)
+  const latest = useRef<Record<string, (...args: any[]) => unknown>>({});
   // request numbers: an answer that is not the latest one (another table, query or file since) is dropped
   const tableReq = useRef(0);
   const sqlReq = useRef(0);
@@ -304,6 +313,26 @@ function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // a file dragged onto the window opens, as the path field + Open (Go resolves the dropped file's full path)
+  useEffect(() => {
+    window.runtime?.OnFileDrop?.((_x, _y, paths) => paths?.[0] && latest.current.openPath(paths[0]), false);
+    return () => window.runtime?.OnFileDropOff?.();
+  }, []);
+
+  // path field as ImGui ElideLeft (Zig): a path longer than the field shows its end, the file name, with "..." in
+  // front; with the focus it scrolls as any field
+  useLayoutEffect(() => {
+    const el = pathRef.current;
+    if (!el) return;
+    const fit = () => {
+      if (!pathFocused) el.scrollLeft = el.scrollWidth;
+      setPathElided(!pathFocused && el.scrollWidth > el.clientWidth);
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [pathText, pathFocused]);
 
   // dragging the top border of the Log panel resizes it (10% of the window by default, 3 lines to 25%)
   function startLogResize(e: React.MouseEvent) {
@@ -570,9 +599,13 @@ function App() {
     }
   }
 
+  // the path of the top bar field: an empty field opens the default database (MDB2SQL_DB_PATH or the sample)
+  const openTyped = () => openPath(pathText.trim());
+
   async function openPath(path: string) {
     setError('');
     if (!(await settleConversion())) return;
+    if (path) setPathText(path);
     setJob(t('job.loading'));
     setProgress(null);
     setStatusText(t('status.loading'));
@@ -582,6 +615,7 @@ function App() {
       const tableList = (await bridge.LoadDatabase(path)) ?? [];
       // Go knows which file an empty path resolved to (MDB2SQL_DB_PATH or the bundled sample)
       const name = (await bridge.DatabaseName?.()) || path.split(/[\\/]/).pop() || 'sample.duckdb';
+      setPathText((await bridge.DatabasePath?.()) || path);
       setSource((await bridge.SourceKind?.()) || '');
       setConverted(!!(await bridge.PendingConversion?.()));
       setDbName(name);
@@ -713,6 +747,20 @@ function App() {
     { group: 'sql', label: t('export.sqlXlsx'), on: !!resultSql, run: () => runExport(sqlResultName, () => bridge?.ExportQuery?.(resultSql, 'xlsx')) },
   ];
 
+  // the export list: the Export... button of the top bar and the Export menu open the same items
+  const exportMenu = (className: string) => (
+    <div className={className} role="menu" aria-label={t('menu.export')}>
+      {exportItems.map((it, i) => (
+        <Fragment key={it.label}>
+          {i > 0 && exportItems[i - 1].group !== it.group && <hr />}
+          <button role="menuitem" disabled={!it.on || busy} onClick={it.run}>
+            {it.label}
+          </button>
+        </Fragment>
+      ))}
+    </div>
+  );
+
   const visibleTables = useMemo(() => {
     const words = searchWords(tableFilter);
     return words.length ? tables.filter((tb) => hasAllWords(normalizeText(tb), words)) : tables;
@@ -750,6 +798,8 @@ function App() {
   // log collapsed: the most important unread line (error, then warning) takes the status bar
   const shownStatus = logOpen ? { text: error || status, level: error ? 'error' : 'info', unread: 0 } : statusLine(logLines, readMark, status, error);
   const viewName = (v: View) => (v === 'data' ? t('tab.data') : v === 'schema' ? t('tab.schema', schema.length) : t('tab.sql'));
+
+  latest.current = { openPath };
 
   const toggleMenu = (name: MenuName) => (e: React.MouseEvent) => {
     e.stopPropagation(); // the window click handler would close it again
@@ -844,21 +894,9 @@ function App() {
               </div>
             )}
           </div>
-          {/* every action lives in one place only: no toolbar copies of the menu items */}
           <div className="menu-root">
             {menuButton('export', t('menu.export'))}
-            {openMenu === 'export' && (
-              <div className="dropdown" role="menu" aria-label={t('menu.export')}>
-                {exportItems.map((it, i) => (
-                  <Fragment key={it.label}>
-                    {i > 0 && exportItems[i - 1].group !== it.group && <hr />}
-                    <button role="menuitem" disabled={!it.on || busy} onClick={it.run}>
-                      {it.label}
-                    </button>
-                  </Fragment>
-                ))}
-              </div>
-            )}
+            {openMenu === 'export' && exportMenu('dropdown')}
           </div>
           <div className="menu-root">
             {menuButton('view', t('menu.view'))}
@@ -917,6 +955,36 @@ function App() {
             )}
           </div>
         </nav>
+        {/* path bar as in Zig: the field takes the line, Browse... Open Export... on the right */}
+        <div className="pathbar">
+          <div className={pathElided ? 'path elided' : 'path'}>
+            <input
+              ref={pathRef}
+              type="text"
+              spellCheck={false}
+              placeholder={t('top.path')}
+              aria-label={t('top.path')}
+              value={pathText}
+              disabled={busy}
+              onChange={(e) => setPathText(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && openTyped()}
+              onFocus={() => setPathFocused(true)}
+              onBlur={() => setPathFocused(false)}
+            />
+          </div>
+          <button disabled={busy} onClick={() => loadDatabase(true)}>
+            {t('top.browse')}
+          </button>
+          <button disabled={busy} onClick={openTyped}>
+            {t('top.open')}
+          </button>
+          <div className="menu-root">
+            <button aria-haspopup="menu" aria-expanded={openMenu === 'exportBar'} disabled={busy || tables.length === 0} onClick={toggleMenu('exportBar')}>
+              {t('top.export')}
+            </button>
+            {openMenu === 'exportBar' && exportMenu('dropdown right')}
+          </div>
+        </div>
       </header>
 
       <nav className="sidebar" aria-label={t('sidebar.label')}>

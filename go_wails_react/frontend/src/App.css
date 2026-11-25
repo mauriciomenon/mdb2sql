@@ -99,6 +99,50 @@ body {
   position: relative;
 }
 
+/* path bar (as Zig): the path field takes the line, Browse... Open Export... on the right */
+.pathbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px 8px;
+}
+
+.path {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.path input {
+  width: 100%;
+}
+
+/* ElideLeft: a path longer than the field shows its end; "..." covers the start (App.tsx scrolls it to the end) */
+.path.elided::before {
+  content: '...';
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  left: 1px;
+  display: flex;
+  align-items: center;
+  padding: 0 2px 0 11px;
+  background: var(--surface);
+  border-radius: 6px 0 0 6px;
+  pointer-events: none;
+}
+
+.pathbar > button,
+.pathbar > .menu-root > button {
+  white-space: nowrap;
+}
+
+/* the Export... list opens under its button, aligned to the window's right edge */
+.dropdown.right {
+  left: auto;
+  right: 0;
+}
+
 .dropdown {
   position: absolute;
   top: 100%;

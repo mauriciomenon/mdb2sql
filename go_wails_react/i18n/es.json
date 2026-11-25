@@ -179,5 +179,9 @@
   "tab.sql": "SQL",
   "theme.dark": "Oscuro",
   "theme.light": "Claro",
-  "theme.system": "Sistema"
+  "theme.system": "Sistema",
+  "top.browse": "Examinar...",
+  "top.export": "Exportar...",
+  "top.open": "Abrir",
+  "top.path": "Archivo de base de datos (.accdb, .mdb, .sqlite, .duckdb)"
 }
