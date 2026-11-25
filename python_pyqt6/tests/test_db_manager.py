@@ -91,6 +91,31 @@ def test_close_interrupts_a_running_query(people_db: Path) -> None:
     assert elapsed < 2 and manager.conn is None
 
 
+def test_table_counts_for_duckdb_and_sqlite_files(tmp_path: Path, people_db: Path) -> None:
+    # contagem da lista de tabelas: DuckDB numa consulta so; SQLite (e o convertido do Access) direto pelo sqlite3;
+    # tabela que nao da para contar (view com erro) fica None e nao derruba as outras
+    import sqlite3
+
+    with duckdb.connect(str(people_db)) as conn:
+        conn.execute("CREATE VIEW broken AS SELECT 1 AS s WHERE error('broken view') IS NULL")  # o filtro falha
+    manager = DBManager(str(people_db))
+    assert manager.table_counts() == {"broken": None, "empty_table": 0, "people": 3}
+    manager.close()
+
+    lite_file = tmp_path / "lite.sqlite"
+    lite = sqlite3.connect(lite_file)
+    lite.execute('CREATE TABLE "a b" (x INTEGER)')
+    lite.executemany('INSERT INTO "a b" VALUES (?)', [(i,) for i in range(1234)])
+    lite.execute("CREATE TABLE e (y TEXT)")
+    lite.commit()
+    lite.close()
+    manager = DBManager(str(lite_file))
+    assert manager.sqlite_file == str(lite_file.resolve())
+    assert manager.table_counts() == {"a b": 1234, "e": 0}
+    manager.close()
+    assert manager.sqlite_file is None
+
+
 def test_duckdb_real_query_sample(sample_database_path: Path) -> None:
     if not sample_database_path.exists():
         pytest.skip("sample.duckdb not found")

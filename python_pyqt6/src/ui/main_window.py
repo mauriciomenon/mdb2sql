@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QDockWidget,
     QFileDialog,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -50,6 +51,8 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     QToolBar,
     QToolButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -84,6 +87,8 @@ SCHEMA_PAD = 6
 SCOPES = {"table": "scope.table", "all": "scope.all"}
 # Configuracoes > Tema: valor gravado em QSettings -> esquema de cores do Qt
 THEMES = {"system": Qt.ColorScheme.Unknown, "light": Qt.ColorScheme.Light, "dark": Qt.ColorScheme.Dark}
+# lista de tabelas: linha selecionada com o destaque da paleta (claro e escuro)
+TABLES_STYLE = "QTreeView::item:selected { background: palette(highlight); color: palette(highlighted-text); }"
 # resposta da pergunta sobre o SQLite convertido do Access
 SAVE, DELETE, CANCEL = "save", "delete", "cancel"
 
@@ -205,6 +210,7 @@ class MainWindow(QMainWindow):
         self.pending_table_name: str | None = None
         self.loaded_table: tuple[str, int] | None = None  # (name, total rows in the table)
         self.loaded_schema: list[dict[str, Any]] = []  # schema da tabela carregada, como o backend devolve
+        self.table_counts: dict[str, int | None] = {}  # linhas de cada tabela (lista de tabelas)
         self.sql_query: str | None = None  # ultima consulta da aba SQL que deu certo (para exportar)
         # filtros coluna = valor (clique direito) e colunas ocultas: valem para view_table, ate trocar de tabela
         self.view_table: str | None = None
@@ -556,19 +562,29 @@ class MainWindow(QMainWindow):
         self.table_filter.textChanged.connect(lambda _text: self.table_filter_timer.start())
         self.table_filter.returnPressed.connect(self._filter_tables_now)  # Enter: na hora, sem os 300 ms
 
-        self.table_list = QListWidget()
+        # lista de tabelas com a contagem de linhas ao lado (igual nas 4 versoes, como o Zig): Tabela | Linhas
+        self.table_list = QTreeWidget()
         self.table_list.setAccessibleName(tr("tables.title"))
-        self.table_list.setUniformItemSizes(True)
-        # selecao como faixa de destaque comum (o estilo windows11 desenha so uma barrinha antes do nome, que parece
-        # um cursor de texto); cores da paleta: vale para claro e escuro
-        self.table_list.setStyleSheet(
-            "QListWidget::item:selected { background: palette(highlight); color: palette(highlighted-text); }"
-        )
+        self.table_list.setColumnCount(2)
+        self.table_list.setHeaderLabels([tr("tables.column_table"), tr("tables.column_rows")])
+        self.table_list.headerItem().setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.table_list.setRootIsDecorated(False)
+        self.table_list.setUniformRowHeights(True)
+        self.table_list.setAllColumnsShowFocus(True)
+        # selecao como faixa de destaque comum na linha inteira (o estilo windows11 desenha um cinza quase igual ao
+        # fundo); cores da paleta: vale para claro e escuro
+        self.table_list.setStyleSheet(TABLES_STYLE)
+        header = self.table_list.header()
+        header.setSectionsMovable(False)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(True)  # Linhas vai ate a borda: a faixa da selecao ocupa a linha inteira
         # nome de tabela nunca vira "...": o painel cresce ate o nome mais longo (limite: rolagem horizontal)
         self.table_list.setTextElideMode(Qt.TextElideMode.ElideNone)
-        self.table_list.setHorizontalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.table_list.setHorizontalScrollMode(QTreeWidget.ScrollMode.ScrollPerPixel)
         # !T: Signal emitido quando usuario seleciona outra tabela
-        self.table_list.currentTextChanged.connect(self.on_table_selected)
+        self.table_list.currentItemChanged.connect(
+            lambda current, _previous: self.on_table_selected(current.text(0) if current is not None else "")
+        )
         self.table_list.itemSelectionChanged.connect(self._sync_current_table)
 
         panel = QWidget()
@@ -967,10 +983,29 @@ class MainWindow(QMainWindow):
 
     def _filter_tables(self, text: str) -> None:
         words = search_words(text)
-        for row in range(self.table_list.count()):
-            item = self.table_list.item(row)
-            name = fold(item.text())
+        for row in range(self.table_list.topLevelItemCount()):
+            item = self.table_list.topLevelItem(row)
+            name = fold(item.text(0))
             item.setHidden(not all(word in name for word in words))
+
+    def table_names(self) -> list[str]:
+        """Nomes da lista de tabelas, na ordem."""
+        return [self.table_list.topLevelItem(row).text(0) for row in range(self.table_list.topLevelItemCount())]
+
+    def _fill_tables(self, tables: list[str], counts: dict[str, int | None]) -> None:
+        # Tabela | Linhas (numero a direita, com o separador de milhar do idioma; vazio se nao deu para contar)
+        self.table_counts = counts
+        items = []
+        for name in tables:
+            count = counts.get(name)
+            item = QTreeWidgetItem([name, num(count) if count is not None else ""])
+            item.setToolTip(0, name)  # nome inteiro tambem na dica
+            item.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            items.append(item)
+        self.table_list.blockSignals(True)
+        self.table_list.clear()
+        self.table_list.addTopLevelItems(items)
+        self.table_list.blockSignals(False)
 
     def _current_view(self) -> QTableView | None:
         page = self.tabs.currentWidget()
@@ -1043,13 +1078,15 @@ class MainWindow(QMainWindow):
         work_dir = self.session.path
         # o mesmo Access (caminho, tamanho, data) ja convertido e salvo: abre o SQLite salvo, sem converter de novo
         saved = self.saved_conversion(db_path)
-        self._run(
-            self._db_request,
-            lambda report: (db_path, saved, *open_database(saved or db_path, report, work_dir)),
-            self._on_database_loaded,
-            self._on_database_error,
-            progress,
-        )
+        def task(report):
+            manager, tables = open_database(saved or db_path, report, work_dir)
+            try:  # linhas de cada tabela para a lista; sem elas a lista abre do mesmo jeito
+                counts = manager.table_counts()
+            except Exception:  # noqa: BLE001 (a contagem e so informativa)
+                counts = {}
+            return db_path, saved, manager, tables, counts
+
+        self._run(self._db_request, task, self._on_database_loaded, self._on_database_error, progress)
 
     # --------------------------------- Access convertido e salvo: lembrado entre execucoes (igual nas 4 versoes)
 
@@ -1077,13 +1114,13 @@ class MainWindow(QMainWindow):
         self.settings.setValue("converted_files", json.dumps(saved))
 
     def _on_database_loaded(self, request_id: int, result: object) -> None:
-        db_path, saved, manager, tables = result  # type: ignore[misc]
+        db_path, saved, manager, tables, counts = result  # type: ignore[misc]
         if request_id != self._db_request:
             manager.release()  # abertura antiga terminou depois de outra mais nova: descarta (e o SQLite dela)
             return
         if saved is not None:
             self.log(tr("log.reused", name=db_path.name, path=saved))
-        previous = self.table_list.currentItem().text() if self.table_list.currentItem() else None
+        previous = self.table_list.currentItem().text(0) if self.table_list.currentItem() else None
         if db_path != self.current_db_path:
             self._reset_view(None)  # outro arquivo: filtros e colunas ocultas nao valem mais
             # nem a pesquisa da aba Data e o filtro da lista; o escopo volta ao padrao de Configuracoes (4 versoes)
@@ -1111,12 +1148,7 @@ class MainWindow(QMainWindow):
         self.path_edit.setText(str(db_path))
         self.stack.setCurrentWidget(self.tabs)
 
-        self.table_list.blockSignals(True)
-        self.table_list.clear()
-        self.table_list.addItems(tables)
-        for row in range(self.table_list.count()):  # nome inteiro tambem na dica
-            self.table_list.item(row).setToolTip(self.table_list.item(row).text())
-        self.table_list.blockSignals(False)
+        self._fill_tables(tables, counts)
         self._fit_tables_panel(tables)
         self._filter_tables(self.table_filter.text())
 
@@ -1127,8 +1159,8 @@ class MainWindow(QMainWindow):
         self._update_export_actions()
 
         if tables:
-            # !T: Keep the selected table across a reload; setCurrentRow triggers on_table_selected
-            self.table_list.setCurrentRow(tables.index(previous) if previous in tables else 0)
+            # !T: Keep the selected table across a reload; setCurrentItem triggers on_table_selected
+            self.table_list.setCurrentItem(self.table_list.topLevelItem(tables.index(previous) if previous in tables else 0))
         else:
             self.loaded_table = None
             self.table_model.set_rows([])
@@ -1262,7 +1294,7 @@ class MainWindow(QMainWindow):
         # table_load_timer sao so da navegacao pela lista com as setas
         item = self.table_list.currentItem()
         if item is not None:
-            self.on_table_selected(item.text())
+            self.on_table_selected(item.text(0))
             self._start_table_worker()
 
     def _search_edited(self) -> None:
@@ -1355,11 +1387,15 @@ class MainWindow(QMainWindow):
         )
 
     def tables_panel_width(self, tables: list[str]) -> int:
-        """Largura do painel para o nome mais longo caber inteiro: 260..35% da janela (acima disso, rolagem)."""
+        """Largura do painel para o nome mais longo e a contagem caberem inteiros: 260..35% da janela (acima disso,
+        rolagem)."""
         metrics = self.table_list.fontMetrics()
         longest = max((metrics.horizontalAdvance(name) for name in tables), default=0)
+        counts = [num(n) for n in self.table_counts.values() if n is not None]
+        rows = max([metrics.horizontalAdvance(text) for text in (*counts, tr("tables.column_rows"))])
         scrollbar = self.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
-        needed = longest + scrollbar + 2 * self.table_list.frameWidth() + 12 + 16  # item, lista e margens do painel
+        # texto + margens de cada coluna, lista e painel
+        needed = longest + rows + 2 * 16 + scrollbar + 2 * self.table_list.frameWidth() + 16
         return max(260, min(needed, round(self.width() * 0.35)))
 
     def _fit_tables_panel(self, tables: list[str]) -> None:

@@ -79,7 +79,7 @@ def test_access_opens_through_one_sqlite_conversion(access_window: MainWindow) -
     win = access_window
     assert win.status_label.text() == "Loaded: sample.mdb (2 tables)"
     assert win.reader_label.text() == "Opened via mdbtools, converted to SQLite"
-    assert [win.table_list.item(i).text() for i in range(2)] == ["empty table", "points"]
+    assert win.table_names() == ["empty table", "points"]
     assert [p.name for p in _converted_files(win)] == ["sample.sqlite"]
 
 

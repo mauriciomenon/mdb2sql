@@ -89,6 +89,8 @@
   "button.open": "Abrir",
   "button.export": "Exportar...",
   "tables.title": "Tablas",
+  "tables.column_table": "Tabla",
+  "tables.column_rows": "Filas",
   "tables.filter": "Filtrar tablas",
   "search.placeholder": "Buscar en la tabla (Ctrl+F)",
   "search.name": "Buscar en la tabla",

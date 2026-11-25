@@ -56,9 +56,14 @@ def test_missing_database_reports_error(qtbot, tmp_path: Path) -> None:
 
 
 def test_open_lists_tables_and_loads_first(window: MainWindow) -> None:
-    names = [window.table_list.item(i).text() for i in range(window.table_list.count())]
+    names = window.table_names()
 
     assert names == ["empty_table", "people"]
+    # lista de tabelas com a contagem de linhas ao lado (igual nas 4 versoes): Tabela | Linhas, numero a direita
+    header = window.table_list.headerItem()
+    assert [header.text(0), header.text(1)] == ["Table", "Rows"]
+    assert [window.table_list.topLevelItem(i).text(1) for i in range(2)] == ["0", "3"]
+    assert window.table_list.topLevelItem(1).textAlignment(1) & Qt.AlignmentFlag.AlignRight
     assert window.status_label.text() == "Loaded: people.duckdb (2 tables)"
     assert window.reader_label.text() == "Opened via DuckDB"  # fixo a direita da barra de baixo
     assert window.windowTitle() == "people.duckdb - mdb2sql 1.3.0 - Python"
@@ -204,13 +209,13 @@ def test_table_filter_hides_non_matching(qtbot, window: MainWindow) -> None:
     # filtro da lista e pesquisa da aba Data: 300 ms depois da ultima tecla, igual nas 4 versoes
     assert window.table_filter_timer.interval() == window.search_timer.interval() == 300
     window.table_filter.setText("peo")
-    assert not window.table_list.item(0).isHidden() and window.table_filter_timer.isActive()  # ainda esperando
+    assert not window.table_list.topLevelItem(0).isHidden() and window.table_filter_timer.isActive()  # ainda esperando
 
-    qtbot.waitUntil(lambda: window.table_list.item(0).isHidden(), timeout=2000)
-    hidden = {window.table_list.item(i).text(): window.table_list.item(i).isHidden() for i in range(2)}
+    qtbot.waitUntil(lambda: window.table_list.topLevelItem(0).isHidden(), timeout=2000)
+    hidden = {window.table_list.topLevelItem(i).text(0): window.table_list.topLevelItem(i).isHidden() for i in range(2)}
     assert hidden == {"empty_table": True, "people": False}
     window.table_filter.setText("TABLE Émpty")  # todas as palavras, qualquer ordem, sem caixa nem acento
-    qtbot.waitUntil(lambda: [window.table_list.item(i).isHidden() for i in range(2)] == [False, True], timeout=2000)
+    qtbot.waitUntil(lambda: [window.table_list.topLevelItem(i).isHidden() for i in range(2)] == [False, True], timeout=2000)
 
 
 def test_enter_applies_the_filter_and_the_search_at_once(qtbot, window: MainWindow) -> None:
@@ -219,7 +224,7 @@ def test_enter_applies_the_filter_and_the_search_at_once(qtbot, window: MainWind
 
     window.table_filter.setText("peo")
     QTest.keyClick(window.table_filter, Qt.Key.Key_Return)
-    assert window.table_list.item(0).isHidden() and not window.table_filter_timer.isActive()
+    assert window.table_list.topLevelItem(0).isHidden() and not window.table_filter_timer.isActive()
 
     _select_table(qtbot, window, "people")
     request = window._table_request
@@ -572,7 +577,7 @@ def test_column_headers_and_table_names_are_not_cut(qtbot, tmp_path: Path) -> No
     cell_metrics = win.data_table.fontMetrics()
     assert win.data_table.columnWidth(4) >= cell_metrics.horizontalAdvance(value70) + 6
     assert win.data_table.columnWidth(3) == 1200  # so acima de 1200 px corta (texto inteiro na dica)
-    assert win.table_list.item(0).toolTip() == table
+    assert win.table_list.topLevelItem(0).toolTip(0) == table
     # nome de tabela nunca vira "...": o painel cabe o nome mais longo do DB4 inteiro; acima de 35% da janela,
     # rolagem horizontal na lista (o nome continua inteiro)
     assert win.table_list.textElideMode() == Qt.TextElideMode.ElideNone
@@ -596,7 +601,7 @@ def test_results_of_the_previous_database_are_dropped(qtbot, window: MainWindow,
     window.run_sql()
     qtbot.waitUntil(lambda: window.sql_model.rowCount() == 3, timeout=30000)
     stale_table = (window._table_request, load_table_payload(window.manager, "people"))
-    stale_open = (people_db, None, *open_database(people_db))  # abertura lenta de A que termina depois de B
+    stale_open = (people_db, None, *open_database(people_db), {})  # abertura lenta de A que termina depois de B
 
     other = people_db.parent / "other.duckdb"
     with duckdb.connect(str(other)) as conn:
@@ -628,7 +633,7 @@ def test_another_file_starts_without_search_and_with_the_default_scope(qtbot, wi
 
     assert window.search_edit.text() == "" and window.table_filter.text() == ""
     assert window.scope_actions["table"].isChecked() and window.data_stack.currentWidget() is window.data_table
-    assert not window.table_list.item(0).isHidden() and window.loaded_search == ""
+    assert not window.table_list.topLevelItem(0).isHidden() and window.loaded_search == ""
 
 
 def test_nothing_duplicated(qtbot, points_window: MainWindow) -> None:
