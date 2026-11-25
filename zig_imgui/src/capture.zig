@@ -48,7 +48,7 @@ pub const filter_column = "SUBNAM";
 pub const filter_value = "U02";
 pub const first_table = "RANGER_SOSTAT";
 pub const second_table = "RANGER_SOANLG";
-// no DB4 (287 tabelas, 10.900 colunas) ELSUL esta em 3 tabelas; a RANGER_SOXAGC vem depois da coluna 10.000
+// no DB4 (287 tabelas; 10.364 colunas no .duckdb) ELSUL esta em 3 tabelas; a RANGER_SOXAGC vem depois da coluna 10.000
 pub const late_term = "ELSUL";
 pub const late_table = "RANGER_SOXAGC";
 

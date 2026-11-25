@@ -397,7 +397,7 @@ pub const Db = struct {
     }
 
     // run com outro teto: consultas do programa que precisam de todas as linhas (o catalogo de colunas da busca em
-    // todas as tabelas; o DB4 tem 10.900 colunas)
+    // todas as tabelas; o DB4 passa de 10.000 colunas)
     pub fn runMax(self: *Db, sql: [:0]const u8, params: []const []const u8, limit: usize) Error!Grid {
         var rows = try self.stream(sql, params, .{ .types = true });
         defer rows.deinit();

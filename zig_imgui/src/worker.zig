@@ -586,7 +586,7 @@ test "search in every table: a SQLite file finds what the DuckDB file finds" {
     }
 }
 
-// O DB4 real tem 10.900 colunas: o catalogo inteiro entra na busca, nao so as max_rows primeiras linhas
+// O DB4 real passa de 10.000 colunas: o catalogo inteiro entra na busca, nao so as max_rows primeiras linhas
 test "search in every table reads the whole column catalog, beyond max_rows columns" {
     var db = dbm.testDb();
     defer db.close();
