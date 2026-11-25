@@ -85,6 +85,17 @@ export function hasAllWords(text, words) {
   return words.every((word) => text.includes(word));
 }
 
+// NIVEL BASICO: Log recolhido: entradas que contam como nao lidas (erros e avisos ainda nao resolvidos)
+export function unreadEntries(entries) {
+  return entries.filter((e) => e.level !== 'info' && !e.resolved);
+}
+
+// Erros de um contexto (ex.: 'err.sql') resolvidos: um SQL que rodou depois sem erro tira o erro anterior da barra de
+// status e do contador; o texto continua no log
+export function resolveContext(entries, context) {
+  return entries.map((e) => (e.context === context && !e.resolved ? { ...e, resolved: true } : e));
+}
+
 // NIVEL BASICO: Log recolhido: a linha que a barra de status mostra entre as nao lidas: o ultimo erro, senao o ultimo
 // aviso; null quando nao ha nenhum (a barra mostra a ultima acao)
 export function importantEntry(entries) {

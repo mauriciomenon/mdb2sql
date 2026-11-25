@@ -16,10 +16,12 @@
     filterLabel,
     fold,
     hasAllWords,
+    resolveContext,
     searchWords,
     setListed,
     statusLine,
     toggleShown,
+    unreadEntries,
     visibleColumns,
     withFilter,
   } from './grid.js';
@@ -157,8 +159,9 @@
   let logArea = $state();
   const entryText = (e) => (e.render ? e.render() : e.err !== undefined ? errorLine(e.err, e.context) : t(e.key, e.values));
   let logText = $derived(log.map((e) => `${e.time}  ${entryText(e)}`).join('\n'));
-  // log recolhido: erros e avisos nao vistos; a barra de status mostra o ultimo erro > ultimo aviso > ultima acao
-  let unread = $derived(logOpen ? [] : log.slice(seen).filter((e) => e.level !== 'info'));
+  // log recolhido: erros e avisos nao vistos nem resolvidos; a barra de status mostra o ultimo erro > ultimo aviso > ultima
+  // acao
+  let unread = $derived(logOpen ? [] : unreadEntries(log.slice(seen)));
   let headline = $derived.by(() => {
     const pick = importantEntry(unread);
     if (pick) return { text: statusLine(entryText(pick)), level: pick.level };
@@ -167,7 +170,9 @@
 
   let sql = $state('');
   let sqlResult = $state.raw(null); // { columns, rows, truncated }
+  let sqlError = $state(''); // erro do ultimo SQL, na linha do botao Executar; some quando um SQL roda sem erro
   let lastSql = ''; // SQL que gerou sqlResult (o que a exportacao repete)
+  const SQL_HINT = 'SELECT * FROM ...'; // dica do editor vazio (a mesma nas 4 versoes, SQL nao se traduz)
 
   // pergunta do SQLite convertido: escolha lembrada so nesta sessao ('save' | 'delete')
   let remembered = null;
@@ -421,6 +426,7 @@
       clearTimeout(tableTimer);
       tableText = tableFilter = '';
       sqlResult = null;
+      sqlError = '';
       lastSql = '';
       saveSetting(LAST_DIR_KEY, dirOf(opened.path));
       showStatus('status.opened', { name: baseName(opened.path), count: fmt(tables.length) });
@@ -449,6 +455,7 @@
     source = '';
     converted = false;
     sqlResult = null;
+    sqlError = '';
     lastSql = '';
     resetTable();
     showStatus('status.closed');
@@ -659,7 +666,8 @@
     clearFilters: () => setFilters([]),
   };
 
-  // NIVEL BASICO: SQL livre; mostra ate o Row limit
+  // NIVEL BASICO: SQL livre; mostra ate o Row limit. Sem erro: sai o erro anterior da linha do botao e da barra de baixo.
+  // Com erro: sai a grade do SQL anterior (pareceria o resultado deste) e o erro fica nos dois lugares
   async function runSql() {
     if (!sql.trim()) return;
     busy = true;
@@ -667,12 +675,17 @@
       const query = sql;
       sqlResult = await invoke('run_sql', { sql: query, limit });
       lastSql = query;
+      sqlError = '';
+      log = resolveContext(log, 'err.sql');
       if (sqlResult.columns.length) {
         showStatus('status.query', { rows: fmt(sqlResult.rows.length) + (sqlResult.truncated ? '+' : '') });
       } else {
         showStatus('status.executed');
       }
     } catch (err) {
+      sqlResult = null;
+      lastSql = '';
+      sqlError = String(err);
       showError(err, 'err.sql'); // erro do motor com o prefixo traduzido
     } finally {
       busy = false;
@@ -1116,11 +1129,13 @@
             bind:value={sql}
             aria-label={t('sql.label')}
             spellcheck="false"
-            placeholder={'SELECT * FROM "' + (selectedTable || 'table') + '" LIMIT 10'}
+            placeholder={SQL_HINT}
           ></textarea>
           <div class="table-bar">
             <button type="button" title={t('sql.runTip')} onclick={runSql} disabled={busy || !openedPath || !sql.trim()}>{t('sql.run')}</button>
-            {#if sqlResult}
+            {#if sqlError}
+              <span class="sql-error">{statusLine(errorLine(sqlError, 'err.sql'))}</span>
+            {:else if sqlResult}
               <span>{t('sql.summary', { rows: fmt(sqlResult.rows.length) + (sqlResult.truncated ? '+' : ''), columns: sqlResult.columns.length })}</span>
             {/if}
           </div>
@@ -2052,6 +2067,13 @@
   /* contagem numa linha so: sem lugar, ela desce inteira */
   .table-bar > span {
     white-space: nowrap;
+  }
+
+  /* erro do SQL: texto do motor, pode ser longo; quebra a linha em vez de passar da janela */
+  .table-bar > .sql-error {
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .table-bar h2,

@@ -89,7 +89,8 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
   da grade (`Filter: SIGLA = 'U9A' x`) com **Clear filters**. Filtros e pesquisa valem juntos.
 - Aba **Schema**: colunas da tabela, tipo e se aceita nulo (Yes/No no idioma da tela).
 - Aba **SQL**: SQL livre do DuckDB sobre as tabelas abertas (ex.: `SELECT * FROM "RANGER_SOSTAT" WHERE RTUNO = 2`);
-  **Run SQL** ou `Ctrl+Enter`. A grade mostra ate o Row limit; a exportacao do resultado leva todas as linhas.
+  **Run SQL** ou `Ctrl+Enter`. A grade mostra ate o Row limit; a exportacao do resultado leva todas as linhas. Erro: a
+  grade anterior sai e o erro aparece ao lado do botao e na barra de status; o proximo SQL sem erro limpa os dois.
 - **Grade**: clique seleciona a celula; `Ctrl+C` copia o valor; botao direito (ou a tecla de menu) abre **Copy
   value**, **Copy row**, **Copy row with header** (TAB, pronto para colar no Excel). NULL aparece como celula vazia
   (ou `NULL` com **Settings > Show NULL** ligado; so a tela: copiar, pesquisar e exportar nao mudam) e numero inteiro
