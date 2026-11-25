@@ -44,13 +44,31 @@ test('the main window has no repeated button or menu item', () => {
     assert.ok(labels.includes(label), `${label} in ${labels.join(', ')}`);
   }
   assert.deepEqual(repeated(labels), []);
-  // uma lista de exportacao so (File > Export) e um jeito so de escolher o arquivo
+  // uma lista de exportacao so, mostrada pelo botao Exportar... do topo e pelo menu Arquivo
   assert.equal(count(app, '{#each EXPORTS'), 1);
   assert.equal(count(app, 'startExport('), 1);
+  assert.equal(count(app, '{@render exportItems()}'), 2);
   assert.equal(count(app, 'onclick={browse}'), 1);
   assert.equal(count(app, 'onclick={closeDatabase}'), 1);
   assert.equal(count(app, 'onclick={copyLog}'), 1);
-  assert.equal(labels.filter((label) => /^export/i.test(label)).length, 0); // nenhum botao Export... fora do menu
+  assert.deepEqual(labels.filter((label) => /^export/i.test(label)), ['Export...']); // o botao do topo
+});
+
+// padrao item 1 (topo = Zig): so o campo do caminho e Procurar... Abrir Exportar... (sem titulo nem rotulo); caminho
+// longo mostra o fim (o comeco sai com "..."); arquivo arrastado para a janela abre
+test('top bar: path field, Browse..., Open, Export... and drag and drop', () => {
+  const header = markup('./App.svelte').match(/<header>[\s\S]*?<\/header>/)[0];
+  assert.doesNotMatch(header, /<h1|<label/);
+  assert.deepEqual(buttonLabels(header), ['Browse...', 'Open', 'Export...']);
+  assert.ok(header.indexOf('id="db-path"') < header.indexOf("t('header.browse')"));
+  assert.match(header, /aria-label=\{t\('header\.database'\)\}/);
+  assert.match(header, /<span class="path-view" aria-hidden="true"><bdi>\{dbPath\}<\/bdi><\/span>/);
+  const code = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  const view = code.match(/\n {2}\.path-view \{([^}]*)\}/)[1];
+  assert.match(view, /direction: rtl;[\s\S]*text-overflow: ellipsis;[\s\S]*white-space: nowrap;/);
+  assert.match(code, /\.path input\.elided \{\s*color: transparent;/);
+  assert.match(code, /onDragDropEvent\(\(\{ payload \}\) => \{\s*if \(payload\.type !== 'drop'[^\n]*\n\s*dbPath = payload\.paths\[0\];\s*openDatabase\(\);/);
+  assert.equal(en['header.open'], 'Open');
 });
 
 // ordem do app em tudo que o usuario ve: Access, SQLite, DuckDB
@@ -204,7 +222,8 @@ test('Columns... dialog is proportional to the window', () => {
 test('table and column names are never cut with an ellipsis', () => {
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
   const css = app.match(/<style>([\s\S]*)<\/style>/)[1];
-  assert.doesNotMatch(css, /text-overflow/);
+  // "..." so no caminho do arquivo no topo (padrao item 1), nunca em nome de tabela ou coluna
+  assert.deepEqual([...css.matchAll(/([^{}]+)\{[^}]*text-overflow/g)].map((m) => m[1].replace(/\/\*[\s\S]*?\*\//g, '').trim()), ['.path-view']);
   assert.match(css, /\.table-list \[role='option'\] \{[^}]*overflow-wrap: anywhere;/);
   assert.match(css, /\.column-list label span \{[^}]*overflow-wrap: anywhere;/);
   assert.doesNotMatch(markup('./App.svelte'), /<select[^>]*size=/); // a lista nativa cortava nomes longos

@@ -6,6 +6,7 @@
 
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
+  import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount, tick } from 'svelte';
   import Grid from './Grid.svelte';
@@ -97,7 +98,7 @@
   let showNull = $state(loadSetting(NULL_KEY) === 'on');
   let nullText = $derived(showNull ? t('grid.null') : '');
 
-  let openMenu = $state(null); // 'file' | 'view' | 'settings' | 'help'
+  let openMenu = $state(null); // 'file' | 'view' | 'settings' | 'help' | 'export' (botao Exportar... do topo)
   let tab = $state('data');
   let themeIndex = $state(0);
   let aboutDialog;
@@ -110,6 +111,7 @@
   let x11 = $state.raw(null); // Linux sem X11: { missing, display, distro, command, link } (backend display.rs)
 
   let dbPath = $state('');
+  let pathFocused = $state(false); // campo do caminho em edicao: mostra o texto inteiro, sem cortar o comeco
   let openedPath = $state('');
   let source = $state('');
   let converted = $state(false); // ha SQLite convertido do Access ainda nao salvo nem apagado
@@ -271,6 +273,12 @@
       // fechar a janela com SQLite convertido pendente: o backend segura e pergunta aqui
       listen('close-requested', async () => {
         if (await settleConverted()) await invoke('exit_app');
+      }),
+      // arquivo arrastado para a janela: abre (o primeiro, se vierem varios); nada com dialogo aberto ou trabalho em curso
+      getCurrentWebview().onDragDropEvent(({ payload }) => {
+        if (payload.type !== 'drop' || !payload.paths?.length || busy || document.querySelector('dialog[open]')) return;
+        dbPath = payload.paths[0];
+        openDatabase();
       }),
     ];
     // Linux sem X11 (janela no Wayland de reserva): aviso a cada abertura, enquanto a condicao existir
@@ -728,17 +736,22 @@
   const focusNow = (node) => node.focus();
 </script>
 
+<!-- lista de exportacao, uma so: botao Exportar... do topo e menu Arquivo; um separador entre banco, tabela e SQL -->
+{#snippet exportItems()}
+  {#each EXPORTS as [key, scope, format], i}
+    {#if i > 0 && scope !== EXPORTS[i - 1][1]}<div class="separator" role="separator"></div>{/if}
+    <button type="button" role="menuitem" disabled={!canExport(scope)} onclick={() => startExport(scope, format, key)}>{t(key)}</button>
+  {/each}
+{/snippet}
+
 <div class="app">
   <div class="menubar" role="menubar" aria-label={t('menu.main')}>
     <div class="menu-root">
       <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openMenu === 'file'} onclick={(e) => toggleMenu(e, 'file')}>{t('menu.file')}</button>
       {#if openMenu === 'file'}
-        <!-- cada acao num lugar so: abrir e o Browse... ao lado do caminho, exportar e so este menu (ui.test.js conta) -->
         <div class="dropdown" role="menu" aria-label={t('menu.file')}>
           <span class="group">{t('file.export')}</span>
-          {#each EXPORTS as [key, scope, format]}
-            <button type="button" role="menuitem" disabled={!canExport(scope)} onclick={() => startExport(scope, format, key)}>{t(key)}</button>
-          {/each}
+          {@render exportItems()}
           <div class="separator" role="separator"></div>
           <button type="button" role="menuitem" disabled={busy || !openedPath} onclick={closeDatabase}>{t('file.close')}</button>
         </div>
@@ -795,13 +808,43 @@
     </div>
   </div>
 
+  <!-- topo como o do Zig: o caminho ocupa a linha, Procurar... Abrir Exportar... a direita; arrastar um arquivo para a
+       janela tambem abre -->
   <header>
-    <h1>{t('app.name')}</h1>
     <form onsubmit={openDatabase}>
-      <label for="db-path">{t('header.database')}</label>
-      <input id="db-path" type="text" bind:value={dbPath} placeholder={t('header.placeholder')} spellcheck="false" autocomplete="off" />
+      <div class="path">
+        <input
+          id="db-path"
+          type="text"
+          class:elided={!pathFocused && dbPath}
+          bind:value={dbPath}
+          aria-label={t('header.database')}
+          placeholder={t('header.placeholder')}
+          spellcheck="false"
+          autocomplete="off"
+          onfocus={() => (pathFocused = true)}
+          onblur={() => (pathFocused = false)}
+        />
+        {#if !pathFocused && dbPath}
+          <!-- caminho maior que o campo perde o comeco (com ...), nunca o nome do arquivo (ElideLeft do Zig) -->
+          <span class="path-view" aria-hidden="true"><bdi>{dbPath}</bdi></span>
+        {/if}
+      </div>
       <button type="button" class="secondary" onclick={browse} disabled={busy}>{t('header.browse')}</button>
       <button type="submit" disabled={busy}>{t('header.open')}</button>
+      <div class="menu-root">
+        <button
+          type="button"
+          class="secondary"
+          aria-haspopup="menu"
+          aria-expanded={openMenu === 'export'}
+          disabled={busy || !openedPath}
+          onclick={(e) => toggleMenu(e, 'export')}>{t('header.export')}</button
+        >
+        {#if openMenu === 'export'}
+          <div class="dropdown end" role="menu" aria-label={t('file.export')}>{@render exportItems()}</div>
+        {/if}
+      </div>
     </form>
   </header>
 
@@ -1285,14 +1328,6 @@
   header {
     display: flex;
     align-items: center;
-    gap: 20px;
-  }
-
-  h1 {
-    margin: 0;
-    font-size: 17px;
-    font-weight: 650;
-    letter-spacing: 0.02em;
   }
 
   form {
@@ -1300,6 +1335,40 @@
     flex: 1;
     align-items: center;
     gap: 8px;
+  }
+
+  /* campo do caminho: ocupa a linha ate os botoes */
+  .path {
+    position: relative;
+    display: flex;
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* fora de foco o texto do campo fica por baixo do .path-view, na mesma letra e no mesmo recuo */
+  .path input.elided {
+    color: transparent;
+  }
+
+  /* ElideLeft: em rtl o que nao cabe sai pelo comeco, com "..." ali; o <bdi> mantem o caminho na ordem normal */
+  .path-view {
+    position: absolute;
+    top: 50%;
+    right: 11px;
+    left: 11px;
+    overflow: hidden;
+    direction: rtl;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
+    transform: translateY(-50%);
+  }
+
+  /* menu do botao Exportar... (no fim da linha): abre para a esquerda, dentro da janela */
+  .dropdown.end {
+    right: 0;
+    left: auto;
   }
 
   label {
@@ -1323,6 +1392,7 @@
   form input {
     flex: 1;
     min-width: 0;
+    margin: 0;
   }
 
   button {
