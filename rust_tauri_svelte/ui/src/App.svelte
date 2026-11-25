@@ -23,7 +23,7 @@
     withFilter,
   } from './grid.js';
   import { LANGS, describe, translator } from './i18n.js';
-  import { defaultSaveDir, dirOf, joinPath, stem, suggestedName } from './paths.js';
+  import { baseName, defaultSaveDir, dirOf, joinPath, stem, suggestedName } from './paths.js';
 
   const LIMITS = [100, 500, 1000];
   // null devolve a janela (barra de titulo e webview) ao tema do sistema
@@ -401,7 +401,7 @@
       sqlResult = null;
       lastSql = '';
       saveSetting(LAST_DIR_KEY, dirOf(opened.path));
-      showStatus('status.opened', { path: opened.path, count: fmt(tables.length) });
+      showStatus('status.opened', { name: baseName(opened.path), count: fmt(tables.length) });
       note('info', { key: 'status.via', values: { source } });
       resetTable();
       if (tables.length > 0) await openTable(tables[0]);
@@ -1108,7 +1108,8 @@
     </section>
   {/if}
 
-  <!-- recolhido: a linha mais importante (erro > aviso > acao); clique nela abre o log -->
+  <!-- como a barra do Go: a esquerda a seta do log e a linha mais importante (erro > aviso > acao; clique nela abre o
+       log); a direita os erros/avisos nao lidos, as colunas ocultas e o modo de leitura -->
   <footer
     class="statusbar"
     class:error={headline.level === 'error'}
@@ -1129,7 +1130,6 @@
     {#if unread.length}<span class="badge" title={t('log.unreadTip')}>{unread.length}</span>{/if}
     {#if hidden.size}<span class="source">{t(hidden.size === 1 ? 'status.hiddenOne' : 'status.hiddenMany', { count: hidden.size })}</span>{/if}
     {#if source}<span class="source" title={t('status.viaTip')}>{t('status.via', { source })}</span>{/if}
-    <span class="stack">{t('app.stack')}</span>
   </footer>
 
   {#if statusMenu}
@@ -2006,17 +2006,8 @@
     color: var(--warn-bg);
   }
 
+  /* colunas ocultas e modo de leitura no texto da barra, sem destaque (como no Go) */
   .statusbar .source {
-    font-weight: 600;
-    color: var(--text);
-    white-space: nowrap;
-  }
-
-  .statusbar.error .source {
-    color: inherit;
-  }
-
-  .statusbar .stack {
     white-space: nowrap;
   }
 </style>

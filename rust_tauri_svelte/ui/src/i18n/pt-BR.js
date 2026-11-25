@@ -1,7 +1,6 @@
 // Portugues (Brasil). Mesmas chaves de en.js (i18n.test.js confere).
 export default {
   'app.name': 'MDB2SQL',
-  'app.stack': 'Rust + Tauri v2 + Svelte',
 
   'menu.main': 'Menu principal',
   'menu.file': 'Arquivo',
@@ -151,7 +150,7 @@ export default {
 
   'status.noDatabase': 'Nenhum banco aberto',
   'status.opening': 'Abrindo banco',
-  'status.opened': '{path}: {count} tabelas',
+  'status.opened': 'Aberto: {name} ({count} {count|tabela|tabelas})',
   'status.openFailed': 'Não foi possível abrir o banco',
   'status.read': 'Lendo tabela do Access {done} de {total}: {item}',
   'status.convert': 'Gravando tabela no SQLite {done} de {total}: {item}',

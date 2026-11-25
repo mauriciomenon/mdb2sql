@@ -250,6 +250,19 @@ test('log panel and status bar text can be copied', () => {
   assert.match(app, /onclick=\{copyStatus\}>\{t\('status.copy'\)\}/);
 });
 
+// padrao item 2 (barra de baixo = Go): seta do log e mensagem a esquerda; nao lidos, colunas ocultas e modo de leitura a
+// direita, sem o rotulo da stack (fica no Sobre); ao abrir, "Aberto: <nome> (<n> tabelas)" sem o caminho
+test('bottom bar: log arrow and message, then unread, hidden columns and read mode', () => {
+  const bar = markup('./App.svelte').match(/<footer[\s\S]*?<\/footer>/)[0];
+  const order = ['class="log-toggle"', 'class="message"', 'class="badge"', "'status.hiddenOne'", "t('status.via'"];
+  const at = order.map((needle) => bar.indexOf(needle));
+  assert.ok(at.every((v, i) => v >= 0 && (i === 0 || v > at[i - 1])), at.join(','));
+  assert.doesNotMatch(bar, /app\.stack|class="stack"/);
+  assert.ok(!('app.stack' in en));
+  assert.match(appFunction('openDatabase'), /showStatus\('status\.opened', \{ name: baseName\(opened\.path\), count: fmt\(tables\.length\) \}\)/);
+  assert.equal(en['status.opened'], 'Loaded: {name} ({count} {count|table|tables})');
+});
+
 // REGRA_X11: aviso curto (3 linhas), link Ajuda clicavel (abre o navegador), comando com botao Copiar, sem URL crua
 test('X11 warning is short, with a clickable Help link and a Copy command button', () => {
   const app = markup('./App.svelte');

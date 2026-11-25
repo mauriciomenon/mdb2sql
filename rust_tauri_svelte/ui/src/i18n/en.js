@@ -1,7 +1,6 @@
 // English (default). Same keys in pt-BR.js and es.js (i18n.test.js checks).
 export default {
   'app.name': 'MDB2SQL',
-  'app.stack': 'Rust + Tauri v2 + Svelte',
 
   'menu.main': 'Main menu',
   'menu.file': 'File',
@@ -151,7 +150,7 @@ export default {
 
   'status.noDatabase': 'No database open',
   'status.opening': 'Opening database',
-  'status.opened': '{path}: {count} tables',
+  'status.opened': 'Loaded: {name} ({count} {count|table|tables})',
   'status.openFailed': 'Could not open the database',
   'status.read': 'Reading Access table {done} of {total}: {item}',
   'status.convert': 'Writing SQLite table {done} of {total}: {item}',
