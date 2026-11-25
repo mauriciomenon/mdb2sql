@@ -109,6 +109,22 @@ def test_table_filter_hides_non_matching(qtbot, window: MainWindow) -> None:
     qtbot.waitUntil(lambda: [window.table_list.item(i).isHidden() for i in range(2)] == [False, True], timeout=2000)
 
 
+def test_enter_applies_the_filter_and_the_search_at_once(qtbot, window: MainWindow) -> None:
+    # Enter nao espera os 300 ms (igual nas 4 versoes): filtro da lista e pesquisa da aba Data
+    from PyQt6.QtTest import QTest
+
+    window.table_filter.setText("peo")
+    QTest.keyClick(window.table_filter, Qt.Key.Key_Return)
+    assert window.table_list.item(0).isHidden() and not window.table_filter_timer.isActive()
+
+    _select_table(qtbot, window, "people")
+    request = window._table_request
+    window.search_edit.setText("carla")
+    QTest.keyClick(window.search_edit, Qt.Key.Key_Return)
+    assert window._table_request == request + 1 and not window.search_timer.isActive()
+    qtbot.waitUntil(lambda: window.data_proxy.rowCount() == 1 and window._busy == 0, timeout=5000)
+
+
 def test_row_limit_reloads_table(qtbot, window: MainWindow) -> None:
     _select_table(qtbot, window, "people")
     request = window._table_request

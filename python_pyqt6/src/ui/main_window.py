@@ -197,7 +197,7 @@ class MainWindow(QMainWindow):
         self.table_filter_timer = QTimer(self)
         self.table_filter_timer.setSingleShot(True)
         self.table_filter_timer.setInterval(SEARCH_DELAY_MS)
-        self.table_filter_timer.timeout.connect(lambda: self._filter_tables(self.table_filter.text()))
+        self.table_filter_timer.timeout.connect(self._filter_tables_now)
 
         self.init_ui()
         if self.session.removed:
@@ -445,6 +445,7 @@ class MainWindow(QMainWindow):
         self.table_filter.setAccessibleName(tr("tables.filter"))
         self.table_filter.setToolTip(tr("tip.words"))
         self.table_filter.textChanged.connect(lambda _text: self.table_filter_timer.start())
+        self.table_filter.returnPressed.connect(self._filter_tables_now)  # Enter: na hora, sem os 300 ms
 
         self.table_list = QListWidget()
         self.table_list.setAccessibleName(tr("tables.title"))
@@ -628,6 +629,7 @@ class MainWindow(QMainWindow):
         self.search_edit.setMinimumWidth(280)
         self.search_edit.setMaximumWidth(420)
         self.search_edit.textChanged.connect(self._search_edited)
+        self.search_edit.returnPressed.connect(self._search_now)  # Enter: na hora, sem os 300 ms
         toolbar.addActions(list(self.scope_actions.values()))  # dois botoes de alternar, um marcado
         toolbar.addWidget(self.search_edit)
 
@@ -798,6 +800,10 @@ class MainWindow(QMainWindow):
     def _focus_sql(self) -> None:
         self.tabs.setCurrentWidget(self.sql_page)
         self.sql_edit.setFocus()
+
+    def _filter_tables_now(self) -> None:
+        self.table_filter_timer.stop()
+        self._filter_tables(self.table_filter.text())
 
     def _filter_tables(self, text: str) -> None:
         words = search_words(text)
