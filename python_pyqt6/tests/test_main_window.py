@@ -105,6 +105,49 @@ def test_select_sort_search_and_copy(qtbot, window: MainWindow) -> None:
     assert QApplication.clipboard().text() == "10\tcarla\t7.25"
 
 
+def test_top_bar_path_open_and_drop(qtbot, window: MainWindow, people_db: Path, tmp_path: Path) -> None:
+    # linha de cima igual nas 4 versoes (Zig): caminho do arquivo aberto, Procurar... / Abrir / Exportar...
+    from PyQt6.QtCore import QMimeData, QPointF, QUrl
+    from PyQt6.QtGui import QDropEvent
+
+    assert window.path_edit.text() == str(people_db)
+    assert window.findChild(type(window.path_edit)) is window.path_edit
+    # caminho maior que o campo, sem foco: mostra o fim (o nome do arquivo), com "..." no comeco
+    window.path_edit.resize(200, window.path_edit.height())
+    shown = window.path_edit.shown_text()
+    assert shown.startswith("…") and str(people_db).endswith(shown[1:]) and len(shown) > 5
+
+    # caminho digitado + Enter abre; caminho que nao existe: erro e o aberto continua
+    import duckdb
+
+    other = tmp_path / "other.duckdb"
+    with duckdb.connect(str(other)) as conn:
+        conn.execute("CREATE TABLE b AS SELECT 1 AS x")
+    window.path_edit.setText(str(tmp_path / "missing.duckdb"))
+    window.path_edit.returnPressed.emit()
+    assert window.current_db_path == people_db and window.status_label.text().startswith("Error:")
+    window.path_edit.setText(f'"{other}"')  # aspas do "Copiar como caminho" do Windows
+    window.open_button.click()
+    qtbot.waitUntil(lambda: window.current_db_path == other and window._busy == 0, timeout=30000)
+
+    # arquivo arrastado para a janela ou para um campo de texto dela abre como o Abrir
+    # !T: QApplication.sendEvent does not deliver a Drop outside a real drag: the handlers are called directly
+    for target in (window, window.search_edit):
+        data = QMimeData()
+        data.setUrls([QUrl.fromLocalFile(str(people_db if target is window else other))])
+        drop = QDropEvent(QPointF(5, 5), Qt.DropAction.CopyAction, data, Qt.MouseButton.LeftButton,
+                          Qt.KeyboardModifier.NoModifier)
+        drop.ignore()
+        if target is window:
+            window.dropEvent(drop)
+        else:
+            assert window.eventFilter(target, drop)  # tratado pela janela, nao vira texto do campo
+        assert drop.isAccepted()
+        expected = people_db if target is window else other
+        qtbot.waitUntil(lambda: window.current_db_path == expected and window._busy == 0, timeout=30000)
+    assert window.search_edit.text() == ""  # o arquivo nao virou texto da pesquisa
+
+
 def test_table_filter_hides_non_matching(qtbot, window: MainWindow) -> None:
     # filtro da lista e pesquisa da aba Data: 300 ms depois da ultima tecla, igual nas 4 versoes
     assert window.table_filter_timer.interval() == window.search_timer.interval() == 300
@@ -265,7 +308,7 @@ def test_opening_a_found_table_clears_its_value_filters(qtbot, window: MainWindo
     window.found_list.itemClicked.emit(window.found_list.item(0))
     qtbot.waitUntil(lambda: window.loaded_search == "ANA" and window._busy == 0, timeout=30000)
 
-    assert window.filters == [] and _chips(window) == [] and window.clear_filters_button.isHidden()
+    assert window.filters == [] and _chips(window) == [] and window.filters_bar.isHidden()
     assert window.matched_rows == 1 and _column(window, 1) == ["Ana"]
 
 
@@ -518,7 +561,8 @@ def test_nothing_duplicated(qtbot, points_window: MainWindow) -> None:
 
     buttons = _texts(b for b in win.findChildren(QAbstractButton) if b.isVisible())
     assert _repeated(buttons) == []
-    assert buttons.count("Export") == 1 and buttons.count("Columns...") == 1 and buttons.count("Clear filters") == 1
+    assert buttons.count("Export...") == 1 and buttons.count("Columns...") == 1 and buttons.count("Clear filters") == 1
+    assert {"Browse...", "Open"} <= set(buttons)  # linha de cima igual ao Zig
     assert _repeated(_menu_texts(win.menuBar())) == []
     assert _menu_texts(win.menuBar()).count("Export") == 1
     assert _repeated(_texts(win.data_table.actions())) == []
@@ -527,7 +571,9 @@ def test_nothing_duplicated(qtbot, points_window: MainWindow) -> None:
     assert win.columns_button.defaultAction() is win.columns_action
     assert win.clear_filters_button.defaultAction() is win.clear_filters_action
     assert win.columns_action in win.header_menu(0).actions()
-    assert win.export_button.menu() is win.export_menu
+    win.export_button.click()  # Exportar... abre o mesmo menu de Arquivo > Exportar
+    assert win.export_menu.isVisible()
+    win.export_menu.close()
 
 
 # ------------------------------------------------------------ 1.2.0: colunas ocultas e filtro por valor
@@ -757,7 +803,7 @@ def test_right_click_filter_runs_in_the_database(qtbot, points_window: MainWindo
     assert win.info_label.text() == "points: Showing 100 of 300 rows"
     menu = [a.text() for a in win.data_table.actions() if not a.isSeparator()]
     assert menu[:2] == ["&Filter by this value", "C&lear filters"] and "&Copy value" in menu
-    assert not win.clear_filters_action.isEnabled() and win.clear_filters_button.isHidden()
+    assert not win.clear_filters_action.isEnabled() and win.filters_bar.isHidden()
 
     # U18A nao esta nas 100 linhas carregadas: o filtro vai na consulta e acha as 50
     _reloaded(qtbot, win, lambda: win.add_filter("sigla", "U18A"))
@@ -771,7 +817,7 @@ def test_right_click_filter_runs_in_the_database(qtbot, points_window: MainWindo
     assert win.filters == [("sigla", "U18A"), ("obs", None)]
     assert win.info_label.text() == "points: Showing 25 of 25 matching rows (300 rows in table)"
     assert _chips(win) == ["Filters:", "sigla = 'U18A'  ×", "obs IS NULL  ×"]
-    assert win.clear_filters_action.isEnabled() and not win.clear_filters_button.isHidden()
+    assert win.clear_filters_action.isEnabled() and not win.filters_bar.isHidden()
 
     # a pesquisa de palavras combina com o filtro, nas linhas carregadas
     win.search_edit.setText("298")

@@ -12,6 +12,7 @@ from typing import Any, Callable
 from PyQt6.QtCore import (
     QEvent,
     QObject,
+    QPoint,
     QRunnable,
     QSettings,
     QSortFilterProxyModel,
@@ -69,6 +70,7 @@ from shared.i18n import num, tr
 from shared.tsv import rows_to_tsv
 from ui.dialogs import AboutDialog, ColumnsDialog
 from ui.table_model import COPY_ROLE, SORT_ROLE, TableModel, fold, search_words
+from ui.widgets import PathEdit
 
 # linhas carregadas da tabela e do resultado SQL: 100 / 500 / 1000 nas 4 versoes (a pesquisa e os filtros vao no
 # banco, alem delas; ordenar e medir as colunas rodam na thread da tela sobre as carregadas)
@@ -249,7 +251,7 @@ class MainWindow(QMainWindow):
         self._create_central()
         self._create_sidebar()
         self._create_log()
-        self._create_toolbar()
+        self._create_top_bar()
         self._create_menus()
         self._create_status_bar()
         self._update_export_actions()
@@ -397,6 +399,21 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._create_data_page(), tr("tab.data"))
         self.tabs.addTab(self.schema_table, tr("tab.schema"))
         self.tabs.addTab(self.sql_page, "SQL")
+        # Linhas (da tabela e do resultado SQL) a direita das abas: visivel em todas
+        self.limit_combo = QComboBox()
+        self.limit_combo.setAccessibleName(tr("rows.name"))
+        self.limit_combo.setToolTip(tr("tip.rows"))
+        for limit in ROW_LIMITS:
+            self.limit_combo.addItem(str(limit), limit)  # 100 / 500 / 1000, sem separador (igual nas 4 versoes)
+        self.limit_combo.currentIndexChanged.connect(self.reload_table)
+        self.limit_label = QLabel(tr("rows.label"))
+        self.limit_label.setBuddy(self.limit_combo)
+        corner = QWidget()
+        corner_row = QHBoxLayout(corner)
+        corner_row.setContentsMargins(6, 0, 6, 0)
+        corner_row.addWidget(self.limit_label)
+        corner_row.addWidget(self.limit_combo)
+        self.tabs.setCornerWidget(corner, Qt.Corner.TopRightCorner)
         # !T: On the tabs for the shortcut scope, on each view for its right-click menu
         copy_actions = [self.copy_action, self.copy_row_action, self.copy_row_header_action]
         self.tabs.addActions(copy_actions)
@@ -425,19 +442,44 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.stack)
 
     def _create_data_page(self) -> QWidget:
-        # barra da aba Data: botao Colunas..., filtros ativos (um botao por filtro, clique remove) e Limpar filtros
+        # barra da aba Data: pesquisa (Ctrl+F) com Esta tabela | Todas as tabelas junto ao campo e Colunas...
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText(tr("search.placeholder"))
+        self.search_edit.setToolTip(tr("tip.words"))
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.setAccessibleName(tr("search.name"))
+        self.search_edit.setMinimumWidth(160)
+        self.search_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.search_edit.textChanged.connect(self._search_edited)
+        self.search_edit.returnPressed.connect(self._search_now)  # Enter: na hora, sem os 300 ms
+        scope = QWidget()  # dois botoes de alternar juntos, um marcado
+        scope.setAccessibleName(tr("scope.name"))
+        scope_row = QHBoxLayout(scope)
+        scope_row.setContentsMargins(0, 0, 0, 0)
+        scope_row.setSpacing(0)
+        for action in self.scope_actions.values():
+            button = QToolButton()
+            button.setDefaultAction(action)
+            scope_row.addWidget(button)
         self.columns_button = QToolButton()
         self.columns_button.setDefaultAction(self.columns_action)
+        bar = QHBoxLayout()
+        bar.setContentsMargins(6, 4, 6, 0)
+        bar.addWidget(self.search_edit, 1)
+        bar.addWidget(scope)
+        bar.addWidget(self.columns_button)
+
+        # filtros ativos (um botao por filtro, clique remove) e Limpar filtros, numa linha que so aparece com filtro
         self.filter_chips = QHBoxLayout()
         self.clear_filters_button = QToolButton()
         self.clear_filters_button.setDefaultAction(self.clear_filters_action)
-        self.clear_filters_button.hide()
-        bar = QHBoxLayout()
-        bar.setContentsMargins(6, 4, 6, 0)
-        bar.addWidget(self.columns_button)
-        bar.addLayout(self.filter_chips)
-        bar.addStretch(1)
-        bar.addWidget(self.clear_filters_button)
+        self.filters_bar = QWidget()
+        filters_row = QHBoxLayout(self.filters_bar)
+        filters_row.setContentsMargins(6, 0, 6, 0)
+        filters_row.addLayout(self.filter_chips)
+        filters_row.addStretch(1)
+        filters_row.addWidget(self.clear_filters_button)
+        self.filters_bar.hide()
 
         # pesquisa em todas as tabelas: lista "TABELA (linhas encontradas)" no lugar da grade; escolher uma abre
         # essa tabela com a mesma pesquisa
@@ -454,6 +496,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         layout.addLayout(bar)
+        layout.addWidget(self.filters_bar)
         layout.addWidget(self.data_stack)
         return self.data_page
 
@@ -625,60 +668,104 @@ class MainWindow(QMainWindow):
         if watched is self.status_label and event.type() == QEvent.Type.MouseButtonRelease:
             if event.button() == Qt.MouseButton.LeftButton and self.log_dock.isHidden():
                 self.set_log_visible(True)
+        # !T: Text fields take drops of text only; a dragged file over them opens like a drop on the window
+        drag = (QEvent.Type.DragEnter, QEvent.Type.DragMove, QEvent.Type.Drop)
+        if event.type() in drag and watched is not self.status_label and self.dropped_file(event) is not None:
+            if event.type() == QEvent.Type.Drop:
+                self.dropEvent(event)
+            else:
+                event.acceptProposedAction()
+            return True
         return super().eventFilter(watched, event)
 
-    def _create_toolbar(self) -> None:
-        toolbar = QToolBar(tr("toolbar.main"), self)
-        toolbar.setObjectName("mainToolbar")
-        toolbar.setMovable(False)
-        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        self.addToolBar(toolbar)
+    def _create_top_bar(self) -> None:
+        # linha de cima igual nas 4 versoes (Zig): caminho do arquivo ocupando a linha (longo: mostra o fim) e
+        # Procurar... / Abrir / Exportar... a direita; arrastar um arquivo para a janela tambem abre
+        self.path_edit = PathEdit()
+        self.path_edit.setPlaceholderText(tr("path.hint"))
+        self.path_edit.setAccessibleName(tr("path.name"))
+        self.path_edit.setMinimumWidth(120)
+        self.path_edit.returnPressed.connect(self.open_typed_path)
+        self.browse_button = QPushButton(tr("button.browse"))
+        self.browse_button.setToolTip(tr("tip.open"))
+        self.browse_button.clicked.connect(self.choose_database)
+        self.open_button = QPushButton(tr("button.open"))
+        self.open_button.setToolTip(tr("tip.open_path"))
+        self.open_button.clicked.connect(self.open_typed_path)
 
-        toolbar.addAction(self.open_action)
-        toolbar.addAction(self.reload_action)
-
-        # botao Exportar com o mesmo menu de Arquivo > Exportar
-        self.export_menu = QMenu(tr("menu.export"), self)  # o mesmo menu fica em File > Export
+        # Exportar... abre o mesmo menu de Arquivo > Exportar, logo abaixo do botao
+        self.export_menu = QMenu(tr("menu.export"), self)
         self.export_menu.addActions(self.export_db_actions)
         self.export_menu.addSeparator()
         self.export_menu.addActions(self.export_table_actions)
         self.export_menu.addSeparator()
         self.export_menu.addActions(self.export_sql_actions)
-        self.export_button = QToolButton()
-        self.export_button.setText(tr("menu.export").replace("&", ""))
-        self.export_button.setAccessibleName(self.export_button.text())
+        self.export_button = QPushButton(tr("button.export"))
         self.export_button.setToolTip(tr("tip.export"))
-        self.export_button.setMenu(self.export_menu)
-        self.export_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        toolbar.addWidget(self.export_button)
-        toolbar.addSeparator()
+        self.export_button.clicked.connect(
+            lambda: self.export_menu.popup(self.export_button.mapToGlobal(QPoint(0, self.export_button.height())))
+        )
 
-        self.limit_combo = QComboBox()
-        self.limit_combo.setAccessibleName(tr("rows.name"))
-        self.limit_combo.setToolTip(tr("tip.rows"))
-        for limit in ROW_LIMITS:
-            self.limit_combo.addItem(str(limit), limit)  # 100 / 500 / 1000, sem separador (igual nas 4 versoes)
-        self.limit_combo.currentIndexChanged.connect(self.reload_table)
-        limit_label = QLabel(f" {tr('rows.label')} ")
-        limit_label.setBuddy(self.limit_combo)
-        toolbar.addWidget(limit_label)
-        toolbar.addWidget(self.limit_combo)
+        bar = QWidget()
+        bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(6, 4, 6, 4)
+        row.addWidget(self.path_edit, 1)
+        for button in (self.browse_button, self.open_button, self.export_button):
+            row.addWidget(button)
+        toolbar = QToolBar(tr("toolbar.main"), self)
+        toolbar.setObjectName("mainToolbar")
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+        toolbar.toggleViewAction().setVisible(False)  # a linha de cima nao some pelo menu de contexto
+        toolbar.addWidget(bar)
+        self.addToolBar(toolbar)
 
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        toolbar.addWidget(spacer)
+        # arquivo arrastado para a janela (ou para um campo de texto dela) abre como o Abrir
+        self.setAcceptDrops(True)
+        for edit in (self.path_edit, self.search_edit, self.table_filter, self.sql_edit.viewport()):
+            edit.installEventFilter(self)
 
-        self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText(tr("search.placeholder"))
-        self.search_edit.setToolTip(tr("tip.words"))
-        self.search_edit.setClearButtonEnabled(True)
-        self.search_edit.setAccessibleName(tr("search.name"))
-        self.search_edit.setMinimumWidth(280)
-        self.search_edit.setMaximumWidth(420)
-        self.search_edit.textChanged.connect(self._search_edited)
-        self.search_edit.returnPressed.connect(self._search_now)  # Enter: na hora, sem os 300 ms
-        toolbar.addActions(list(self.scope_actions.values()))  # dois botoes de alternar, um marcado
-        toolbar.addWidget(self.search_edit)
+    @staticmethod
+    def dropped_file(event) -> Path | None:
+        """O arquivo local arrastado (um so), ou None."""
+        urls = event.mimeData().urls() if event.mimeData() is not None else []
+        if len(urls) == 1 and urls[0].isLocalFile():
+            return Path(urls[0].toLocalFile())
+        return None
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 (Qt)
+        if self.dropped_file(event) is not None:
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:  # noqa: N802 (Qt)
+        path = self.dropped_file(event)
+        if path is not None:
+            event.acceptProposedAction()
+            self.path_edit.setText(str(path))
+            QTimer.singleShot(0, self.open_typed_path)  # !T: after the drag ends: the open may ask (Access SQLite)
+
+    def open_typed_path(self) -> None:
+        """Abrir: o caminho do campo (Enter, botao ou arquivo arrastado); vazio, o dialogo de abrir."""
+        text = self.path_edit.text().strip().strip('"')
+        if not text:
+            self.choose_database()
+            return
+        path = Path(text).expanduser()
+        if not path.is_file():  # o banco aberto continua aberto
+            self._set_message(self.status_label, tr("status.not_found", name=text), error=True)
+            return
+        self._open_chosen(path)
+
+    def _set_opening(self, opening: bool) -> None:
+        # abrindo um arquivo: Abrir, Procurar..., Ctrl+O e F5 esperam
+        for item in (self.open_action, self.reload_action, self.browse_button, self.open_button):
+            item.setEnabled(not opening)
+
+    def _open_chosen(self, path: Path) -> None:
+        if self.release_database():  # Access convertido: pergunta antes (Cancelar mantem o aberto)
+            self._remember_dir(path)
+            self.open_database(path)
 
     def _create_menus(self) -> None:
         menu_bar = self.menuBar()
@@ -908,9 +995,8 @@ class MainWindow(QMainWindow):
     def choose_database(self) -> None:
         start_dir = default_save_dir(self.current_db_path, self.settings.value("last_dir"))
         file_name, _ = QFileDialog.getOpenFileName(self, tr("dialog.open"), str(start_dir), open_filter())
-        if file_name and self.release_database():
-            self._remember_dir(Path(file_name))
-            self.open_database(Path(file_name))
+        if file_name:
+            self._open_chosen(Path(file_name))
 
     def load_database(self):
         # Recarrega o banco atual; sem banco aberto usa a env var ou o caminho default
@@ -922,8 +1008,7 @@ class MainWindow(QMainWindow):
             self._set_message(self.status_label, tr("status.not_found", name=db_path.name), error=True)
             return
 
-        self.open_action.setEnabled(False)
-        self.reload_action.setEnabled(False)
+        self._set_opening(True)
         self._set_message(self.status_label, tr("status.loading", name=db_path.name))
 
         def progress(done: int, total: int, table: str) -> None:
@@ -999,6 +1084,7 @@ class MainWindow(QMainWindow):
         self.sql_query = None
         self.sql_model.set_rows([])
         self.setWindowTitle(f"{db_path.name} - {app_title()}")
+        self.path_edit.setText(str(db_path))
         self.stack.setCurrentWidget(self.tabs)
 
         self.table_list.blockSignals(True)
@@ -1013,8 +1099,7 @@ class MainWindow(QMainWindow):
         # o caminho usado para abrir (Access ODBC, mdbtools, SQLite, DuckDB) fica visivel na barra de status
         key = "status.loaded_access" if manager.converted else "status.loaded"
         self._set_message(self.status_label, tr(key, name=db_path.name, count=num(len(tables)), reader=manager.reader))
-        self.open_action.setEnabled(True)
-        self.reload_action.setEnabled(True)
+        self._set_opening(False)
         self._update_export_actions()
 
         if tables:
@@ -1032,8 +1117,7 @@ class MainWindow(QMainWindow):
         if request_id != self._db_request:
             return
         self._set_message(self.status_label, tr("status.error", message=message), error=True)
-        self.open_action.setEnabled(True)
-        self.reload_action.setEnabled(True)
+        self._set_opening(False)
 
     # ------------------------------------------- fechar: SQLite convertido do Access
 
@@ -1121,8 +1205,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(app_title())
         self.status_label.clear()
         self.info_label.clear()
-        self.open_action.setEnabled(True)
-        self.reload_action.setEnabled(True)
+        self._set_opening(False)
         self._update_export_actions()
 
     def close_database(self) -> None:
@@ -1365,7 +1448,7 @@ class MainWindow(QMainWindow):
             chip.setToolTip(tr("filters.remove"))
             chip.clicked.connect(lambda _checked=False, p=position: self.remove_filter(p))
             self.filter_chips.addWidget(chip)
-        self.clear_filters_button.setVisible(bool(self.filters))
+        self.filters_bar.setVisible(bool(self.filters))
         self.clear_filters_action.setEnabled(bool(self.filters))
 
     def _apply_hidden_columns(self) -> None:
