@@ -89,8 +89,10 @@ fn load_database(app: AppHandle, db_path: String, state: State<'_, AppState>) ->
     })?;
     let has_converted = connected.converted.is_some();
     *state.converted.lock().unwrap() = connected.converted;
+    let opened = manager.current_path().unwrap_or(path);
+    show_title(&app, Some(&opened));
     Ok(Opened {
-        path: manager.current_path().unwrap_or(path),
+        path: opened,
         tables: manager.list_tables()?,
         source: connected.source,
         converted: has_converted,
@@ -99,9 +101,10 @@ fn load_database(app: AppHandle, db_path: String, state: State<'_, AppState>) ->
 
 // NIVEL BASICO: Fecha o banco (File > Close); o SQLite convertido que ainda existir e apagado
 #[tauri::command(async)]
-fn close_database(state: State<'_, AppState>) {
+fn close_database(app: AppHandle, state: State<'_, AppState>) {
     state.converted.lock().unwrap().take();
     state.db_manager.lock().unwrap().close();
+    show_title(&app, None);
 }
 
 // NIVEL BASICO: Salva o SQLite convertido em `path`. overwrite = false recusa arquivo existente ([[err.exists]])
@@ -241,8 +244,23 @@ fn cancel_export(state: State<'_, AppState>) {
     state.cancel_export.store(true, Ordering::SeqCst);
 }
 
-// Barra de titulo da janela; a versao vem do Cargo.toml (fonte unica)
+// Barra de titulo da janela; a versao vem do Cargo.toml (fonte unica). tauri.conf.json repete o texto para a janela
+// ja nascer com ele (cargo test confere)
 const WINDOW_TITLE: &str = concat!("mdb2sql ", env!("CARGO_PKG_VERSION"), " - Rust");
+
+// NIVEL BASICO: Titulo das 4 versoes: "{arquivo} - mdb2sql 1.3.0 - Rust" com banco aberto, "mdb2sql 1.3.0 - Rust" sem
+fn window_title(path: Option<&str>) -> String {
+    match path.and_then(|p| Path::new(p).file_name()) {
+        Some(name) => format!("{} - {WINDOW_TITLE}", name.to_string_lossy()),
+        None => WINDOW_TITLE.to_string(),
+    }
+}
+
+fn show_title(app: &AppHandle, path: Option<&str>) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_title(&window_title(path));
+    }
+}
 
 // Os dois unicos enderecos que o app abre no navegador; capabilities/default.json libera so estes
 // para o plugin opener (cargo test confere que as duas listas sao iguais)
@@ -421,10 +439,19 @@ mod tests {
         assert!(urls.iter().all(|url| url.starts_with("https://") && !url.contains('*')));
     }
 
+    // padrao item 3: "{arquivo} - mdb2sql 1.3.0 - Rust" com arquivo aberto, "mdb2sql 1.3.0 - Rust" sem; a janela ja nasce
+    // com o titulo sem arquivo (tauri.conf.json), nunca com outro texto antes do setup
     #[test]
     fn window_title_is_short_and_shows_the_version() {
         assert_eq!(WINDOW_TITLE, "mdb2sql 1.3.0 - Rust");
         assert_eq!(WINDOW_TITLE, format!("mdb2sql {} - Rust", env!("CARGO_PKG_VERSION")));
+        assert_eq!(window_title(None), "mdb2sql 1.3.0 - Rust");
+        if cfg!(windows) {
+            assert_eq!(window_title(Some(r"C:\dados\DB4.accdb")), "DB4.accdb - mdb2sql 1.3.0 - Rust");
+        }
+        assert_eq!(window_title(Some("/home/u/x y.sqlite")), "x y.sqlite - mdb2sql 1.3.0 - Rust");
+        let conf: serde_json::Value = serde_json::from_str(&std::fs::read_to_string("tauri.conf.json").unwrap()).unwrap();
+        assert_eq!(conf["app"]["windows"][0]["title"], WINDOW_TITLE);
     }
 
     // Cargo.toml e a fonte unica: tauri.conf.json herda dele quando nao tem "version"
