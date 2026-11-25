@@ -72,6 +72,8 @@ mod tests {
         assert_eq!(source, "DuckDB");
         assert_eq!(manager.list_tables().unwrap(), vec!["Other table", "points"]);
         assert_eq!(manager.get_row_count("points", &[], "").unwrap(), 2);
+        // coluna Linhas da lista de tabelas (padrao item 6), na ordem da lista
+        assert_eq!(manager.table_rows(&manager.list_tables().unwrap()).unwrap(), [5, 2]);
 
         let schema = manager.get_table_schema("points").unwrap();
         let names: Vec<&str> = schema.iter().map(|c| c.name.as_str()).collect();
@@ -149,6 +151,7 @@ mod tests {
             // valor que seria injecao se fosse concatenado: e so um texto que nenhuma linha tem
             assert_eq!(ids(&[filter("si\"gla", json!("' OR 1=1 --"))]), Vec::<i64>::new());
             assert_eq!(manager.get_row_count("t", &[], "").unwrap(), 5);
+            assert_eq!(manager.table_rows(&["t".to_string()]).unwrap(), [5], "{path:?}");
             // o limite Rows continua valendo com filtro
             assert_eq!(manager.query_table("t", 1, &[filter("si\"gla", json!("U9A"))], "").unwrap().len(), 1);
             assert!(manager.query_table("t", 10, &[filter("missing", json!(1))], "").is_err());

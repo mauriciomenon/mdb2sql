@@ -82,6 +82,8 @@ export default {
   'tables.label': 'Tabelas ({shown}/{total})',
   'tables.filter': 'Filtrar tabelas',
   'tables.list': 'Lista de tabelas',
+  'tables.name': 'Tabela',
+  'tables.rows': 'Linhas',
   'tabs.view': 'Visão',
   'tabs.data': 'Dados',
   'tabs.schema': 'Esquema',

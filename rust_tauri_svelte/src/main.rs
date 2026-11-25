@@ -34,11 +34,13 @@ struct AppState {
     display_warning: Option<DisplayWarning>,
 }
 
-// NIVEL BASICO: Banco aberto: caminho absoluto, tabelas, por qual caminho foi lido e se ha SQLite convertido
+// NIVEL BASICO: Banco aberto: caminho absoluto, tabelas e as linhas de cada uma (mesma ordem), por qual caminho foi
+// lido e se ha SQLite convertido
 #[derive(Serialize)]
 struct Opened {
     path: String,
     tables: Vec<String>,
+    rows: Vec<i64>,
     source: String,
     converted: bool,
 }
@@ -91,9 +93,11 @@ fn load_database(app: AppHandle, db_path: String, state: State<'_, AppState>) ->
     *state.converted.lock().unwrap() = connected.converted;
     let opened = manager.current_path().unwrap_or(path);
     show_title(&app, Some(&opened));
+    let tables = manager.list_tables()?;
     Ok(Opened {
         path: opened,
-        tables: manager.list_tables()?,
+        rows: manager.table_rows(&tables)?,
+        tables,
         source: connected.source,
         converted: has_converted,
     })

@@ -57,6 +57,19 @@ test('the main window has no repeated button or menu item', () => {
   assert.deepEqual(labels.filter((label) => /^export/i.test(label)), ['Export ▸', 'Export...']);
 });
 
+// padrao item 6 (= Zig): a lista de tabelas tem as colunas Tabela e Linhas; as linhas vem do backend ao abrir
+test('table list shows the row count of each table', () => {
+  const ui = markup('./App.svelte');
+  const list = ui.match(/<div\s+class="table-list"[\s\S]*?\{\/each\}/)[0];
+  assert.match(list, /<div class="table-head" aria-hidden="true"><span>\{t\('tables\.name'\)\}<\/span><span>\{t\('tables\.rows'\)\}<\/span><\/div>/);
+  assert.match(list, /<span class="name">\{name\}<\/span><span class="rows">\{fmt\(tableRows\.get\(name\) \?\? 0\)\}<\/span>/);
+  assert.match(appFunction('openDatabase'), /tableRows = new Map\(opened\.tables\.map\(\(name, i\) => \[name, opened\.rows\[i\]\]\)\);/);
+  assert.match(appFunction('closeDatabase'), /tableRows = new Map\(\);/);
+  assert.deepEqual([en['tables.name'], en['tables.rows'], CATALOG_PT['tables.rows'], CATALOG_ES['tables.rows']], ['Table', 'Rows', 'Linhas', 'Filas']);
+  const main = readFileSync(new URL('../../src/main.rs', import.meta.url), 'utf8');
+  assert.match(main, /rows: manager\.table_rows\(&tables\)\?,/);
+});
+
 // padrao item 21: Sobre = conteudo desta versao (Build, Stack, Janela, Bancos, Leitura do Access, Autor, Licenca, links)
 // com o titulo do Zig, "Sobre o mdb2sql" (o mesmo do menu Ajuda), nas 3 linguas
 test('About: title About mdb2sql and the rows of this stack', () => {

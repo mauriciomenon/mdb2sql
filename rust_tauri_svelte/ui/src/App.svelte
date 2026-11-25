@@ -119,6 +119,7 @@
   let source = $state('');
   let converted = $state(false); // ha SQLite convertido do Access ainda nao salvo nem apagado
   let tables = $state([]);
+  let tableRows = $state.raw(new Map()); // linhas de cada tabela (coluna Linhas da lista), lidas ao abrir o arquivo
   let tableText = $state(''); // texto do filtro de tabelas; tableFilter e o que esta valendo na lista
   let tableFilter = $state('');
   let tableTimer;
@@ -419,6 +420,7 @@
     try {
       const opened = await invoke('load_database', { dbPath: path });
       tables = opened.tables;
+      tableRows = new Map(opened.tables.map((name, i) => [name, opened.rows[i]]));
       openedPath = opened.path;
       source = opened.source;
       converted = opened.converted;
@@ -451,6 +453,7 @@
       return;
     }
     tables = [];
+    tableRows = new Map();
     openedPath = '';
     source = '';
     converted = false;
@@ -1102,9 +1105,13 @@
         aria-activedescendant={visibleTables.includes(selectedTable) ? `table-${visibleTables.indexOf(selectedTable)}` : undefined}
         onkeydown={tableKey}
       >
+        <!-- como a lista do Zig: colunas Tabela e Linhas (o titulo fica no alto enquanto a lista rola) -->
+        {#if tables.length}
+          <div class="table-head" aria-hidden="true"><span>{t('tables.name')}</span><span>{t('tables.rows')}</span></div>
+        {/if}
         {#each visibleTables as name, i (name)}
           <div id="table-{i}" role="option" tabindex="-1" aria-selected={name === selectedTable} class:selected={name === selectedTable} onclick={() => openTable(name)}>
-            {name}
+            <span class="name">{name}</span><span class="rows">{fmt(tableRows.get(name) ?? 0)}</span>
           </div>
         {/each}
       </div>
@@ -1729,15 +1736,40 @@
     flex-shrink: 0;
   }
 
-  /* lista de tabelas: nome inteiro (quebra a linha, nada cortado), rola so na vertical */
+  /* lista de tabelas: nome inteiro (quebra a linha, nada cortado) e as linhas a direita, rola so na vertical */
   .table-list {
     flex: 1;
     min-height: 0;
-    padding: 4px;
+    padding: 0 4px 4px;
     overflow: hidden auto;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 6px;
+  }
+
+  /* titulos Tabela | Linhas, presos no alto da lista */
+  .table-head {
+    position: sticky;
+    top: 0;
+    display: flex;
+    gap: 12px;
+    margin-bottom: 4px;
+    padding: 6px 6px 4px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .table-list .name {
+    min-width: 0;
+  }
+
+  .table-head span:last-child,
+  .table-list .rows {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
   }
 
   .table-list:focus-visible {
@@ -1746,6 +1778,9 @@
   }
 
   .table-list [role='option'] {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
     padding: 4px 6px;
     border-radius: 4px;
     overflow-wrap: anywhere;
