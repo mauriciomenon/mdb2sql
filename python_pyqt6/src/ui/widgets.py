@@ -6,6 +6,7 @@
 from PyQt6.QtCore import QPoint, QRect, QSize, Qt
 from PyQt6.QtGui import QPainter, QPalette
 from PyQt6.QtWidgets import (
+    QLabel,
     QLayout,
     QLayoutItem,
     QLineEdit,
@@ -30,6 +31,45 @@ class SelectionTextDelegate(QStyledItemDelegate):
             for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
                 option.palette.setColor(group, QPalette.ColorRole.Text,
                                         option.palette.color(group, QPalette.ColorRole.HighlightedText))
+
+
+ZWSP = "​"  # espaco de largura zero: ponto onde um caminho pode quebrar a linha
+
+
+class WrapLabel(QLabel):
+    """Mensagem da barra de baixo: quebra a linha quando nao cabe (um caminho longo quebra nas barras) e fica so com
+    as linhas necessarias; text() devolve a mensagem sem os pontos de quebra (Copiar, testes)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWordWrap(True)
+
+    def setText(self, text: str) -> None:  # noqa: N802 (Qt)
+        super().setText(text.replace("\\", "\\" + ZWSP).replace("/", "/" + ZWSP))
+        self._fit()
+
+    def text(self) -> str:
+        return super().text().replace(ZWSP, "")
+
+    def clear(self) -> None:
+        super().clear()
+        self._fit()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt)
+        super().resizeEvent(event)
+        self._fit()
+
+    def _fit(self) -> None:
+        # !T: A word-wrapped label in a status bar was sized for a tiny width (a 271 px tall bar at 720 px): the
+        # !T: height is set from the width it really has
+        # !T: Measured with the font metrics: QLabel.heightForWidth kept the height of the previous, longer text
+        margins = self.contentsMargins()
+        width = max(1, self.width() - margins.left() - margins.right())
+        area = QRect(0, 0, width, 100_000)
+        text = self.fontMetrics().boundingRect(area, Qt.TextFlag.TextWordWrap.value, super().text()).height()
+        height = max(text, self.fontMetrics().height()) + margins.top() + margins.bottom()
+        if height != self.minimumHeight() or height != self.maximumHeight():
+            self.setFixedHeight(height)
 
 
 class PathEdit(QLineEdit):

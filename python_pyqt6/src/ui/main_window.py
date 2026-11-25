@@ -78,7 +78,7 @@ from shared.i18n import num, tr
 from shared.tsv import rows_to_tsv
 from ui.dialogs import AboutDialog, ColumnsDialog
 from ui.table_model import COPY_ROLE, SORT_ROLE, TableModel, fold, search_words
-from ui.widgets import FlowLayout, PathEdit, SelectionTextDelegate
+from ui.widgets import FlowLayout, PathEdit, SelectionTextDelegate, WrapLabel
 
 # linhas carregadas da tabela e do resultado SQL: 100 / 500 / 1000 nas 4 versoes (a pesquisa e os filtros vao no
 # banco, alem delas; ordenar e medir as colunas rodam na thread da tela sobre as carregadas)
@@ -998,7 +998,8 @@ class MainWindow(QMainWindow):
     def _create_status_bar(self) -> None:
         # barra de baixo igual nas 4 versoes (Go): a esquerda a seta do Log e a mensagem; a direita o contador de nao
         # lidos do Log, as colunas ocultas e como o arquivo foi lido (fixo enquanto ele estiver aberto)
-        self.status_label = QLabel()  # o centro da janela ja diz "No database loaded"
+        # janela estreita: a mensagem longa quebra a linha (a barra cresce so o necessario), nada cortado
+        self.status_label = WrapLabel()  # o centro da janela ja diz "No database loaded"
         self._copy_menu_on(self.status_label)
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)  # indeterminado: o backend nao informa percentual

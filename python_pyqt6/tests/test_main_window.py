@@ -222,6 +222,26 @@ def test_narrow_window_wraps_the_data_bar_and_the_search_stretches(qtbot, window
         assert extension is None or not extension.isVisible()
 
 
+def test_long_bottom_bar_message_wraps_instead_of_being_cut(qtbot, window: MainWindow) -> None:
+    # janela estreita: a mensagem longa (caminho sem espacos) quebra a linha e a barra cresce so o necessario;
+    # Copiar e os testes leem o texto como ele e
+    long = r"1 linha exportada para C:\Users\x\Downloads\Temp\mdb2sql_pendencias_2026-11-24\padrao\export\found.csv"
+    window.resize(720, 800)
+    qtbot.waitUntil(lambda: window.width() == 720, timeout=3000)
+    window._set_message(window.status_label, "Loaded: people.duckdb (2 tables)")
+    QApplication.processEvents()
+    one_line = window.status_label.height()
+    window._set_message(window.status_label, long)
+    qtbot.waitUntil(lambda: window.status_label.height() > one_line, timeout=3000)
+    label = window.status_label
+    assert label.text() == long and label.toolTip() == long
+    lines = label.fontMetrics().boundingRect(0, 0, label.width(), 10**5, Qt.TextFlag.TextWordWrap.value,
+                                             label.text().replace(chr(92), chr(92) + chr(0x200b))).height()
+    assert label.height() == lines > one_line  # as linhas que o texto pede, sem sobra
+    window._set_message(window.status_label, "Loaded: people.duckdb (2 tables)")
+    qtbot.waitUntil(lambda: window.status_label.height() == one_line, timeout=3000)
+
+
 def test_flow_layout_wraps_and_gives_the_spare_width_to_the_search(qtbot) -> None:
     from PyQt6.QtWidgets import QLineEdit, QPushButton, QSizePolicy
 
