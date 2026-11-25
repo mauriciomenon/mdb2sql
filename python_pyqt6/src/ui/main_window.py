@@ -78,7 +78,7 @@ from shared.i18n import num, tr
 from shared.tsv import rows_to_tsv
 from ui.dialogs import AboutDialog, ColumnsDialog
 from ui.table_model import COPY_ROLE, SORT_ROLE, TableModel, fold, search_words
-from ui.widgets import FlowLayout, PathEdit
+from ui.widgets import FlowLayout, PathEdit, SelectionTextDelegate
 
 # linhas carregadas da tabela e do resultado SQL: 100 / 500 / 1000 nas 4 versoes (a pesquisa e os filtros vao no
 # banco, alem delas; ordenar e medir as colunas rodam na thread da tela sobre as carregadas)
@@ -574,6 +574,7 @@ class MainWindow(QMainWindow):
         self._t(view.setAccessibleName, name)
         view.setModel(proxy)
         view.setAlternatingRowColors(True)
+        view.setItemDelegate(SelectionTextDelegate(view))  # celula selecionada legivel no tema claro e no escuro
         view.setWordWrap(False)
         view.setHorizontalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
 

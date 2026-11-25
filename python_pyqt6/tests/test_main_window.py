@@ -374,6 +374,28 @@ def mw_tables_style() -> str:
     return TABLES_STYLE
 
 
+def test_selected_cell_text_uses_the_highlighted_text_color(window: MainWindow) -> None:
+    # windows11 escrevia a celula selecionada com a cor de texto (preto sobre azul escuro no tema claro): as grades
+    # usam a cor de texto destacado da paleta na celula selecionada, legivel nos dois temas
+    from PyQt6.QtGui import QColor, QPalette
+    from PyQt6.QtWidgets import QStyle, QStyleOptionViewItem
+
+    for view in (window.data_table, window.schema_table, window.sql_table):
+        delegate = view.itemDelegate()
+        option = QStyleOptionViewItem()
+        option.palette = QPalette(QApplication.palette())
+        option.palette.setColor(QPalette.ColorRole.Text, QColor("#000000"))
+        option.palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+        option.state |= QStyle.StateFlag.State_Selected
+        delegate.initStyleOption(option, window.table_model.index(0, 0))
+        for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+            assert option.palette.color(group, QPalette.ColorRole.Text).name() == "#ffffff"
+        option.state &= ~QStyle.StateFlag.State_Selected  # sem selecao: a cor de texto normal
+        option.palette.setColor(QPalette.ColorRole.Text, QColor("#000000"))
+        delegate.initStyleOption(option, window.table_model.index(0, 0))
+        assert option.palette.color(QPalette.ColorRole.Text).name() == "#000000"
+
+
 def test_search_all_tables_and_open_one(qtbot, window: MainWindow) -> None:
     # controle de duas opcoes junto ao campo; padrao: esta tabela
     scope_texts = ("This table", "All tables")

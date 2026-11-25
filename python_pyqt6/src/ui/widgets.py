@@ -5,7 +5,31 @@
 
 from PyQt6.QtCore import QPoint, QRect, QSize, Qt
 from PyQt6.QtGui import QPainter, QPalette
-from PyQt6.QtWidgets import QLayout, QLayoutItem, QLineEdit, QSizePolicy, QStyle, QStyleOptionFrame, QWidget
+from PyQt6.QtWidgets import (
+    QLayout,
+    QLayoutItem,
+    QLineEdit,
+    QSizePolicy,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionFrame,
+    QWidget,
+)
+
+
+class SelectionTextDelegate(QStyledItemDelegate):
+    """Celula selecionada com o texto na cor de texto destacado da paleta, legivel sobre o destaque nos dois temas.
+
+    !T: The windows11 style fills a selected cell with Highlight but writes it with Text: in the light theme that is
+    !T: black on dark blue. Other styles already use HighlightedText, so for them nothing changes
+    """
+
+    def initStyleOption(self, option, index) -> None:  # noqa: N802 (Qt)
+        super().initStyleOption(option, index)
+        if option.state & QStyle.StateFlag.State_Selected:
+            for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+                option.palette.setColor(group, QPalette.ColorRole.Text,
+                                        option.palette.color(group, QPalette.ColorRole.HighlightedText))
 
 
 class PathEdit(QLineEdit):
