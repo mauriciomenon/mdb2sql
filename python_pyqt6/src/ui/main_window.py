@@ -1789,7 +1789,8 @@ class MainWindow(QMainWindow):
         self.sql_model.set_rows([])
         self.sql_query = None
         self._update_export_actions()
-        text = tr("status.sql_error", message=message)
+        # comando que nao e de leitura: a recusa vai como esta, sem o prefixo de erro do banco
+        text = message if message == tr("error.sql_read_only") else tr("status.sql_error", message=message)
         self._sql_error, self._sql_error_unread = text, self.log_dock.isHidden()
         self._set_message(self.sql_info, text, error=True, log=False)  # na linha do botao Executar
         self._set_message(self.status_label, text, error=True)

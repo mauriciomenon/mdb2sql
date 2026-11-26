@@ -189,6 +189,7 @@
   "error.export_format": "Formato de exportação não suportado: {suffix}",
   "error.export_self": "O arquivo de saída é o próprio banco aberto; escolha outro nome",
   "error.no_rows": "A consulta não devolve linhas",
+  "error.sql_read_only": "A aba SQL só lê o banco: este comando não é permitido",
   "display.title": "Modo de exibição",
   "display.using_wayland": "X11 indisponível; usando Wayland.",
   "display.no_server": "Servidor X não definido (DISPLAY)",

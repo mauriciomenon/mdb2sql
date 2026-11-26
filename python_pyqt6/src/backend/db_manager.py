@@ -32,6 +32,25 @@ def sql_string(text: str) -> str:
     return "'" + text.replace("'", "''") + "'"
 
 
+# tipos de comando do DuckDB que so leem: SELECT (tambem WITH, VALUES, FROM, TABLE, SHOW, DESCRIBE, SUMMARIZE),
+# EXPLAIN, PRAGMA e MULTI (o PIVOT sem lista de valores)
+READ_STATEMENTS = {"SELECT", "EXPLAIN", "PRAGMA", "MULTI"}
+
+
+def reads_only(query: str) -> bool:
+    """A aba SQL so le: todo comando de query e de leitura, pelo tipo que o DuckDB da a ele (nao pelo texto).
+
+    !T: The engine also runs the query in a read-only transaction (execute_query), which refuses what these types can
+    !T: still write: EXPLAIN ANALYZE of a write, IMPORT DATABASE (a PRAGMA)
+    """
+    try:
+        return all(statement.type.name in READ_STATEMENTS for statement in duckdb.extract_statements(query))
+    except duckdb.ParserException:
+        return True  # erro de sintaxe: a consulta roda e mostra o erro do motor
+    except ValueError:
+        return False  # tipo de comando que esta versao do duckdb nao sabe nomear (UPDATE EXTENSIONS)
+
+
 Filters = Sequence[tuple[str, Any]]  # (coluna, valor) do clique direito "Filtrar por este valor"
 
 
@@ -308,13 +327,23 @@ class DBManager:
 
     def execute_query(self, query: str, limit: int = 1000) -> tuple[List[str], List[Dict[str, Any]], bool]:
         """
-        Executa SQL livre; devolve (colunas, ate limit linhas, ha mais linhas).
+        Executa SQL livre, so de leitura; devolve (colunas, ate limit linhas, ha mais linhas).
+
+        Comando que nao e de leitura e recusado antes de rodar (PermissionError): o banco, a copia convertida e a
+        memoria nunca mudam.
         """
         if not self.conn:
             return [], [], False
+        if not reads_only(query):
+            raise PermissionError(tr("error.sql_read_only"))
 
         with self.cursor() as cursor:
-            cursor.execute(query)
+            # !T: The cursor is closed after the query, which rolls this transaction back (temporary objects too)
+            cursor.execute("BEGIN TRANSACTION READ ONLY")
+            try:
+                cursor.execute(query)
+            except duckdb.TransactionException as exc:  # o motor recusou uma escrita
+                raise PermissionError(tr("error.sql_read_only")) from exc
             if cursor.description is None:  # comando sem resultado (SET, CREATE ...)
                 return [], [], False
             columns: list[str] = []

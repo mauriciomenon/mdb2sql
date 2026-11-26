@@ -597,6 +597,23 @@ def test_sql_error_clears_the_grid_and_success_clears_the_error(qtbot, window: M
     assert window.log_unread.text() == "(1)" and window.status_label.text() == "Error: other"
 
 
+def test_sql_tab_refuses_a_command_that_is_not_a_read(qtbot, window: MainWindow) -> None:
+    # so leitura nas 4 versoes: a recusa aparece como esta (sem o prefixo de erro do banco) e a grade velha sai
+    window.sql_edit.setPlainText("SELECT name FROM people")
+    window.run_sql()
+    qtbot.waitUntil(lambda: window.sql_model.rowCount() == 3 and window._busy == 0, timeout=30000)
+    window.sql_edit.setPlainText("CREATE TABLE made AS SELECT 1 AS a")
+    window.run_sql()
+    refused = "The SQL tab only reads the database: this command is not allowed"
+    qtbot.waitUntil(lambda: window._busy == 0 and window.sql_info.text() == refused, timeout=30000)
+    assert window.status_label.text() == refused and window.sql_model.rowCount() == 0 and window.sql_query is None
+    assert "made" not in window.manager.list_tables()
+    window.sql_edit.setPlainText("SELECT * FROM made")
+    window.run_sql()
+    qtbot.waitUntil(lambda: window._busy == 0 and "made" in window.sql_info.text(), timeout=30000)
+    assert window.sql_info.text().startswith("SQL query error:")  # a tabela nao foi criada
+
+
 def test_export_actions_write_files_next_to_source(qtbot, window: MainWindow, people_db: Path, monkeypatch) -> None:
     asked = []
 

@@ -189,6 +189,7 @@
   "error.export_format": "Formato de exportación no admitido: {suffix}",
   "error.export_self": "El archivo de salida es la base de datos abierta; elija otro nombre",
   "error.no_rows": "La consulta no devuelve filas",
+  "error.sql_read_only": "La pestaña SQL solo lee la base de datos: este comando no está permitido",
   "display.title": "Modo de visualización",
   "display.using_wayland": "X11 no disponible; usando Wayland.",
   "display.no_server": "Servidor X no definido (DISPLAY)",

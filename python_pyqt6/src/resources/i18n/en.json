@@ -189,6 +189,7 @@
   "error.export_format": "Unsupported export format: {suffix}",
   "error.export_self": "The output file is the open database; choose another name",
   "error.no_rows": "The query returns no rows",
+  "error.sql_read_only": "The SQL tab only reads the database: this command is not allowed",
   "display.title": "Display mode",
   "display.using_wayland": "X11 unavailable; using Wayland.",
   "display.no_server": "X server not set (DISPLAY)",
