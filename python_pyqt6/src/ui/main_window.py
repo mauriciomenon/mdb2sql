@@ -714,6 +714,7 @@ class MainWindow(QMainWindow):
         self.terms_found.currentItemChanged.connect(
             lambda item, _previous: self._show_term_table(item.data(Qt.ItemDataRole.UserRole) if item else "")
         )
+        self.terms_found.itemSelectionChanged.connect(self._sync_term_table)
         self.terms_model = TableModel(self)
         self.terms_proxy, self.terms_table = self._create_table_view(self.terms_model, "a11y.terms")
         self.terms_info = QLabel()
@@ -2197,6 +2198,12 @@ class MainWindow(QMainWindow):
         self.terms_info.clear()
         self.not_found_edit.clear()
         self._show_terms_summary()
+
+    def _sync_term_table(self) -> None:
+        # !T: UI Automation / screen readers select an item without making it current; follow the selection
+        items = self.terms_found.selectedItems()
+        if items and items[0] is not self.terms_found.currentItem():
+            self.terms_found.setCurrentItem(items[0])
 
     def _term_table(self) -> str:
         item = self.terms_found.currentItem()

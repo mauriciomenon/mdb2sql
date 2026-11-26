@@ -917,7 +917,11 @@ def test_terms_tab_lists_hits_in_list_order_copies_and_reports(qtbot, tmp_path: 
     assert win.terms_summary.text() == "2 of 3 terms found: 5 rows in 2 tables"
     assert win.not_found_title.text() == "Not found (1)" and win.not_found_edit.toPlainText() == "PNTNAM"
     assert win.terms_found.currentRow() == 0 and win.terms_model.columns == ["Term", "txt"]  # a primeira escolhida
-    win.terms_found.setCurrentRow(1)
+    # UI Automation seleciona o item sem torna-lo o atual: a grade segue a selecao
+    from PyQt6.QtCore import QItemSelectionModel
+
+    win.terms_found.selectionModel().select(win.terms_found.model().index(1, 0),
+                                            QItemSelectionModel.SelectionFlag.ClearAndSelect)
     qtbot.waitUntil(lambda: win._busy == 0 and win.terms_model.columns[1:2] == ["RTUNO"], timeout=30000)
     proxy = win.terms_proxy
     assert [(proxy.index(r, 0).data(), proxy.index(r, 2).data()) for r in range(proxy.rowCount())] == [
