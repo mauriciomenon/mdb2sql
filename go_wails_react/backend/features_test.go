@@ -79,6 +79,7 @@ func TestSQLTabIsReadOnly(t *testing.T) {
 			`DESCRIBE pontos`, `SUMMARIZE pontos`, `EXPLAIN SELECT * FROM pontos`, `EXPLAIN ANALYZE SELECT count(*) FROM pontos`,
 			`PRAGMA table_info('pontos')`, `PRAGMA database_size`, `select 1;`, `SELECT 1; SELECT 2 AS two`,
 			`PIVOT pontos ON sub USING count(*)`,
+			`SELECT 'sqlite_attach(x) it''s' AS s /* checkpoint() */ -- force_checkpoint()`, // names in text and comments are no calls
 		} {
 			res, err := m.RunQuery(ctx, q, 10)
 			if err != nil || len(res.Columns) == 0 {

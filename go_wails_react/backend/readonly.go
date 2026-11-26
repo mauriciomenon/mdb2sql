@@ -8,10 +8,10 @@ package backend
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
+	"unicode"
 	"unsafe"
 
 	"github.com/duckdb/duckdb-go/v2"
@@ -72,39 +72,61 @@ func writingFunction(name string) bool {
 	return strings.HasSuffix(name, "_attach") || name == "checkpoint" || name == "force_checkpoint"
 }
 
-// hasWritingFunction walks the parse tree of json_serialize_sql (the parser's own tree, never the text) for a
-// function_name that writes
-func hasWritingFunction(v any) bool {
-	switch x := v.(type) {
-	case map[string]any:
-		if name, ok := x["function_name"].(string); ok && writingFunction(name) {
-			return true
-		}
-		for _, e := range x {
-			if hasWritingFunction(e) {
-				return true
+// calledFunctions lists the names the query calls: a name (plain or "quoted") followed by "(", outside string
+// literals and comments. Checked before DuckDB prepares anything: binding an unknown function makes it try to install
+// an extension from the network (seen: sqlite_attach on a DuckDB file waited minutes)
+func calledFunctions(query string) []string {
+	var names []string
+	q := []rune(query)
+	for i := 0; i < len(q); {
+		switch {
+		case q[i] == '\'': // a string: up to the closing quote ('' inside is a quote)
+			for i++; i < len(q) && !(q[i] == '\'' && (i+1 == len(q) || q[i+1] != '\'')); i++ {
+				if q[i] == '\'' {
+					i++
+				}
 			}
-		}
-	case []any:
-		for _, e := range x {
-			if hasWritingFunction(e) {
-				return true
+			i++
+		case q[i] == '-' && i+1 < len(q) && q[i+1] == '-':
+			for i < len(q) && q[i] != '\n' {
+				i++
 			}
+		case q[i] == '/' && i+1 < len(q) && q[i+1] == '*':
+			for i += 2; i+1 < len(q) && !(q[i] == '*' && q[i+1] == '/'); i++ {
+			}
+			i += 2
+		case q[i] == '"' || q[i] == '_' || unicode.IsLetter(q[i]):
+			start := i
+			if q[i] == '"' {
+				for i++; i < len(q) && q[i] != '"'; i++ {
+				}
+				i++
+			} else {
+				for i < len(q) && (q[i] == '_' || unicode.IsLetter(q[i]) || unicode.IsDigit(q[i])) {
+					i++
+				}
+			}
+			name := strings.Trim(string(q[start:min(i, len(q))]), `"`)
+			j := i
+			for j < len(q) && unicode.IsSpace(q[j]) {
+				j++
+			}
+			if j < len(q) && q[j] == '(' {
+				names = append(names, name)
+			}
+		default:
+			i++
 		}
 	}
-	return false
+	return names
 }
 
-// checkFunctions refuses (err.sqlReadOnly) a SELECT that calls a writing table function. A query the serializer does
-// not take (a statement other than SELECT, a syntax error) is left to checkReadOnly, which refuses or explains it.
-func checkFunctions(ctx context.Context, conn *sql.Conn, query string) error {
-	var tree string
-	var v any
-	if conn.QueryRowContext(ctx, "SELECT json_serialize_sql(?)", query).Scan(&tree) != nil || json.Unmarshal([]byte(tree), &v) != nil {
-		return nil
-	}
-	if hasWritingFunction(v) {
-		return errors.New(i18n.T("err.sqlReadOnly"))
+// checkFunctions refuses (err.sqlReadOnly) a query that calls a writing table function
+func checkFunctions(query string) error {
+	for _, name := range calledFunctions(query) {
+		if writingFunction(name) {
+			return errors.New(i18n.T("err.sqlReadOnly"))
+		}
 	}
 	return nil
 }
@@ -112,13 +134,14 @@ func checkFunctions(ctx context.Context, conn *sql.Conn, query string) error {
 // readOnlyConn gives the connection that runs a SQL tab query: the query was checked (checkFunctions, checkReadOnly)
 // and the connection is inside a READ ONLY transaction; done rolls it back and frees the connection
 func (m *DBManager) readOnlyConn(ctx context.Context, query string) (*sql.Conn, func(), error) {
+	if err := checkFunctions(query); err != nil {
+		return nil, nil, err
+	}
 	conn, err := m.conn.Conn(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	if err = checkFunctions(ctx, conn, query); err == nil {
-		err = checkReadOnly(conn, query)
-	}
+	err = checkReadOnly(conn, query)
 	if err == nil {
 		_, err = conn.ExecContext(ctx, "BEGIN TRANSACTION READ ONLY")
 	}
