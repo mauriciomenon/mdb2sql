@@ -245,7 +245,7 @@ fechar; salvar o SQLite e reabri-lo ja da o mesmo ganho: ~3 s).
 - A pesquisa compara o texto de cada valor como o DuckDB o escreve (ex.: `2.0` para um DOUBLE que a grade mostra `2`).
 - Excel: texto com mais de 32.767 caracteres e cortado (limite do Excel); numeros com mais de 15 digitos e datas
   antes de 1900 vao como texto; BLOB vai como texto.
-- EXPLAIN so com uma consulta e sozinho no texto (`EXPLAIN SELECT 1; SELECT 2` e recusado): o DuckDB nao diz qual
+- EXPLAIN so com uma consulta, sozinho no texto e sem comentario (`EXPLAIN SELECT 1; SELECT 2` e recusado): o DuckDB nao diz qual
   comando um EXPLAIN explica, e EXPLAIN ANALYZE roda esse comando.
 - Mensagens tecnicas vindas dos motores (erro de SQL do DuckDB, do sistema de arquivos) aparecem como o motor
   escreve, em ingles.
