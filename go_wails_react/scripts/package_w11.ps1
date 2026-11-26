@@ -26,7 +26,7 @@ Copy-Item build\bin\mdb2sql.exe, LICENSE $appDir
     'DuckDB (.duckdb) e exporta para .sqlite, .duckdb, .xlsx e .csv. Precisa do Microsoft Edge WebView2 Runtime'
     '(parte do Windows 11). Idiomas: ingles, portugues (Brasil), espanhol (Configuracoes > Idioma).'
     'Access sem nada instalado: mdbtools embutido (ou o driver ODBC do Access 64 bits, se existir). O Access e'
-    'convertido uma vez para SQLite; ao fechar, o programa pergunta se salva ou apaga o SQLite convertido.'
+    'convertido uma vez para SQLite; ao sair sem ter salvo (Arquivo > Salvar), o programa pergunta se salva.'
     'Cache das ferramentas embutidas: %LOCALAPPDATA%\mdb2sql\go-wails-react-<versao>-<build>.'
     'Codigo: https://github.com/mauriciomenon/mdb2sql  e  https://gitlab.com/mauricio.menon/mdb2sql'
     'Licenca: GPL v2 ou posterior (arquivo LICENSE)'

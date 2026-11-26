@@ -158,9 +158,12 @@ body {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
+/* an item of an open menu: 25 px, as Zig */
 .dropdown button {
   display: flex;
   align-items: center;
+  padding-top: 3px;
+  padding-bottom: 3px;
   border: 0;
   text-align: left;
   white-space: nowrap;
@@ -176,10 +179,20 @@ body {
   color: var(--muted);
 }
 
-/* File > Export: the list opens beside its item */
+/* a submenu opens beside its item; under the Export... button (right edge of the window) it opens to the left */
 .dropdown.sub {
   top: -5px;
   left: 100%;
+}
+
+.right .dropdown.sub {
+  left: auto;
+  right: 100%;
+}
+
+/* the cell menu shows its submenus beside it (no scroll box) */
+.menu.cell-menu {
+  overflow: visible;
 }
 
 .dropdown button:hover:not(:disabled) {
@@ -191,12 +204,6 @@ body {
   margin: 4px 0;
   border: 0;
   border-top: 1px solid var(--border);
-}
-
-.menu-title {
-  margin: 4px 12px 2px;
-  font-size: inherit;
-  color: var(--muted);
 }
 
 .check {
@@ -223,7 +230,7 @@ body {
 .sql-bar {
   display: flex;
   gap: 8px;
-  align-items: stretch;
+  align-items: flex-start; /* the Run button keeps its own height, as every button (owner 26/11) */
 }
 
 .sql-bar textarea {
@@ -254,15 +261,17 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+/* the sizes of the Zig version (owner 26/11; the font stays): buttons and fields 29 px high with the border */
 button,
 select,
 input {
   font: inherit;
+  line-height: 19px;
   color: inherit;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 6px 12px;
+  padding: 4px 12px;
 }
 
 button {
@@ -283,7 +292,6 @@ button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-text);
-  font-weight: 600;
 }
 
 :focus-visible {
@@ -357,7 +365,7 @@ button.primary {
   display: flex;
   gap: 8px;
   width: 100%;
-  padding: 5px 8px;
+  padding: 4px 8px; /* 27 px a line, as Zig */
   border: 0;
   background: none;
   text-align: left;
@@ -433,6 +441,12 @@ button.primary {
   margin-left: -1px;
 }
 
+/* the tabs Data, Schema, SQL, Terms: 27 px high, as Zig */
+.tabs[role='tablist'] button {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
 .tabs button:first-child {
   border-radius: 6px 0 0 6px;
   margin-left: 0;
@@ -467,7 +481,8 @@ table {
 
 th,
 td {
-  padding: 5px 10px;
+  padding: 3px 10px; /* 27 px a row with its border, as Zig */
+  line-height: 20px;
   text-align: left;
   /* no max-width: each column is as wide as its longest value (no cut fields) */
   white-space: nowrap;
@@ -490,13 +505,13 @@ th {
 }
 
 .hits .table-item {
-  padding: 5px 10px;
+  padding: 4px 10px;
 }
 
 /* Schema grid: 6 px more on each side between its three columns */
 .schema th,
 .schema td {
-  padding: 5px 16px;
+  padding: 3px 16px;
 }
 
 /* right edge of a Data header: drag to resize the column (header menu > Size column to fit undoes it) */
@@ -507,6 +522,89 @@ th {
   bottom: 0;
   width: 6px;
   cursor: col-resize;
+}
+
+/* Data: the narrow first column of the boxes that mark rows */
+th.mark,
+td.mark {
+  width: 1px;
+  padding: 0 6px;
+}
+
+td.mark input {
+  margin: 0;
+  vertical-align: middle;
+}
+
+/* "Only marked" at the right of the line under the grid */
+.only-marked {
+  float: right;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.only-marked input {
+  margin: 0;
+}
+
+/* pages of the Data tab: the previous and next buttons after the line, as large as every button */
+.pager {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 12px;
+  vertical-align: middle;
+}
+
+/* Terms tab: the pasted terms (about 8 lines, then a scroll bar), one line of selectors, the tables found beside the
+   rows of the chosen one, the terms not found */
+.terms-text,
+.terms-missing textarea {
+  resize: vertical;
+  font: inherit; /* the app font (Segoe UI 14 px), as in the Python and Zig versions; a textarea would use monospace */
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.terms-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.terms-hits {
+  display: flex;
+  flex: 1;
+  gap: 10px;
+  min-height: 120px;
+}
+
+.terms-hits .hits {
+  flex: none;
+  max-width: 35%;
+  overflow: auto;
+}
+
+.terms-hits .table-container {
+  min-width: 0;
+}
+
+.terms-missing {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: 4px 8px;
+}
+
+.terms-missing h3 {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: inherit;
+  font-weight: normal; /* as in the Python and Zig versions */
 }
 
 /* numbers to the right, the header of a numeric column too */
@@ -560,8 +658,11 @@ td[aria-selected='true'] {
   display: flex;
   justify-content: space-between;
   gap: 16px;
+  padding-top: 3px;
+  padding-bottom: 3px;
   border: 0;
   text-align: left;
+  white-space: nowrap;
 }
 
 /* the column list of the header menu: check mark, then the name (as in Settings) */
@@ -703,7 +804,23 @@ td[aria-selected='true'] {
   margin-left: auto;
 }
 
-/* "Converted SQLite file" dialog */
+/* the text of a dialog button (Sized in App.tsx): every text of the row in the 3 languages in one grid cell, only its
+   own visible, so all the buttons of the row have one width and height */
+.sized {
+  display: inline-grid;
+  justify-items: center;
+  white-space: nowrap;
+}
+
+.sized > span {
+  grid-area: 1 / 1;
+}
+
+.sized > .ghost {
+  visibility: hidden;
+}
+
+/* questions (exit, export running, whole table or rows found) and the display warning */
 .conversion {
   width: min(480px, 100%);
 }
@@ -732,18 +849,6 @@ td[aria-selected='true'] {
 .conversion .primary:focus {
   outline: 2px solid var(--text);
   outline-offset: 2px;
-}
-
-.remember {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 12px;
-  color: var(--muted);
-}
-
-.remember input {
-  margin: 0;
 }
 
 /* "Display mode" warning (Linux without X11): the command is selectable and has its own Copy button */

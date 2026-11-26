@@ -22,16 +22,36 @@ export function DisplayWarning() {
   return window['go']['main']['App']['DisplayWarning']();
 }
 
-export function ExportDatabase(arg1) {
-  return window['go']['main']['App']['ExportDatabase'](arg1);
+export function Exit() {
+  return window['go']['main']['App']['Exit']();
+}
+
+export function ExportAllCSV() {
+  return window['go']['main']['App']['ExportAllCSV']();
+}
+
+export function ExportMarked(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ExportMarked'](arg1, arg2, arg3);
 }
 
 export function ExportQuery(arg1, arg2) {
   return window['go']['main']['App']['ExportQuery'](arg1, arg2);
 }
 
+export function ExportSchema(arg1, arg2) {
+  return window['go']['main']['App']['ExportSchema'](arg1, arg2);
+}
+
+export function ExportSearch(arg1, arg2) {
+  return window['go']['main']['App']['ExportSearch'](arg1, arg2);
+}
+
 export function ExportTable(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ExportTable'](arg1, arg2, arg3, arg4);
+}
+
+export function ExportTerms(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ExportTerms'](arg1, arg2, arg3);
 }
 
 export function GetAppInfo() {
@@ -58,12 +78,16 @@ export function GetShowNull() {
   return window['go']['main']['App']['GetShowNull']();
 }
 
-export function GetTableData(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['GetTableData'](arg1, arg2, arg3, arg4);
+export function GetTableData(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['GetTableData'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function GetTableSchema(arg1) {
   return window['go']['main']['App']['GetTableSchema'](arg1);
+}
+
+export function GetTermMatch() {
+  return window['go']['main']['App']['GetTermMatch']();
 }
 
 export function GetTheme() {
@@ -74,24 +98,28 @@ export function LoadDatabase(arg1) {
   return window['go']['main']['App']['LoadDatabase'](arg1);
 }
 
+export function MarkedRows(arg1, arg2) {
+  return window['go']['main']['App']['MarkedRows'](arg1, arg2);
+}
+
 export function PendingConversion() {
   return window['go']['main']['App']['PendingConversion']();
-}
-
-export function RememberedChoice() {
-  return window['go']['main']['App']['RememberedChoice']();
-}
-
-export function ResolveConversion(arg1, arg2) {
-  return window['go']['main']['App']['ResolveConversion'](arg1, arg2);
 }
 
 export function RunQuery(arg1, arg2) {
   return window['go']['main']['App']['RunQuery'](arg1, arg2);
 }
 
+export function SaveDatabase(arg1) {
+  return window['go']['main']['App']['SaveDatabase'](arg1);
+}
+
 export function SearchAllTables(arg1) {
   return window['go']['main']['App']['SearchAllTables'](arg1);
+}
+
+export function SearchTerms(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SearchTerms'](arg1, arg2, arg3);
 }
 
 export function SelectDatabase() {
@@ -114,6 +142,10 @@ export function SetShowNull(arg1) {
   return window['go']['main']['App']['SetShowNull'](arg1);
 }
 
+export function SetTermMatch(arg1) {
+  return window['go']['main']['App']['SetTermMatch'](arg1);
+}
+
 export function SetTheme(arg1) {
   return window['go']['main']['App']['SetTheme'](arg1);
 }
@@ -122,10 +154,18 @@ export function SourceKind() {
   return window['go']['main']['App']['SourceKind']();
 }
 
+export function StartupLog() {
+  return window['go']['main']['App']['StartupLog']();
+}
+
 export function StartupPath() {
   return window['go']['main']['App']['StartupPath']();
 }
 
 export function TableCounts() {
   return window['go']['main']['App']['TableCounts']();
+}
+
+export function TermRows(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['TermRows'](arg1, arg2, arg3, arg4);
 }

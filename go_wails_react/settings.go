@@ -19,11 +19,16 @@ type Settings struct {
 	ShowNull bool   `json:"showNull"` // a NULL cell shows "NULL"; off (default) it stays empty
 	// Data tab search when the app starts: "table" (the open table, default) or "all" (all tables)
 	SearchScope string `json:"searchScope"`
-	// SQLite saved from each Access file (lowercase path), so the same unchanged file opens it without converting
+	// Terms tab comparison when the app starts: "whole" (the whole cell equals the term, default) or "contains"
+	TermMatch string `json:"termMatch"`
+	// SQLite or DuckDB saved from each Access file (lowercase path), so the same unchanged file opens it without converting
 	Converted map[string]SavedConversion `json:"converted,omitempty"`
+	// folders created beside Access files to hold their converted SQLite (no temporary folder could): the startup
+	// looks there for what a crash left
+	TempDirs []string `json:"tempDirs,omitempty"`
 }
 
-// SavedConversion: the Access file's version when converted (fileKey: path, size, date), the SQLite saved from it and
+// SavedConversion: the Access file's version when converted (fileKey: path, size, date), the file saved from it and
 // that file's own version when saved; a change in either converts again
 type SavedConversion struct {
 	Key     string `json:"key"`
@@ -41,6 +46,19 @@ func (a *App) SetSearchScope(scope string) error {
 		return fmt.Errorf("unknown search scope %q", scope)
 	}
 	a.settings.SearchScope = scope
+	return a.saveSettings()
+}
+
+var termMatches = map[string]bool{"whole": true, "contains": true}
+
+// GetTermMatch / SetTermMatch: Settings > Term matching
+func (a *App) GetTermMatch() string { return a.settings.TermMatch }
+
+func (a *App) SetTermMatch(match string) error {
+	if !termMatches[match] {
+		return fmt.Errorf("unknown term matching %q", match)
+	}
+	a.settings.TermMatch = match
 	return a.saveSettings()
 }
 
@@ -80,6 +98,9 @@ func loadSettings() Settings {
 	}
 	if !searchScopes[s.SearchScope] {
 		s.SearchScope = "table"
+	}
+	if !termMatches[s.TermMatch] {
+		s.TermMatch = "whole"
 	}
 	if !i18n.Valid(s.Language) {
 		s.Language = i18n.Langs[0]

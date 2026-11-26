@@ -60,6 +60,60 @@ export namespace backend {
 	        this.rows = source["rows"];
 	    }
 	}
+	export class TermHit {
+	    term: string;
+	    table: string;
+	    rows: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TermHit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.term = source["term"];
+	        this.table = source["table"];
+	        this.rows = source["rows"];
+	    }
+	}
+	export class TermsResult {
+	    terms: string[];
+	    repeated: number;
+	    hits: TermHit[];
+	    tables: TableHits[];
+	    notFound: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new TermsResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.terms = source["terms"];
+	        this.repeated = source["repeated"];
+	        this.hits = this.convertValues(source["hits"], TermHit);
+	        this.tables = this.convertValues(source["tables"], TableHits);
+	        this.notFound = source["notFound"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 
 }
 
@@ -93,20 +147,6 @@ export namespace main {
 	        this.webview = source["webview"];
 	        this.mdbtools = source["mdbtools"];
 	        this.mdbtoolsSystem = source["mdbtoolsSystem"];
-	    }
-	}
-	export class ConversionResult {
-	    done: boolean;
-	    saved: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ConversionResult(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.done = source["done"];
-	        this.saved = source["saved"];
 	    }
 	}
 	export class DisplayWarning {

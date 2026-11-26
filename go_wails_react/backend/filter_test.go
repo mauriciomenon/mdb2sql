@@ -133,6 +133,9 @@ func TestTableFilters(t *testing.T) {
 			}
 			for _, row := range rows {
 				for col, v := range row {
+					if col == RowIDKey { // the engine's rowid of the row, not a column
+						continue
+					}
 					got, err := m.QueryTable("pts", 1000, "", Filter{col, uiValue(t, v)}, Filter{"id", uiValue(t, row["id"])})
 					if err != nil || len(got) != 1 {
 						t.Errorf("id %v, %s = %v: %d rows (%v)", row["id"], col, v, len(got), err)

@@ -97,17 +97,27 @@ func TestAccessConvertsToSQLite(t *testing.T) {
 				[][]string{{"São Paulo", "11451245"}, {"Foz do Iguaçu", "NULL"}}) {
 				t.Errorf("cities %q", got)
 			}
-			// Close leaves the converted file to the caller, who saves or deletes it
+			// File > Save copies the converted file (never over itself) and the database stays open on it; Close leaves
+			// it to the caller, who removes it with its folder
+			dest := filepath.Join(t.TempDir(), "saved.sqlite")
+			if err := m.SaveConverted(dest); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.SaveConverted(conv); err == nil {
+				t.Error("saved over the temporary file itself")
+			}
+			if n, _ := m.GetRowCount("Tipos", ""); n != 3 {
+				t.Errorf("after save: %d rows in the open database", n)
+			}
 			m.Close()
 			if _, err := os.Stat(conv); err != nil {
 				t.Fatalf("converted file gone after Close: %v", err)
 			}
-			dest := filepath.Join(t.TempDir(), "saved.sqlite")
-			if err := SaveConverted(conv, dest); err != nil {
+			if err := RemoveConverted(conv); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := os.Stat(filepath.Dir(conv)); !os.IsNotExist(err) {
-				t.Errorf("temporary folder left after save: %v", err)
+				t.Errorf("temporary folder left: %v", err)
 			}
 			back := NewDBManager()
 			defer back.Close()
@@ -121,34 +131,55 @@ func TestAccessConvertsToSQLite(t *testing.T) {
 	}
 }
 
-func TestCleanStaleConvertedKeepsLiveProcesses(t *testing.T) {
-	cache := t.TempDir()
-	t.Setenv("LOCALAPPDATA", cache)  // os.UserCacheDir on Windows
-	t.Setenv("XDG_CACHE_HOME", cache) // and on Linux
-	root, _ := convertedRoot()
-	mine, err := newConvertedPath("x.accdb")
+// standard item 29: the converted file goes to the first folder where a file can be created (the user's temporary
+// folder, the system's, then the folder of the Access file); the leftovers of dead processes are removed from all of
+// them, and a folder that ends up empty is removed too
+func TestConvertedFolderFallsBackAndIsCleaned(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file") // nothing can be created under a file
+	os.WriteFile(file, nil, 0o644)
+	bad := filepath.Join(file, convertedDir)
+	second := filepath.Join(dir, "system", convertedDir)
+	third := filepath.Join(dir, "source", convertedDir)
+	mine, err := newConvertedIn([]string{bad, second, third}, filepath.Join(dir, "source", "x.accdb"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	pidDir := filepath.Dir(filepath.Dir(mine))
+	if filepath.Base(mine) != "x.sqlite" || filepath.Base(pidDir) != strconv.Itoa(os.Getpid()) || filepath.Dir(pidDir) != second {
+		t.Errorf("converted file %s, want <%s>/<pid>/<random>/x.sqlite", mine, second)
+	}
+	if _, err := os.Stat(mine); !os.IsNotExist(err) {
+		t.Errorf("the path must not exist yet: %v", err)
+	}
+	if got, err := newConvertedIn([]string{bad}, "x.accdb"); err == nil {
+		t.Errorf("no folder to write to must fail, got %s", got)
+	}
+	roots := ConvertedRoots(filepath.Join(dir, "source", "x.accdb"))
+	if len(roots) != 3 || roots[0] != filepath.Join(os.TempDir(), convertedDir) || roots[2] != third || len(ConvertedRoots("")) != 2 {
+		t.Errorf("roots %q", roots)
+	}
+
 	os.WriteFile(mine, []byte("x"), 0o644)
-	dead := filepath.Join(root, "2147483646") // no such process
+	dead := filepath.Join(third, "2147483646") // no such process
 	os.MkdirAll(filepath.Join(dead, "a"), 0o755)
 	os.WriteFile(filepath.Join(dead, "a", "old.sqlite"), []byte("x"), 0o644)
-	notPid := filepath.Join(root, "notes")
+	notPid := filepath.Join(second, "notes")
 	os.MkdirAll(notPid, 0o755)
-
-	if n := CleanStaleConverted(); n != 1 {
+	if n := CleanStaleConverted(bad, second, third); n != 1 {
 		t.Errorf("removed %d folders, want 1", n)
 	}
-	for path, want := range map[string]bool{mine: true, dead: false, notPid: true} {
+	for path, want := range map[string]bool{mine: true, third: false, notPid: true} {
 		if _, err := os.Stat(path); (err == nil) != want {
 			t.Errorf("%s exists=%v, want %v", path, err == nil, want)
 		}
 	}
-	if filepath.Base(filepath.Dir(filepath.Dir(mine))) != strconv.Itoa(os.Getpid()) {
-		t.Errorf("converted file not under the process folder: %s", mine)
+	// the converted file leaves with its folders: nothing stays in the temporary folder nor beside an Access file
+	os.Remove(notPid)
+	if err := RemoveConverted(mine); err != nil {
+		t.Fatal(err)
 	}
-	if got := UniquePath(filepath.Dir(mine), "x.sqlite"); filepath.Base(got) != "x (2).sqlite" {
-		t.Errorf("UniquePath = %s", got)
+	if _, err := os.Stat(second); !os.IsNotExist(err) {
+		t.Errorf("empty folder %s left: %v", second, err)
 	}
 }

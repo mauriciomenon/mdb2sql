@@ -2,7 +2,7 @@ import React from 'react';
 import { readFileSync } from 'node:fs';
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { vi, beforeEach } from 'vitest';
-import App, { aboutRows, clampLogHeight, columnCellWidth, filterLabel, gridText, LOG_MIN, logLine, nullableText, progressText, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
+import App, { aboutRows, clampLogHeight, columnCellWidth, favoritesFirst, filterLabel, gridText, LOG_MIN, logLine, nullableText, parseTerms, progressText, ROWID, rowKey, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
 import { CATALOGS, LANGS, translate, translateN } from './i18n';
 
 const tables = ['RANGER_SOACCU', 'RANGER_SOGEN'];
@@ -31,6 +31,29 @@ const menu = (name, item) => {
   fireEvent.click(screen.getByRole('button', { name }));
   fireEvent.click(screen.getByRole('menuitem', { name: item }));
 };
+
+// the item of an open menu with this label (after its check mark, before its submenu arrow or shortcut); the last
+// one: a submenu item
+const item = (text) => {
+  const name = new RegExp(`^✓?${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}( ▸| (Ctrl\\+|F5|Space|Espaço).*)?$`);
+  return ['menuitem', 'menuitemradio', 'menuitemcheckbox'].flatMap((role) => screen.queryAllByRole(role, { name })).at(-1);
+};
+
+// opens a menubar menu or the Export... button, hovers each submenu of the path and clicks its last item
+const pick = (button, ...path) => {
+  fireEvent.click(screen.getByRole('button', { name: button }));
+  for (const name of path.slice(0, -1)) fireEvent.mouseEnter(item(name));
+  fireEvent.click(item(path.at(-1)));
+};
+
+// the visible texts of the buttons of a dialog (a sized button also holds, invisible, the texts that set its size)
+const buttonTexts = (el) => within(el).getAllByRole('button').map((b) => (b.querySelector('.sized > span') ?? b).textContent);
+// the hidden texts that size a button (owner 26/11: every button of a dialog as large as the longest text in the 3 languages)
+const sizers = (b) => [...b.querySelectorAll('.sized > .ghost')].map((g) => g.textContent);
+
+// the items of a menu as shown: a separator is "--", a submenu its name with the arrow
+const menuTree = (menuEl) =>
+  [...menuEl.children].map((el) => (el.tagName === 'HR' ? '--' : el.classList.contains('menu-root') ? el.querySelector('button').textContent : el.textContent));
 
 // Open of the path bar with the field empty: the default database (MDB2SQL_DB_PATH or the sample)
 const openDefault = () => fireEvent.click(screen.getByRole('button', { name: 'Open' }));
@@ -63,9 +86,9 @@ describe('App IPC flow', () => {
     expect(tableItem).toBeInTheDocument();
     fireEvent.click(tableItem);
 
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenCalledWith('RANGER_SOACCU', 100, [], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenCalledWith('RANGER_SOACCU', 100, [], '', 0));
     expect(screen.getByText('Alpha')).toBeInTheDocument();
-    expect(screen.getByText(/showing 2 of 2 rows/i)).toBeInTheDocument();
+    expect(screen.getByText(/rows 1 to 2 of 2/)).toBeInTheDocument();
   });
 
   it('opens the file picked in the native dialog and shows its schema', async () => {
@@ -89,7 +112,8 @@ describe('App IPC flow', () => {
     const es = (key, ...args) => translate('es', key, ...args);
     expect(['YES', 'NO'].map((v) => nullableText(v, pt))).toEqual(['Sim', 'Não']);
     expect(['YES', 'NO'].map((v) => nullableText(v, es))).toEqual(['Sí', 'No']);
-    expect(pt('tab.schema')).toBe('Esquema');
+    expect(pt('tab.schema')).toBe('Schema'); // owner: Schema in the 3 languages
+    expect(translate('es', 'export.dbSchema')).toBe('Schema de la base de datos');
   });
 
   // standard item 1: the path bar of Zig (field + Browse... Open Export...); a file dropped on the window opens
@@ -130,15 +154,23 @@ describe('App IPC flow', () => {
     await waitFor(() => expect(field).toHaveValue('C:\\resolved\\sample.duckdb'));
 
     fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
-    expect(within(screen.getByRole('menu', { name: 'Export' })).getByRole('menuitem', { name: en('export.dbSqlite') })).toBeEnabled();
+    expect(within(screen.getByRole('menu', { name: 'Export' })).getByRole('menuitem', { name: /^Current table ▸/ })).toBeEnabled();
+
+    // File > Open the typed path is the Open button
+    fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
+    fireEvent.change(field, { target: { value: 'C:\\data\\menu.duckdb' } });
+    pick('File', 'Open the typed path');
+    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('C:\\data\\menu.duckdb'));
   });
 
-  // standard item 20: the shortcuts of the Python version
-  it('has the shortcuts Ctrl+O, Ctrl+F, F5, Ctrl+Q and Ctrl+1/2/3', async () => {
+  // standard items 20 and 28: the shortcuts of the menus
+  it('has the shortcuts Ctrl+O, Ctrl+S, Ctrl+Shift+S, Ctrl+W, Ctrl+F, Ctrl+T, F5, Ctrl+Q and Ctrl+1/2/3/4', async () => {
     const SelectDatabase = vi.fn(async () => '');
     const DatabasePath = vi.fn(async () => 'C:\\data\\db.duckdb');
+    const SaveDatabase = vi.fn(async () => '');
+    const CloseDatabase = vi.fn(async () => {});
     const Quit = vi.fn();
-    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SelectDatabase, DatabasePath } } }, runtime: { Quit } });
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SelectDatabase, DatabasePath, SaveDatabase, CloseDatabase } } }, runtime: { Quit } });
     render(<App />);
     const key = (init) => fireEvent.keyDown(window, init);
 
@@ -157,8 +189,28 @@ describe('App IPC flow', () => {
     expect(screen.getByRole('tab', { name: /Schema/ })).toHaveAttribute('aria-selected', 'true');
     key({ key: '3', ctrlKey: true });
     await waitFor(() => expect(screen.getByLabelText('SQL')).toHaveFocus());
+    key({ key: '4', ctrlKey: true });
+    expect(screen.getByRole('tab', { name: 'Advanced Search' })).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => expect(screen.getByLabelText('Advanced Search')).toHaveFocus());
+    key({ key: 'f', ctrlKey: true }); // the Terms tab has no search field: back to Data, on its search
+    await waitFor(() => expect(screen.getByLabelText('Search the table')).toHaveFocus());
     key({ key: '1', ctrlKey: true });
     expect(screen.getByRole('tab', { name: 'Data' })).toHaveAttribute('aria-selected', 'true');
+    key({ key: 't', ctrlKey: true });
+    expect(screen.getByRole('button', { name: 'RANGER_SOACCU' })).toHaveFocus();
+
+    const idle = () => waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    key({ key: 's', ctrlKey: true });
+    await waitFor(() => expect(SaveDatabase).toHaveBeenLastCalledWith(false));
+    await idle();
+    key({ key: 'S', ctrlKey: true, shiftKey: true });
+    await waitFor(() => expect(SaveDatabase).toHaveBeenLastCalledWith(true));
+    await idle();
+    key({ key: 'w', ctrlKey: true });
+    await waitFor(() => expect(CloseDatabase).toHaveBeenCalled());
+    await screen.findByText(en('empty.formats'));
+    key({ key: 's', ctrlKey: true }); // nothing open: Save is disabled, its key too
+    expect(SaveDatabase).toHaveBeenCalledTimes(2);
     key({ key: 'q', ctrlKey: true });
     await waitFor(() => expect(Quit).toHaveBeenCalled());
   });
@@ -182,7 +234,7 @@ describe('App IPC flow', () => {
 
     openDefault(); // the second count answers after the file was closed: dropped
     await waitFor(() => expect(TableCounts).toHaveBeenCalledTimes(2));
-    menu('File', 'Close');
+    menu('File', /^Close/);
     await waitFor(() => expect(CloseDatabase).toHaveBeenCalled());
     await act(async () => late([7, 8]));
     expect(list.querySelector('.count')).toBeNull();
@@ -206,18 +258,18 @@ describe('App IPC flow', () => {
     expect(within(bar).getByRole('radiogroup', { name: 'Search in' })).toBeInTheDocument();
     expect(within(bar).getByRole('combobox')).toBeInTheDocument();
     expect(within(bar).getByRole('button', { name: 'Columns...' })).toBeInTheDocument();
-    expect(content.querySelector('.info').textContent).toBe('RANGER_SOACCU: showing 2 of 2 rows');
+    expect(content.querySelector('.info').textContent).toBe('RANGER_SOACCU: rows 1 to 2 of 2◀▶');
 
     fireEvent.contextMenu(screen.getByText('Beta'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Filter by this value' }));
     await screen.findByText("Filter: NAME = 'Beta'");
     expect(parts()).toEqual(['content-bar', 'filters', 'table-container', 'info']);
-    await waitFor(() => expect(content.querySelector('.info').textContent).toBe('RANGER_SOACCU: showing 2 of 1 row found'));
+    await waitFor(() => expect(content.querySelector('.info').textContent).toBe('RANGER_SOACCU: row 1 of 1 found◀▶'));
 
     fireEvent.contextMenu(screen.getByText('Beta'));
     fireEvent.click(screen.getByRole('menuitem', { name: /Copy value/ }));
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Copied value'));
-    expect(content.querySelector('.info').textContent).toBe('RANGER_SOACCU: showing 2 of 1 row found');
+    expect(content.querySelector('.info').textContent).toBe('RANGER_SOACCU: row 1 of 1 found◀▶');
   });
 
   it('does nothing when the dialog is cancelled', async () => {
@@ -252,20 +304,22 @@ describe('App IPC flow', () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Help' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'About' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'About mdb2sql' }));
 
     // standard item 21: the rows of Rust under the title "About mdb2sql" of Zig
     const dialog = await screen.findByRole('dialog', { name: 'About mdb2sql 1.3.0' });
     // Access first, SQLite second, DuckDB last
     expect(dialog.querySelector('.tagline').textContent).toMatch(/Microsoft Access, SQLite and DuckDB/);
     const rowsShown = [...dialog.querySelectorAll('dl > div')].map((el) => [el.querySelector('dt').textContent, el.querySelector('dd').textContent]);
-    expect(rowsShown.map(([label]) => label)).toEqual(['Build', 'Stack', 'Window', 'Databases', 'Access reading', 'Author', 'License', 'GitHub', 'GitLab']);
+    expect(rowsShown.map(([label]) => label)).toEqual(['Build', 'Stack', 'Window', 'Databases', 'Access reading', 'Writing', 'Author', 'License', 'GitHub', 'GitLab']);
     expect(rowsShown).toEqual([
       ['Build', '412 (2026-11-17)'],
       ['Stack', `Go 1.26.10 + Wails 2.13.0 + React ${React.version}`],
       ['Window', 'WebView2 158.0.4370.33'],
       ['Databases', 'DuckDB 2.0.0'],
       ['Access reading', 'Access ODBC driver (installed); fallback: embedded mdbtools 1.0.1'],
+      // standard item 28: .mdb and .accdb cannot be written
+      ['Writing', 'SQLite, DuckDB, Excel and CSV. .mdb and .accdb files cannot be written: the Access format is proprietary to Microsoft.'],
       ['Author', 'Mauricio Menon'],
       ['License', 'GPL v2 or later'],
       ['GitHub', 'https://github.com/mauriciomenon/mdb2sql'],
@@ -341,7 +395,7 @@ describe('App IPC flow', () => {
     fireEvent.contextMenu(header('NAME'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Hide this column' }));
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], '', 0));
     await waitFor(() => expect(header('NAME')).toBeInTheDocument());
   });
 
@@ -413,17 +467,17 @@ describe('App IPC flow', () => {
     openDefault();
     await screen.findByText('Alpha');
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'tension de campo' } });
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], 'tension de campo'), { timeout: 2000 });
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], 'tension de campo', 0), { timeout: 2000 });
     expect(GetRowCount).toHaveBeenCalledWith('RANGER_SOACCU', [], 'tension de campo');
-    expect(await screen.findByText(/showing 2 of 1 row found$/)).toBeInTheDocument();
+    expect(await screen.findByText(/row 1 of 1 found$/)).toBeInTheDocument();
     // the search stays when another table is chosen
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'tension de campo'));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'tension de campo', 0));
     // Enter searches at once, without the pause
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'u9a' } });
-    expect(bridge.GetTableData).not.toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'u9a');
+    expect(bridge.GetTableData).not.toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'u9a', 0);
     fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
-    expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'u9a');
+    expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'u9a', 0);
   });
 
   it('searches all tables from the Data tab and opens a table of the list with the same search', async () => {
@@ -441,7 +495,7 @@ describe('App IPC flow', () => {
     const scope = screen.getByRole('radiogroup', { name: 'Search in' });
     expect(within(scope).getAllByRole('radio').map((r) => r.textContent)).toEqual(['This table', 'All tables']);
     expect(within(scope).getByRole('radio', { name: 'This table' })).toHaveAttribute('aria-checked', 'true');
-    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: /tables/ })).not.toBeInTheDocument();
 
     fireEvent.click(within(scope).getByRole('radio', { name: 'All tables' }));
     expect(SearchAllTables).not.toHaveBeenCalled(); // nothing to search yet: the table stays
@@ -458,10 +512,10 @@ describe('App IPC flow', () => {
     expect(hit.closest('ul').className).toBe('hits');
     expect(screen.queryByRole('columnheader')).not.toBeInTheDocument();
     expect(screen.getByText('1 table with rows matching "tensao"')).toBeInTheDocument();
-    expect(bridge.GetTableData).not.toHaveBeenCalledWith('RANGER_SOACCU', 100, [], 'tensao'); // the grid is not queried
+    expect(bridge.GetTableData).not.toHaveBeenCalledWith('RANGER_SOACCU', 100, [], 'tensao', 0); // the grid is not queried
 
     fireEvent.click(hit);
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'tensao'));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'tensao', 0));
     expect(within(scope).getByRole('radio', { name: 'This table' })).toHaveAttribute('aria-checked', 'true');
     expect(await screen.findByText('Alpha')).toBeInTheDocument();
 
@@ -478,7 +532,7 @@ describe('App IPC flow', () => {
     await screen.findByText('Alpha');
     expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true');
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    expect(screen.getByText('Default search scope')).toBeInTheDocument();
+    fireEvent.mouseEnter(item('Default search scope'));
     expect(screen.getByRole('menuitemradio', { name: /All tables/ })).toHaveAttribute('aria-checked', 'true');
     fireEvent.click(screen.getByRole('menuitemradio', { name: /This table/ }));
     expect(SetSearchScope).toHaveBeenCalledWith('table');
@@ -536,7 +590,7 @@ describe('App IPC flow', () => {
     fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
     const hit = await screen.findByRole('button', { name: 'RANGER_SOACCU (2)' });
     fireEvent.click(hit);
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], 'a'));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], 'a', 0));
     expect(screen.queryByRole('group', { name: 'Active filters' })).not.toBeInTheDocument();
   });
 
@@ -555,7 +609,7 @@ describe('App IPC flow', () => {
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'ana' } });
     fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
     await waitFor(() => expect(SearchAllTables).toHaveBeenCalledWith('ana'));
-    menu('File', 'Close');
+    menu('File', /^Close/);
     await waitFor(() => expect(CloseDatabase).toHaveBeenCalled());
     expect(await screen.findByText('Closed sample.duckdb')).toBeInTheDocument();
     expect(screen.queryByText(/context canceled/)).not.toBeInTheDocument();
@@ -576,7 +630,7 @@ describe('App IPC flow', () => {
 
     openDefault();
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], '', 0));
     expect(screen.getByLabelText('Search the table')).toHaveValue('');
     expect(screen.getByLabelText('Filter 2 tables')).toHaveValue('');
     expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true');
@@ -594,25 +648,25 @@ describe('App IPC flow', () => {
     expect(screen.getByRole('menuitem', { name: 'Clear filters' })).toBeDisabled();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Filter by this value' }));
     const byName = { column: 'NAME', value: 'Beta' };
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [byName], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [byName], '', 0));
     expect(GetRowCount).toHaveBeenCalledWith('RANGER_SOACCU', [byName], '');
     expect(await screen.findByText("Filter: NAME = 'Beta'")).toBeInTheDocument();
-    expect(await screen.findByText(/showing 2 of 1 row found$/)).toBeInTheDocument();
+    expect(await screen.findByText(/row 1 of 1 found$/)).toBeInTheDocument();
 
     // a second column is ANDed; the row limit keeps the filters
     fireEvent.contextMenu(screen.getByRole('cell', { name: '2' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Filter by this value' }));
     const byId = { column: 'ID', value: 2 };
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [byName, byId], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [byName, byId], '', 0));
     expect(await screen.findByText('Filter: ID = 2')).toBeInTheDocument();
     fireEvent.change(screen.getByRole('combobox'), { target: { value: '500' } });
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 500, [byName, byId], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 500, [byName, byId], '', 0));
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove filter NAME' }));
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 500, [byId], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 500, [byId], '', 0));
     await waitFor(() => expect(screen.queryByText("Filter: NAME = 'Beta'")).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 500, [], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 500, [], '', 0));
     await waitFor(() => expect(screen.queryByRole('group', { name: 'Active filters' })).not.toBeInTheDocument());
 
     // changing table clears the filters
@@ -620,7 +674,7 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Filter by this value' }));
     await screen.findByText("Filter: NAME = 'Beta'");
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 500, [], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 500, [], '', 0));
     await waitFor(() => expect(screen.queryByRole('group', { name: 'Active filters' })).not.toBeInTheDocument());
   });
 
@@ -644,105 +698,114 @@ describe('App IPC flow', () => {
     expect(screen.getByText(/Loaded: DB4\.accdb \(2 tables\)/)).toBeInTheDocument();
   });
 
-  // the SQLite converted from Access: asked once before another file, Close or Exit; Cancel keeps everything
-  it('asks to save or delete the converted SQLite before opening another file, closing or quitting', async () => {
+  // standard item 27: another file, F5 and Close never ask (Go deletes the unsaved SQLite and logs it); leaving the app
+  // with the converted SQLite not saved asks Save | Back, Exit. Esc and the x are Back; a Save cancelled in the file
+  // dialog asks again; the Go log lines of the startup (leftovers removed) reach the Log
+  it('asks only on exit about the converted SQLite: Save on the left, Back and Exit on the right', async () => {
     let pending = '';
-    let remembered = '';
     const LoadDatabase = vi.fn(async () => {
-      pending = 'DB4.sqlite'; // as if each file opened were an Access file
+      pending = 'DB3.accdb'; // as if each file opened were an Access file
       return tables;
     });
-    const PendingConversion = vi.fn(async () => pending);
-    const RememberedChoice = vi.fn(async () => remembered);
-    const ResolveConversion = vi.fn(async (choice, remember) => {
-      pending = '';
-      if (remember) remembered = choice;
-      return { done: true, saved: choice === 'save' ? 'C:\\data\\DB4.sqlite' : '' };
-    });
+    const SaveDatabase = vi.fn(async () => '');
     const CloseDatabase = vi.fn(async () => {});
-    const Quit = vi.fn();
+    const Exit = vi.fn(async () => {});
+    const StartupLog = vi.fn(async () => ['1 converted file from an earlier session removed']);
     global.window = Object.assign(window, {
-      go: { main: { App: { ...bridge, LoadDatabase, PendingConversion, RememberedChoice, ResolveConversion, CloseDatabase } } },
-      runtime: { Quit },
+      go: { main: { App: { ...bridge, LoadDatabase, PendingConversion: vi.fn(async () => pending), SaveDatabase, CloseDatabase, Exit, StartupLog } } },
     });
     render(<App />);
     openDefault();
     await screen.findByText('Alpha');
-    expect(LoadDatabase).toHaveBeenCalledTimes(1);
-
-    // Cancel: nothing changes, nothing is loaded
-    openDefault();
-    const dialog = await screen.findByRole('dialog', { name: 'Converted SQLite file' });
-    expect(dialog.textContent).toMatch(/DB4\.sqlite/);
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(ResolveConversion).not.toHaveBeenCalled();
-    expect(LoadDatabase).toHaveBeenCalledTimes(1);
-    expect(screen.getByText('Alpha')).toBeInTheDocument();
-
-    // Delete + remember: resolved once, then the other file opens
-    openDefault();
-    await screen.findByRole('dialog', { name: 'Converted SQLite file' });
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Remember for this session' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(ResolveConversion).toHaveBeenCalledWith('delete', true));
+    fireEvent.keyDown(window, { key: 'F5' }); // the same file again: no question
     await waitFor(() => expect(LoadDatabase).toHaveBeenCalledTimes(2));
     await screen.findByText('Alpha');
-
-    // remembered for the session: Exit does not ask again
-    menu('File', /^Exit/);
-    await waitFor(() => expect(Quit).toHaveBeenCalled());
-    expect(ResolveConversion).toHaveBeenLastCalledWith('delete', false);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
-    // Close database: the remembered choice again, then the file closes
-    openDefault();
-    await screen.findByText('Alpha');
-    menu('File', 'Close');
-    await waitFor(() => expect(ResolveConversion).toHaveBeenCalledTimes(3));
+    const exitQuestion = async () => {
+      menu('File', /^Exit/);
+      return screen.findByRole('dialog', { name: 'Converted SQLite file' });
+    };
+    let dialog = await exitQuestion();
+    expect(dialog.textContent).toContain('The database converted from DB3.accdb was not saved. Save before exiting?');
+    expect(buttonTexts(dialog)).toEqual(['×', 'Save', 'Back', 'Exit']);
+    // Save, Back and Exit of one size: each one sized by the same texts, the three of them in the three languages
+    const sized = within(dialog).getAllByRole('button').slice(1).map(sizers);
+    expect(sized[0]).toEqual(['Save', 'Back', 'Exit', 'Salvar', 'Voltar', 'Sair', 'Guardar', 'Volver', 'Salir']);
+    expect(sized.every((s) => s.join() === sized[0].join())).toBe(true);
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toHaveFocus(); // Enter = Save
+    expect(within(dialog).getByRole('button', { name: 'Back' }).className).toBe('end'); // Back and Exit on the right
+    expect(dialog.textContent).not.toMatch(/Remember/);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    dialog = await exitQuestion();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' })); // the x
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    dialog = await exitQuestion();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(Exit).not.toHaveBeenCalled();
+    expect(screen.getByText('Alpha')).toBeInTheDocument(); // the file stays open
+
+    // Save cancelled in the file dialog: the question comes back; saved: the app leaves
+    dialog = await exitQuestion();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(SaveDatabase).toHaveBeenCalledWith(false));
+    dialog = await screen.findByRole('dialog', { name: 'Converted SQLite file' });
+    SaveDatabase.mockImplementationOnce(async () => {
+      pending = '';
+      return 'C:\\data\\DB3.sqlite';
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(Exit).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('status').textContent).toBe('Exported sample.duckdb to C:\\data\\DB3.sqlite');
+
+    // Exit: leaves without saving (Go deletes the temporary SQLite); Close asks nothing
+    pending = 'DB3.accdb';
+    dialog = await exitQuestion();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Exit' }));
+    await waitFor(() => expect(Exit).toHaveBeenCalledTimes(2));
+    menu('File', /^Close/);
     await waitFor(() => expect(CloseDatabase).toHaveBeenCalled());
-    expect(await screen.findByText(en('empty.formats'))).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show the log' }));
+    expect(screen.getByRole('textbox', { name: 'Log' }).value).toContain('1 converted file from an earlier session removed');
   });
 
-  // owner got stuck in the exit prompt: Esc and the x always close it (no quit), Enter is Save (focused), and a
-  // Save whose file dialog is cancelled asks again, where Esc still works
-  it('never traps the user in the save/delete prompt on exit', async () => {
-    let pending = '';
-    const LoadDatabase = vi.fn(async () => {
-      pending = 'DB4.sqlite';
-      return tables;
+  // standard item 27: the window closed (or Ctrl+Q) during an export asks first, Back or Exit; Exit cancels the export
+  it('asks Back or Exit when leaving during an export, and Exit cancels it', async () => {
+    let exitAsked;
+    let finish;
+    const EventsOn = vi.fn((name, cb) => {
+      if (name === 'exit-asked') exitAsked = cb;
+      return () => {};
     });
-    const ResolveConversion = vi.fn(async () => ({ done: false, saved: '' })); // the file dialog was cancelled
-    const Quit = vi.fn();
-    global.window = Object.assign(window, {
-      go: { main: { App: { ...bridge, LoadDatabase, PendingConversion: vi.fn(async () => pending), RememberedChoice: vi.fn(async () => ''), ResolveConversion } } },
-      runtime: { Quit },
-    });
+    const ExportTable = vi.fn(() => new Promise((resolve) => (finish = resolve)));
+    const CancelJob = vi.fn(async () => finish(''));
+    const Exit = vi.fn(async () => {});
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, ExportTable, CancelJob, Exit, PendingConversion: vi.fn(async () => '') } } }, runtime: { EventsOn } });
     render(<App />);
     openDefault();
     await screen.findByText('Alpha');
+    pick('Export...', 'Current table', 'CSV...');
+    await waitFor(() => expect(ExportTable).toHaveBeenCalled());
 
-    menu('File', /^Exit/);
-    await screen.findByRole('dialog', { name: 'Converted SQLite file' });
-    expect(screen.getByRole('button', { name: 'Save...' })).toHaveFocus(); // Enter = Save
-    fireEvent.keyDown(window, { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(Quit).not.toHaveBeenCalled();
+    act(() => {
+      exitAsked(); // the window close button: Go asks the UI
+    });
+    let dialog = await screen.findByRole('dialog', { name: 'Export in progress' });
+    expect(dialog.textContent).toContain('Exiting cancels the export of RANGER_SOACCU.');
+    expect(buttonTexts(dialog)).toEqual(['×', 'Back', 'Exit']);
+    fireEvent.keyDown(window, { key: 'Escape' }); // Back: the export goes on
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Export in progress' })).not.toBeInTheDocument());
+    expect(CancelJob).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Exporting' })).toBeInTheDocument();
 
-    menu('File', /^Exit/);
-    await screen.findByRole('dialog', { name: 'Converted SQLite file' });
-    fireEvent.click(screen.getByRole('button', { name: 'Close' })); // the dialog's x
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-
-    menu('File', /^Exit/);
-    await screen.findByRole('dialog', { name: 'Converted SQLite file' });
-    fireEvent.click(screen.getByRole('button', { name: 'Save...' }));
-    await waitFor(() => expect(ResolveConversion).toHaveBeenCalledWith('save', false));
-    expect(await screen.findByRole('dialog', { name: 'Converted SQLite file' })).toBeInTheDocument(); // asked again
-    fireEvent.keyDown(window, { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(Quit).not.toHaveBeenCalled();
-    expect(screen.getByText('Alpha')).toBeInTheDocument(); // the file stays open
+    fireEvent.keyDown(window, { key: 'q', ctrlKey: true }); // Ctrl+Q works during the export
+    dialog = await screen.findByRole('dialog', { name: 'Export in progress' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Exit' }));
+    await waitFor(() => expect(Exit).toHaveBeenCalled());
+    expect(CancelJob).toHaveBeenCalled();
   });
 
   // owner: every dialog has a visible OK/Close button; Enter = default, Esc = close
@@ -757,7 +820,7 @@ describe('App IPC flow', () => {
     expect(warn).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Help' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'About' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'About mdb2sql' }));
     await screen.findByRole('dialog', { name: /mdb2sql/ });
     expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus();
     fireEvent.keyDown(window, { key: 'Escape' });
@@ -783,6 +846,7 @@ describe('App IPC flow', () => {
     expect(screen.queryByRole('combobox', { name: /Theme/ })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    fireEvent.mouseEnter(item('Theme'));
     expect(screen.getByRole('menuitemradio', { name: /Light/ })).toHaveAttribute('aria-checked', 'true');
     fireEvent.click(screen.getByRole('menuitemradio', { name: /Dark/ }));
 
@@ -819,13 +883,11 @@ describe('App IPC flow', () => {
     expect(await screen.findByRole('button', { name: 'Archivo' })).toBeInTheDocument(); // saved language
     expect(screen.getByText('Ninguna base de datos abierta')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Configuración' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: /Português/ }));
+    pick('Configuración', 'Idioma', 'Português (Brasil)');
     expect(SetLanguage).toHaveBeenCalledWith('pt-BR');
     expect(screen.getByRole('button', { name: 'Arquivo' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Exibir' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Configurações' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: /English/ }));
+    pick('Configurações', 'Idioma', 'English');
     expect(screen.getByRole('button', { name: 'File' })).toBeInTheDocument();
   });
 
@@ -986,44 +1048,386 @@ describe('App IPC flow', () => {
     expect(screen.getByRole('cell', { name: '2' }).className).toBe('num');
   });
 
-  // standard item 19: File menu of Zig - Open... (Ctrl+O), Export >, Close, Exit (Ctrl+Q)
-  it('exports from File > Export and from Export..., and runs SQL', async () => {
-    const ExportDatabase = vi.fn(async () => 'C:\\out\\db.xlsx');
-    const ExportQuery = vi.fn(async () => 'C:\\out\\r.csv');
-    const RunQuery = vi.fn(async () => ({ columns: ['n', 'n (2)'], rows: [{ n: 1, 'n (2)': 'x' }], more: true }));
-    global.window = Object.assign(window, { go: { main: { App: { ...bridge, ExportDatabase, ExportQuery, RunQuery } } } });
+  // standard item 28: every button has a menu item; the menu tree of the standard (the same in the 4 apps), the Export
+  // list also under the Export... button; pt-BR with no English
+  it('has the menu tree of the standard, in English and in pt-BR', async () => {
     render(<App />);
-
-    expect(screen.getByRole('button', { name: 'Export...' })).toBeDisabled(); // nothing open yet
+    openDefault();
+    await screen.findByText('Alpha');
+    const tree = (button, name = button) => {
+      fireEvent.click(screen.getByRole('button', { name: button }));
+      const items = menuTree(screen.getByRole('menu', { name }));
+      fireEvent.click(screen.getByRole('button', { name: button }));
+      return items;
+    };
+    expect(tree('File')).toEqual(['Open... Ctrl+O', 'Open the typed path', 'Reopen F5', '--', 'Save Ctrl+S', 'Save as... Ctrl+Shift+S', 'Export ▸', '--', 'Close Ctrl+W', '--', 'Exit Ctrl+Q']);
+    expect(tree('Edit')).toEqual([
+      'Copy value Ctrl+C', 'Copy row Ctrl+Shift+C', 'Copy row with header', 'Copy the whole log', '--',
+      'Search Ctrl+F', 'Filter by this value', 'Clear filters', '--', 'Mark or unmark row Space', 'Unmark all rows',
+    ]);
+    expect(tree('View')).toEqual([
+      '✓Data Ctrl+1', 'Schema Ctrl+2', 'SQL Ctrl+3', 'Advanced Search Ctrl+4', '--', 'Rows ▸', 'Columns...', 'Search in ▸', 'Only marked rows',
+      'Go to the table list Ctrl+T', 'Favorite or unfavorite table Ctrl+D', '--', 'Run SQL Ctrl+Enter', 'Search terms Ctrl+Enter', '--', 'Log Ctrl+L',
+    ]);
+    expect(tree('Settings')).toEqual(['Theme ▸', 'Language ▸', 'Default search scope ▸', 'Term matching ▸', 'Show NULL']);
+    expect(tree('Help')).toEqual(['About mdb2sql']);
+    const exportList = [
+      'Current table ▸', 'Marked rows ▸', 'Current table schema ▸', 'Database schema ▸', 'All tables to CSV (one file per table)...',
+      'SQL result ▸', 'All-tables search result (Excel)...', 'Advanced Search report ▸',
+    ];
+    expect(tree('Export...', 'Export')).toEqual(exportList);
     fireEvent.click(screen.getByRole('button', { name: 'File' }));
-    const file = screen.getByRole('menu', { name: 'File' });
-    expect(within(file).getAllByRole('menuitem').map((el) => el.textContent)).toEqual(['Open... Ctrl+O', 'Export ▸', 'Close', 'Exit Ctrl+Q']);
-    expect(within(file).getByRole('menuitem', { name: /^Export/ })).toBeDisabled();
+    fireEvent.mouseEnter(item('Export'));
+    expect(menuTree(screen.getByRole('menu', { name: 'Export' }))).toEqual(exportList);
+    fireEvent.mouseEnter(item('Current table'));
+    expect(menuTree(screen.getByRole('menu', { name: 'Current table' }))).toEqual(['CSV...', 'Excel (.xlsx)...']);
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    fireEvent.mouseEnter(item('Rows'));
+    expect(menuTree(screen.getByRole('menu', { name: 'Rows' }))).toEqual(['✓100', '500', '1000']);
+    fireEvent.mouseEnter(item('Search in'));
+    expect(menuTree(screen.getByRole('menu', { name: 'Search in' }))).toEqual(['✓This table', 'All tables']);
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    fireEvent.mouseEnter(item('Term matching'));
+    expect(menuTree(screen.getByRole('menu', { name: 'Term matching' }))).toEqual(['✓Whole value', 'Contains']);
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    // labels and data only: no how-to sentences, no copyright line
+    fireEvent.click(screen.getByRole('tab', { name: 'Advanced Search' }));
+    const shown = document.body.textContent + [...document.querySelectorAll('[title], [placeholder]')].map((e) => e.title || e.placeholder).join(' ');
+    expect(shown).not.toMatch(/copyright|press |write a|verifi|lembre|open a database|export writes/i);
+
+    pick('Settings', 'Language', 'Português (Brasil)');
+    expect(tree('Arquivo')).toEqual([
+      'Abrir... Ctrl+O', 'Abrir o caminho digitado', 'Reabrir F5', '--', 'Salvar Ctrl+S', 'Salvar como... Ctrl+Shift+S', 'Exportar ▸', '--',
+      'Fechar Ctrl+W', '--', 'Sair Ctrl+Q',
+    ]);
+    expect(tree('Editar')).toEqual([
+      'Copiar valor Ctrl+C', 'Copiar linha Ctrl+Shift+C', 'Copiar linha com cabeçalho', 'Copiar todo o Log', '--',
+      'Pesquisar Ctrl+F', 'Filtrar por este valor', 'Limpar filtros', '--', 'Marcar ou desmarcar linha Espaço', 'Desmarcar todas as linhas',
+    ]);
+    expect(tree('Exibir')).toEqual([
+      'Dados Ctrl+1', 'Schema Ctrl+2', 'SQL Ctrl+3', '✓Pesquisa Avançada Ctrl+4', '--', 'Linhas ▸', 'Colunas...', 'Pesquisar em ▸', 'Só as linhas marcadas',
+      'Ir para a lista de tabelas Ctrl+T', 'Favoritar ou desfavoritar tabela Ctrl+D', '--', 'Executar SQL Ctrl+Enter', 'Pesquisar termos Ctrl+Enter', '--', 'Log Ctrl+L',
+    ]);
+    expect(tree('Configurações')).toEqual(['Tema ▸', 'Idioma ▸', 'Escopo padrão da busca ▸', 'Comparação dos termos ▸', 'Exibir NULL']);
+    expect(tree('Ajuda')).toEqual(['Sobre o mdb2sql']);
+    expect(tree('Exportar...', 'Exportar')).toEqual([
+      'Tabela atual ▸', 'Linhas marcadas ▸', 'Schema da tabela atual ▸', 'Schema do banco ▸', 'Todas as tabelas em CSV (um arquivo por tabela)...',
+      'Resultado do SQL ▸', 'Resultado da busca em todas as tabelas (Excel)...', 'Relatório da Pesquisa Avançada ▸',
+    ]);
+  });
+
+  // owner 26/11 (13h): pages in the Data tab, as large as the Rows list; the line says which rows of how many; previous
+  // and next are disabled at the ends; another search goes back to the first page
+  it('pages through a table of more than 1000 rows, the last page short', async () => {
+    const total = (search) => (search ? 3 : 1050);
+    const GetTableData = vi.fn(async (_t, limit, _f, search, offset) =>
+      Array.from({ length: Math.max(0, Math.min(limit, total(search) - offset)) }, (_, i) => ({ ID: offset + i + 1, NAME: 'n' })),
+    );
+    const GetRowCount = vi.fn(async (_t, _f, search) => total(search));
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, GetRowCount } } } });
+    render(<App />);
+    openDefault();
+    await screen.findByText('RANGER_SOACCU: rows 1 to 100 of 1,050');
+    const prev = () => screen.getByRole('button', { name: 'Previous page' });
+    const next = () => screen.getByRole('button', { name: 'Next page' });
+    expect(prev()).toBeDisabled();
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '500' } });
+    await screen.findByText('RANGER_SOACCU: rows 1 to 500 of 1,050');
+    fireEvent.click(next());
+    await screen.findByText('RANGER_SOACCU: rows 501 to 1,000 of 1,050');
+    expect(GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 500, [], '', 500);
+    fireEvent.click(next());
+    await screen.findByText('RANGER_SOACCU: rows 1,001 to 1,050 of 1,050');
+    expect(document.querySelectorAll('.table-container tbody tr')).toHaveLength(50);
+    expect(next()).toBeDisabled();
+    expect(prev()).toBeEnabled();
+    fireEvent.click(prev());
+    await screen.findByText('RANGER_SOACCU: rows 501 to 1,000 of 1,050');
+    // a search: the first page again, the rows found
+    fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'n' } });
+    fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
+    await screen.findByText('RANGER_SOACCU: rows 1 to 3 of 3 found');
+    expect(GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 500, [], 'n', 0);
+    expect(next()).toBeDisabled();
+    expect(translateN('pt-BR', 'info.page', 36804, 'T', '1', '100', (36804).toLocaleString('pt-BR'))).toBe('T: linhas 1 a 100 de 36.804');
+  });
+
+  // standard item 34: favorite tables first in the table list, in alphabetical order, with a star; right-click a table
+  // or View > Favorite or unfavorite table (Ctrl+D, the open table); kept by name while the program is open
+  it('puts the favorite tables first in the table list, from its right-click menu and Ctrl+D', async () => {
+    const LoadDatabase = vi.fn(async () => ['RANGER_SOACCU', 'RANGER_SOGEN', 'RANGER_SOSTAT']);
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, LoadDatabase } } } });
+    render(<App />);
+    openDefault();
+    await screen.findByText('Alpha');
+    const list = screen.getByRole('navigation', { name: 'Tables' });
+    const names = () => [...list.querySelectorAll('.table-item .name')].map((el) => el.textContent);
+    expect(names()).toEqual(['RANGER_SOACCU', 'RANGER_SOGEN', 'RANGER_SOSTAT']);
+
+    fireEvent.contextMenu(within(list).getByRole('button', { name: 'RANGER_SOSTAT' }));
+    fireEvent.click(item('Add to favorites'));
+    expect(names()).toEqual(['★ RANGER_SOSTAT', 'RANGER_SOACCU', 'RANGER_SOGEN']);
+    fireEvent.keyDown(window, { key: 'd', ctrlKey: true }); // the open table, RANGER_SOACCU
+    expect(names()).toEqual(['★ RANGER_SOACCU', '★ RANGER_SOSTAT', 'RANGER_SOGEN']);
+    fireEvent.change(screen.getByLabelText('Filter 3 tables'), { target: { value: 'stat' } });
+    await waitFor(() => expect(names()).toEqual(['★ RANGER_SOSTAT'])); // the filter applies to the favorites too
+
+    // another file keeps them by name; a name the file does not have is not shown
+    LoadDatabase.mockImplementation(async () => ['RANGER_SOGEN', 'RANGER_SOSTAT']);
+    openDefault();
+    await waitFor(() => expect(names()).toEqual(['★ RANGER_SOSTAT', 'RANGER_SOGEN']));
+    fireEvent.contextMenu(within(list).getByRole('button', { name: 'RANGER_SOSTAT' }));
+    fireEvent.click(item('Remove from favorites'));
+    pick('View', 'Favorite or unfavorite table'); // the open table, RANGER_SOGEN
+    expect(names()).toEqual(['★ RANGER_SOGEN', 'RANGER_SOSTAT']);
+    expect(favoritesFirst(['B', 'A', 'C', 'D'], new Set(['D', 'B', 'X']))).toEqual(['B', 'D', 'A', 'C']);
+    expect(translate('pt-BR', 'fav.add')).toBe('Favoritar');
+  });
+
+  // standard item 28: File > Save and Save as... (Go asks for the file: SQLite, DuckDB or Excel), disabled with nothing
+  // open, and the new exports of the list: table and database schema, all tables to CSV, SQL result, All tables search
+  it('saves from File > Save and Save as... and runs the exports of the list', async () => {
+    const SaveDatabase = vi.fn(async (saveAs) => (saveAs ? 'D:\\other\\db.xlsx' : 'C:\\data\\db.sqlite'));
+    const ExportSchema = vi.fn(async (table, format) => `C:\\out\\${table || 'db'}_schema.${format}`);
+    const ExportAllCSV = vi.fn(async () => 'C:\\out');
+    const ExportQuery = vi.fn(async () => 'C:\\out\\query.csv');
+    const ExportSearch = vi.fn(async () => 'C:\\out\\db_busca.xlsx');
+    const SearchAllTables = vi.fn(async () => [{ table: 'RANGER_SOGEN', rows: 3 }]);
+    const RunQuery = vi.fn(async () => ({ columns: ['n'], rows: [{ n: 1 }], more: false }));
+    global.window = Object.assign(window, {
+      go: { main: { App: { ...bridge, SaveDatabase, ExportSchema, ExportAllCSV, ExportQuery, ExportSearch, SearchAllTables, RunQuery } } },
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'File' }));
+    for (const name of ['Save', 'Save as...', 'Export', 'Close']) expect(item(name)).toBeDisabled(); // nothing open
     fireEvent.click(screen.getByRole('button', { name: 'File' }));
     openDefault();
     await screen.findByText('Alpha');
+    const idle = () => waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole('button', { name: 'File' }));
-    fireEvent.mouseEnter(screen.getByRole('menuitem', { name: /^Export/ })); // the submenu opens beside it
-    fireEvent.click(screen.getByRole('menuitem', { name: /^Export/ })); // a click after the hover keeps it open
-    const list = screen.getByRole('menu', { name: 'Export' });
-    // SQLite before DuckDB (owner's format order)
-    const items = within(list).getAllByRole('menuitem').map((el) => el.textContent);
-    expect(items.indexOf(en('export.dbSqlite'))).toBeLessThan(items.indexOf(en('export.dbDuckdb')));
-    fireEvent.click(within(list).getByRole('menuitem', { name: en('export.dbXlsx') }));
-    await waitFor(() => expect(ExportDatabase).toHaveBeenCalledWith('xlsx'));
-    expect(await screen.findByText(/Exported .* to C:\\out\\db\.xlsx/)).toBeInTheDocument();
+    pick('File', 'Save');
+    await waitFor(() => expect(SaveDatabase).toHaveBeenLastCalledWith(false));
+    expect(await screen.findByText('Exported sample.duckdb to C:\\data\\db.sqlite')).toBeInTheDocument();
+    pick('File', 'Save as...');
+    await waitFor(() => expect(SaveDatabase).toHaveBeenLastCalledWith(true));
+    await idle();
+
+    pick('File', 'Export', 'Current table schema', 'Excel (.xlsx)...');
+    await waitFor(() => expect(ExportSchema).toHaveBeenLastCalledWith('RANGER_SOACCU', 'xlsx'));
+    await idle();
+    pick('Export...', 'Database schema', 'CSV...');
+    await waitFor(() => expect(ExportSchema).toHaveBeenLastCalledWith('', 'csv'));
+    await idle();
+    pick('Export...', en('export.allCsv'));
+    await waitFor(() => expect(ExportAllCSV).toHaveBeenCalled());
+    await idle();
 
     fireEvent.click(screen.getByRole('tab', { name: 'SQL' }));
     fireEvent.change(screen.getByLabelText('SQL'), { target: { value: 'select 1' } });
-    fireEvent.keyDown(screen.getByLabelText('SQL'), { key: 'Enter', ctrlKey: true });
+    pick('View', 'Run SQL');
     await waitFor(() => expect(RunQuery).toHaveBeenCalledWith('select 1', 100));
-    expect(await screen.findByText('n (2)')).toBeInTheDocument();
-    expect(screen.getByText(/SQL result: 1 row \(limit 100/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: en('export.sqlCsv') }));
+    await screen.findByText(/SQL result: 1 row/);
+    pick('Export...', 'SQL result', 'CSV...');
     await waitFor(() => expect(ExportQuery).toHaveBeenCalledWith('select 1', 'csv'));
+    await idle();
+
+    // the All tables search result: Excel, one sheet per table found (Go)
+    fireEvent.click(screen.getByRole('tab', { name: 'Data' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'All tables' }));
+    fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'gen' } });
+    fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
+    await screen.findByRole('button', { name: 'RANGER_SOGEN (3)' });
+    pick('Export...', en('export.searchAll'));
+    await waitFor(() => expect(ExportSearch).toHaveBeenCalledWith('gen', ['RANGER_SOGEN']));
+  });
+
+  // standard item 31: a box per row; the marked rows stay on top of the grid, in table order, during other searches;
+  // Only marked, the count under the grid, the cell menu and the export of the marked rows
+  it('keeps the marked rows on top during other searches, with Only marked, the count and their export', async () => {
+    const all = ['kkk', 'jjj', 'hhh', 'ggg'].map((NAME, i) => ({ [ROWID]: i + 1, ID: i + 1, NAME }));
+    const GetTableData = vi.fn(async (_t, _l, _f, search) => all.filter((r) => !search || r.NAME === search));
+    const GetRowCount = vi.fn(async (_t, _f, search) => (search ? 1 : all.length));
+    const MarkedRows = vi.fn(async (_t, marks) => all.filter((r) => marks.some((m) => m[ROWID] === r[ROWID])));
+    const ExportMarked = vi.fn(async () => 'C:\\out\\RANGER_SOACCU_marcadas.csv');
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, GetRowCount, MarkedRows, ExportMarked } } } });
+    render(<App />);
+    openDefault();
+    await screen.findByText('ggg');
+    const names = () => [...document.querySelectorAll('.table-container tbody tr')].map((tr) => tr.cells[2].textContent);
+    const searchFor = (text) => {
+      fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: text } });
+      fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
+    };
+    const mark = document.querySelector('th.mark');
+    expect([mark.textContent, mark.title]).toEqual(['', 'Mark rows']); // no title, a tip
+
+    // the owner's example: search kkk, mark it (its box); search jjj, mark it (Space); search hhh, mark it (Edit menu)
+    searchFor('kkk');
+    await waitFor(() => expect(names()).toEqual(['kkk']));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Mark rows' }));
+    searchFor('jjj');
+    await waitFor(() => expect(names()).toEqual(['kkk', 'jjj']));
+    fireEvent.click(screen.getByText('jjj'));
+    fireEvent.keyDown(screen.getByText('jjj'), { key: ' ' });
+    searchFor('hhh');
+    await waitFor(() => expect(names()).toEqual(['kkk', 'jjj', 'hhh']));
+    fireEvent.click(screen.getByText('hhh'));
+    pick('Edit', 'Mark or unmark row');
+    searchFor('ggg');
+    await waitFor(() => expect(names()).toEqual(['kkk', 'jjj', 'hhh', 'ggg']));
+    expect(screen.getAllByRole('checkbox', { name: 'Mark rows' }).map((c) => c.checked)).toEqual([true, true, true, false]);
+    const info = document.querySelector('.info');
+    expect(info.textContent).toBe('Only marked' + 'RANGER_SOACCU: row 1 of 1 found, 3 marked' + '◀▶');
+
+    // Only marked (the box under the grid and View > Only marked rows)
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Only marked' }));
+    expect(names()).toEqual(['kkk', 'jjj', 'hhh']);
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    expect(item('Only marked rows')).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(item('Only marked rows'));
+    expect(names()).toEqual(['kkk', 'jjj', 'hhh', 'ggg']);
+
+    pick('Export...', 'Marked rows', 'CSV...');
+    await waitFor(() => expect(ExportMarked).toHaveBeenCalledWith('RANGER_SOACCU', 'csv', [all[0], all[1], all[2]]));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    // the cell menu of Data: filters, copies, then the marks
+    fireEvent.contextMenu(screen.getByText('ggg'));
+    expect(menuTree(screen.getByRole('menu', { name: 'Cell' }))).toEqual([
+      'Filter by this value', 'Clear filters', '--', 'Copy value Ctrl+C', 'Copy row Ctrl+Shift+C', 'Copy row with header', '--',
+      'Mark or unmark row Space', 'Export marked rows ▸', 'Unmark all rows',
+    ]);
+    fireEvent.click(item('Unmark all rows'));
+    await waitFor(() => expect(names()).toEqual(['ggg']));
+    expect(screen.queryByRole('checkbox', { name: 'Only marked' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
+    expect(item('Marked rows')).toBeDisabled();
+
+    // identity of a row: the engine's rowid; without one, all its values (equal rows are marked together)
+    expect(rowKey({ [ROWID]: 7, A: 1 }, ['A'])).toBe('#7');
+    expect(rowKey({ A: 1, B: null }, ['A', 'B'])).toBe(rowKey({ B: null, A: 1 }, ['A', 'B']));
+    expect(rowKey({ A: 1, B: null }, ['A', 'B'])).not.toBe(rowKey({ A: 1, B: 2 }, ['A', 'B']));
+    expect(translateN('pt-BR', 'mark.count', 1, 1)).toBe(', 1 marcada');
+  });
+
+  // standard item 32: the pasted terms (count, repeats), Whole value | Contains and This table | All tables (defaults of
+  // Settings), progress, the summary, the tables found, the rows of the chosen one (Term first), the terms not found
+  // with Copy, the copies without the Term column and the report
+  it('searches the pasted terms and shows the tables found, their rows and the terms not found', async () => {
+    const res = {
+      terms: ['TENSAO', 'PNTNAM', 'U9A'],
+      repeated: 1,
+      hits: [
+        { term: 'TENSAO', table: 'RANGER_SOSTAT', rows: 2 },
+        { term: 'U9A', table: 'RANGER_SOGEN', rows: 1 },
+        { term: 'U9A', table: 'RANGER_SOSTAT', rows: 1 },
+      ],
+      tables: [
+        { table: 'RANGER_SOGEN', rows: 1 },
+        { table: 'RANGER_SOSTAT', rows: 3 },
+      ],
+      notFound: ['PNTNAM'],
+    };
+    let answer;
+    const SearchTerms = vi.fn(() => new Promise((resolve) => (answer = resolve)));
+    const stat = [
+      { Term: 'TENSAO', ID: 1, NAME: 'a' },
+      { Term: 'TENSAO', ID: 2, NAME: 'b' },
+      { Term: 'U9A', ID: 2, NAME: 'b' },
+    ];
+    const TermRows = vi.fn(async (table) => ({ columns: ['Term', 'ID', 'NAME'], rows: table === 'RANGER_SOGEN' ? [{ Term: 'U9A', ID: 7, NAME: 'g' }] : stat, more: false }));
+    const ExportTerms = vi.fn(async () => 'C:\\out\\sample_termos.xlsx');
+    const SetTermMatch = vi.fn(async () => {});
+    const ClipboardSetText = vi.fn(async () => true);
+    let goProgress;
+    const EventsOn = vi.fn((name, cb) => {
+      if (name === 'progress') goProgress = cb;
+      return () => {};
+    });
+    global.window = Object.assign(window, {
+      go: { main: { App: { ...bridge, SearchTerms, TermRows, ExportTerms, SetTermMatch, GetTermMatch: vi.fn(async () => 'contains'), GetSearchScope: vi.fn(async () => 'all') } } },
+      runtime: { ClipboardSetText, EventsOn },
+    });
+    render(<App />);
+    openDefault();
+    await screen.findByText('Alpha');
+    fireEvent.click(screen.getByRole('tab', { name: 'Advanced Search' }));
+    const box = screen.getByLabelText('Advanced Search');
+    // owner 26/11 (13e): the hint shows an example, one term per line
+    expect(box.getAttribute('placeholder').split('\n')).toEqual([
+      'Paste the terms, one per line (for example, an Excel column). Example:', 'text1', 'text2', 'text3',
+      'searches the 3 terms in all tables or only in the selected table.',
+    ]);
+    expect(translate('pt-BR', 'terms.hint').split('\n')[4]).toBe('pesquisa os 3 termos em todas as tabelas ou só na tabela selecionada.');
+    expect(screen.getByRole('radio', { name: 'Contains' })).toHaveAttribute('aria-checked', 'true'); // Settings > Term matching
+    expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true'); // Default search scope
+    expect(screen.getByRole('radiogroup', { name: 'Term matching' }).title).toMatch(/^Whole value: the whole cell equals the term/);
+    fireEvent.change(box, { target: { value: 'TENSAO\n  pntnam \n\nU9A\ntensao\n' } });
+    expect(screen.getByText('3 terms, 1 repeated')).toBeInTheDocument();
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(SearchTerms).toHaveBeenCalledWith(['TENSAO', '  pntnam ', '', 'U9A', 'tensao', ''], true, ''));
+    act(() => goProgress({ done: 1, total: 2, label: 'RANGER_SOGEN' }));
+    expect(screen.getByText('Searching terms: table 1 of 2 (RANGER_SOGEN)')).toBeInTheDocument();
+    await act(async () => answer(res));
+    expect(await screen.findByText('2 of 3 terms found: 4 rows in 2 tables')).toBeInTheDocument();
+
+    // the first table found is chosen; its rows, the Term first, limited as in Data (Rows)
+    await waitFor(() => expect(TermRows).toHaveBeenLastCalledWith('RANGER_SOGEN', res.terms, true, 100));
+    expect(screen.getByRole('button', { name: 'RANGER_SOGEN (1)' })).toHaveAttribute('aria-current', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOSTAT (3)' }));
+    await waitFor(() => expect(TermRows).toHaveBeenLastCalledWith('RANGER_SOSTAT', res.terms, true, 100));
+    await waitFor(() => expect([...document.querySelectorAll('.terms-hits th')].map((th) => th.textContent)).toEqual(['Term', 'ID', 'NAME']));
+    expect(document.querySelectorAll('.terms-hits tbody tr')).toHaveLength(3);
+    expect(screen.getByText('RANGER_SOSTAT: showing 3 of 3 rows')).toBeInTheDocument();
+
+    // not found: one per line, in pasted order, with Copy
+    expect(screen.getByRole('heading', { name: 'Not found (1)' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Not found (1)' })).toHaveValue('PNTNAM');
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+    await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('PNTNAM'));
+
+    // the copies leave the Term column out; "Copy the rows found" copies every row found, with the header
+    fireEvent.contextMenu(screen.getByText('a'));
+    expect(menuTree(screen.getByRole('menu', { name: 'Cell' }))).toEqual([
+      'Copy value Ctrl+C', 'Copy row Ctrl+Shift+C', 'Copy row with header', '--', 'Copy the rows found in this table', 'Advanced Search report ▸',
+    ]);
+    fireEvent.click(item('Copy row with header'));
+    await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('ID\tNAME\r\n1\ta'));
+    fireEvent.contextMenu(screen.getByText('a'));
+    fireEvent.click(item('Copy the rows found in this table'));
+    await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('ID\tNAME\r\n1\ta\r\n2\tb\r\n2\tb'));
+    expect(TermRows).toHaveBeenLastCalledWith('RANGER_SOSTAT', res.terms, true, 0);
+    expect(screen.getByRole('status').textContent).toBe('Copied 3 rows');
+
+    // the report: cell menu and Export
+    fireEvent.contextMenu(screen.getByText('a'));
+    fireEvent.mouseEnter(item('Advanced Search report'));
+    expect(menuTree(screen.getByRole('menu', { name: 'Advanced Search report' }))).toEqual(['Excel (.xlsx)...', 'CSV...', 'SQLite (.sqlite)...', 'DuckDB (.duckdb)...']);
+    fireEvent.click(item('Excel (.xlsx)...'));
+    await waitFor(() => expect(ExportTerms).toHaveBeenCalledWith(res, true, 'xlsx'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    pick('Export...', 'Advanced Search report', 'DuckDB (.duckdb)...');
+    await waitFor(() => expect(ExportTerms).toHaveBeenLastCalledWith(res, true, 'duckdb'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    // Settings > Term matching also applies now
+    pick('Settings', 'Term matching', 'Whole value');
+    expect(SetTermMatch).toHaveBeenCalledWith('whole');
+    expect(screen.getByRole('radio', { name: 'Whole value' })).toHaveAttribute('aria-checked', 'true');
+    // a new search: the old answer leaves at once
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    expect(screen.queryByText('2 of 3 terms found: 4 rows in 2 tables')).not.toBeInTheDocument();
+    await waitFor(() => expect(SearchTerms).toHaveBeenLastCalledWith(expect.any(Array), false, ''));
+
+    // terms: one per line, trimmed, empty lines dropped, a repeat (ignoring case) searched once; the right plural
+    expect(parseTerms(' a \nA\n\nb\r\nB ')).toEqual({ terms: ['a', 'b'], repeated: 2 });
+    // owner 26/11 (13d): the tab is the Advanced Search in the 3 languages, and so is its report
+    expect(LANGS.map((l) => translate(l, 'tab.terms'))).toEqual(['Advanced Search', 'Pesquisa Avançada', 'Búsqueda Avanzada']);
+    expect(translate('es', 'export.terms')).toBe('Informe de la Búsqueda Avanzada');
+    const pt = (key, n, ...args) => translateN('pt-BR', key, n, ...args);
+    expect(pt('terms.count', 1, 1) + pt('terms.repeated', 1, 1)).toBe('1 termo, 1 repetido');
+    expect(translate('pt-BR', 'terms.summary', pt('terms.found', 1, 1, 1), pt('terms.rows', 1, 1), pt('terms.tables', 1, 1))).toBe('1 de 1 termo encontrado: 1 linha em 1 tabela');
+    expect(translate('pt-BR', 'terms.summary', pt('terms.found', 3, 2, 3), pt('terms.rows', 8, 8), pt('terms.tables', 2, 2))).toBe('2 de 3 termos encontrados: 8 linhas em 2 tabelas');
   });
 
   // standard item 17: texts of Rust/Zig; with the search active a table export asks: whole table or only the rows found
@@ -1034,19 +1438,16 @@ describe('App IPC flow', () => {
     render(<App />);
     openDefault();
     await screen.findByText('Alpha');
-    const exportCsv = () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Current table to CSV...' }));
-    };
+    const exportCsv = () => pick('Export...', 'Current table', 'CSV...');
     exportCsv(); // no search: no question
     await waitFor(() => expect(ExportTable).toHaveBeenLastCalledWith('RANGER_SOACCU', 'csv', [], ''));
 
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'alp' } });
     fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
-    await screen.findByText(/showing 2 of 1 row found/);
+    await screen.findByText(/row 1 of 1 found/);
     exportCsv();
     const dialog = await screen.findByRole('dialog', { name: 'Export RANGER_SOACCU' });
-    expect(within(dialog).getAllByRole('button').map((b) => b.textContent)).toEqual(['Whole table', 'Only the 1 row found', 'Cancel']);
+    expect(buttonTexts(dialog)).toEqual(['Whole table', 'Only the 1 row found', 'Cancel']);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Only the 1 row found' }));
     await waitFor(() => expect(ExportTable).toHaveBeenLastCalledWith('RANGER_SOACCU', 'csv', [], 'alp'));
     exportCsv();
@@ -1059,39 +1460,7 @@ describe('App IPC flow', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(ExportTable).toHaveBeenCalledTimes(3);
     expect(translateN('pt-BR', 'exportAsk.found', 5, 5)).toBe('Só as 5 linhas encontradas');
-    expect(translate('pt-BR', 'export.sqlCsv')).toBe('Resultado do SQL para CSV...');
-  });
-
-  // owner's rule: no action twice on screen; the export list is the exception of the standard (items 1 and 19, as
-  // Zig): File > Export and the Export... button of the path bar open the same list
-  it('shows every button and menu action once', async () => {
-    render(<App />);
-    openDefault();
-    await screen.findByText('Alpha');
-    fireEvent.contextMenu(screen.getByText('Beta'));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Filter by this value' }));
-    await screen.findByText("Filter: NAME = 'Beta'");
-
-    const names = (role, root = document.body) =>
-      [...root.querySelectorAll(role === 'button' ? 'button:not([role])' : `[role="${role}"]`)]
-        .filter((el) => !el.closest('.sidebar')) // the table list is data, not actions
-        .map((el) => el.getAttribute('aria-label') || el.textContent.trim());
-    const all = names('button');
-    for (const m of ['File', 'Export...', 'View', 'Settings', 'Help']) {
-      fireEvent.click(screen.getByRole('button', { name: m }));
-      all.push(...names('menuitem'), ...names('menuitemradio'), ...names('menuitemcheckbox'));
-      fireEvent.click(screen.getByRole('button', { name: m }));
-    }
-    const dupes = all.filter((n, i) => all.indexOf(n) !== i);
-    expect(dupes).toEqual([]);
-    expect(all.filter((n) => /^export/i.test(n))).toEqual(['Export...', 'Export ▸']);
-    expect(all).toContain(en('export.dbXlsx'));
-    expect(all).toContain('Clear filters');
-    expect(all).toContain('Columns...');
-    // labels and data only: no how-to sentences, no copyright line
-    fireEvent.click(screen.getByRole('tab', { name: 'SQL' }));
-    const shown = document.body.textContent + [...document.querySelectorAll('[title]')].map((e) => e.title).join(' ');
-    expect(shown).not.toMatch(/copyright|press |write a|verifi|lembre|open a database|export writes/i);
+    expect(translate('pt-BR', 'export.table')).toBe('Tabela atual');
   });
 
   it('selects a cell by focus and opens its menu from the keyboard', async () => {
@@ -1103,7 +1472,7 @@ describe('App IPC flow', () => {
     fireEvent.contextMenu(cell); // menu key: no mouse position
     expect(screen.getByRole('menu', { name: 'Cell' }).style.left).not.toBe('0px');
     fireEvent.click(screen.getByRole('menuitem', { name: 'Filter by this value' }));
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [{ column: 'NAME', value: 'Beta' }], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [{ column: 'NAME', value: 'Beta' }], '', 0));
   });
 
   // jsdom has no layout, so the rules themselves are checked: 1.2.0 cut "RANGER_SOSTAT" to "RAN..." and the table
@@ -1123,6 +1492,38 @@ describe('App IPC flow', () => {
       expect(rule(sel)).toMatch(/overflow-wrap: anywhere/);
       expect(rule(sel)).not.toMatch(/nowrap|overflow: hidden/);
     }
+  });
+
+  // coordinator 26/11: the box of the terms and the one of the terms not found use the app font (Segoe UI 14 px), not
+  // the monospace of a textarea, as in the Python and Zig versions
+  it('writes the term boxes in the app font', () => {
+    const css = readFileSync('src/App.css', 'utf8').replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = (sel) => css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*]/g, '\\$&')} \\{([^}]*)\\}`))?.[1] ?? '';
+    expect(rule('.terms-missing textarea')).toMatch(/font: inherit;/);
+    expect(rule('.terms-missing textarea')).not.toMatch(/monospace|Consolas/);
+  });
+
+  // coordinator 26/11: the title "Not found (n)" is not bold, as in the Python and Zig versions
+  it('writes the not found title not bold', () => {
+    const css = readFileSync('src/App.css', 'utf8').replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = (sel) => css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*]/g, '\\$&')} \\{([^}]*)\\}`))?.[1] ?? '';
+    expect(rule('.terms-missing h3')).toMatch(/font-weight: normal;/);
+  });
+
+  // owner 26/11 (13f): no button larger than the others to show rank: the Run button of the SQL tab keeps its height
+  // (not stretched to the SQL field), the default button is not bold, Run and Search terms look as the rest
+  it('makes no button larger than the others', async () => {
+    const css = readFileSync('src/App.css', 'utf8').replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = (sel) => css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*]/g, '\\$&')} \\{([^}]*)\\}`))?.[1] ?? '';
+    expect(rule('.sql-bar')).toMatch(/align-items: flex-start/);
+    expect(rule('button.primary') + rule('.sized > .ghost')).not.toMatch(/font-weight|padding|font-size/);
+    render(<App />);
+    openDefault();
+    await screen.findByText('Alpha');
+    fireEvent.click(screen.getByRole('tab', { name: 'SQL' }));
+    expect(screen.getByRole('button', { name: 'Run' }).className).toBe('');
+    fireEvent.click(screen.getByRole('tab', { name: 'Advanced Search' }));
+    expect(screen.getByRole('button', { name: 'Search terms' }).className).toBe('');
   });
 
   // audit items 3 and 16: late answers of an older table, query or file must not show, and Export must not
@@ -1147,7 +1548,7 @@ describe('App IPC flow', () => {
     slowTable.armed = true;
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOACCU' }));
-    await waitFor(() => expect(GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], ''));
+    await waitFor(() => expect(GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], '', 0));
     slowTable.resolve([{ ID: 9, NAME: 'Late' }]);
     await screen.findByText('Alpha');
     expect(screen.queryByText('Late')).not.toBeInTheDocument();
@@ -1167,13 +1568,13 @@ describe('App IPC flow', () => {
 
     // another file: the SQL result of the previous one can no longer be exported
     fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
-    expect(screen.getByRole('menuitem', { name: en('export.sqlCsv') })).toBeEnabled();
+    expect(item('SQL result')).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
     openDefault();
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenCalledTimes(2));
     await screen.findByText('Alpha');
     fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
-    expect(screen.getByRole('menuitem', { name: en('export.sqlCsv') })).toBeDisabled();
+    expect(item('SQL result')).toBeDisabled();
   });
 
   it('describes progress by table or by row', () => {
@@ -1249,7 +1650,7 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Copy row with header' }));
     await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('ID\tNAME\r\n2\tBeta'));
     fireEvent.contextMenu(screen.getByText('Beta'));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy row' }));
+    fireEvent.click(item('Copy row'));
     await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('2\tBeta'));
 
     fireEvent.click(screen.getByText('Alpha'));
@@ -1299,6 +1700,12 @@ describe('App IPC flow', () => {
 
 // one catalog per language with the same keys; every text of the screen comes from them
 describe('language catalogs', () => {
+  // owner 26/11 (13g): the Log is called Log in the 3 languages; in Spanish its copy is "Copiar todo el log"
+  it('call the Log Log in the 3 languages', () => {
+    expect(LANGS.map((l) => translate(l, 'log.title'))).toEqual(['Log', 'Log', 'Log']);
+    expect(translate('es', 'menu.copyLog')).toBe('Copiar todo el log');
+  });
+
   const source = readFileSync('src/App.tsx', 'utf8');
 
   it('have the same keys in the three languages, none empty', () => {
@@ -1326,7 +1733,7 @@ describe('language catalogs', () => {
 
   it('hold every key the screen uses', () => {
     const used = [...source.matchAll(/\btn?\(\s*'([^']+)'/g)].map((m) => m[1]);
-    used.push(...['system', 'light', 'dark'].map((th) => `theme.${th}`), ...LANGS.map((l) => `lang.${l}`), 'scope.table', 'scope.all', 'tab.data', 'tab.schema', 'tab.sql');
+    used.push(...['system', 'light', 'dark'].map((th) => `theme.${th}`), ...LANGS.map((l) => `lang.${l}`), 'scope.table', 'scope.all', 'tab.data', 'tab.schema', 'tab.sql', 'tab.terms', 'btn.back', 'terms.whole', 'terms.contains', ...['csv', 'xlsx', 'sqlite', 'duckdb'].map((f) => `export.${f}`));
     expect(used.length).toBeGreaterThan(80);
     expect(used.filter((k) => !(k in CATALOGS.en))).toEqual([]);
   });
