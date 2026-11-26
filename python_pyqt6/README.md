@@ -115,8 +115,8 @@ Tabs:
   the Run button shows the result (`SQL result: 3 rows`) or the error; an error clears the previous result, and the
   next query that works clears the error there and in the status bar.
 - **Advanced Search** (Ctrl+4): paste a list of terms (one per line, for example an Excel column), choose "Whole value |
-  Contains" (default in Settings > Term matching) and "This table | All tables", and Search terms (Ctrl+Enter in
-  the tab). Every column of every table is compared as text: whole value = the cell without spaces at the ends is
+  Contains" (default in Settings > Term matching) and "This table | All tables" (it always starts in All tables;
+  with This table the summary ends with `(only in <table>)`), and Search terms (Ctrl+Enter in the tab). Every column of every table is compared as text: whole value = the cell without spaces at the ends is
   the term; contains = the cell contains it; case does not count. Empty lines are skipped and a repeated term is
   searched once (`8 terms, 2 repeated`); a header pasted from Excel is a term like any other. The search runs in
   the database engine with progress and Cancel, then shows `X of Y terms found: N rows in M tables`, the tables with
@@ -163,8 +163,8 @@ Menus:
   opens the log. Right-click on the status bar: Copy (the whole message) and Log. Numeric columns and their headers
   are right-aligned.
 - **Settings**: Theme (System, Light or Dark; switching changes the whole window), Language (English by default,
-  Português (Brasil), Español; applies at once), Default search scope (This table or All tables; also the Advanced Search
-  tab), Term matching (Whole value or Contains) and Show NULL
+  Português (Brasil), Español; applies at once), Default search scope (This table or All tables; the Data tab
+  only), Term matching (Whole value or Contains) and Show NULL
   (off by default: a NULL cell is empty). All are saved (Windows registry `HKCU\Software\MDB2SQL`,
   Linux `~/.config/MDB2SQL/MDB2SQL.conf`; with the environment variable `MDB2SQL_SETTINGS=<file.ini>`, in that file).
 - **Help > About mdb2sql**: name, version, Build (number and date), Stack (Python and PyQt6 versions), Window (Qt
