@@ -112,7 +112,8 @@ describe('App IPC flow', () => {
     const es = (key, ...args) => translate('es', key, ...args);
     expect(['YES', 'NO'].map((v) => nullableText(v, pt))).toEqual(['Sim', 'Não']);
     expect(['YES', 'NO'].map((v) => nullableText(v, es))).toEqual(['Sí', 'No']);
-    expect(pt('tab.schema')).toBe('Esquema');
+    expect(pt('tab.schema')).toBe('Schema'); // owner: Schema in the 3 languages
+    expect(translate('es', 'export.dbSchema')).toBe('Schema de la base de datos');
   });
 
   // standard item 1: the path bar of Zig (field + Browse... Open Export...); a file dropped on the window opens
@@ -1104,13 +1105,13 @@ describe('App IPC flow', () => {
       'Pesquisar Ctrl+F', 'Filtrar por este valor', 'Limpar filtros', '--', 'Marcar ou desmarcar linha Espaço', 'Desmarcar todas as linhas',
     ]);
     expect(tree('Exibir')).toEqual([
-      'Dados Ctrl+1', 'Esquema Ctrl+2', 'SQL Ctrl+3', '✓Termos Ctrl+4', '--', 'Linhas ▸', 'Colunas...', 'Pesquisar em ▸', 'Só as linhas marcadas',
+      'Dados Ctrl+1', 'Schema Ctrl+2', 'SQL Ctrl+3', '✓Termos Ctrl+4', '--', 'Linhas ▸', 'Colunas...', 'Pesquisar em ▸', 'Só as linhas marcadas',
       'Ir para a lista de tabelas Ctrl+T', 'Favoritar ou desfavoritar tabela Ctrl+D', '--', 'Executar SQL Ctrl+Enter', 'Pesquisar termos Ctrl+Enter', '--', 'Log Ctrl+L',
     ]);
     expect(tree('Configurações')).toEqual(['Tema ▸', 'Idioma ▸', 'Escopo padrão da busca ▸', 'Comparação dos termos ▸', 'Exibir NULL']);
     expect(tree('Ajuda')).toEqual(['Sobre o mdb2sql']);
     expect(tree('Exportar...', 'Exportar')).toEqual([
-      'Tabela atual ▸', 'Linhas marcadas ▸', 'Esquema da tabela atual ▸', 'Esquema do banco ▸', 'Todas as tabelas em CSV (um arquivo por tabela)...',
+      'Tabela atual ▸', 'Linhas marcadas ▸', 'Schema da tabela atual ▸', 'Schema do banco ▸', 'Todas as tabelas em CSV (um arquivo por tabela)...',
       'Resultado do SQL ▸', 'Resultado da busca em todas as tabelas (Excel)...', 'Relatório da pesquisa de termos ▸',
     ]);
   });
