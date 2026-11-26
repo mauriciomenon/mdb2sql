@@ -182,8 +182,8 @@ test "translations differ from English where words are involved" {
 // Texto de tela fora do catalogo: literal com espaco ou comecando por maiuscula (chaves e IDs sao minusculos,
 // sem espaco). Excecoes: SQL, nomes de produto, atalhos, variaveis de ambiente e mensagens do --capture.
 fn uiTextOutsideCatalog(src: []const u8) ?[]const u8 {
-    const allowed_lines = [_][]const u8{ "c.failed", "c.skip(", "c.note(", "rep.print(", "sql.appendSlice(", "@import(", "extern ", "\\x00*.", "--file-filter=", "segoeui", "consola.ttf", "copyZ(&app.sql", "SQLite format 3", "env.get(" };
-    const allowed = [_][]const u8{ "GLFW {d}.{d}.{d} + OpenGL 3.3", "DuckDB {s}", "#version 330", "X11 (DISPLAY={s}: {t})", "Ctrl+O", "Ctrl+L", "Ctrl+C", "Ctrl+Q", "Ctrl+S", "Ctrl+Shift+S", "Ctrl+W", "F5", "Ctrl+Shift+C", "Ctrl+F", "Ctrl+T", "Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+Enter" };
+    const allowed_lines = [_][]const u8{ "c.failed", "c.skip(", "c.note(", "rep.print(", "sql.appendSlice(", "@import(", "extern ", "\\x00*.", "--file-filter=", "segoeui", "seguisym", "consola.ttf", "copyZ(&app.sql", "SQLite format 3", "env.get(" };
+    const allowed = [_][]const u8{ "GLFW {d}.{d}.{d} + OpenGL 3.3", "DuckDB {s}", "#version 330", "X11 (DISPLAY={s}: {t})", "Ctrl+O", "Ctrl+L", "Ctrl+C", "Ctrl+Q", "Ctrl+S", "Ctrl+Shift+S", "Ctrl+W", "F5", "Ctrl+Shift+C", "Ctrl+F", "Ctrl+T", "Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+Enter", "Ctrl+D" };
     var lines = std.mem.splitScalar(u8, src, '\n');
     while (lines.next()) |full| {
         // sem o comentario do fim da linha (// fora de string)

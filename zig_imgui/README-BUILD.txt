@@ -137,6 +137,8 @@ Debian - dist/debian/amd64/
   Termos (Valor inteiro e Contem, Todas as tabelas, a tabela RANGER_SOSTAT escolhida; o resultado e o tempo vao para
   <pasta>\capture_terms.txt) e a aba Termos em espanhol e ingles. A lista vem de um arquivo:
     $env:MDB2SQL_CAPTURE_TERMS = 'C:\copia\termos.txt'   (sem ela os passos de Termos sao pulados)
+  So alguns passos (medicao rapida): $env:MDB2SQL_CAPTURE_ONLY = 'u_terms' (comecos de nome, separados por virgula).
+  Favoritas (v_favorites_pt_br): RANGER_SOSTAT, RANGER_SOEQID e RANGER_SOTEXT no topo da lista e o clique direito.
   A caixa de salvar nativa bloqueia o programa: o passo s_save_dialog_pt_br so roda com
   $env:MDB2SQL_CAPTURE_DIALOG = '1' e um script de fora que a fotografa e fecha (o run_capture.ps1 das capturas de
   25/11 faz isso por mensagens a janela, sem mouse).

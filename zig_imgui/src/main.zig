@@ -33,6 +33,7 @@ extern fn ImGui_ImplOpenGL3_Shutdown() void;
 // src/shim.c: campos de structs que o translate-c deixa opacos
 extern fn shim_io_setup() void;
 extern fn shim_add_font(path: [*:0]const u8, size_pixels: f32) ?*ig.ImFont;
+extern fn shim_merge_glyph(path: [*:0]const u8, size_pixels: f32, glyph: c_uint) ?*ig.ImFont;
 extern fn shim_clipper_range(clipper: *const ig.ImGuiListClipper, start: *c_int, end: *c_int) void;
 extern fn shim_capture_setup() void;
 extern fn shim_capture_frame(w: f32, h: f32) void;
@@ -136,6 +137,13 @@ const Capture = struct {
     terms_report: std.ArrayList(u8) = .empty, // capture_terms.txt
     dialog: bool = false, // MDB2SQL_CAPTURE_DIALOG=1: o passo save_dialog abre a caixa nativa
     log_mark: usize = 0, // prompt_delete: tamanho do Log antes de Fechar
+    only: []const u8 = "", // MDB2SQL_CAPTURE_ONLY: comecos de nome dos passos que rodam (vazio = todos)
+
+    fn wanted(only: []const u8, name: []const u8) bool {
+        var it = std.mem.tokenizeScalar(u8, only, ',');
+        while (it.next()) |prefix| if (std.mem.startsWith(u8, name, prefix)) return true;
+        return false;
+    }
 
     fn size(c: *const Capture) [2]u32 {
         const s = dbm.capture.plan[@min(c.step, dbm.capture.plan.len - 1)];
@@ -236,6 +244,11 @@ const Capture = struct {
         }
         while (true) {
             if (c.step == dbm.capture.plan.len or c.applied) return;
+            // MDB2SQL_CAPTURE_ONLY=u_,v_: so os passos que comecam assim (medicao rapida); os outros nem rodam
+            if (c.only.len > 0 and !wanted(c.only, dbm.capture.plan[c.step].name)) {
+                c.step += 1;
+                continue;
+            }
             // reopen_saved comeca com o arquivo fechado (depois do Salvar)
             if (dbm.capture.plan[c.step].action == .reopen_saved) {
                 if (app.slot.busy() or app.exit_ask != null) return;
@@ -330,6 +343,13 @@ const Capture = struct {
                 app.want_reload = true;
             },
             .unmark_all => app.want_unmark_all = true,
+            .favorites => {
+                // as 3 favoritas (as que o arquivo tiver) e o menu do clique direito na tabela aberta
+                for (cap.fav_tables) |name| if (indexOf(app.db.table_names, name)) |i| {
+                    if (!dbm.gridtools.isFavorite(app.favorites.items, name)) app.toggleFavorite(i);
+                };
+                app.fav_menu = app.selected;
+            },
             .terms => {
                 if (c.terms_file.len == 0) {
                     c.skip(app.gpa, "no term list (MDB2SQL_CAPTURE_TERMS=<file>)");
@@ -577,6 +597,13 @@ const Capture = struct {
             .search_only => if (app.marked_top != 3) c.note(app.gpa, "the 3 marked rows are not on top during another search"),
             .only_marked => if (app.data == null or app.data.?.rows.len != app.marksOf(app.selected).len) c.note(app.gpa, "Only marked does not show just the marked rows"),
             .unmark_all => if (app.marksOf(app.selected).len != 0 or app.only_marked) c.note(app.gpa, "Unmark all rows left marks"),
+            // as favoritas no topo da lista, em ordem alfabetica
+            .favorites => {
+                const order = app.table_order.items;
+                const want = [_][]const u8{ "RANGER_SOEQID", "RANGER_SOSTAT", "RANGER_SOTEXT" };
+                for (want, 0..) |name, k| if (k >= order.len or !std.mem.eql(u8, app.db.table_names[order[k]], name))
+                    return c.note(app.gpa, "the favorite tables are not at the top in alphabetical order");
+            },
             .terms => {
                 c.recordTerms(app, cap.plan[c.step].arg);
                 const res = app.terms_res orelse return;
@@ -1122,6 +1149,25 @@ const App = struct {
     start_cell: ?[2]usize = null, // --cell: linha e coluna (base 0) que abrem com o menu de copia
     start_menu: ?enum { File, Edit, View, Settings, Help, Export } = null, // --menu: menu aberto quando o banco abrir (capturas)
     start_export: ?ExportKind = null, // --export: abre o dialogo de salvar dessa exportacao quando o banco abrir
+    // Tabelas favoritas (item 34): pelo nome (do gpa), so na memoria; valem em qualquer arquivo aberto na sessao
+    favorites: std.ArrayList([]const u8) = .empty,
+    table_order: std.ArrayList(usize) = .empty, // ordem da lista de tabelas no quadro (favoritas primeiro)
+    want_fav: ?usize = null, // favoritar ou desfavoritar esta tabela (indice em db.table_names)
+    fav_menu: ?usize = null, // --capture: abre o menu do clique direito desta tabela da lista
+
+    // Favorita sai da lista ou entra nela (pelo nome); a lista rola ate a tabela aberta (que pode ter ido ao topo)
+    fn toggleFavorite(app: *App, table: usize) void {
+        if (table >= app.db.table_names.len) return;
+        const name = app.db.table_names[table];
+        for (app.favorites.items, 0..) |f, i| if (std.mem.eql(u8, f, name)) {
+            app.gpa.free(app.favorites.orderedRemove(i));
+            app.reveal_selected = true;
+            return;
+        };
+        const copy = app.gpa.dupe(u8, name) catch return;
+        app.favorites.append(app.gpa, copy) catch return app.gpa.free(copy);
+        app.reveal_selected = true;
+    }
 
     fn deinit(app: *App) void {
         // fechar com trabalho em andamento: pede para parar e espera a thread antes de soltar o banco
@@ -1142,6 +1188,9 @@ const App = struct {
         app.gpa.free(app.slot.req.hits); // exportacao da busca global cortada pela saida
         app.gpa.free(app.counts);
         app.freeMarks();
+        for (app.favorites.items) |f| app.gpa.free(f);
+        app.favorites.deinit(app.gpa);
+        app.table_order.deinit(app.gpa);
         app.filter_scratch.deinit(app.gpa);
         app.filters.deinit(app.gpa);
         app.db.close();
@@ -1816,6 +1865,10 @@ const App = struct {
             app.editMarks();
             app.want_reload = true;
         }
+        if (app.want_fav) |i| {
+            app.want_fav = null;
+            app.toggleFavorite(i);
+        }
         if (app.start_export != null and app.db.isOpen() and !app.want_open and !app.want_reload and !app.want_run) {
             app.want_export = app.start_export;
             app.start_export = null;
@@ -2239,6 +2292,7 @@ const App = struct {
                 app.want_reload = true;
             }
             if (ig.igMenuItem_Bool(tr("menu_goto_tables"), "Ctrl+T", false, has_db)) app.focus_tables = true;
+            if (ig.igMenuItem_Bool(tr("fav_toggle"), "Ctrl+D", false, has_db and app.selected != null)) app.want_fav = app.selected;
             ig.igSeparator();
             if (ig.igMenuItem_Bool(tr("menu_run_sql"), "Ctrl+Enter", false, has_db and zstr(&app.sql).len > 0)) {
                 app.want_tab = .sql;
@@ -2321,6 +2375,7 @@ const App = struct {
             if (chord(ctrl | ig.ImGuiMod_Shift | ig.ImGuiKey_S)) app.want_save = .save_as;
             if (chord(ctrl | ig.ImGuiKey_W)) app.want_close = true;
             if (chord(ctrl | ig.ImGuiKey_T)) app.focus_tables = true;
+            if (chord(ctrl | ig.ImGuiKey_D)) app.want_fav = app.selected; // favoritar a tabela aberta
             // Ctrl+Shift+C: copiar a linha da celula escolhida na grade da aba atual
             if (chord(ctrl | ig.ImGuiMod_Shift | ig.ImGuiKey_C)) if (app.currentGrid()) |c| copySelection(c.g, c.sel, true, false, c.skip);
             if (chord(ctrl | ig.ImGuiKey_F)) {
@@ -2766,9 +2821,11 @@ const App = struct {
         }
         var fbuf: [app.table_filter.len]u8 = undefined;
         const words = dbm.gridtools.fold(&fbuf, zstr(&app.table_filter_applied));
-        for (app.db.table_names, 0..) |name, i| {
-            const row = [_]?[]const u8{name};
-            if (!(dbm.gridtools.rowMatches(app.gpa, &app.filter_scratch, &row, words) catch true)) continue;
+        // favoritas primeiro, em ordem alfabetica; depois as outras na ordem do arquivo (o filtro vale para todas)
+        dbm.gridtools.tableOrder(app.gpa, &app.table_order, &app.filter_scratch, app.db.table_names, app.favorites.items, words) catch {};
+        for (app.table_order.items) |i| {
+            const name = app.db.table_names[i];
+            const fav = dbm.gridtools.isFavorite(app.favorites.items, name);
             ig.igTableNextRow(0, 0);
             _ = ig.igTableNextColumn();
             ig.igPushID_Int(@intCast(i));
@@ -2778,6 +2835,16 @@ const App = struct {
                 app.scope = .table; // a aba Data mostra a tabela escolhida
             }
             const hovered = ig.igIsItemHovered(0);
+            // clique direito: Favoritar / Desfavoritar (--capture abre o menu sem mouse, logo abaixo da linha)
+            if (app.fav_menu == i) {
+                app.fav_menu = null;
+                _ = ig.igOpenPopup_Str("##tablemenu", 0);
+                ig.igSetNextWindowPos(.{ .x = ig.igGetItemRectMin().x + 24, .y = ig.igGetItemRectMax().y }, ig.ImGuiCond_Always, .{ .x = 0, .y = 0 });
+            }
+            if (ig.igBeginPopupContextItem("##tablemenu", ig.ImGuiPopupFlags_MouseButtonRight)) {
+                defer ig.igEndPopup();
+                if (ig.igMenuItem_Bool(if (fav) tr("fav_remove") else tr("fav_add"), null, false, true)) app.want_fav = i;
+            }
             ig.igPopID();
             if (app.selected == i and app.reveal_selected) {
                 ig.igSetScrollHereY(0.5);
@@ -2786,6 +2853,11 @@ const App = struct {
             ig.igSameLine(0, 0);
             // nome mais largo que a coluna (painel estreito): o nome inteiro aparece no tooltip
             if (hovered and textWidth(name) > ig.igGetContentRegionAvail().x) tooltip(name);
+            // favorita: "★ " antes do nome, na cor do texto
+            if (fav) {
+                textSlice("\u{2605} ");
+                ig.igSameLine(0, 0);
+            }
             textSlice(name);
             _ = ig.igTableNextColumn();
             if (i < app.counts.len) {
@@ -3765,6 +3837,11 @@ fn run(init: std.process.Init) !void {
     const ui_font = for (platform.fonts) |font| {
         if (std.Io.Dir.cwd().access(init.io, font, .{})) |_| {
             _ = shim_add_font(font, 18.6 * scale);
+            // a estrela das favoritas (U+2605) de outra fonte, juntada a esta (a Segoe UI nao tem)
+            for (platform.star_fonts) |star| if (std.Io.Dir.cwd().access(init.io, star, .{})) |_| {
+                _ = shim_merge_glyph(star, 18.6 * scale, 0x2605);
+                break;
+            } else |_| {};
             break true;
         } else |_| {}
     } else blk: {
@@ -3792,6 +3869,7 @@ fn run(init: std.process.Init) !void {
         capture = .{ .out_dir = o.out_dir, .fbo = try Fbo.load(), .save_type = save_type };
         capture.?.terms_file = init.environ_map.get("MDB2SQL_CAPTURE_TERMS") orelse "";
         capture.?.dialog = if (init.environ_map.get("MDB2SQL_CAPTURE_DIALOG")) |v| std.mem.eql(u8, v, "1") else false;
+        capture.?.only = init.environ_map.get("MDB2SQL_CAPTURE_ONLY") orelse "";
     }
     defer if (capture) |*c| {
         if (c.failed != null or c.wrong.items.len > 0) capture_failed = true;

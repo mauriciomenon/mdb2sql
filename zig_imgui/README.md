@@ -117,7 +117,11 @@ While a file opens, the status line shows the time, a progress bar (tables conve
 
 - **Table list** (left): every table with its row count, the whole name shown (the panel starts as wide as the
   longest name, up to 40% of the window, and scrolls sideways beyond that); the box on top filters by name 300 ms
-  after the last key (Enter: at once).
+  after the last key (Enter: at once). Right-click a table: **Add to favorites** / **Remove from favorites** (also
+  **View > Favorite or unfavorite table**, Ctrl+D, for the open table): favorites come first, in alphabetical order,
+  with `★ ` before the name, then the other tables; the filter applies to them too. They are kept by table name
+  while the program is open (Close, another file and Reopen keep them; a name the file does not have is not shown)
+  and are not saved.
 - **Data** tab, top to bottom: one line with the search box, **This table** | **All tables**, **Rows** (the first 100,
   500 or 1000 rows) and **Columns...** (a narrow window wraps it, nothing cut); the value filters line, only when
   there are filters; the grid (click a column header to sort); under the grid `<table>: showing <n> of <total> rows`
@@ -194,7 +198,8 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   row** (Space), **Unmark all rows**.
 - **View**: **Data** (Ctrl+1), **Schema** (Ctrl+2), **SQL** (Ctrl+3), **Terms** (Ctrl+4); **Rows** > 100 / 500 /
   1000, **Columns...**, **Search in** > This table / All tables, **Only marked rows**, **Go to the table list**
-  (Ctrl+T); **Run SQL** and **Search terms** (Ctrl+Enter); **Log** (Ctrl+L).
+  (Ctrl+T), **Favorite or unfavorite table** (Ctrl+D); **Run SQL** and **Search terms** (Ctrl+Enter); **Log**
+  (Ctrl+L).
 - **Log** panel at the bottom (**View > Log**, Ctrl+L, or the arrow at the left of the status bar and in the panel
   header): every message of the session with its time, in a monospace font one step smaller; select and Ctrl+C, or
   **Copy all**, **Clear**. About 10% of the window high (at least 3 lines, at most 25%), resized by dragging its top
@@ -207,7 +212,9 @@ While a file opens, the status line shows the time, a progress bar (tables conve
 - Shortcuts (the same in the 4 versions): Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+W close, Ctrl+Q exit,
   F5 open the file again, Ctrl+F Data search, Ctrl+T table list, Ctrl+1 / Ctrl+2 / Ctrl+3 / Ctrl+4 Data / Schema /
   SQL / Terms tab, Ctrl+L Log, Ctrl+Enter run the SQL (in the Terms tab: search the terms), Ctrl+C copy the cell,
-  Ctrl+Shift+C copy the row, Space mark the row.
+  Ctrl+Shift+C copy the row, Space mark the row, Ctrl+D favorite the open table.
+- Dialogs with more than one button (exit question, export in progress, whole table or rows found, Columns): every
+  button has the same width and height, the width of the longest of their texts in the three languages.
 - Numbers are right-aligned in the grids and in the row counts of the table list (headers too); arrows are `←` `→`.
 - **Settings > Theme**: System, Light, Dark. **Settings > Language**: English, Português (Brasil), Español.
   **Settings > Default search scope**: This table, All tables. **Settings > Term matching**: Whole value, Contains.
@@ -279,6 +286,8 @@ the public mdbtools test data, and the small `testdata/mdb2sql_test.mdb` kept in
 - **Terms** tab: search a pasted list in every column of every table, whole value or contains; report in Excel, CSV,
   SQLite or DuckDB.
 - The SQL tab only reads (the statement type decides; writes are refused before running).
+- Favorite tables on top of the table list (right-click, View, Ctrl+D), kept by name for the session.
+- Dialog buttons of the same size in every language.
 
 ### Changes in 1.3.0
 

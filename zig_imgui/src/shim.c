@@ -26,6 +26,21 @@ ImFont *shim_add_font(const char *path, float size_pixels) {
     return ImFontAtlas_AddFontFromFileTTF(igGetIO_Nil()->Fonts, path, size_pixels, NULL, NULL);
 }
 
+// Um caractere que a fonte da interface nao tem vem de outra fonte, juntada a ela (MergeMode): a Segoe UI nao tem a
+// estrela U+2605 das tabelas favoritas, a Segoe UI Symbol tem. So esse caractere e lido da outra fonte.
+ImFont *shim_merge_glyph(const char *path, float size_pixels, unsigned int glyph) {
+    static ImWchar ranges[3];
+    ranges[0] = (ImWchar)glyph;
+    ranges[1] = (ImWchar)glyph;
+    ranges[2] = 0;
+    ImFontConfig *cfg = ImFontConfig_ImFontConfig();
+    cfg->MergeMode = true;
+    cfg->GlyphRanges = ranges;
+    ImFont *font = ImFontAtlas_AddFontFromFileTTF(igGetIO_Nil()->Fonts, path, size_pixels, cfg, NULL);
+    ImFontConfig_destroy(cfg);
+    return font;
+}
+
 void shim_clipper_range(const ImGuiListClipper *clipper, int *start, int *end) {
     *start = clipper->DisplayStart;
     *end = clipper->DisplayEnd;

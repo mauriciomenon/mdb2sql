@@ -115,6 +115,12 @@ else
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
     };
 
+// De onde vem a estrela das tabelas favoritas (U+2605) quando a fonte da interface nao a tem (a Segoe UI nao tem)
+pub const star_fonts = if (is_windows)
+    [_][:0]const u8{"C:\\Windows\\Fonts\\seguisym.ttf"}
+else
+    [_][:0]const u8{ "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf" };
+
 // Fonte monoespacada do painel de Log
 pub const mono_fonts = if (is_windows)
     [_][:0]const u8{ "C:\\Windows\\Fonts\\consola.ttf", "C:\\Windows\\Fonts\\cour.ttf" }

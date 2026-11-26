@@ -132,6 +132,48 @@ pub fn rowMatches(gpa: Allocator, scratch: *std.ArrayList(u8), row: []const ?[]c
     return false;
 }
 
+// !T: Order of the table list (item 34): the favorite tables the open file has come first, alphabetical (case
+// ignored), then the other tables in file order; the filter words apply to both; a favorite name the file does not
+// have is ignored. `out` gets indices into `names`.
+pub fn tableOrder(gpa: Allocator, out: *std.ArrayList(usize), scratch: *std.ArrayList(u8), names: []const []const u8, favorites: []const []const u8, words: []const u8) Allocator.Error!void {
+    out.clearRetainingCapacity();
+    for (favorites) |f| for (names, 0..) |n, i| if (std.mem.eql(u8, n, f)) {
+        if (try rowMatches(gpa, scratch, &.{n}, words)) try out.append(gpa, i);
+        break;
+    };
+    std.mem.sort(usize, out.items, names, struct {
+        fn less(ns: []const []const u8, a: usize, b: usize) bool {
+            return std.ascii.lessThanIgnoreCase(ns[a], ns[b]);
+        }
+    }.less);
+    for (names, 0..) |n, i| {
+        if (isFavorite(favorites, n) or !try rowMatches(gpa, scratch, &.{n}, words)) continue;
+        try out.append(gpa, i);
+    }
+}
+
+pub fn isFavorite(favorites: []const []const u8, name: []const u8) bool {
+    for (favorites) |f| if (std.mem.eql(u8, f, name)) return true;
+    return false;
+}
+
+test "table list order (item 34): favorites first and alphabetical, the filter applies, a missing name is ignored" {
+    const names = [_][]const u8{ "RANGER_SOACCU", "RANGER_SOSTAT", "RANGER_SOEQID", "RANGER_SOTEXT", "Outra" };
+    const favs = [_][]const u8{ "RANGER_SOTEXT", "RANGER_SOSTAT", "NAO_EXISTE", "RANGER_SOEQID" };
+    var order: std.ArrayList(usize) = .empty;
+    defer order.deinit(std.testing.allocator);
+    var scratch: std.ArrayList(u8) = .empty;
+    defer scratch.deinit(std.testing.allocator);
+    try tableOrder(std.testing.allocator, &order, &scratch, &names, &favs, "");
+    try std.testing.expectEqualSlices(usize, &.{ 2, 1, 3, 0, 4 }, order.items);
+    // o filtro vale para as favoritas tambem ("st": so RANGER_SOSTAT)
+    try tableOrder(std.testing.allocator, &order, &scratch, &names, &favs, "st");
+    try std.testing.expectEqualSlices(usize, &.{1}, order.items);
+    // sem favoritas: a ordem do arquivo
+    try tableOrder(std.testing.allocator, &order, &scratch, &names, &.{}, "");
+    try std.testing.expectEqualSlices(usize, &.{ 0, 1, 2, 3, 4 }, order.items);
+}
+
 fn hasAll(text: []const u8, words: []const u8) bool {
     var it = std.mem.tokenizeAny(u8, words, &std.ascii.whitespace);
     while (it.next()) |w| if (std.mem.indexOf(u8, text, w) == null) return false;

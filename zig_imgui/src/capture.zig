@@ -52,7 +52,7 @@ pub fn parse(args: []const []const u8) error{Usage}!?Options {
 // (whole|contains), pesquisa, escolhe a tabela RANGER_SOSTAT e grava o resultado em capture_terms.txt (sem a
 // variavel: pulado); terms_show mostra a aba Termos (outro idioma); save_dialog abre a caixa de salvar nativa (so com
 // MDB2SQL_CAPTURE_DIALOG=1: ela bloqueia ate um script de fora fotografar e fechar).
-pub const Action = enum { display_warning, log_error, log_error_open, exit_esc, show, filter, columns, close_columns, other_table, about, log, settings_menu, lang_en, lang_pt_br, lang_es, prompt, prompt_delete, click_cell, global_late, global_clear, global, open_hit, reopen, export_ask, header_menu, cell_menu, file_menu, export_menu, sql_tab, sql_error, key_ctrl_enter, key_ctrl_1, key_ctrl_2, key_ctrl_f, key_f5, reopen_saved, sql_write, table, search_mark, search_only, only_marked, unmark_all, edit_menu, view_menu, terms, terms_show, save_dialog };
+pub const Action = enum { display_warning, log_error, log_error_open, exit_esc, show, filter, columns, close_columns, other_table, about, log, settings_menu, lang_en, lang_pt_br, lang_es, prompt, prompt_delete, click_cell, global_late, global_clear, global, open_hit, reopen, export_ask, header_menu, cell_menu, file_menu, export_menu, sql_tab, sql_error, key_ctrl_enter, key_ctrl_1, key_ctrl_2, key_ctrl_f, key_f5, reopen_saved, sql_write, favorites, table, search_mark, search_only, only_marked, unmark_all, edit_menu, view_menu, terms, terms_show, save_dialog };
 pub const Step = struct { name: []const u8, action: Action, w: u32, h: u32, arg: []const u8 = "" };
 pub const default_size = [2]u32{ 1280, 800 }; // tamanho em que o programa abre
 pub const max_size = [2]u32{ 1920, 1129 }; // area de trabalho de 1920x1200 menos a barra de tarefas e o titulo
@@ -64,6 +64,8 @@ pub const second_table = "RANGER_SOANLG";
 // no DB4 (287 tabelas; 10.364 colunas no .duckdb) ELSUL esta em 3 tabelas; a RANGER_SOXAGC vem depois da coluna 10.000
 pub const late_term = "ELSUL";
 pub const late_table = "RANGER_SOXAGC";
+// tabelas favoritas da captura (no topo, em ordem alfabetica: SOEQID, SOSTAT, SOTEXT)
+pub const fav_tables = [_][]const u8{ "RANGER_SOSTAT", "RANGER_SOEQID", "RANGER_SOTEXT" };
 // linhas marcadas: 3 buscas com 1 marcada em cada, depois outra busca (os PNTNAM da lista do dono, RANGER_SOSTAT)
 pub const mark_terms = [_][]const u8{ "TURBINA CGI VIBRACION ANORMAL 1 CANAL 1", "GENERADOR GGB ALIMENTACION CONTROL 24VCC", "GENERADOR GGB INTERRUPTORES CONTROL CIRCUITO 2", "GENERADOR COJ EMP VIBRACION" };
 
@@ -109,6 +111,8 @@ pub const plan = [_]Step{
     .{ .name = "s_menu_file_pt_br", .action = .file_menu, .w = default_size[0], .h = default_size[1] },
     .{ .name = "s_menu_export_pt_br", .action = .export_menu, .w = default_size[0], .h = default_size[1] },
     .{ .name = "s_menu_settings_pt_br", .action = .settings_menu, .w = default_size[0], .h = default_size[1] },
+    // item 34: 3 favoritas no topo da lista e o clique direito aberto na primeira
+    .{ .name = "v_favorites_pt_br", .action = .favorites, .w = default_size[0], .h = default_size[1] },
     .{ .name = "u_terms_pt_br", .action = .terms, .w = default_size[0], .h = default_size[1], .arg = "whole" },
     .{ .name = "u_terms_contains_pt_br", .action = .terms, .w = default_size[0], .h = default_size[1], .arg = "contains" },
     .{ .name = "u_terms_max_pt_br", .action = .terms_show, .w = max_size[0], .h = max_size[1] },
