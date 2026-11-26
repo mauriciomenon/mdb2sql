@@ -505,7 +505,8 @@ describe('App IPC flow', () => {
 
   it('searches the whole table in the database (Data tab), after a pause in typing', async () => {
     const GetRowCount = vi.fn(async (_t, _f, search) => (search ? 1 : 2));
-    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetRowCount } } } });
+    // Settings > Default search scope chosen This table (the default is All tables since standard 18a)
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetRowCount, GetSearchScope: vi.fn(async () => 'table') } } } });
     render(<App />);
     openDefault();
     await screen.findByText('Alpha');
@@ -537,7 +538,8 @@ describe('App IPC flow', () => {
     await screen.findByText('Alpha');
     const scope = screen.getByRole('radiogroup', { name: 'Search in' });
     expect(within(scope).getAllByRole('radio').map((r) => r.textContent)).toEqual(['This table', 'All tables']);
-    expect(within(scope).getByRole('radio', { name: 'This table' })).toHaveAttribute('aria-checked', 'true');
+    // standard 18a: All tables by default, with nothing chosen in Settings
+    expect(within(scope).getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.queryByRole('checkbox', { name: /tables/ })).not.toBeInTheDocument();
 
     fireEvent.click(within(scope).getByRole('radio', { name: 'All tables' }));
@@ -1130,7 +1132,7 @@ describe('App IPC flow', () => {
     fireEvent.mouseEnter(item('Rows'));
     expect(menuTree(screen.getByRole('menu', { name: 'Rows' }))).toEqual(['✓100', '500', '1000']);
     fireEvent.mouseEnter(item('Search in'));
-    expect(menuTree(screen.getByRole('menu', { name: 'Search in' }))).toEqual(['✓This table', 'All tables']);
+    expect(menuTree(screen.getByRole('menu', { name: 'Search in' }))).toEqual(['This table', '✓All tables']); // standard 18a
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     fireEvent.mouseEnter(item('Term matching'));
     expect(menuTree(screen.getByRole('menu', { name: 'Term matching' }))).toEqual(['✓Whole value', 'Contains']);
@@ -1169,7 +1171,7 @@ describe('App IPC flow', () => {
       Array.from({ length: Math.max(0, Math.min(limit, total(search) - offset)) }, (_, i) => ({ ID: offset + i + 1, NAME: 'n' })),
     );
     const GetRowCount = vi.fn(async (_t, _f, search) => total(search));
-    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, GetRowCount } } } });
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, GetRowCount, GetSearchScope: vi.fn(async () => 'table') } } } });
     render(<App />);
     openDefault();
     await screen.findByText('RANGER_SOACCU: rows 1 to 100 of 1,050');
@@ -1294,7 +1296,7 @@ describe('App IPC flow', () => {
     const GetRowCount = vi.fn(async (_t, _f, search) => (search ? 1 : all.length));
     const MarkedRows = vi.fn(async (_t, marks) => all.filter((r) => marks.some((m) => m[ROWID] === r[ROWID])));
     const ExportMarked = vi.fn(async () => 'C:\\out\\RANGER_SOACCU_marcadas.csv');
-    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, GetRowCount, MarkedRows, ExportMarked } } } });
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, GetRowCount, MarkedRows, ExportMarked, GetSearchScope: vi.fn(async () => 'table') } } } });
     render(<App />);
     openDefault();
     await screen.findByText('ggg');
@@ -1484,7 +1486,7 @@ describe('App IPC flow', () => {
   it('asks whole table or only the rows found before exporting a searched table', async () => {
     const ExportTable = vi.fn(async () => 'C:\\out\\t.csv');
     const GetRowCount = vi.fn(async (_t, _f, search) => (search ? 1 : 2));
-    global.window = Object.assign(window, { go: { main: { App: { ...bridge, ExportTable, GetRowCount } } } });
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, ExportTable, GetRowCount, GetSearchScope: vi.fn(async () => 'table') } } } });
     render(<App />);
     openDefault();
     await screen.findByText('Alpha');
