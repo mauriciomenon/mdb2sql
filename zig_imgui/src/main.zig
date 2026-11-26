@@ -1976,7 +1976,8 @@ const App = struct {
             .dbschema_csv, .dbschema_xlsx => std.fmt.bufPrint(&name_buf, "{s}_schema", .{std.fs.path.stem(loaded)}) catch "schema",
             .result_csv, .result_xlsx => "query",
             .marked_csv, .marked_xlsx => std.fmt.bufPrint(&name_buf, "{s}_marcadas", .{app.db.table_names[app.selected orelse return]}) catch "marcadas",
-            .terms_xlsx, .terms_csv, .terms_sqlite, .terms_duckdb => std.fmt.bufPrint(&name_buf, "{s}_termos", .{std.fs.path.stem(loaded)}) catch "termos",
+            // item 19 e: "<banco> - Pesquisa Avançada.xlsx" (.sqlite/.duckdb conforme o tipo), o nome da aba no idioma da tela
+            .terms_xlsx, .terms_csv, .terms_sqlite, .terms_duckdb => std.fmt.bufPrint(&name_buf, "{s} - {s}", .{ std.fs.path.stem(loaded), tr("tab_terms") }) catch tr("tab_terms"),
             .global_xlsx => std.fmt.bufPrint(&name_buf, "{s}_busca", .{std.fs.path.stem(loaded)}) catch "busca",
         };
         var file_buf: [600]u8 = undefined;

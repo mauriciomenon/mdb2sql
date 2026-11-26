@@ -170,6 +170,14 @@ test "item 13 f: every button has the height of its line (none taller to show hi
     try std.testing.expectEqual(1, std.mem.count(u8, ui, "ImGuiStyleVar_FramePadding"));
 }
 
+test "item 19 e: the Advanced Search report is suggested as \"<database> - Pesquisa Avançada.xlsx\" (the tab name), never _termos or .xls" {
+    try expectOrder("// item 19 e:", &.{ ".terms_xlsx, .terms_csv, .terms_sqlite, .terms_duckdb => std.fmt.bufPrint(&name_buf, \"{s} - {s}\"", "tr(\"tab_terms\")" });
+    const ui = @embedFile("main.zig");
+    try std.testing.expect(std.mem.indexOf(u8, ui, "_termos") == null);
+    try std.testing.expect(std.mem.indexOf(u8, ui, "\".xls\"") == null);
+    try std.testing.expectEqualStrings("Pesquisa Avançada", i18n.catalogs[1].tab_terms);
+}
+
 test "item 17: Advanced Search starts in All tables, never the Data tab default scope; This table says where it searched" {
     const ui = @embedFile("main.zig");
     try std.testing.expect(std.mem.indexOf(u8, ui, "terms_scope: settings.SearchScope = .all,") != null);
