@@ -593,14 +593,7 @@ const Capture = struct {
                 c.note(app.gpa, "the SQL tab ran a statement that writes"),
             .key_ctrl_enter => if (app.result == null or alert.len > 0 or app.sql_msg.is_err) c.note(app.gpa, "Ctrl+Enter with a SQL that works did not clear the previous error"),
             .key_f5 => if (!app.db.isOpen() or !app.status.loaded) c.note(app.gpa, "F5 did not open the file again"),
-            .reopen_saved => {
-                if (app.converted != null or (app.source != .sqlite and app.source != .duckdb)) c.note(app.gpa, "the saved file was not reused (the Access file was converted again)");
-                // a linha do Log diz o formato real do salvo
-                const saved_as: dbm.Source = if (c.save_type == .duckdb) .duckdb else .sqlite;
-                var lb: [2200]u8 = undefined;
-                const line = i18n.fmt(&lb, "converted_reused", .{ std.fs.path.basename(zstr(&c.source_path)), saved_as.label(), c.saved_path orelse "" });
-                if (std.mem.indexOf(u8, session_log.slice(), line) == null) c.note(app.gpa, "the Log line of the reused file does not say its format");
-            },
+            .reopen_saved => if (app.converted != null or (app.source != .sqlite and app.source != .duckdb)) c.note(app.gpa, "the saved file was not reused (the Access file was converted again)"),
             .search_only => if (app.marked_top != 3) c.note(app.gpa, "the 3 marked rows are not on top during another search"),
             .only_marked => if (app.data == null or app.data.?.rows.len != app.marksOf(app.selected).len) c.note(app.gpa, "Only marked does not show just the marked rows"),
             .unmark_all => if (app.marksOf(app.selected).len != 0 or app.only_marked) c.note(app.gpa, "Unmark all rows left marks"),
@@ -1412,9 +1405,7 @@ const App = struct {
                 if (access_file) if (app.prefs.savedFor(app.io, zstr(&app.path))) |dest| {
                     copyZ(&r.path, dest);
                     var lb: [2200]u8 = undefined;
-                    // o formato real do salvo: SQLite ou DuckDB
-                    const saved_as: dbm.Source = if (query.sourceKind(dest) catch .sqlite == .duckdb) .duckdb else .sqlite;
-                    logLine(i18n.fmt(&lb, "converted_reused", .{ std.fs.path.basename(zstr(&app.path)), saved_as.label(), dest }));
+                    logLine(i18n.fmt(&lb, "converted_reused", .{ std.fs.path.basename(zstr(&app.path)), dest }));
                 };
                 r.table_name = app.start_table;
                 app.start_table = "";
