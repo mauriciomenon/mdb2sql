@@ -3896,7 +3896,7 @@ fn run(init: std.process.Init) !void {
     // do ImGui. O ImGui mede a altura da linha (no Segoe UI, 1.33x a letra): 18.6 = letra de 14 px, a do Go/Wails
     // (com 16 ficava em 12 px, pequena); titulos seguem proporcionais (FontSizeBase)
     // Os glifos (acentos, setas U+2190-21FF) entram no atlas sob demanda (fontes dinamicas do Dear ImGui 1.92+)
-    const ui_font = for (platform.fonts) |font| {
+    _ = for (platform.fonts) |font| {
         if (std.Io.Dir.cwd().access(init.io, font, .{})) |_| {
             _ = shim_add_font(font, 18.6 * scale);
             // a estrela das favoritas (U+2605) e as setas das paginas (U+25B6, U+25C0) de outra fonte, juntada a esta

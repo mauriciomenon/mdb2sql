@@ -88,7 +88,7 @@ test "item 18 b: About lines: version with the full commit (or dev), runtime, to
     i18n.lang = .pt_br;
     var bb: [160]u8 = undefined;
     try std.testing.expectEqualStrings("Versão " ++ version ++ " - dev", versionText(&bb, "", ""));
-    const c40 = "0930908" ++ "a" ** 33;
+    const c40 = "5faa7b68d93a7e8eef8215a694be2857e4b720c3"; // 40 digitos
     try std.testing.expectEqualStrings("Versão " ++ version ++ " - commit " ++ c40 ++ " - 2026-11-26", versionText(&bb, c40, "2026-11-26"));
     try std.testing.expectEqualStrings("Ferramentas: SQLite " ++ sqlite_version ++ ", DuckDB 2.0.0, mdbtools " ++ mdbtools_version, toolsText(&bb, "v2.0.0"));
     try std.testing.expectEqualStrings("Suporte ao driver ODBC, caso instalado.", i18n.tr("about_odbc"));
