@@ -117,7 +117,46 @@ pub const Cell = union(enum) {
     text: []const u8,
     number: []const u8, // texto ja no formato numerico (ex.: "-1.5", "3e+20")
     boolean: bool,
+    date: Date, // celula de data do Excel (item 19 c): o numero de serie com o formato de data
 };
+
+// Data do Excel: dias desde 1899-12-30 (fracao = hora); time = com hora (formato aaaa-mm-dd hh:mm:ss)
+pub const Date = struct { serial: f64, time: bool };
+
+// !T: "2026-07-14" or "2026-07-14 10:20:30[.fff]" (the text DuckDB gives for DATE and TIMESTAMP) -> Excel date serial;
+// null = not that form or before 1900-03-01 (Excel's 1900 calendar is wrong before it): the cell stays text
+pub fn dateSerial(s: []const u8) ?Date {
+    if (s.len < 10 or s[4] != '-' or s[7] != '-') return null;
+    const y = std.fmt.parseInt(i64, s[0..4], 10) catch return null;
+    const m = std.fmt.parseInt(i64, s[5..7], 10) catch return null;
+    const d = std.fmt.parseInt(i64, s[8..10], 10) catch return null;
+    if (m < 1 or m > 12 or d < 1 or d > 31 or y < 1900 or (y == 1900 and m < 3)) return null;
+    // dias desde 1970-01-01 (algoritmo civil de Howard Hinnant); 1899-12-30 e o dia -25569
+    const yy = if (m <= 2) y - 1 else y;
+    const era = @divFloor(yy, 400);
+    const yoe = yy - era * 400;
+    const doy = @divFloor(153 * (if (m > 2) m - 3 else m + 9) + 2, 5) + d - 1;
+    const doe = yoe * 365 + @divFloor(yoe, 4) - @divFloor(yoe, 100) + doy;
+    const days = era * 146097 + doe - 719468 + 25569;
+    var serial: f64 = @floatFromInt(days);
+    if (s.len == 10) return .{ .serial = serial, .time = false };
+    if (s.len < 19 or s[10] != ' ' or s[13] != ':' or s[16] != ':') return null;
+    const hh = std.fmt.parseInt(u32, s[11..13], 10) catch return null;
+    const mi = std.fmt.parseInt(u32, s[14..16], 10) catch return null;
+    const sec = std.fmt.parseFloat(f64, s[17..]) catch return null;
+    if (hh > 23 or mi > 59 or sec >= 61) return null;
+    serial += (@as(f64, @floatFromInt(hh * 3600 + mi * 60)) + sec) / 86400.0;
+    return .{ .serial = serial, .time = true };
+}
+
+test "Excel date serials: DATE and TIMESTAMP text, before 1900-03-01 and other text stay text" {
+    try std.testing.expectEqual(Date{ .serial = 45000, .time = false }, dateSerial("2023-03-15").?);
+    try std.testing.expectEqual(Date{ .serial = 61, .time = false }, dateSerial("1900-03-01").?);
+    try std.testing.expectEqual(Date{ .serial = 45000.5, .time = true }, dateSerial("2023-03-15 12:00:00").?);
+    try std.testing.expectApproxEqAbs(45000.75 + 1.5 / 86400.0, dateSerial("2023-03-15 18:00:01.5").?.serial, 1e-9);
+    for ([_][]const u8{ "1899-12-31", "1900-02-28", "2023-13-01", "abc", "2023-03-15T12:00:00", "2023-03-15 12:00" }) |bad|
+        try std.testing.expect(dateSerial(bad) == null);
+}
 
 // Numero que o Excel aceita em <v> (sem inf/nan/hex)
 pub fn isExcelNumber(s: []const u8) bool {
@@ -292,6 +331,8 @@ pub const Workbook = struct {
                     try wb.put("</v></c>");
                 },
                 .boolean => |b| try wb.xml.writeAll(if (b) " t=\"b\"><v>1</v></c>" else " t=\"b\"><v>0</v></c>"),
+                // estilo 2 = data e hora, 3 = so data (styles.xml)
+                .date => |d| try wb.xml.print(" s=\"{d}\"><v>{d}</v></c>", .{ @as(u8, if (d.time) 2 else 3), d.serial }),
                 .text => |s| {
                     try wb.xml.writeAll(" t=\"inlineStr\"><is><t xml:space=\"preserve\">");
                     const cut = cutUtf8(s, max_cell_chars);
@@ -365,12 +406,15 @@ pub const Workbook = struct {
 
         try wb.whole("xl/styles.xml", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n" ++
             "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">" ++
+            "<numFmts count=\"2\"><numFmt numFmtId=\"164\" formatCode=\"yyyy-mm-dd hh:mm:ss\"/><numFmt numFmtId=\"165\" formatCode=\"yyyy-mm-dd\"/></numFmts>" ++
             "<fonts count=\"2\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font><font><b/><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts>" ++
             "<fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills>" ++
             "<borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders>" ++
             "<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>" ++
-            "<cellXfs count=\"2\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>" ++
-            "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyFont=\"1\"/></cellXfs>" ++
+            "<cellXfs count=\"4\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>" ++
+            "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyFont=\"1\"/>" ++
+            "<xf numFmtId=\"164\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/>" ++
+            "<xf numFmtId=\"165\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/></cellXfs>" ++
             "<cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles>" ++
             "</styleSheet>");
 

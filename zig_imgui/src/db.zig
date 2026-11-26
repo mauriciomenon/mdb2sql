@@ -313,6 +313,14 @@ pub fn isBoolType(ty: c.duckdb_type) bool {
     return ty == c.DUCKDB_TYPE_BOOLEAN;
 }
 
+// Tipos que viram data numa planilha (o texto do DuckDB: "aaaa-mm-dd" ou "aaaa-mm-dd hh:mm:ss")
+pub fn isDateType(ty: c.duckdb_type) bool {
+    return switch (ty) {
+        c.DUCKDB_TYPE_DATE, c.DUCKDB_TYPE_TIMESTAMP, c.DUCKDB_TYPE_TIMESTAMP_S, c.DUCKDB_TYPE_TIMESTAMP_MS, c.DUCKDB_TYPE_TIMESTAMP_NS => true,
+        else => false,
+    };
+}
+
 pub const Db = struct {
     gpa: Allocator,
     db: c.duckdb_database = null,

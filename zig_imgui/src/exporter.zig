@@ -305,11 +305,13 @@ fn writeSheets(wb: *xlsx.Workbook, db: *Db, sel: Select, progress: *Progress, ro
     try wb.endSheet();
 }
 
-// Texto da celula -> celula da planilha, conforme o tipo original da coluna
+// Texto da celula -> celula da planilha, conforme o tipo original da coluna: numero e celula numerica, data e
+// celula de data (item 19 c), NULL e celula vazia
 fn toCell(text: ?[]const u8, ty: anytype) xlsx.Cell {
     const s = text orelse return .empty;
     if (dbm.isBoolType(ty)) return .{ .boolean = std.mem.eql(u8, s, "true") };
     if (dbm.isNumericType(ty) and xlsx.isExcelNumber(s)) return .{ .number = s };
+    if (dbm.isDateType(ty)) if (xlsx.dateSerial(s)) |d| return .{ .date = d };
     return .{ .text = s };
 }
 
