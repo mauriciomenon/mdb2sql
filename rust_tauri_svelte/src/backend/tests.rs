@@ -1192,4 +1192,53 @@ mod tests {
             assert!(manager.check_read_only(&format!("SELECT * FROM {table}")).is_ok());
         }
     }
+
+    // item 31: identidade da linha marcada = rowid do DuckDB (tabela do .duckdb, SQLite e Access copiados para a
+    // memoria); view sem rowid: todos os valores (linhas identicas marcam juntas). As marcadas voltam inteiras, na ordem
+    // da tabela, qualquer que seja a pesquisa, e a exportacao delas leva so elas
+    #[test]
+    fn marked_rows_come_back_by_rowid_or_by_all_values() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("marks.duckdb");
+        duckdb::Connection::open(&path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE p AS SELECT range AS id, 'kkk' || range AS s FROM range(5);
+                 CREATE TABLE d (s VARCHAR, n INTEGER); INSERT INTO d VALUES ('x', 1), ('x', 1), ('y', 2);
+                 CREATE VIEW dv AS SELECT * FROM d;",
+            )
+            .unwrap();
+        let lite = dir.path().join("marks.sqlite");
+        rusqlite::Connection::open(&lite).unwrap().execute_batch("CREATE TABLE p (id INTEGER, s TEXT); INSERT INTO p VALUES (0, 'kkk0'), (1, 'kkk1'), (2, 'kkk2'), (3, 'kkk3'), (4, 'kkk4');").unwrap();
+        for file in [&path, &lite] {
+            let manager = DBManager::new();
+            manager.connect(file.to_str().unwrap(), &mut no_progress()).unwrap();
+            let page = manager.table_page("p", 2, &[], "", &[]).unwrap();
+            assert_eq!(page.ids, [json!(0), json!(1)], "rowid");
+            assert!(page.rows[0].get("mdb2sql id").is_none(), "the id is not a column");
+            // marca as linhas 4 e 2 (fora da pagina); outra pesquisa: elas voltam na ordem da tabela, alem da pagina
+            let marked = [json!(4), json!(2)];
+            let page = manager.table_page("p", 2, &[], "kkk1", &marked).unwrap();
+            assert_eq!(page.rows, [json!({ "id": 1, "s": "kkk1" })]);
+            assert_eq!(page.marked_ids, [json!(2), json!(4)]);
+            assert_eq!(page.marked, [json!({ "id": 2, "s": "kkk2" }), json!({ "id": 4, "s": "kkk4" })]);
+            let (filter, params) = manager.marked_where("p", &marked).unwrap();
+            let out = dir.path().join("p_marcadas.csv");
+            let conn = manager.export_connection().unwrap();
+            let done = export::export_source(&conn, &Source::Rows("p".into(), filter, params), "csv", &out, &mut ok_progress()).unwrap();
+            assert_eq!(done.count, 2);
+            assert_eq!(std::fs::read_to_string(&out).unwrap(), "\u{FEFF}id,s\r\n2,kkk2\r\n4,kkk4\r\n");
+            assert!(manager.marked_where("p", &[]).is_err());
+        }
+        // view: identidade = todos os valores; as duas linhas ('x', 1) marcam juntas
+        let manager = DBManager::new();
+        manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+        let page = manager.table_page("dv", 10, &[], "", &[]).unwrap();
+        assert!(page.ids.iter().all(|id| id.is_string()));
+        assert_eq!(page.ids[0], page.ids[1]);
+        assert_ne!(page.ids[0], page.ids[2]);
+        let page = manager.table_page("dv", 10, &[], "y", &[page.ids[0].clone()]).unwrap();
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(page.marked, [json!({ "s": "x", "n": 1 }), json!({ "s": "x", "n": 1 })]);
+    }
 }
