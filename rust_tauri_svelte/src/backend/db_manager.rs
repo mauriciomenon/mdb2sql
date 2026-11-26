@@ -116,16 +116,21 @@ pub(crate) fn where_clause(filters: &[Filter]) -> Result<(String, Vec<duckdb::ty
 // NIVEL TECNICO: every column is compared as text (CAST AS VARCHAR) after lower(strip_accents()); the words go as
 // bound parameters folded the same way, so "tensao" finds "TENSÃO". NULL never matches. Empty search = None.
 // columns = (nome, tipo): numbers, dates, times and booleans already print in lowercase without accents, so they skip
-// the fold (same result; on DB3 the fold of every cell was most of the time of the all-tables search, tests.rs)
+// the fold, and a word with a letter their text never has ("tension") skips those columns (same rows; on DB3 the fold
+// and the cast of every cell were most of the time of the all-tables search, tests.rs). No column left: FALSE
 pub(crate) fn search_condition(columns: &[(String, String)], search: &str) -> Option<(String, Vec<duckdb::types::Value>)> {
     let words: Vec<&str> = search.split_whitespace().collect();
     if words.is_empty() || columns.is_empty() {
         return None;
     }
+    // o texto desses tipos so tem estes caracteres (1e+20, -inf, nan, true, false, 10:00:00+00, 0001-01-01 (BC));
+    // letra fora daqui, nunca. Fora do ASCII a palavra ainda passa pelo dobramento: a coluna fica
+    let fits = |word: &&str| word.chars().all(|c| !c.is_ascii() || "0123456789-+.: ()abcefilnrstuy".contains(c.to_ascii_lowercase()));
     let fold = |sql: &str| format!("lower(strip_accents({sql}))");
     let mut params = Vec::new();
     let cells: Vec<String> = columns
         .iter()
+        .filter(|(_, kind)| !prints_folded(kind) || words.iter().all(fits))
         .map(|(col, kind)| {
             let text = format!("CAST({} AS VARCHAR)", ident(col));
             let cell = if prints_folded(kind) { text } else { fold(&text) };
@@ -139,6 +144,9 @@ pub(crate) fn search_condition(columns: &[(String, String)], search: &str) -> Op
             format!("({})", all.join(" AND "))
         })
         .collect();
+    if cells.is_empty() {
+        return Some(("FALSE".to_string(), params));
+    }
     Some((format!("({})", cells.join(" OR ")), params))
 }
 

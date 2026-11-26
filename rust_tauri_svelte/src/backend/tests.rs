@@ -865,11 +865,18 @@ mod tests {
     fn search_matches_all_words_in_one_cell_ignoring_case_and_accents() {
         let col = |name: &str, kind: &str| (name.to_string(), kind.to_string());
         assert!(search_condition(&[col("a", "VARCHAR")], "   ").is_none());
-        let (sql, params) = search_condition(&[col("co\"l", "VARCHAR"), col("b", "INTEGER")], "x y").unwrap();
+        let (sql, params) = search_condition(&[col("co\"l", "VARCHAR"), col("b", "INTEGER")], "1 2").unwrap();
         assert_eq!(params.len(), 4);
         assert!(sql.contains("CAST(\"co\"\"l\" AS VARCHAR)") && sql.contains(" OR ") && sql.contains(" AND "), "{sql}");
         // numero ja sai em minusculas e sem acento: sem lower(strip_accents()) na celula (so nas palavras)
         assert!(sql.contains("contains(lower(strip_accents(CAST(\"co\"\"l\" AS VARCHAR)))") && sql.contains("contains(CAST(\"b\" AS VARCHAR)"), "{sql}");
+        // palavra com letra que numero, data e booleano nunca escrevem ("campo"): essas colunas ficam fora; sem coluna, FALSE
+        let (sql, params) = search_condition(&[col("n", "INTEGER"), col("s", "VARCHAR")], "campo 7").unwrap();
+        assert!(!sql.contains("\"n\"") && sql.contains("\"s\"") && params.len() == 2, "{sql}");
+        assert_eq!(search_condition(&[col("n", "DATE")], "campo").unwrap().0, "FALSE");
+        for (kind, word) in [("DOUBLE", "1E+20"), ("DOUBLE", "-inf"), ("BOOLEAN", "False"), ("TIMESTAMP", "10:00:00+00"), ("BOOLEAN", "fálse")] {
+            assert!(search_condition(&[col("n", kind)], word).unwrap().0.contains("\"n\""), "{kind} {word}");
+        }
         let dir = tempdir().unwrap();
         let path = dir.path().join("s.duckdb");
         duckdb::Connection::open(&path)
@@ -925,7 +932,7 @@ mod tests {
         assert_eq!(manager.get_row_count("b_points", &[], "TENSAO").unwrap(), 2);
         assert_eq!(manager.get_row_count("c_numbers", &[], "7").unwrap(), 1);
         // tipos que nao passam por lower(strip_accents()): o texto deles ja e o dobrado (maiusculas da busca valem)
-        for search in ["E+20", "TRUE", "2024-01-02", "05:06:08", "2024-03-04 05:06"] {
+        for search in ["E+20", "TRUE", "trué", "2024-01-02", "05:06:08", "2024-03-04 05:06"] {
             assert_eq!(found(search), [("d_kinds".to_string(), 1)], "{search}");
         }
 
