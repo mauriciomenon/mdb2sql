@@ -2507,7 +2507,7 @@ class MainWindow(QMainWindow):
             )
 
     def export_table_schema_as(self, suffix: str) -> None:
-        # Coluna, Tipo, Aceita nulo (como a aba Esquema): <tabela>_schema
+        # Coluna, Tipo, Aceita nulo (como a aba Schema): <tabela>_schema
         if self.manager is None or self.loaded_table is None:
             return
         table, manager = self.loaded_table[0], self.manager

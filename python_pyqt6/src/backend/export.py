@@ -145,14 +145,14 @@ def export_csv_folder(
 
 
 def table_schema_query(table: str) -> tuple[str, list[Any]]:
-    """Esquema da tabela como na aba Esquema: Coluna, Tipo, Aceita nulo (Sim/Nao no idioma da tela)."""
+    """Schema da tabela como na aba Schema: Coluna, Tipo, Aceita nulo (Sim/Nao no idioma da tela)."""
     names = [quote(tr(key)) for key in ("schema.column", "schema.type", "schema.nullable")]
     return (f'SELECT name AS {names[0]}, type AS {names[1]}, CASE WHEN "notnull" THEN ? ELSE ? END AS {names[2]}'
             " FROM pragma_table_info(?)", [tr("schema.no"), tr("schema.yes"), table])
 
 
 def database_schema_query(tables: Sequence[str]) -> tuple[str, list[Any]]:
-    """Esquema do banco: Tabela, Coluna, Tipo, Aceita nulo, na ordem da lista de tabelas e das colunas."""
+    """Schema do banco: Tabela, Coluna, Tipo, Aceita nulo, na ordem da lista de tabelas e das colunas."""
     names = [quote(tr(key)) for key in ("tables.column_table", "schema.column", "schema.type", "schema.nullable")]
     return (f"SELECT table_name AS {names[0]}, column_name AS {names[1]}, data_type AS {names[2]},"
             f" CASE WHEN is_nullable = 'YES' THEN ? ELSE ? END AS {names[3]} FROM information_schema.columns"

@@ -394,6 +394,19 @@ def test_menu_tree_is_the_same_in_the_four_versions(window: MainWindow) -> None:
     assert window.export_button.isEnabled()
 
 
+def test_schema_tab_is_called_schema_in_every_language(window: MainWindow) -> None:
+    # 13 c): "Schema" nos 3 idiomas: a aba, Exibir e os dois itens de Exportar; nenhum "Esquema" na tela
+    from shared import i18n
+
+    for code, table_schema, db_schema in (("pt_BR", "Schema da tabela atual", "Schema do banco"),
+                                          ("es", "Schema de la tabla actual", "Schema de la base de datos"),
+                                          ("en", "Current table schema", "Database schema")):
+        window.set_language(code)
+        assert window.tabs.tabText(1) == "Schema" and window.schema_tab_action.text().replace("&", "") == "Schema"
+        assert {table_schema, db_schema} <= {a.text() for a in window.export_menu.actions()}
+        assert not [key for key, text in i18n.catalog(code).items() if "squema" in text.lower()]
+
+
 def test_menu_items_are_disabled_like_their_buttons(qtbot, window: MainWindow) -> None:
     # Linhas do menu = lista Linhas da aba Dados; Pesquisar em = Esta tabela | Todas as tabelas
     window.rows_actions[2].trigger()
