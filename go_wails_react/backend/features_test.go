@@ -509,3 +509,40 @@ func TestSchemaFolderAndSearchExports(t *testing.T) {
 		t.Errorf("empty valuesQuery: %s", q)
 	}
 }
+
+// review 26/11 (P1): the marked rows of a big table come in table order, by rowid and by values (a view has no
+// rowid), whatever the order of marking, also in their export
+func TestMarkedRowsOfABigTableInTableOrder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "big.duckdb")
+	db, err := sql.Open("duckdb", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE big AS SELECT i, i % 7 AS k FROM range(500000) t(i); CREATE VIEW bigv AS SELECT * FROM big`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewDBManager()
+	if err := m.Connect(path); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	want := []any{int64(5), int64(250000), int64(499990)}
+	rows, err := m.MarkedRows("big", []map[string]any{{RowIDKey: float64(499990)}, {RowIDKey: float64(5)}, {RowIDKey: float64(250000)}})
+	if err != nil || !reflect.DeepEqual(ids(rows, "i"), want) {
+		t.Errorf("by rowid: %v (%v)", ids(rows, "i"), err)
+	}
+	byValues := []map[string]any{{"i": float64(499990), "k": float64(499990 % 7)}, {"i": float64(5), "k": float64(5)}, {"i": float64(250000), "k": float64(250000 % 7)}}
+	rows, err = m.MarkedRows("bigv", byValues)
+	if err != nil || !reflect.DeepEqual(ids(rows, "i"), want) {
+		t.Errorf("by values: %v (%v)", ids(rows, "i"), err)
+	}
+	out := filepath.Join(t.TempDir(), "m.csv")
+	if err := m.ExportMarked(context.Background(), "bigv", byValues, "csv", out, noProgress); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(out); string(data) != "\xEF\xBB\xBFi,k\r\n5,5\r\n250000,"+strconv.Itoa(250000%7)+"\r\n499990,"+strconv.Itoa(499990%7)+"\r\n" {
+		t.Errorf("export %q", data)
+	}
+}

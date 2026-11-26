@@ -637,13 +637,15 @@ func (m *DBManager) rowMaps(rowID bool, query string, args ...any) ([]map[string
 	return results, rows.Err()
 }
 
-// markedTail is the " WHERE ... [ORDER BY rowid]" that selects the marked rows of table, in table order, and its
-// parameters ("" = no mark). Each mark is what the UI keeps of a marked row: with a rowid, that rowid (RowIDKey); else
-// the whole row, compared value by value in the column types, so rows equal in every value are marked together.
-// Values the UI cannot send back as they are (lists, structs, binary) stay out of the comparison.
-func (m *DBManager) markedTail(table string, marks []map[string]any) (tail string, args []any, rowID bool, err error) {
+// markedTail is the " FROM ... WHERE ... ORDER BY ..." that selects the marked rows of table, in table order (ORDER BY
+// rowid, else the position of the row in the table: a big table read in parallel keeps its order), with sel = the
+// columns of the table over that FROM and the parameters ("" = no mark). Each mark is what the UI keeps of a marked row:
+// with a rowid, that rowid (RowIDKey); else the whole row, compared value by value in the column types, so rows equal
+// in every value are marked together. Values the UI cannot send back as they are (lists, structs, binary) stay out of
+// the comparison.
+func (m *DBManager) markedTail(table string, marks []map[string]any) (sel, from string, args []any, rowID bool, err error) {
 	if rowID, err = m.hasRowID(table); err != nil || len(marks) == 0 {
-		return "", nil, rowID, err
+		return "", "", nil, rowID, err
 	}
 	if rowID {
 		ids := make([]string, 0, len(marks))
@@ -654,14 +656,14 @@ func (m *DBManager) markedTail(table string, marks []map[string]any) (tail strin
 			case int64:
 				ids = append(ids, strconv.FormatInt(v, 10))
 			default:
-				return "", nil, rowID, fmt.Errorf("marked row without its rowid")
+				return "", "", nil, rowID, fmt.Errorf("marked row without its rowid")
 			}
 		}
-		return " WHERE rowid IN (" + strings.Join(ids, ", ") + ") ORDER BY rowid", nil, rowID, nil
+		return "*", " FROM " + quoteIdent(table) + " WHERE rowid IN (" + strings.Join(ids, ", ") + ") ORDER BY rowid", nil, rowID, nil
 	}
 	schema, err := m.tableSchema(table)
 	if err != nil {
-		return "", nil, rowID, err
+		return "", "", nil, rowID, err
 	}
 	rowsCond := make([]string, len(marks))
 	for i, mark := range marks {
@@ -678,11 +680,12 @@ func (m *DBManager) markedTail(table string, marks []map[string]any) (tail strin
 			}
 		}
 		if len(conds) == 0 {
-			return "", nil, rowID, fmt.Errorf("marked row with no value to compare")
+			return "", "", nil, rowID, fmt.Errorf("marked row with no value to compare")
 		}
 		rowsCond[i] = "(" + strings.Join(conds, " AND ") + ")"
 	}
-	return " WHERE " + strings.Join(rowsCond, " OR "), args, rowID, nil
+	return "* EXCLUDE (mdb2sql_rn)", " FROM (SELECT row_number() OVER () AS mdb2sql_rn, * FROM " + quoteIdent(table) + ") WHERE " +
+		strings.Join(rowsCond, " OR ") + " ORDER BY mdb2sql_rn", args, rowID, nil
 }
 
 // MarkedRows returns the marked rows of table (see markedTail) as QueryTable returns rows, in table order
@@ -692,11 +695,14 @@ func (m *DBManager) MarkedRows(table string, marks []map[string]any) ([]map[stri
 	if m.conn == nil {
 		return nil, fmt.Errorf("no database connected")
 	}
-	tail, args, rowID, err := m.markedTail(table, marks)
-	if err != nil || tail == "" {
+	sel, from, args, rowID, err := m.markedTail(table, marks)
+	if err != nil || from == "" {
 		return []map[string]any{}, err
 	}
-	return m.rowMaps(rowID, "SELECT "+selectRows(rowID)+" FROM "+quoteIdent(table)+tail, args...)
+	if rowID {
+		sel = selectRows(true)
+	}
+	return m.rowMaps(rowID, "SELECT "+sel+from, args...)
 }
 
 // Retorna numero total de linhas em uma tabela

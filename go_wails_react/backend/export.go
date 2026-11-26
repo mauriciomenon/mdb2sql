@@ -226,14 +226,14 @@ func (m *DBManager) ExportMarked(ctx context.Context, table string, marks []map[
 	if m.conn == nil {
 		return fmt.Errorf("no database connected")
 	}
-	tail, args, _, err := m.markedTail(table, marks)
+	sel, from, args, _, err := m.markedTail(table, marks)
 	if err != nil {
 		return err
 	}
-	if tail == "" {
+	if from == "" {
 		return fmt.Errorf("no marked row")
 	}
-	return m.exportOne(ctx, exportItem{name: table, query: "SELECT * FROM " + quoteIdent(table) + tail, args: args}, format, out, progress, len(marks))
+	return m.exportOne(ctx, exportItem{name: table, query: "SELECT " + sel + from, args: args}, format, out, progress, len(marks))
 }
 
 // ExportSchema writes the schema of table, or with table "" of every table, to out (format "csv" or "xlsx"): the
