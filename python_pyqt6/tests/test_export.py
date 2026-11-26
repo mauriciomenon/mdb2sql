@@ -37,6 +37,41 @@ def _noop(*_args) -> None:
     pass
 
 
+def test_every_output_keeps_the_columns_titles_and_types(tmp_path: Path) -> None:
+    # BRIEF 19 c: tabela atual, marcadas, resultado do SQL e Salvar como: as mesmas colunas, titulos, ordem e tipos
+    # da tabela; no Excel numero e celula numerica, data e data, NULL vazio; nenhuma coluna a mais
+    from backend.db_manager import MARK_KEY
+
+    db_file = tmp_path / "typed.duckdb"
+    with duckdb.connect(str(db_file)) as conn:
+        conn.execute("CREATE TABLE t (RTUNO BIGINT, PNTNO INTEGER, BIAS DOUBLE, PRECO DECIMAL(19,4), QUANDO TIMESTAMP,"
+                     " ATIVO BOOLEAN, NOME VARCHAR)")
+        conn.execute("INSERT INTO t VALUES (50, 238, 0.5, 12.3456, TIMESTAMP '2026-07-14 10:11:12', true, 'U9A'),"
+                     " (51, NULL, NULL, NULL, NULL, NULL, NULL)")
+    header = ("RTUNO", "PNTNO", "BIAS", "PRECO", "QUANDO", "ATIVO", "NOME")
+    with DBManager(str(db_file)) as manager:
+        keys = [row[MARK_KEY] for row in manager.fetch_rows(*manager.select_table("t", keyed=True))]
+        outputs = {"table": manager.select_table("t"), "marked": manager.marked_query("t", keys),
+                   "sql": ("SELECT * FROM t", [])}
+        for name, (query, params) in outputs.items():
+            export_result(manager, query, "t", tmp_path / f"{name}.xlsx", _noop, params=params)
+        for suffix in (".xlsx", ".duckdb", ".sqlite"):
+            export_database(manager, tmp_path / f"saved{suffix}", _noop)
+        source_types = manager.column_types()["t"]
+    for name in (*outputs, "saved"):
+        sheet = openpyxl.load_workbook(tmp_path / f"{name}.xlsx")["t"]
+        assert tuple(c.value for c in sheet[1]) == header, name
+        assert [c.data_type for c in sheet[2]] == ["n", "n", "n", "n", "d", "b", "s"], name
+        assert sheet["A2"].value == 50 and sheet["B2"].value == 238 and sheet["D2"].value == 12.3456, name
+        assert [c.value for c in sheet[3]] == [51, None, None, None, None, None, None], name
+    with DBManager(str(tmp_path / "saved.duckdb")) as saved:
+        assert saved.column_types()["t"] == source_types
+    with DBManager(str(tmp_path / "saved.sqlite")) as saved:
+        types = saved.column_types()["t"]
+        assert list(types) == list(header) and types["NOME"] == "VARCHAR"
+        assert all(kind != "VARCHAR" for column, kind in types.items() if column != "NOME"), types
+
+
 def test_sheet_name_rules() -> None:
     used = {"history"}
     long_name = "RANGER_SOSTAT_WITH_A_VERY_LONG_TABLE_NAME"
