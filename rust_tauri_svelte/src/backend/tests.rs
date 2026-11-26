@@ -563,7 +563,9 @@ mod tests {
     #[test]
     fn sample_mdb_converts_to_sqlite_with_types_and_nulls() {
         let manager = DBManager::new();
-        let opened = manager.connect_with("tests/data/sample.mdb", Some("mdbtools"), &mut no_progress()).unwrap();
+        // caminho completo: relativo nao abre (BRIEF secao 14)
+        let mdb = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("data").join("sample.mdb");
+        let opened = manager.connect_with(mdb.to_str().unwrap(), Some("mdbtools"), &mut no_progress()).unwrap();
         assert_eq!(opened.source, "mdbtools → SQLite");
         assert_eq!(manager.list_tables().unwrap(), ["Empty", "Sample Types"]);
         assert_eq!(manager.get_row_count("Empty", &[], "").unwrap(), 0);
