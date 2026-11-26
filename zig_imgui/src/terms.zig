@@ -144,8 +144,16 @@ fn tableCounts(db: *Db, gpa: Allocator, table: []const u8, columns: []const []co
     while (true) {
         var sql: std.ArrayList(u8) = .empty;
         defer sql.deinit(gpa);
-        try sql.appendSlice(gpa, "SELECT m.ord, COUNT(*)");
-        try writeFrom(&sql, gpa, table, columns, match, key.*);
+        // rowid: os pares (linha, termo) ja contam, sem ler a tabela de novo; o texto da linha (identicas sao uma so na
+        // identidade, mas aparecem todas na grade): conta pela juncao com a tabela, como a grade
+        if (key.* == .rowid) {
+            try sql.appendSlice(gpa, "SELECT m.ord, COUNT(*) FROM ");
+            try writeMatches(&sql, gpa, table, columns, match, key.*);
+            try sql.appendSlice(gpa, " m");
+        } else {
+            try sql.appendSlice(gpa, "SELECT m.ord, COUNT(*)");
+            try writeFrom(&sql, gpa, table, columns, match, key.*);
+        }
         try sql.appendSlice(gpa, " GROUP BY m.ord ORDER BY m.ord");
         try sql.append(gpa, 0);
         return db.runMax(sql.items[0 .. sql.items.len - 1 :0], &.{}, std.math.maxInt(usize)) catch |e| {
@@ -160,10 +168,16 @@ fn tableCounts(db: *Db, gpa: Allocator, table: []const u8, columns: []const []co
 // viram uma lista (unnest) e casam com a tabela de termos numa juncao; DISTINCT: o termo em duas colunas da mesma
 // linha conta uma vez.
 fn writeFrom(out: *std.ArrayList(u8), a: Allocator, table: []const u8, columns: []const []const u8, match: Match, key: query.RowKey) Allocator.Error!void {
-    const k = query.keyExpr(key);
     try out.appendSlice(a, " FROM ");
     try query.writeIdent(out, a, table);
-    try out.print(a, " AS " ++ row ++ " JOIN (SELECT DISTINCT c.k, t.ord, t.term FROM (SELECT {s} AS k, unnest([", .{k});
+    try out.appendSlice(a, " AS " ++ row ++ " JOIN ");
+    try writeMatches(out, a, table, columns, match, key);
+    try out.print(a, " m ON {s} = m.k", .{query.keyExpr(key)});
+}
+
+// Os pares (identidade da linha, termo) de uma tabela, sem repetir: (SELECT DISTINCT k, ord, term ...)
+fn writeMatches(out: *std.ArrayList(u8), a: Allocator, table: []const u8, columns: []const []const u8, match: Match, key: query.RowKey) Allocator.Error!void {
+    try out.print(a, "(SELECT DISTINCT c.k, t.ord, t.term FROM (SELECT {s} AS k, unnest([", .{query.keyExpr(key)});
     for (columns, 0..) |col, i| {
         if (i > 0) try out.appendSlice(a, ", ");
         try out.appendSlice(a, if (match == .whole) "lower(trim(CAST(" ++ row ++ "." else "lower(CAST(" ++ row ++ ".");
@@ -172,7 +186,7 @@ fn writeFrom(out: *std.ArrayList(u8), a: Allocator, table: []const u8, columns: 
     }
     try out.appendSlice(a, "]) AS v FROM ");
     try query.writeIdent(out, a, table);
-    try out.print(a, " AS " ++ row ++ ") c JOIN " ++ terms_table ++ " t ON {s}) m ON {s} = m.k", .{ if (match == .whole) "c.v = t.k" else "contains(c.v, t.k)", k });
+    try out.print(a, " AS " ++ row ++ ") c JOIN " ++ terms_table ++ " t ON {s})", .{if (match == .whole) "c.v = t.k" else "contains(c.v, t.k)"});
 }
 
 // As linhas achadas de uma tabela, na ordem dos termos e depois na da tabela. `title`: titulo da 1a coluna (o termo
