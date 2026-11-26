@@ -129,6 +129,21 @@ test "Data tab below the search (standard 24): filters line, grid, then the coun
     for ([_][]const u8{ "tr(\"prev\")", "tr(\"next\")", "page_line" }) |gone| try std.testing.expect(std.mem.indexOf(u8, ui, gone) == null);
 }
 
+test "item 13 f: every button has the height of its line (none taller to show hierarchy) and the default padding" {
+    const ui = @embedFile("main.zig");
+    var it = std.mem.splitSequence(u8, ui, "ig.igButton(");
+    _ = it.next();
+    var n: usize = 0;
+    while (it.next()) |rest| : (n += 1) {
+        const line = rest[0 .. std.mem.indexOfScalar(u8, rest, '\n') orelse rest.len];
+        try std.testing.expect(std.mem.indexOf(u8, line, ".y = 0 }") != null);
+    }
+    try std.testing.expect(n > 5);
+    // os segmentos tem a altura do quadro; o preenchimento so muda na caixa de marcar da grade
+    try std.testing.expect(std.mem.indexOf(u8, ui, ".y = ig.igGetFrameHeight() }, 0)) clicked = i;") != null);
+    try std.testing.expectEqual(1, std.mem.count(u8, ui, "ImGuiStyleVar_FramePadding"));
+}
+
 test "File menu (item 28: Open..., Open the typed path, Reopen, Save, Save as..., Export, Close, Exit) and the shortcuts" {
     try expectOrder("if (ig.igBeginMenu(file_l", &.{ "tr(\"menu_open\"), \"Ctrl+O\"", "tr(\"menu_open_typed\")", "tr(\"menu_reopen\"), \"F5\"", "igSeparator", "tr(\"menu_save\"), \"Ctrl+S\"", "tr(\"menu_save_as\"), \"Ctrl+Shift+S\"", "igBeginMenu(export_l", "igSeparator", "tr(\"menu_close\"), \"Ctrl+W\"", "igSeparator", "tr(\"menu_exit\"), \"Ctrl+Q\"" });
     try expectOrder("const chord = ig.igIsKeyChordPressed_Nil;", &.{ "ImGuiKey_O)", "ImGuiKey_L)", "ImGuiKey_Q)", "ImGuiKey_S)", "ImGuiMod_Shift | ig.ImGuiKey_S)", "ImGuiKey_W)", "ImGuiKey_F)", "ImGuiKey_F5,", "ImGuiKey_1)", "ImGuiKey_2)", "ImGuiKey_3)", "ImGuiKey_Enter)" });
