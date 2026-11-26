@@ -13,11 +13,21 @@ export function DatabasePath():Promise<string>;
 
 export function DisplayWarning():Promise<main.DisplayWarning>;
 
-export function ExportDatabase(arg1:string):Promise<string>;
+export function Exit():Promise<void>;
+
+export function ExportAllCSV():Promise<string>;
+
+export function ExportMarked(arg1:string,arg2:string,arg3:Array<Record<string, any>>):Promise<string>;
 
 export function ExportQuery(arg1:string,arg2:string):Promise<string>;
 
+export function ExportSchema(arg1:string,arg2:string):Promise<string>;
+
+export function ExportSearch(arg1:string,arg2:Array<string>):Promise<string>;
+
 export function ExportTable(arg1:string,arg2:string,arg3:Array<backend.Filter>,arg4:string):Promise<string>;
+
+export function ExportTerms(arg1:backend.TermsResult,arg2:boolean,arg3:string):Promise<string>;
 
 export function GetAppInfo():Promise<main.AppInfo>;
 
@@ -35,19 +45,23 @@ export function GetTableData(arg1:string,arg2:number,arg3:Array<backend.Filter>,
 
 export function GetTableSchema(arg1:string):Promise<Array<backend.ColumnSchema>>;
 
+export function GetTermMatch():Promise<string>;
+
 export function GetTheme():Promise<string>;
 
 export function LoadDatabase(arg1:string):Promise<Array<string>>;
 
+export function MarkedRows(arg1:string,arg2:Array<Record<string, any>>):Promise<Array<Record<string, any>>>;
+
 export function PendingConversion():Promise<string>;
-
-export function RememberedChoice():Promise<string>;
-
-export function ResolveConversion(arg1:string,arg2:boolean):Promise<main.ConversionResult>;
 
 export function RunQuery(arg1:string,arg2:number):Promise<backend.QueryResult>;
 
+export function SaveDatabase(arg1:boolean):Promise<string>;
+
 export function SearchAllTables(arg1:string):Promise<Array<backend.TableHits>>;
+
+export function SearchTerms(arg1:Array<string>,arg2:boolean,arg3:string):Promise<backend.TermsResult>;
 
 export function SelectDatabase():Promise<string>;
 
@@ -59,10 +73,16 @@ export function SetSearchScope(arg1:string):Promise<void>;
 
 export function SetShowNull(arg1:boolean):Promise<void>;
 
+export function SetTermMatch(arg1:string):Promise<void>;
+
 export function SetTheme(arg1:string):Promise<void>;
 
 export function SourceKind():Promise<string>;
 
+export function StartupLog():Promise<Array<string>>;
+
 export function StartupPath():Promise<string>;
 
 export function TableCounts():Promise<Array<number>>;
+
+export function TermRows(arg1:string,arg2:Array<string>,arg3:boolean,arg4:number):Promise<backend.QueryResult>;
