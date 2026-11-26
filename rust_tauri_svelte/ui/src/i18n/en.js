@@ -124,7 +124,7 @@ export default {
   'tabs.terms': 'Advanced Search',
   'limit.label': 'Rows',
 
-  'terms.hint': 'Paste the terms, one per line (for example, an Excel column)',
+  'terms.hint': 'Paste the terms, one per line (for example, an Excel column). Example:\ntext1\ntext2\ntext3\nsearches the 3 terms in all tables or only in the selected table.',
   'terms.run': 'Search terms',
   'terms.count': '{count} {count|term|terms}',
   'terms.repeated': ', {count} repeated',

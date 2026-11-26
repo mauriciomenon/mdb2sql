@@ -124,7 +124,7 @@ export default {
   'tabs.terms': 'Pesquisa Avançada',
   'limit.label': 'Linhas',
 
-  'terms.hint': 'Cole os termos, um por linha (por exemplo, uma coluna do Excel)',
+  'terms.hint': 'Cole os termos, um por linha (por exemplo, uma coluna do Excel). Exemplo:\ntexto1\ntexto2\ntexto3\npesquisa os 3 termos em todas as tabelas ou só na tabela selecionada.',
   'terms.run': 'Pesquisar termos',
   'terms.count': '{count} {count|termo|termos}',
   'terms.repeated': ', {count} {count|repetido|repetidos}',

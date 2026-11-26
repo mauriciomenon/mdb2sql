@@ -124,7 +124,7 @@ export default {
   'tabs.terms': 'Búsqueda Avanzada',
   'limit.label': 'Filas',
 
-  'terms.hint': 'Pegue los términos, uno por línea (por ejemplo, una columna de Excel)',
+  'terms.hint': 'Pegue los términos, uno por línea (por ejemplo, una columna de Excel). Ejemplo:\ntexto1\ntexto2\ntexto3\nbusca los 3 términos en todas las tablas o solo en la tabla seleccionada.',
   'terms.run': 'Buscar términos',
   'terms.count': '{count} {count|término|términos}',
   'terms.repeated': ', {count} {count|repetido|repetidos}',

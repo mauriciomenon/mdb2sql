@@ -179,7 +179,14 @@ test('new texts of Save, exit, marked rows and Terms are the agreed ones', () =>
     ['marks.count', { count: 1 }, ', 1 marcada', ', 1 marked', ', 1 marcada'],
     ['marks.only', {}, 'Só as marcadas', 'Only marked', 'Solo las marcadas'],
     ['marks.export', {}, 'Exportar linhas marcadas', 'Export marked rows', 'Exportar filas marcadas'],
-    ['terms.hint', {}, 'Cole os termos, um por linha (por exemplo, uma coluna do Excel)', 'Paste the terms, one per line (for example, an Excel column)', 'Pegue los términos, uno por línea (por ejemplo, una columna de Excel)'],
+    // BRIEF secao 13 e: o texto de fundo da caixa de termos com o exemplo, uma linha por termo
+    [
+      'terms.hint',
+      {},
+      'Cole os termos, um por linha (por exemplo, uma coluna do Excel). Exemplo:\ntexto1\ntexto2\ntexto3\npesquisa os 3 termos em todas as tabelas ou só na tabela selecionada.',
+      'Paste the terms, one per line (for example, an Excel column). Example:\ntext1\ntext2\ntext3\nsearches the 3 terms in all tables or only in the selected table.',
+      'Pegue los términos, uno por línea (por ejemplo, una columna de Excel). Ejemplo:\ntexto1\ntexto2\ntexto3\nbusca los 3 términos en todas las tablas o solo en la tabla seleccionada.',
+    ],
     ['match.help', {}, 'Valor inteiro: a célula inteira é igual ao termo. Contém: a célula contém o termo. Maiúsculas e espaços nas pontas não contam.', 'Whole value: the whole cell equals the term. Contains: the cell contains the term. Case and spaces at the ends do not count.', 'Valor completo: la celda entera es igual al término. Contiene: la celda contiene el término. Mayúsculas y espacios en los extremos no cuentan.'],
     ['settings.match', {}, 'Comparação dos termos', 'Term matching', 'Comparación de términos'],
     ['terms.count', { count: 9 }, '9 termos', '9 terms', '9 términos'],
