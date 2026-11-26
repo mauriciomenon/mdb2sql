@@ -706,3 +706,50 @@ func TestTermsFindNumbersLoosely(t *testing.T) {
 		t.Errorf("view grid rows %v", got)
 	}
 }
+
+// standard 19c and 19g (owner 26/11): an Excel export has the columns and titles of the table, numbers as numeric
+// cells, a date as a date, NULL empty; each column as wide as its longest text (title or cell), at most 60
+func TestExcelKeepsTypesAndFitsColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.duckdb")
+	db, err := sql.Open("duckdb", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE x (RTUNO BIGINT, "Nome do ponto" VARCHAR, quando TIMESTAMP, valor DECIMAL(10,2), vazio VARCHAR, memo VARCHAR);
+		INSERT INTO x VALUES (50, 'GENERADOR CGS VIBRACION ANORMAL 1 CANAL 1', '2024-01-02 03:04:05', 12.5, NULL, repeat('m', 200))`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewDBManager()
+	if err := m.Connect(path); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	out := filepath.Join(t.TempDir(), "x.xlsx")
+	if err := m.ExportTable(context.Background(), "x", "xlsx", out, noProgress, ""); err != nil {
+		t.Fatal(err)
+	}
+	f, err := excelize.OpenFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	rows, _ := f.GetRows("x")
+	if len(rows) != 2 || !reflect.DeepEqual(rows[0], []string{"RTUNO", "Nome do ponto", "quando", "valor", "vazio", "memo"}) {
+		t.Fatalf("rows %v", rows)
+	}
+	for cell, want := range map[string]excelize.CellType{"A2": excelize.CellTypeNumber, "C2": excelize.CellTypeNumber, "D2": excelize.CellTypeNumber, "E2": excelize.CellTypeUnset} {
+		if got, _ := f.GetCellType("x", cell); got != want {
+			t.Errorf("%s: cell type %v, want %v", cell, got, want)
+		}
+	}
+	if v, _ := f.GetCellValue("x", "C2"); !strings.Contains(v, "1/2/24") { // Excel date format m/d/yy h:mm
+		t.Errorf("date cell shows %q", v)
+	}
+	for col, want := range map[string]float64{"A": 8, "B": 43, "C": 21, "D": 8, "E": 8, "F": 60} {
+		if got, _ := f.GetColWidth("x", col); got != want {
+			t.Errorf("column %s width %v, want %v", col, got, want)
+		}
+	}
+}

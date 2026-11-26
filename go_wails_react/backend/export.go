@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/duckdb/duckdb-go/v2"
 	"github.com/xuri/excelize/v2"
@@ -613,6 +614,7 @@ func (m *DBManager) writeSheets(ctx context.Context, f *excelize.File, used map[
 	for i, c := range cols {
 		header[i] = c
 	}
+	widths := m.xlsxWidths(ctx, it, cols)
 	var sw *excelize.StreamWriter
 	part, line := 0, 0 // line = last written sheet row
 	newSheet := func() error {
@@ -640,6 +642,11 @@ func (m *DBManager) writeSheets(ctx context.Context, f *excelize.File, used map[
 		}
 		if sw, err = f.NewStreamWriter(name); err != nil {
 			return err
+		}
+		for i, w := range widths { // before the first row: the stream writer takes widths only then
+			if err := sw.SetColWidth(i+1, i+1, w); err != nil {
+				return err
+			}
 		}
 		line = 1
 		return sw.SetRow("A1", header)
@@ -675,6 +682,37 @@ func (m *DBManager) writeSheets(ctx context.Context, f *excelize.File, used map[
 		return err
 	}
 	return sw.Flush()
+}
+
+// xlsxWidths: the width of each column of a sheet, fitted to the longest text of its title and cells (best fit,
+// standard 19g), between 8 and 60 characters; nil (Excel's default) if the query cannot be measured. Measured on the
+// pool, as the row count, with the columns renamed by position (a result may repeat a name)
+func (m *DBManager) xlsxWidths(ctx context.Context, it exportItem, cols []string) []float64 {
+	if len(cols) == 0 {
+		return nil
+	}
+	alias := make([]string, len(cols))
+	exprs := make([]string, len(cols))
+	for i := range cols {
+		alias[i] = fmt.Sprintf("c%d", i)
+		exprs[i] = fmt.Sprintf("coalesce(max(length(CAST(c%d AS VARCHAR))), 0)", i)
+	}
+	query := fmt.Sprintf("SELECT %s FROM (%s) AS mdb2sql_w(%s)", strings.Join(exprs, ", "),
+		strings.TrimRight(strings.TrimSpace(it.query), "; \t\r\n"), strings.Join(alias, ", "))
+	longest := make([]int64, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range longest {
+		ptrs[i] = &longest[i]
+	}
+	if err := m.conn.QueryRowContext(ctx, query, it.args...).Scan(ptrs...); err != nil {
+		return nil
+	}
+	widths := make([]float64, len(cols))
+	for i, c := range cols {
+		n := max(longest[i], int64(utf8.RuneCountInString(c)))
+		widths[i] = min(max(float64(n)+2, 8), 60)
+	}
+	return widths
 }
 
 // xlsxValue keeps numbers, booleans and dates as Excel values; the rest becomes text
