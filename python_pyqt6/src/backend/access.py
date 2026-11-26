@@ -53,12 +53,10 @@ def quote(name: str) -> str:
 
 
 def decimal_type(precision: int | None, scale: int | None) -> str:
-    # Numeric(p,0) do Access e inteiro (RTUNO, PNTNO): INTEGER ate 9 digitos, BIGINT ate 18 (BRIEF 19 a); com casas
-    # decimais, DECIMAL(p,s). O DuckDB (que le o SQLite) guarda ate 38 digitos
+    # o tipo e da coluna (BRIEF 20): Numeric(p,0) do Access e INTEGER (RTUNO, PNTNO; ate 18 digitos cabem no inteiro
+    # de 64 bits do SQLite); com casas, DECIMAL(p,s). O DuckDB (que le o SQLite) guarda ate 38 digitos
     precision, scale = min(precision or 18, 38), min(scale or 0, 38)
-    if scale == 0 and precision <= 18:
-        return "INTEGER" if precision <= 9 else "BIGINT"
-    return f"DECIMAL({precision},{scale})"
+    return "INTEGER" if scale == 0 and precision <= 18 else f"DECIMAL({precision},{scale})"
 
 
 def mdbtools_dir() -> Path | None:
@@ -122,16 +120,11 @@ def _create(lite: sqlite3.Connection, table: str, columns: list[tuple[str, str]]
     return f"INSERT INTO {quote(table)} VALUES ({', '.join('?' * len(columns))})"
 
 
-def number_value(value: Decimal) -> int | float:
-    """Decimal para o SQLite: inteiro como INTEGER, com casas como REAL (CAST para DOUBLE antes de gravar); nunca
-    texto (BRIEF 19 h: um texto com mais de 15 digitos ficaria TEXT mesmo numa coluna DECIMAL)."""
-    return int(value) if value.is_finite() and value == value.to_integral_value() else float(value)
-
-
 def _odbc_value(value: object) -> object:
-    # Decimal: number_value; data no mesmo formato do mdbtools
+    # o valor como o Access o da; o tipo da coluna (o schema) decide como o SQLite guarda, sem CAST celula a celula
+    # (BRIEF 20). Decimal vai como o texto exato (o sqlite3 nao recebe Decimal); data no mesmo formato do mdbtools
     if isinstance(value, Decimal):
-        return number_value(value)
+        return str(value)
     if isinstance(value, datetime):
         return value.strftime(TIMESTAMP)
     if isinstance(value, date):
@@ -204,10 +197,8 @@ def mdb_columns(schema: str) -> list[tuple[str, str]]:
     return columns
 
 
-def _csv_rows(csv_path: Path, blobs: list[int], dates: list[int], decimals: list[int] | None = None
-              ) -> Iterator[list[object]]:
-    """Linhas do CSV do mdb-export (sem o cabecalho): NULL vira None, binario (hex) vira bytes, DECIMAL vira numero
-    (number_value).
+def _csv_rows(csv_path: Path, blobs: list[int], dates: list[int]) -> Iterator[list[object]]:
+    """Linhas do CSV do mdb-export (sem o cabecalho): NULL vira None, binario (hex) vira bytes.
 
     !T: mdbtools 1.0.1 cannot convert dates outside ~1900-9999: Windows prints them empty (NULL), Linux prints the
     !T: invalid 1900-01-00, which would make the whole table unreadable; it becomes NULL too (README: known limits)
@@ -223,9 +214,6 @@ def _csv_rows(csv_path: Path, blobs: list[int], dates: list[int], decimals: list
             for index in dates:
                 if isinstance(values[index], str) and values[index].startswith(INVALID_DATE):
                     values[index] = None
-            for index in decimals or ():
-                if values[index]:
-                    values[index] = number_value(Decimal(values[index]))
             yield values
 
 
@@ -268,8 +256,7 @@ def _load_mdbtools(path: Path, lite: sqlite3.Connection, work: Path, progress: P
                     csv_path = future.result()
                     blobs = [index for index, (_, kind) in enumerate(columns) if kind == "BLOB"]
                     dates = [index for index, (_, kind) in enumerate(columns) if kind == "DATETIME"]
-                    decimals = [index for index, (_, kind) in enumerate(columns) if kind.startswith("DECIMAL")]
-                    lite.executemany(insert, _csv_rows(csv_path, blobs, dates, decimals))
+                    lite.executemany(insert, _csv_rows(csv_path, blobs, dates))
                     csv_path.unlink()
             except BaseException:
                 for future in exports:

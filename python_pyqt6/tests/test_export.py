@@ -25,8 +25,7 @@ def test_export_to_sqlite_keeps_decimals_numeric(tmp_path: Path) -> None:
 
     lite = sqlite3.connect(out)
     expected = sorted(p for p in prices if p > 20)
-    # numero, nunca texto (18 vira inteiro 18, 21.35 real), na coluna declarada DECIMAL(19,4) como a da origem
-    assert {row[0] for row in lite.execute("SELECT DISTINCT typeof(UnitPrice) FROM Products")} == {"integer", "real"}
+    # a coluna com o tipo da origem (o schema: BRIEF 20); as contas abaixo provam que ela tem numero
     assert lite.execute("PRAGMA table_info(Products)").fetchone()[2] == "DECIMAL(19,4)"
     count, total = lite.execute("SELECT count(*), round(sum(UnitPrice), 2) FROM Products WHERE UnitPrice > 20").fetchone()
     assert (count, total) == (len(expected), round(sum(expected), 2))

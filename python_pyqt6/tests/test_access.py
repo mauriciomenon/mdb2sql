@@ -56,7 +56,7 @@ def test_mdb_schema_tables_maps_access_types() -> None:
 
     assert list(tables) == ["RANGER_SOSTAT", "OTHER"]
     assert tables["RANGER_SOSTAT"] == [
-        ("RTUNO", "BIGINT"),  # Numeric(p,0) e inteiro (BRIEF 19 a: nunca texto)
+        ("RTUNO", "INTEGER"),  # Numeric(p,0) e inteiro (BRIEF 19 a e 20: o tipo e da coluna)
         ("SUBNAM", "TEXT"),
         ("VALUE", "DOUBLE"),
         ("WHEN", "DATETIME"),
@@ -70,16 +70,15 @@ def test_mdb_schema_tables_maps_access_types() -> None:
 
 
 def test_odbc_types() -> None:
-    # Numeric(p,0) e inteiro: INTEGER ate 9 digitos, BIGINT ate 18, acima DECIMAL(p,0); com casas, DECIMAL(p,s)
-    assert access._odbc_type("DECIMAL", 10, 0) == "BIGINT"
-    assert access._odbc_type("NUMERIC", 5, 0) == "INTEGER"
+    # Numeric(p,0) e INTEGER (ate 18 digitos), acima DECIMAL(p,0); com casas, DECIMAL(p,s): o tipo e da coluna
+    assert access._odbc_type("DECIMAL", 10, 0) == access._odbc_type("NUMERIC", 5, 0) == "INTEGER"
     assert access._odbc_type("NUMERIC", 30, 0) == "DECIMAL(30,0)"
     assert access._odbc_type("COUNTER", 10, 0) == "INTEGER"
     assert access._odbc_type("LONGCHAR", 1073741823, None) == "TEXT"
     assert access._odbc_type("NUMERIC", 60, 2) == "DECIMAL(38,2)"
-    # o valor Decimal inteiro vai como int; com casas, como float (REAL no SQLite, nunca texto: BRIEF 19 h)
-    assert access._odbc_value(Decimal("50")) == 50 and access._odbc_value(Decimal("12.50")) == 12.5
-    assert isinstance(access._odbc_value(Decimal("12.50")), float)
+    assert access._odbc_type("REAL", 24, None) == "REAL" and access._odbc_type("DOUBLE", 53, None) == "DOUBLE"
+    # o valor como o Access o da, sem CAST celula a celula (BRIEF 20): o schema decide como o SQLite guarda
+    assert access._odbc_value(Decimal("12.50")) == "12.50"
 
 
 @pytest.mark.parametrize(
@@ -218,8 +217,9 @@ def test_sample_mdb_converts_once_to_a_typed_sqlite_file(monkeypatch, tmp_path: 
 @pytest.mark.skipif(os.name != "nt" or not access.odbc_available(), reason="cria o .mdb pelo driver ODBC do Access")
 @pytest.mark.parametrize("reader", READERS)
 def test_numbers_with_decimals_are_numbers_everywhere(monkeypatch, tmp_path: Path, reader: str) -> None:
-    # BRIEF 19 h: Currency, Decimal(10,2), Single e Double saem numero, nunca texto: no SQLite convertido (typeof real
-    # ou integer), no DuckDB salvo (DECIMAL fica DECIMAL) e no Excel (celula numerica)
+    # BRIEF 19 h e 20: Currency, Decimal(10,2), Single e Double saem numero: o SQLite convertido tem o tipo do Access
+    # em cada coluna (o schema), a coluna numerica tem numero, o DuckDB salvo mantem DECIMAL e o Excel tem celula
+    # numerica
     import ctypes
 
     import openpyxl
@@ -245,12 +245,14 @@ def test_numbers_with_decimals_are_numbers_everywhere(monkeypatch, tmp_path: Pat
     manager.connect(str(mdb), work_dir=tmp_path)
     try:
         lite = sqlite3.connect(manager.converted)
-        stored = lite.execute("SELECT typeof(dinheiro), typeof(decimal2), typeof(simples), typeof(duplo) FROM nums"
-                              " ORDER BY id").fetchall()
+        declared = {row[1]: row[2] for row in lite.execute("PRAGMA table_info(nums)")}
         lite.close()
-        assert stored == [("real", "real", "real", "real"), ("integer", "integer", "real", "real")]
+        assert declared == {"id": "INTEGER", "dinheiro": "DECIMAL(19,4)", "decimal2": "DECIMAL(10,2)",
+                            "simples": "REAL", "duplo": "DOUBLE"}
         assert manager.column_types()["nums"] == {"id": "BIGINT", "dinheiro": "DECIMAL(19,4)",
                                                   "decimal2": "DECIMAL(10,2)", "simples": "DOUBLE", "duplo": "DOUBLE"}
+        assert manager.query_table("nums")[0] == {"id": 1, "dinheiro": Decimal("18.5"), "decimal2": Decimal("12.34"),
+                                                  "simples": 1.5, "duplo": 2316.25}
         for suffix in (".duckdb", ".xlsx"):
             export_database(manager, tmp_path / f"saved{suffix}", lambda *_a: None)
     finally:
