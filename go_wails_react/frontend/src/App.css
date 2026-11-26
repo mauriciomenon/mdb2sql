@@ -158,9 +158,12 @@ body {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
+/* an item of an open menu: 25 px, as Zig */
 .dropdown button {
   display: flex;
   align-items: center;
+  padding-top: 3px;
+  padding-bottom: 3px;
   border: 0;
   text-align: left;
   white-space: nowrap;
@@ -258,15 +261,17 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+/* the sizes of the Zig version (owner 26/11; the font stays): buttons and fields 29 px high with the border */
 button,
 select,
 input {
   font: inherit;
+  line-height: 19px;
   color: inherit;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 6px 12px;
+  padding: 4px 12px;
 }
 
 button {
@@ -361,7 +366,7 @@ button.primary {
   display: flex;
   gap: 8px;
   width: 100%;
-  padding: 5px 8px;
+  padding: 4px 8px; /* 27 px a line, as Zig */
   border: 0;
   background: none;
   text-align: left;
@@ -437,6 +442,12 @@ button.primary {
   margin-left: -1px;
 }
 
+/* the tabs Data, Schema, SQL, Terms: 27 px high, as Zig */
+.tabs[role='tablist'] button {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
 .tabs button:first-child {
   border-radius: 6px 0 0 6px;
   margin-left: 0;
@@ -471,7 +482,8 @@ table {
 
 th,
 td {
-  padding: 5px 10px;
+  padding: 3px 10px; /* 27 px a row with its border, as Zig */
+  line-height: 20px;
   text-align: left;
   /* no max-width: each column is as wide as its longest value (no cut fields) */
   white-space: nowrap;
@@ -494,13 +506,13 @@ th {
 }
 
 .hits .table-item {
-  padding: 5px 10px;
+  padding: 4px 10px;
 }
 
 /* Schema grid: 6 px more on each side between its three columns */
 .schema th,
 .schema td {
-  padding: 5px 16px;
+  padding: 3px 16px;
 }
 
 /* right edge of a Data header: drag to resize the column (header menu > Size column to fit undoes it) */
@@ -638,6 +650,8 @@ td[aria-selected='true'] {
   display: flex;
   justify-content: space-between;
   gap: 16px;
+  padding-top: 3px;
+  padding-bottom: 3px;
   border: 0;
   text-align: left;
   white-space: nowrap;
