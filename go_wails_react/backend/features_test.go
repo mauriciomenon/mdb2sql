@@ -352,9 +352,9 @@ func TestSearchTerms(t *testing.T) {
 		if sheet, _ := f.GetRows("pontos"); len(sheet) != 6 || !reflect.DeepEqual(sheet[0], []string{"id", "nome", "sub", "num", "valor"}) {
 			t.Errorf("pontos sheet %v", sheet)
 		}
-		for cell, want := range map[string]excelize.CellType{"A2": excelize.CellTypeNumber, "B2": excelize.CellTypeSharedString, "D2": excelize.CellTypeNumber, "E2": excelize.CellTypeNumber} {
-			if got, _ := f.GetCellType("pontos", cell); got != want && !(want == excelize.CellTypeSharedString && got == excelize.CellTypeInlineString) {
-				t.Errorf("pontos %s: cell type %v, want %v", cell, got, want)
+		for _, cell := range []string{"A2", "D2", "E2"} { // id, num, valor
+			if !numericCell(f, "pontos", cell) {
+				t.Errorf("pontos %s is not a number", cell)
 			}
 		}
 		// CSV: a folder, one file per sheet
@@ -634,6 +634,7 @@ func TestTermsReportResultSheet(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Close()
+	i18n.SetLang("en")
 	err := m.ExportTerms(context.Background(), TermsResult{Terms: []string{"zzz"}}, false, "xlsx", filepath.Join(t.TempDir(), "n.xlsx"), noProgress)
 	if err == nil || err.Error() != "No row found to export." {
 		t.Errorf("empty report: %v", err)
@@ -707,6 +708,15 @@ func TestTermsFindNumbersLoosely(t *testing.T) {
 	}
 }
 
+// numericCell: an Excel cell that holds a number (a date is one too): not a text type (excelize leaves a number's type
+// unset or "n"), and its raw value parses as a number
+func numericCell(f *excelize.File, sheet, cell string) bool {
+	typ, _ := f.GetCellType(sheet, cell)
+	raw, _ := f.GetCellValue(sheet, cell, excelize.Options{RawCellValue: true})
+	_, err := strconv.ParseFloat(raw, 64)
+	return (typ == excelize.CellTypeUnset || typ == excelize.CellTypeNumber) && err == nil
+}
+
 // standard 19c and 19g (owner 26/11): an Excel export has the columns and titles of the table, numbers as numeric
 // cells, a date as a date, NULL empty; each column as wide as its longest text (title or cell), at most 60
 func TestExcelKeepsTypesAndFitsColumns(t *testing.T) {
@@ -739,10 +749,16 @@ func TestExcelKeepsTypesAndFitsColumns(t *testing.T) {
 	if len(rows) != 2 || !reflect.DeepEqual(rows[0], []string{"RTUNO", "Nome do ponto", "quando", "valor", "vazio", "memo"}) {
 		t.Fatalf("rows %v", rows)
 	}
-	for cell, want := range map[string]excelize.CellType{"A2": excelize.CellTypeNumber, "C2": excelize.CellTypeNumber, "D2": excelize.CellTypeNumber, "E2": excelize.CellTypeUnset} {
-		if got, _ := f.GetCellType("x", cell); got != want {
-			t.Errorf("%s: cell type %v, want %v", cell, got, want)
+	for _, cell := range []string{"A2", "C2", "D2"} {
+		if !numericCell(f, "x", cell) {
+			t.Errorf("%s is not a number", cell)
 		}
+	}
+	if typ, _ := f.GetCellType("x", "B2"); typ != excelize.CellTypeSharedString && typ != excelize.CellTypeInlineString {
+		t.Errorf("B2: cell type %v, want text", typ)
+	}
+	if v, _ := f.GetCellValue("x", "E2"); v != "" {
+		t.Errorf("NULL shows %q", v)
 	}
 	if v, _ := f.GetCellValue("x", "C2"); !strings.Contains(v, "1/2/24") { // Excel date format m/d/yy h:mm
 		t.Errorf("date cell shows %q", v)

@@ -155,8 +155,8 @@ func TestRealDB_Terms(t *testing.T) {
 				}
 				for row := 2; row <= 9; row++ {
 					for _, col := range []string{"A", "B"} { // RTUNO, PNTNO
-						if typ, _ := f.GetCellType(realBigTable, fmt.Sprintf("%s%d", col, row)); typ != excelize.CellTypeNumber {
-							t.Errorf("%s %s%d: cell type %v, want a number", realBigTable, col, row, typ)
+						if cell := fmt.Sprintf("%s%d", col, row); !numericCell(f, realBigTable, cell) {
+							t.Errorf("%s %s is not a number", realBigTable, cell)
 						}
 					}
 				}
