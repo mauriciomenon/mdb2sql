@@ -561,7 +561,7 @@ td.mark input {
 .terms-text,
 .terms-missing textarea {
   resize: vertical;
-  font: 14px/1.4 Consolas, 'Cascadia Mono', monospace;
+  font: inherit; /* the app font (Segoe UI 14 px), as in the Python and Zig versions; a textarea would use monospace */
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border);

@@ -1494,6 +1494,15 @@ describe('App IPC flow', () => {
     }
   });
 
+  // coordinator 26/11: the box of the terms and the one of the terms not found use the app font (Segoe UI 14 px), not
+  // the monospace of a textarea, as in the Python and Zig versions
+  it('writes the term boxes in the app font', () => {
+    const css = readFileSync('src/App.css', 'utf8').replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = (sel) => css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*]/g, '\\$&')} \\{([^}]*)\\}`))?.[1] ?? '';
+    expect(rule('.terms-missing textarea')).toMatch(/font: inherit;/);
+    expect(rule('.terms-missing textarea')).not.toMatch(/monospace|Consolas/);
+  });
+
   // owner 26/11 (13f): no button larger than the others to show rank: the Run button of the SQL tab keeps its height
   // (not stretched to the SQL field), the default button is not bold, Run and Search terms look as the rest
   it('makes no button larger than the others', async () => {
