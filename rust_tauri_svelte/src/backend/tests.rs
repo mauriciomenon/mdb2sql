@@ -1375,7 +1375,8 @@ mod tests {
             .execute_batch(
                 "CREATE TABLE n (i INTEGER, d DOUBLE, m DECIMAL(10,2), s VARCHAR);
                  INSERT INTO n VALUES (216, 0.1, 1234.50, '216,0'), (2160, 216.5, 7.00, '1.234,5'), (NULL, NULL, 1.23, 'abc'),
-                   (1234, NULL, NULL, '1,234.567'), (NULL, NULL, NULL, '216');",
+                   (1234, NULL, NULL, '1,234.567'), (NULL, NULL, NULL, '216'),
+                   (NULL, NULL, NULL, '12,34,567'), (NULL, NULL, NULL, '1234,567');",
             )
             .unwrap();
         let manager = DBManager::new();
@@ -1387,8 +1388,9 @@ mod tests {
         };
         // "216": linha 1 (i 216 e o texto "216,0") e linha 5 ("216"); nunca 2160 nem 216.5 (linha 2)
         // "0,1": d 0.1; "1234.5": m 1234.50 e o texto "1.234,5"; "1,234": i 1234 (linha 4) e m 1.23 nao; "1234567": "1,234.567"
-        // nao: e 1234.567; "abc": texto; "216.50": d 216.5
-        let hits = search(&["216", "0,1", "1234.5", "1,234", "1234567", "abc", "216.50", "2.160"]);
+        // nao: e 1234.567, e "12,34,567" (milhar so em grupos de 3: nao e numero) e "1234,567" (1234.567) tambem nao, como no
+        // Python; "abc": texto; "216.50": d 216.5; "1": nunca "0,1" (0.1) nem 1.23
+        let hits = search(&["216", "0,1", "1234.5", "1,234", "1234567", "abc", "216.50", "2.160", "1"]);
         assert_eq!(hits, [hit(0, 2), hit(1, 1), hit(2, 2), hit(3, 1), hit(5, 1), hit(6, 1), hit(7, 1)]);
         // sem termo numerico, so o texto (o caminho de antes)
         assert_eq!(search(&["ABC", "zzz"]), [hit(0, 1)]);
