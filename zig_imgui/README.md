@@ -73,28 +73,34 @@ libdecor, which loads GTK; two early starts on WSLg crashed inside it (README-BU
 
 ## Access files: one conversion to SQLite
 
-Opening an `.accdb`/`.mdb` converts every table once into a temporary SQLite file in `<TEMP>/mdb2sql-zig/` and the
-program reads that file (the status line says `read with mdbtools, converted to SQLite`). Types are kept as SQLite
+Opening an `.accdb`/`.mdb` converts every table once into a temporary SQLite file in the subfolder `mdb2sql-zig` of
+the user's temporary folder (Windows `%TEMP%`), else of the system one (`%SystemRoot%\Temp`, Linux `/tmp`), last next
+to the source file (the first where a file can be created), and the program reads that file (the status line says `read with mdbtools, converted to SQLite`). Types are kept as SQLite
 stores them: integers (`Byte`, `Integer`, `Long Integer`, `Numeric (p, 0)` up to 18 digits) as INTEGER (declared
 BIGINT), `Single`, `Double`, `Currency` and the other `Numeric` as REAL (declared DOUBLE; exact up to 15 significant
 digits), dates as ISO text (`2026-07-14 10:30:00`, declared VARCHAR: ISO text sorts and compares in date order),
 Yes/No as 0/1, OLE/binary as BLOB, text as TEXT; NULL stays NULL. Every number has numeric affinity, so a filter
 (`WHERE SCALE > 100`), `ORDER BY` and `SUM` compare numbers, in the program and in any tool that opens the saved file.
 
-When the file is closed (**File > Close**), another file is opened, or the program exits, a short dialog asks
-`Save the SQLite file converted from Access (<source>.sqlite)?`:
+**File > Save** (Ctrl+S) writes the open database, whatever its kind, through the native save box: the folder and the
+name of the original file, the types SQLite (`.sqlite`), DuckDB (`.duckdb`) and Excel (`.xlsx`, one sheet per table),
+the type of the open file already chosen (Access and SQLite: SQLite; DuckDB: DuckDB); when that name is the open file
+itself the box suggests `<name> (copy)`. **File > Save as...** (Ctrl+Shift+S) is the same box, starting in the last
+folder saved or exported to. `.mdb`/`.accdb` files cannot be written (the box title and About say so). A converted
+Access saved as SQLite is a copy of the temporary file; the other cases are the database export (written to
+`<file>.part` first, progress, **Cancel**).
 
-- **Save...** - save dialog, by default next to the source file as `<source>.sqlite`;
-- **Delete** - the temporary file is deleted;
-- **Cancel** (or Esc, or the dialog's X) - nothing is closed (the program stays open).
+Saved as SQLite or DuckDB, the conversion is kept in the settings with the key of the Access file (path, size and
+modification date): opening the same, unchanged Access file again, also in a later run, opens the saved file at once,
+with no conversion; if the Access file (or the saved file) changed, it is converted again.
 
-With **Remember for this session** checked, the answer is used until the program closes without asking (a remembered
-**Save** writes into the same folder; if that name already exists the save dialog opens). A saved SQLite is kept in
-the settings with the key of the Access file (path, size and modification date): opening the same, unchanged Access
-file again, also in a later run, opens the saved SQLite at once, with no conversion and no question; if the Access
-file (or the saved SQLite) changed, it is converted again. Temporary files are never left behind: they are deleted
-on **Delete**, and if the program crashes, the next start deletes the temporaries of programs that are no longer
-running.
+Closing the file (**File > Close**, Ctrl+W), opening another one and **Reopen** (F5) never ask: a conversion that was
+not saved is deleted and the Log says `SQLite converted from <file> discarded`. Only exiting the program (the window's
+X, **File > Exit**, Ctrl+Q, Alt+F4) with a converted Access file not saved asks `The database converted from <file>
+was not saved. Save before exiting?`: **Save** (the save box; canceling it brings the question back), **Back** (also
+Esc and the X of the box) and **Exit** (deletes the temporary file). An export still running asks first: **Back** or
+**Exit** (which cancels it, leaving no half file). Temporary files left by a program that crashed are deleted at the
+next start (in the temporary folders; next to the source when that Access file is opened), with a line in the Log.
 
 ## How to use
 
@@ -111,11 +117,16 @@ While a file opens, the status line shows the time, a progress bar (tables conve
 
 - **Table list** (left): every table with its row count, the whole name shown (the panel starts as wide as the
   longest name, up to 40% of the window, and scrolls sideways beyond that); the box on top filters by name 300 ms
-  after the last key (Enter: at once).
-- **Data** tab, top to bottom: one line with the search box, **This table** | **All tables**, **Rows** (the first 100,
+  after the last key (Enter: at once). Right-click a table: **Add to favorites** / **Remove from favorites** (also
+  **View > Favorite or unfavorite table**, Ctrl+D, for the open table): favorites come first, in alphabetical order,
+  with `★ ` before the name, then the other tables; the filter applies to them too. They are kept by table name
+  while the program is open (Close, another file and Reopen keep them; a name the file does not have is not shown)
+  and are not saved.
+- **Data** tab, top to bottom: one line with the search box, **This table** | **All tables**, **Rows** (pages of 100,
   500 or 1000 rows) and **Columns...** (a narrow window wraps it, nothing cut); the value filters line, only when
-  there are filters; the grid (click a column header to sort); under the grid `<table>: showing <n> of <total> rows`
-  (with a search or filter: `... rows found`). The search
+  there are filters; the grid (click a column header to sort); under the grid `<table>: rows <first> to <last> of <total>`
+  (with a search or filter: `... found`) and the pages ◀ ▶ (disabled at the ends; the marked rows stay on top of every
+  page; a new search, filter, sort, Rows or table goes back to page 1). The search
   runs 300 ms after the last key (Enter: at once), in the database over the **whole table** (every column), for
   Access, SQLite and DuckDB alike, before the row limit: the row count follows it.
 - Next to the search box, **This table** | **All tables**: with **All tables** the text is searched in every table
@@ -131,9 +142,43 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   cannot be hidden. Hidden columns last while the table is open, are not saved, and are still searched and exported.
 - **Filter by this value** (right-click a cell of the Data tab): exact `column = value` filter in the database
   query; several add up (AND) and combine with the search; each is a button above the grid (click to remove).
+- **Marked rows** (Data tab): the first grid column is a narrow box per row (tip `Mark rows`); its click, Space on the
+  selected row, the cell menu and **Edit > Mark or unmark row** mark or unmark it. Marks are kept per table while the
+  file is open (Close, another file and Reopen clear them). The marked rows always come first, in table order,
+  whatever the search, the value filters, the sort or the scope; below them the current search without repeating
+  them. The line under the grid adds `, <n> marked` and, only with marks, the box **Only marked** on the right (also
+  **View > Only marked rows**). **Export > Marked rows** and the cell menu (**Export marked rows**, **Unmark all
+  rows**) write the marked rows of the table: every column, table order, `<table>_marcadas`. Row identity: the
+  engine's rowid (DuckDB tables; SQLite tables, so also the converted Access file); a view, or a table with a column
+  of its own called `rowid`, has none and uses the text of the whole row, so identical rows are marked together.
 - **Schema** tab: column, type, nullable (Yes / No in the screen language, also in its export).
-- **SQL** tab: any SQL (the empty box shows `SELECT * FROM ...`), **Run** (Ctrl+Enter), first 10,000 rows shown; a
-  run that works clears the previous error next to the button and in the status bar, an error clears the old grid.
+- **SQL** tab: read-only. Statements are classified by DuckDB's statement type, not by text: queries (`SELECT`,
+  `WITH`, `VALUES`, `SHOW`, `DESCRIBE`, `SUMMARIZE`, reading `PRAGMA`s) and `EXPLAIN` (inside a rolled back
+  transaction) run; anything else is refused before running with `The SQL tab only reads the database: this command
+  is not allowed` (the file, the converted copy and the memory database never change). The empty box shows
+  `SELECT * FROM ...`; **Run** (Ctrl+Enter), first 10,000 rows shown; a run that works clears the previous error next
+  to the button and in the status bar, an error clears the old grid.
+- **Advanced Search** tab (Ctrl+4): paste a list (one term per line, for example an Excel column) in the box; **Whole value** |
+  **Contains** (default in **Settings > Term matching**: whole value), **This table** | **All tables** (default: the
+  default search scope), **Search terms** (Ctrl+Enter) and the count `<n> terms, <n> repeated` (empty lines and the
+  spaces at the ends do not count; a repeated term is searched once). Whole value: the cell as text, without the spaces
+  at the ends, equals the term ignoring case; when a term reads as a number it also matches by value, with a loose
+  rule for US and BR/European formats: a text has up to two readings, "." decimal with "," thousands and "," decimal
+  with "." thousands, a thousands mark only before groups of 3 digits (1,234 = 1.234 or 1234; 216,0 = 216, never
+  2160; 0,1 = 0.1; 216 finds 216.0, 216,0 and "216"; 1234.5 finds "1.234,5"; 216 does not find 2160 or 216.5); a
+  numeric column matches by its value; contains: the cell holds the term ignoring
+  case; every column of every
+  table in the scope, numbers and dates as text. The search runs in the database (a temporary table of terms joined to
+  each table), with progress `Searching terms: table i of n (name)` and **Cancel**. Then the summary
+  `<found> of <n> terms found: <rows> rows in <tables> tables`, the tables with rows found as `<table> (<rows>)` and
+  the grid of the chosen one: first the column **Term** (the term that found the row), then the table's columns, in
+  the order of the pasted list and then of the table (a row found by two terms shows twice), limited like the Data
+  tab with `showing X of Y rows`. Below, **Not found (<n>)**: a read-only box, one term per line in the pasted order,
+  with **Copy**. Grid menu: the three copies (rows without the Term column), **Copy the rows found in this table**
+  (every row found, with the header, TAB separated, no Term column) and **Advanced Search report** > Excel / CSV /
+  SQLite / DuckDB (`<database>_termos`): a **Filter Result** sheet (term, status, table, rows: one line per term and table; a term
+  not found has an empty table and 0), then one sheet per table with rows (Term + the table's columns), named after the table;
+  SQLite and DuckDB hold the same tables, CSV is a folder with one file per sheet.
 - **Search rule**: the text is split into words; a row matches when one cell holds every word, in any order,
   ignoring case and accents (`Tensión campo` finds `EXCITACION TENSION DE CAMPO`; `tensao` does not: there is no
   fuzzy matching).
@@ -145,10 +190,22 @@ While a file opens, the status line shows the time, a progress bar (tables conve
 
 ### Menus
 
-- **File**: **Open...**, **Export** (also the **Export...** button): **Database to SQLite**, **Database to DuckDB**,
-  **Database to Excel** (one sheet per table), **Current table / schema / SQL result to CSV or Excel**; **Close**;
-  **Exit** (Ctrl+Q). Exporting the table while a search or value filter is active asks first: **Whole table** or **Only the
-  <n> rows found**. Export to `.accdb`/`.mdb` is not available (no reliable library writes Access files).
+- **File**: **Open...** (Ctrl+O, the **Browse...** button), **Open the typed path** (the **Open** button), **Reopen**
+  (F5), **Save** (Ctrl+S), **Save as...** (Ctrl+Shift+S), **Export**, **Close** (Ctrl+W), **Exit** (Ctrl+Q).
+- **Export** (also the **Export...** button), a fixed list where what does not apply is disabled: **Current table** >
+  CSV / Excel (the Data table; with a search or value filter it asks first: **Whole table** or **Only the <n> rows
+  found**), **Marked rows** > CSV / Excel, **Current table schema** > CSV / Excel, **Database schema** > CSV / Excel
+  (table, column, type, nullable; `<database>_schema`), **All tables to CSV (one file per table)...** (a native folder
+  picker; when some files already exist, one Yes/No question), **SQL result** > CSV / Excel, **All-tables search
+  result (Excel)...** (one sheet per table with rows: the rows the search finds, every column; `<database>_busca`),
+  **Advanced Search report** > Excel / CSV / SQLite / DuckDB.
+- **Edit**: **Copy value** (Ctrl+C), **Copy row** (Ctrl+Shift+C), **Copy row with header** (the grid of the current
+  tab), **Copy the whole log**; **Search** (Ctrl+F), **Filter by this value**, **Clear filters**; **Mark or unmark
+  row** (Space), **Unmark all rows**.
+- **View**: **Data** (Ctrl+1), **Schema** (Ctrl+2), **SQL** (Ctrl+3), **Advanced Search** (Ctrl+4); **Rows** > 100 / 500 /
+  1000, **Columns...**, **Search in** > This table / All tables, **Only marked rows**, **Go to the table list**
+  (Ctrl+T), **Favorite or unfavorite table** (Ctrl+D); **Run SQL** and **Search terms** (Ctrl+Enter); **Log**
+  (Ctrl+L).
 - **Log** panel at the bottom (**View > Log**, Ctrl+L, or the arrow at the left of the status bar and in the panel
   header): every message of the session with its time, in a monospace font one step smaller; select and Ctrl+C, or
   **Copy all**, **Clear**. About 10% of the window high (at least 3 lines, at most 25%), resized by dragging its top
@@ -158,25 +215,30 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   **Copy** (the whole text). Also on the right, always: the hidden columns of the grid on screen and how the open file
   was read (`Opened via Access ODBC, converted to SQLite`, `Opened via mdbtools, ...`, `Opened via SQLite`,
   `Opened via DuckDB`). Opening a file says `Loaded: <file> (<n> tables)`.
-- Shortcuts (the same in the 4 versions): Ctrl+O open, Ctrl+F Data search, F5 open the file again, Ctrl+Q exit,
-  Ctrl+1 / Ctrl+2 / Ctrl+3 Data / Schema / SQL tab, Ctrl+L Log, Ctrl+Enter run the SQL, Ctrl+C copy the cell.
+- Shortcuts (the same in the 4 versions): Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+W close, Ctrl+Q exit,
+  F5 open the file again, Ctrl+F Data search, Ctrl+T table list, Ctrl+1 / Ctrl+2 / Ctrl+3 / Ctrl+4 Data / Schema /
+  SQL / Advanced Search tab, Ctrl+L Log, Ctrl+Enter run the SQL (in the Advanced Search tab: search the terms), Ctrl+C copy the cell,
+  Ctrl+Shift+C copy the row, Space mark the row, Ctrl+D favorite the open table.
+- Dialogs with more than one button (exit question, export in progress, whole table or rows found, Columns): every
+  button has the same width and height, the width of the longest of their texts in the three languages.
 - Numbers are right-aligned in the grids and in the row counts of the table list (headers too); arrows are `←` `→`.
 - **Settings > Theme**: System, Light, Dark. **Settings > Language**: English, Português (Brasil), Español.
-  **Settings > Default search scope**: This table, All tables. **Settings > Show NULL** (off by default). All are
-  saved and apply at once, without restarting.
-- **Help > About mdb2sql**: version, build, stack, Access reader, license and the GitHub and GitLab links.
+  **Settings > Default search scope**: This table, All tables. **Settings > Term matching**: Whole value, Contains.
+  **Settings > Show NULL** (off by default). All are saved and apply at once, without restarting.
+- **Help > About mdb2sql**: version, build, stack, Access reader, Writing (SQLite, DuckDB, Excel and CSV; `.mdb` and
+  `.accdb` cannot be written), license and the GitHub and GitLab links.
 
 ### Saved settings
 
 Windows: `%APPDATA%\mdb2sql\zig-imgui.ini`; Linux: `~/.config/mdb2sql/zig-imgui.ini` (`$XDG_CONFIG_HOME` if set).
-Theme, language, Log panel, default search scope, Show NULL, the last folder used and the last 8 Access files saved
-as SQLite (path, size and date of both files).
+Theme, language, Log panel, default search scope, term matching, Show NULL, the last folder used and the last 8
+Access files saved as SQLite or DuckDB (path, size and date of both files).
 
 ### Command line
 
 ```
 mdb2sql-zig [file] [--table NAME] [--sql "SELECT ..."] [--search TEXT] [--cell ROW,COL]
-            [--theme system|light|dark] [--lang en|pt_br|es] [--about] [--menu File|View|Settings|Help|Export]
+            [--theme system|light|dark] [--lang en|pt_br|es] [--about] [--menu File|Edit|View|Settings|Help|Export]
             [--export KIND]
 ```
 
@@ -212,8 +274,26 @@ the public mdbtools test data, and the small `testdata/mdb2sql_test.mdb` kept in
   only on the listed columns; the session log; settings with the language.
 - Screenshots of the release program, taken by its hidden test aid `--capture` (README-BUILD.txt) on copies of
   `DB4.accdb` and `nwind.mdb` read by mdbtools: table, filter, Columns at the default and maximized size, narrow
-  window, Log, Settings > Language, About and the converted-SQLite dialog in the three languages, and the window
-  after **Delete** (the capture also checks that the temporary file is gone).
+  window, Log, Settings > Language, About and the exit question in the three languages, and the window after
+  **Close** (the capture also checks that the temporary file is gone and the discard is logged).
+
+### Changes since 1.3.0
+
+- Exiting with a converted Access file not saved asks **Save** / **Back** / **Exit**; Close, another file and Reopen
+  discard it with a Log line (no question, no "Remember for this session"). An export running asks before exiting.
+- **File > Save** and **Save as...** for any open database: SQLite, DuckDB or Excel in one native box; the
+  "Database to" exports left the Export menu. Saved as DuckDB the conversion is remembered too.
+- Converted SQLite in the user's temporary folder, else the system one, else next to the source; crash leftovers
+  cleaned at start with a Log line.
+- Menus as in the other three versions: the fixed Export list (marked rows, database schema, all tables to CSV,
+  all-tables search result, term search report), Edit and View; new shortcuts Ctrl+S, Ctrl+Shift+S, Ctrl+W, Ctrl+T,
+  Ctrl+4, Ctrl+Shift+C, Space.
+- Marked rows in the Data tab, kept on top during other searches; **Only marked**; export of the marked rows.
+- **Advanced Search** tab: search a pasted list in every column of every table, whole value or contains; report in Excel, CSV,
+  SQLite or DuckDB.
+- The SQL tab only reads (the statement type decides; writes are refused before running).
+- Favorite tables on top of the table list (right-click, View, Ctrl+D), kept by name for the session.
+- Dialog buttons of the same size in every language.
 
 ### Changes in 1.3.0
 

@@ -139,7 +139,33 @@ test "texts as in the Go catalog (the reference wording), in the three languages
         .{ "clear_filters", "Clear filters", "Limpar filtros", "Quitar filtros" },
         .{ "menu_search_scope", "Default search scope", "Escopo padrão da busca", "Alcance predeterminado de la búsqueda" },
         .{ "menu_log", "Log", "Log", "Log" },
-        .{ "converted_remember", "Remember for this session", "Lembrar nesta sessão", "Recordar en esta sesión" },
+        // itens 27 e 28 (BRIEF de 25/11, secao 8)
+        .{ "exit_text", "The database converted from {s} was not saved. Save before exiting?", "O banco convertido de {s} não foi salvo. Salvar antes de sair?", "La base de datos convertida de {s} no se guardó. ¿Guardar antes de salir?" },
+        .{ "btn_back", "Back", "Voltar", "Volver" },
+        .{ "log_discarded", "SQLite converted from {s} discarded", "SQLite convertido de {s} descartado", "SQLite convertido de {s} descartado" },
+        .{ "export_run_text", "Exiting cancels the export of {s}.", "Sair cancela a exportação de {s}.", "Salir cancela la exportación de {s}." },
+        .{ "copy_name", "{s} (copy)", "{s} (cópia)", "{s} (copia)" },
+        .{ "about_write", "Writing", "Gravação", "Escritura" },
+        .{ "menu_open_typed", "Open the typed path", "Abrir o caminho digitado", "Abrir la ruta escrita" },
+        .{ "menu_save_as", "Save as...", "Salvar como...", "Guardar como..." },
+        // itens 31 e 32
+        .{ "only_marked", "Only marked", "Só as marcadas", "Solo las marcadas" },
+        .{ "menu_copy_log", "Copy the whole log", "Copiar todo o Log", "Copiar todo el log" },
+        // o Access reaproveitado diz o formato real do salvo (SQLite ou DuckDB)
+        .{ "converted_reused", "{s}: opened the {s} saved from it ({s})", "{s}: aberto o {s} salvo dele ({s})", "{s}: abierto el {s} guardado de él ({s})" },
+        // item 13 c: Schema nos 3 idiomas (aba, Exibir e Exportar)
+        .{ "tab_schema", "Schema", "Schema", "Schema" },
+        .{ "export_schema", "Current table schema", "Schema da tabela atual", "Schema de la tabla actual" },
+        .{ "export_dbschema", "Database schema", "Schema do banco", "Schema de la base de datos" },
+        // item 13 d: a aba Termos vira Pesquisa Avançada (Exibir Ctrl+4 e Exportar)
+        .{ "tab_terms", "Advanced Search", "Pesquisa Avançada", "Búsqueda Avanzada" },
+        .{ "export_terms", "Advanced Search report", "Relatório da Pesquisa Avançada", "Informe de la Búsqueda Avanzada" },
+        // item 13 e: o texto de fundo da caixa com o exemplo em linhas separadas
+        .{ "terms_hint", "Paste the terms, one per line (for example, an Excel column). Example:\ntext1\ntext2\ntext3\nsearches the 3 terms in all tables or only in the selected table.", "Cole os termos, um por linha (por exemplo, uma coluna do Excel). Exemplo:\ntexto1\ntexto2\ntexto3\npesquisa os 3 termos em todas as tabelas ou só na tabela selecionada.", "Pegue los términos, uno por línea (por ejemplo, una columna de Excel). Ejemplo:\ntexto1\ntexto2\ntexto3\nbusca los 3 términos en todas las tablas o solo en la tabla seleccionada." },
+        .{ "match_whole", "Whole value", "Valor inteiro", "Valor completo" },
+        .{ "terms_progress", "Searching terms: table {d} of {d} ({s})", "Pesquisando termos: tabela {d} de {d} ({s})", "Buscando términos: tabla {d} de {d} ({s})" },
+        .{ "copy_hits", "Copy the rows found in this table", "Copiar as linhas encontradas desta tabela", "Copiar las filas encontradas en esta tabla" },
+        .{ "overwrite_many_one", "{d} file already exists in this folder. Replace it?", "{d} arquivo já existe nesta pasta. Substituir?", "{d} archivo ya existe en esta carpeta. ¿Reemplazarlo?" },
     };
     inline for (want) |w| {
         inline for (0..3) |l| try t.expectEqualStrings(w[l + 1], @field(catalogs[l], w[0]));
@@ -166,8 +192,8 @@ test "translations differ from English where words are involved" {
 // Texto de tela fora do catalogo: literal com espaco ou comecando por maiuscula (chaves e IDs sao minusculos,
 // sem espaco). Excecoes: SQL, nomes de produto, atalhos, variaveis de ambiente e mensagens do --capture.
 fn uiTextOutsideCatalog(src: []const u8) ?[]const u8 {
-    const allowed_lines = [_][]const u8{ "c.failed", "c.skip(", "c.note(","sql.appendSlice(", "@import(", "extern ", "\\x00*.", "--file-filter=", "segoeui", "consola.ttf", "copyZ(&app.sql", "SQLite format 3" };
-    const allowed = [_][]const u8{ "GLFW {d}.{d}.{d} + OpenGL 3.3", "DuckDB {s}", "#version 330", "X11 (DISPLAY={s}: {t})", "Ctrl+O", "Ctrl+L", "Ctrl+C", "Ctrl+Q" };
+    const allowed_lines = [_][]const u8{ "c.failed", "c.skip(", "c.note(", "rep.print(", "sql.appendSlice(", "@import(", "extern ", "\\x00*.", "--file-filter=", "segoeui", "seguisym", "consola.ttf", "copyZ(&app.sql", "SQLite format 3", "env.get(" };
+    const allowed = [_][]const u8{ "GLFW {d}.{d}.{d} + OpenGL 3.3", "DuckDB {s}", "#version 330", "X11 (DISPLAY={s}: {t})", "Ctrl+O", "Ctrl+L", "Ctrl+C", "Ctrl+Q", "Ctrl+S", "Ctrl+Shift+S", "Ctrl+W", "F5", "Ctrl+Shift+C", "Ctrl+F", "Ctrl+T", "Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+Enter", "Ctrl+D" };
     var lines = std.mem.splitScalar(u8, src, '\n');
     while (lines.next()) |full| {
         // sem o comentario do fim da linha (// fora de string)
@@ -251,7 +277,7 @@ test "no lecturing hints and no copyright line in any catalog" {
             try t.expect(std.mem.indexOf(u8, s, "->") == null and !std.mem.startsWith(u8, s, "< ") and !std.mem.endsWith(u8, s, " >"));
         }
         // mensagens do app sem "..." (o log e a barra de status mostram estas)
-        inline for (.{ "busy_converting", "busy_opening", "busy_loading", "busy_running", "busy_exporting", "converted_deleted", "status_loaded", "status_closed" }) |k|
+        inline for (.{ "busy_converting", "busy_opening", "busy_loading", "busy_running", "busy_exporting", "log_discarded", "status_loaded", "status_closed" }) |k|
             try t.expect(std.mem.indexOf(u8, @field(C, k), "...") == null);
     }
 }
@@ -262,14 +288,35 @@ test "Data tab count line under the grid: shown of all rows, or of the rows foun
     lang = .pt_br;
     try t.expectEqualStrings("Tipos: mostrando 3 de 3 linhas", fmtCount(&b, "rows_showing", 3, .{ "Tipos", 3, 3 }));
     try t.expectEqualStrings("Tipos: mostrando 1 de 1 linha", fmtCount(&b, "rows_showing", 1, .{ "Tipos", 1, 1 }));
-    try t.expectEqualStrings("Medições: mostrando 1 de 1 linha encontrada", fmtCount(&b, "rows_found", 1, .{ "Medições", 1, 1 }));
-    try t.expectEqualStrings("T: mostrando 100 de 604 linhas encontradas", fmtCount(&b, "rows_found", 604, .{ "T", 100, 604 }));
+    // aba Dados (item 13 h): a pagina, de quantas (com busca ou filtro: encontradas)
+    try t.expectEqualStrings("T: linhas 1 a 100 de 36804", fmtCount(&b, "rows_page", 36804, .{ "T", 1, 100, 36804 }));
+    try t.expectEqualStrings("Medições: linha 1 a 1 de 1 encontrada", fmtCount(&b, "rows_page_found", 1, .{ "Medições", 1, 1, 1 }));
+    try t.expectEqualStrings("T: linhas 601 a 604 de 604 encontradas", fmtCount(&b, "rows_page_found", 604, .{ "T", 601, 604, 604 }));
+    lang = .en;
+    try t.expectEqualStrings("T: rows 101 to 200 of 250", fmtCount(&b, "rows_page", 250, .{ "T", 101, 200, 250 }));
     lang = .es;
+    try t.expectEqualStrings("T: filas 0 a 0 de 0", fmtCount(&b, "rows_page", 0, .{ "T", 0, 0, 0 }));
     try t.expectEqualStrings("T: mostrando 0 de 0 filas", fmtCount(&b, "rows_showing", 0, .{ "T", 0, 0 }));
     // Todas as tabelas
     lang = .pt_br;
     try t.expectEqualStrings("1 tabela com linhas que contêm \"campo\"", fmtCount(&b, "global_found", 1, .{ 1, "campo" }));
     try t.expectEqualStrings("3 tabelas com linhas que contêm \"ELSUL\"", fmtCount(&b, "global_found", 3, .{ 3, "ELSUL" }));
+}
+
+test "Terms tab counts and summary with the right plural (item 32)" {
+    defer lang = .en;
+    var b: [4][96]u8 = undefined;
+    lang = .pt_br;
+    try t.expectEqualStrings("8 termos", fmtCount(&b[0], "terms_count", 8, .{8}));
+    try t.expectEqualStrings(", 1 repetido", fmtCount(&b[0], "terms_repeated", 1, .{1}));
+    try t.expectEqualStrings("1 de 1 termo encontrado: 1 linha em 1 tabela", fmt(&b[3], "terms_summary", .{
+        fmtCount(&b[0], "terms_found", 1, .{ 1, 1 }), fmtCount(&b[1], "terms_rows", 1, .{1}), fmtCount(&b[2], "terms_tables", 1, .{1}),
+    }));
+    lang = .es;
+    try t.expectEqualStrings("7 de 9 términos encontrados: 12 filas en 3 tablas", fmt(&b[3], "terms_summary", .{
+        fmtCount(&b[0], "terms_found", 9, .{ 7, 9 }), fmtCount(&b[1], "terms_rows", 12, .{12}), fmtCount(&b[2], "terms_tables", 3, .{3}),
+    }));
+    try t.expectEqualStrings(", 1 marcada", fmtCount(&b[0], "marked_count", 1, .{1}));
 }
 
 test "tr and fmt follow the current language" {

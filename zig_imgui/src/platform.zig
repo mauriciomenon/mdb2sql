@@ -43,6 +43,33 @@ pub fn messageBox(io: ?std.Io, title: []const u8, text_utf8: []const u8, icon: I
     _ = child.wait(i) catch {};
 }
 
+// Pergunta nativa Sim / Nao (a mesma do "ja existe, substituir?" da caixa de salvar). Linux: zenity --question;
+// sem ele a resposta e nao.
+pub fn confirm(io: std.Io, hwnd: ?*anyopaque, title: []const u8, text_utf8: []const u8) bool {
+    const text = text_utf8[0..@min(text_utf8.len, 1000)];
+    if (is_windows) {
+        var wide: [2048:0]u16 = undefined;
+        const n = std.unicode.wtf8ToWtf16Le(wide[0 .. wide.len - 1], text) catch 0;
+        wide[n] = 0;
+        var cap: [128:0]u16 = undefined;
+        const cn = std.unicode.wtf8ToWtf16Le(cap[0 .. cap.len - 1], title[0..@min(title.len, 100)]) catch 0;
+        cap[cn] = 0;
+        return MessageBoxW(hwnd, &wide, &cap, 0x4 | 0x20) == 6; // MB_YESNO | MB_ICONQUESTION, IDYES
+    }
+    var b: [1100]u8 = undefined;
+    const arg = std.fmt.bufPrint(&b, "--text={s}", .{text}) catch return false;
+    var tb: [140]u8 = undefined;
+    const targ = std.fmt.bufPrint(&tb, "--title={s}", .{title}) catch return false;
+    var child = std.process.spawn(io, .{
+        .argv = &.{ "zenity", "--question", "--no-markup", targ, arg },
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    }) catch return false;
+    const term = child.wait(io) catch return false;
+    return term.success();
+}
+
 // Abre a URL (ja conferida pelo chamador) no navegador padrao
 pub fn openUrl(io: std.Io, url: [:0]const u8) void {
     if (is_windows) {
@@ -87,6 +114,12 @@ else
         "/usr/share/fonts/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
     };
+
+// De onde vem a estrela das favoritas (U+2605) e as setas das paginas (U+25B6, U+25C0): a Segoe UI nao as tem
+pub const star_fonts = if (is_windows)
+    [_][:0]const u8{"C:\\Windows\\Fonts\\seguisym.ttf"}
+else
+    [_][:0]const u8{ "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf" };
 
 // Fonte monoespacada do painel de Log
 pub const mono_fonts = if (is_windows)

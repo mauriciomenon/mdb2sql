@@ -15,6 +15,7 @@ pub const capture = @import("capture.zig");
 pub const gridtools = @import("gridtools.zig");
 pub const xlsx = @import("xlsx.zig");
 pub const exporter = @import("exporter.zig");
+pub const terms = @import("terms.zig");
 pub const access = @import("access.zig");
 pub const settings = @import("settings.zig");
 pub const i18n = @import("i18n.zig");
@@ -22,7 +23,94 @@ pub const log = @import("log.zig");
 pub const display = @import("display.zig");
 const Allocator = std.mem.Allocator;
 
-pub const Error = error{ DuckDb, Canceled } || query.BuildError || query.PathError;
+pub const Error = error{ DuckDb, Canceled, SqlReadOnly } || query.BuildError || query.PathError;
+
+// !T: The SQL tab only reads. The kind of a statement is the one DuckDB gives after preparing it (never its text):
+// queries (SELECT, WITH, VALUES, SHOW, DESCRIBE, SUMMARIZE and the PRAGMAs that DuckDB rewrites into a query) and
+// EXPLAIN are read; everything else (CREATE, INSERT, UPDATE, DELETE, DROP, ALTER, COPY, ATTACH, SET, a PRAGMA that
+// sets something, CALL, LOAD, transactions...) is refused before it runs.
+pub fn readsOnly(ty: c.duckdb_statement_type) bool {
+    return ty == c.DUCKDB_STATEMENT_TYPE_SELECT or ty == c.DUCKDB_STATEMENT_TYPE_EXPLAIN;
+}
+
+// !T: The format written in the file itself (its first bytes), not in its name: SQLite or DuckDB; null = neither
+pub fn fileFormat(io: std.Io, path: []const u8) ?Source {
+    var hb: [16]u8 = undefined;
+    const h = std.Io.Dir.cwd().readFile(io, path, &hb) catch return null;
+    if (std.mem.eql(u8, h, "SQLite format 3\x00")) return .sqlite;
+    if (h.len >= 12 and std.mem.eql(u8, h[8..12], "DUCK")) return .duckdb;
+    return null;
+}
+
+test "the format of a saved file comes from its first bytes (a DuckDB is not called SQLite)" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var b1: [256]u8 = undefined;
+    var b2: [256]u8 = undefined;
+    const duck = tmpPath(&b1, &tmp, "f.duckdb");
+    const lite = tmpPath(&b2, &tmp, "f.sqlite");
+    var db = testDb();
+    defer db.close();
+    try db.open(duck, false);
+    try db.exec("CREATE TABLE x AS SELECT 1 AS a");
+    try db.open(":memory:", false);
+    try db.loadSqlite();
+    var ab: [400]u8 = undefined;
+    try db.exec(try std.fmt.bufPrintSentinel(&ab, "ATTACH '{s}' AS l (TYPE sqlite)", .{lite}, 0));
+    try db.exec("CREATE TABLE l.x AS SELECT 1 AS a");
+    try db.exec("DETACH l");
+    try t.expectEqual(Source.duckdb, fileFormat(t.io, duck).?);
+    try t.expectEqual(Source.sqlite, fileFormat(t.io, lite).?);
+    try t.expect(fileFormat(t.io, "nao_existe.sqlite") == null);
+}
+
+// !T: A call of a table function that attaches another database (sqlite_attach, postgres_attach, ... : a name
+// ending in _attach, plain or quoted, followed by "("), outside string literals and comments. The statement type of
+// such a SELECT is SELECT, so the type alone would let it run.
+pub fn callsAttach(sql: []const u8) bool {
+    var i: usize = 0;
+    while (i < sql.len) {
+        const ch = sql[i];
+        if (ch == '\'') { // texto: ate o apostrofo que fecha ('' e um apostrofo dentro)
+            i += 1;
+            while (i < sql.len) : (i += 1) if (sql[i] == '\'') {
+                if (i + 1 < sql.len and sql[i + 1] == '\'') i += 1 else break;
+            };
+            i += 1;
+        } else if (ch == '-' and i + 1 < sql.len and sql[i + 1] == '-') {
+            i = std.mem.indexOfScalarPos(u8, sql, i, '\n') orelse sql.len;
+        } else if (ch == '/' and i + 1 < sql.len and sql[i + 1] == '*') {
+            i = if (std.mem.indexOfPos(u8, sql, i + 2, "*/")) |e| e + 2 else sql.len;
+        } else if (ch == '"' or std.ascii.isAlphabetic(ch) or ch == '_') {
+            // nome (entre aspas ou nao) e, depois dos espacos, "("
+            const quoted = ch == '"';
+            const start = if (quoted) i + 1 else i;
+            var end = start;
+            if (quoted) {
+                end = std.mem.indexOfScalarPos(u8, sql, start, '"') orelse sql.len;
+            } else while (end < sql.len and (std.ascii.isAlphanumeric(sql[end]) or sql[end] == '_')) end += 1;
+            const name = sql[start..end];
+            i = if (quoted) @min(end + 1, sql.len) else end;
+            var j = i;
+            while (j < sql.len and std.ascii.isWhitespace(sql[j])) j += 1;
+            if (j < sql.len and sql[j] == '(' and name.len >= "_attach".len and
+                std.ascii.eqlIgnoreCase(name[name.len - "_attach".len ..], "_attach")) return true;
+        } else i += 1;
+    }
+    return false;
+}
+
+test "SQL tab: a SELECT that calls a table function attaching a database is caught; the same words in text are not" {
+    try t.expect(callsAttach("SELECT * FROM sqlite_attach('outro.sqlite', overwrite=true)"));
+    try t.expect(callsAttach("select * from SQLITE_ATTACH ('x.db')"));
+    try t.expect(callsAttach("SELECT * FROM \"sqlite_attach\"('x.db')"));
+    try t.expect(callsAttach("WITH a AS (SELECT * FROM postgres_attach('dbname=x')) SELECT * FROM a"));
+    try t.expect(!callsAttach("SELECT 'sqlite_attach(' AS s, 1 AS sqlite_attach"));
+    try t.expect(!callsAttach("SELECT * FROM t -- sqlite_attach('x')\n"));
+    try t.expect(!callsAttach("SELECT * FROM t /* sqlite_attach('x') */"));
+    try t.expect(!callsAttach("SELECT 'it''s sqlite_attach(' FROM t"));
+    try t.expect(!callsAttach("SELECT * FROM sqlite_scan('x.sqlite', 't')"));
+}
 
 // Por onde o arquivo aberto foi lido (mostrado na barra de status)
 pub const Source = enum {
@@ -53,9 +141,45 @@ pub const Grid = struct {
     truncated: bool = false, // o resultado tinha mais que max_rows linhas (as outras nao foram lidas)
     float_cols: []const bool = &.{}, // colunas DOUBLE/FLOAT: a grade mostra 2.0 como 2 (so na tela, como no Go)
     num_cols: []const bool = &.{}, // colunas numericas: a grade alinha a direita (valor e cabecalho)
+    keys: []const []const u8 = &.{}, // identidade de cada linha (consulta com Spec.with_key; linhas marcadas)
 
     pub fn deinit(self: *Grid) void {
         self.arena.deinit();
+    }
+
+    // A 1a coluna (a identidade da linha, Spec.with_key) sai da grade e vira `keys`
+    fn splitKeys(self: *Grid) Allocator.Error!void {
+        if (self.columns.len == 0) return;
+        const a = self.arena.allocator();
+        const keys = try a.alloc([]const u8, self.rows.len);
+        const rows = try a.alloc([]?[]const u8, self.rows.len);
+        for (keys, rows, self.rows) |*k, *r, row| {
+            k.* = row[0] orelse "";
+            r.* = row[1..];
+        }
+        self.keys = keys;
+        self.rows = rows;
+        self.columns = self.columns[1..];
+        self.float_cols = self.float_cols[1..];
+        self.num_cols = self.num_cols[1..];
+    }
+
+    // As linhas de `other` (as mesmas colunas) depois das suas, copiadas para a arena desta grade
+    pub fn append(self: *Grid, other: *const Grid) Allocator.Error!void {
+        const a = self.arena.allocator();
+        const rows = try a.alloc([]?[]const u8, self.rows.len + other.rows.len);
+        @memcpy(rows[0..self.rows.len], self.rows);
+        for (rows[self.rows.len..], other.rows) |*dst, src| {
+            const row = try a.alloc(?[]const u8, src.len);
+            for (row, src) |*cell, s| cell.* = if (s) |v| try a.dupe(u8, v) else null;
+            dst.* = row;
+        }
+        const keys = try a.alloc([]const u8, self.keys.len + other.keys.len);
+        @memcpy(keys[0..self.keys.len], self.keys);
+        for (keys[self.keys.len..], other.keys) |*k, s| k.* = try a.dupe(u8, s);
+        self.rows = rows;
+        self.keys = keys;
+        self.truncated = self.truncated or other.truncated;
     }
 };
 
@@ -273,6 +397,7 @@ pub const Db = struct {
         self.forgetTables();
         self.source = null;
         if (self.conn == null) return;
+        terms.dropTables(self);
         self.exec("USE memory") catch {};
         self.exec("DETACH DATABASE IF EXISTS src") catch {};
     }
@@ -391,6 +516,37 @@ pub const Db = struct {
         return types;
     }
 
+    // Tipo do comando, como o DuckDB o classifica ao preparar (SQL errado: error.DuckDb com a mensagem dele)
+    pub fn statementType(self: *Db, sql: [:0]const u8) Error!c.duckdb_statement_type {
+        if (self.conn == null) {
+            self.setError("no database connected");
+            return error.DuckDb;
+        }
+        var stmt: c.duckdb_prepared_statement = null;
+        defer c.duckdb_destroy_prepare(&stmt);
+        if (c.duckdb_prepare(self.conn, sql, &stmt) != c.DuckDBSuccess) {
+            self.setError(c.duckdb_prepare_error(stmt));
+            return error.DuckDb;
+        }
+        return c.duckdb_prepared_statement_type(stmt);
+    }
+
+    // !T: SQL of the SQL tab: refused with error.SqlReadOnly unless the statement only reads (readsOnly). EXPLAIN
+    // ANALYZE runs the statement it explains, so an EXPLAIN goes inside a transaction that is rolled back: the
+    // open file, the converted copy and the memory database never change.
+    pub fn runReadOnly(self: *Db, sql: [:0]const u8) Error!Grid {
+        // um SELECT pode chamar uma funcao de tabela que anexa outro banco (sqlite_attach cria views e abre o arquivo):
+        // recusado antes de preparar
+        if (callsAttach(sql)) return error.SqlReadOnly;
+        const ty = try self.statementType(sql);
+        if (!readsOnly(ty)) return error.SqlReadOnly;
+        if (ty != c.DUCKDB_STATEMENT_TYPE_EXPLAIN) return self.run(sql, &.{});
+        try self.exec("BEGIN TRANSACTION");
+        defer self.exec("ROLLBACK") catch {};
+        // como veio (o EXPLAIN ja devolve texto): uma tentativa que falha dentro da transacao a deixaria abortada
+        return self.collect(sql, &.{}, max_rows, .{ .wrap = false, .types = true });
+    }
+
     // Executa SQL com parametros '?' e devolve tudo como texto (no maximo max_rows linhas)
     pub fn run(self: *Db, sql: [:0]const u8, params: []const []const u8) Error!Grid {
         return self.runMax(sql, params, max_rows);
@@ -399,7 +555,11 @@ pub const Db = struct {
     // run com outro teto: consultas do programa que precisam de todas as linhas (o catalogo de colunas da busca em
     // todas as tabelas; o DB4 passa de 10.000 colunas)
     pub fn runMax(self: *Db, sql: [:0]const u8, params: []const []const u8, limit: usize) Error!Grid {
-        var rows = try self.stream(sql, params, .{ .types = true });
+        return self.collect(sql, params, limit, .{ .types = true });
+    }
+
+    fn collect(self: *Db, sql: [:0]const u8, params: []const []const u8, limit: usize, opts: QueryOpts) Error!Grid {
+        var rows = try self.stream(sql, params, opts);
         defer rows.deinit();
 
         var grid: Grid = .{ .arena = .init(self.gpa) };
@@ -466,7 +626,27 @@ pub const Db = struct {
     pub fn page(self: *Db, spec: query.Spec) Error!Grid {
         const built = try query.buildSelect(self.gpa, spec);
         defer built.deinit(self.gpa);
-        return self.run(built.sql, built.params);
+        var g = try self.run(built.sql, built.params);
+        errdefer g.deinit();
+        if (spec.with_key) try g.splitKeys();
+        return g;
+    }
+
+    // !T: Row identity of a table for the marked rows: the engine's rowid when the table has one (DuckDB tables, and
+    // SQLite tables through the sqlite extension, so also the converted Access file); a view, or a table with a
+    // column of its own called rowid, has none and uses the md5 of the whole row (identical rows are one row).
+    pub fn rowKey(self: *Db, table: []const u8, columns: []const []const u8) Error!query.RowKey {
+        if (query.hasRowidColumn(columns)) return .hash;
+        if (!query.contains(self.table_names, table)) return error.TableNotFound;
+        var sql: std.ArrayList(u8) = .empty;
+        defer sql.deinit(self.gpa);
+        try sql.appendSlice(self.gpa, "SELECT " ++ query.row_alias ++ ".rowid FROM ");
+        try query.writeIdent(&sql, self.gpa, table);
+        try sql.appendSlice(self.gpa, " AS " ++ query.row_alias ++ " LIMIT 0");
+        try sql.append(self.gpa, 0);
+        // so prepara (nao roda): sem rowid o DuckDB recusa a coluna
+        _ = self.statementType(sql.items[0 .. sql.items.len - 1 :0]) catch return .hash;
+        return .rowid;
     }
 
     pub fn count(self: *Db, spec: query.Spec) Error!u64 {
@@ -531,6 +711,7 @@ test {
     _ = gridtools;
     _ = xlsx;
     _ = exporter;
+    _ = terms;
     _ = access;
     _ = settings;
     _ = i18n;
@@ -578,6 +759,81 @@ test "Schema export: the tab titles and the nullable values in the screen langua
     try t.expectEqualStrings("id", g.rows[0][0].?);
     try t.expectEqualStrings("Não", g.rows[0][2].?); // id INTEGER NOT NULL
     try t.expectEqualStrings("Sim", g.rows[1][2].?);
+}
+
+test "SQL tab is read-only: reads run, every other statement is refused by its DuckDB statement type, nothing changes" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [256]u8 = undefined;
+    const path = tmpPath(&buf, &tmp, "ro.duckdb");
+    try makeSample(path);
+    var db = Db.init(t.allocator);
+    defer db.close();
+    try db.openReadOnly(path);
+    const reads = [_][:0]const u8{
+        "SELECT * FROM people",                             "WITH x AS (SELECT 1 AS a) SELECT a FROM x",
+        "FROM people",                                      "VALUES (1), (2)",
+        "TABLE people",                                     "SHOW TABLES",
+        "DESCRIBE people",                                  "SUMMARIZE people",
+        "EXPLAIN SELECT * FROM people",                     "PRAGMA version",
+        "PRAGMA table_info('people')",                      "PRAGMA database_list",
+        "select count(*) from big ;",                       "/* c */ SELECT 1 -- fim",
+    };
+    for (reads) |sql| {
+        var g = db.runReadOnly(sql) catch |e| {
+            std.debug.print("refused or failed: {s} ({t}: {s})\n", .{ sql, e, db.lastError() });
+            return e;
+        };
+        g.deinit();
+    }
+    // escrita na memoria (o arquivo esta anexado so para leitura), configuracao, arquivos, outros bancos: recusados
+    const writes = [_][:0]const u8{
+        "CREATE TABLE memory.main.x (a INTEGER)",           "CREATE TEMP TABLE x AS SELECT 1 AS a",
+        "CREATE VIEW memory.main.v AS SELECT 1",            "CREATE MACRO memory.main.f(a) AS a + 1",
+        "INSERT INTO people VALUES (9, 'x', 1.0)",          "UPDATE people SET name = 'x'",
+        "DELETE FROM people",                               "DROP TABLE people",
+        "ALTER TABLE people ADD COLUMN z INTEGER",          "WITH x AS (SELECT 1) INSERT INTO big SELECT * FROM x",
+        "ATTACH ':memory:' AS other",                       "DETACH src",
+        "USE memory",                                       "SET threads = 2",
+        "RESET threads",                                    "PRAGMA threads = 2",
+        "PRAGMA enable_profiling",                          "COPY people TO 'people_copy.csv'",
+        "COPY (SELECT 1) TO 'one.csv'",                     "EXPORT DATABASE 'exported'",
+        "CALL pragma_version()",                            "CHECKPOINT",
+        "VACUUM",                                           "BEGIN TRANSACTION",
+        "PREPARE p AS SELECT 1",                            "LOAD sqlite",
+        "SELECT * FROM sqlite_attach('ro_other.sqlite', overwrite=true)",
+    };
+    for (writes) |sql| {
+        if (db.runReadOnly(sql)) |g| {
+            var grid = g;
+            grid.deinit();
+            std.debug.print("ran, should be refused: {s}\n", .{sql});
+            return error.TestUnexpectedResult;
+        } else |e| if (e != error.SqlReadOnly) {
+            std.debug.print("{s}: {t} ({s})\n", .{ sql, e, db.lastError() });
+            return error.TestUnexpectedResult;
+        }
+    }
+    // EXPLAIN ANALYZE roda o comando explicado: a transacao desfeita nao deixa a tabela na memoria
+    if (db.runReadOnly("EXPLAIN ANALYZE CREATE TABLE memory.main.sneaky AS SELECT 1 AS a")) |g| {
+        var grid = g;
+        grid.deinit();
+    } else |_| {}
+    try t.expectError(error.DuckDb, db.exec("SELECT * FROM memory.main.sneaky"));
+    // varios comandos de uma vez nunca rodaram na aba SQL (o DuckDB recusa ao preparar)
+    try t.expectError(error.DuckDb, db.runReadOnly("SELECT 1; DROP TABLE people"));
+    // SQL errado: o erro do DuckDB, como antes
+    try t.expectError(error.DuckDb, db.runReadOnly("SELEC 1"));
+    try t.expect(std.mem.indexOf(u8, db.lastError(), "syntax error") != null);
+    // nada mudou, e o que foi recusado nao criou arquivo
+    try t.expectEqual(3, db.table_names.len);
+    try t.expectEqual(4, try db.count(.{ .table = "people", .tables = db.table_names, .columns = &.{} }));
+    try t.expectError(error.FileNotFound, std.Io.Dir.cwd().access(t.io, "one.csv", .{}));
+    try t.expectError(error.FileNotFound, std.Io.Dir.cwd().access(t.io, "people_copy.csv", .{}));
+    try t.expectError(error.FileNotFound, std.Io.Dir.cwd().access(t.io, "ro_other.sqlite", .{}));
+    try t.expect(readsOnly(c.DUCKDB_STATEMENT_TYPE_SELECT) and readsOnly(c.DUCKDB_STATEMENT_TYPE_EXPLAIN));
+    for ([_]c.duckdb_statement_type{ c.DUCKDB_STATEMENT_TYPE_INSERT, c.DUCKDB_STATEMENT_TYPE_UPDATE, c.DUCKDB_STATEMENT_TYPE_DELETE, c.DUCKDB_STATEMENT_TYPE_CREATE, c.DUCKDB_STATEMENT_TYPE_DROP, c.DUCKDB_STATEMENT_TYPE_ALTER, c.DUCKDB_STATEMENT_TYPE_COPY, c.DUCKDB_STATEMENT_TYPE_ATTACH, c.DUCKDB_STATEMENT_TYPE_DETACH, c.DUCKDB_STATEMENT_TYPE_SET, c.DUCKDB_STATEMENT_TYPE_PRAGMA, c.DUCKDB_STATEMENT_TYPE_CALL, c.DUCKDB_STATEMENT_TYPE_LOAD, c.DUCKDB_STATEMENT_TYPE_TRANSACTION, c.DUCKDB_STATEMENT_TYPE_EXPORT, c.DUCKDB_STATEMENT_TYPE_MULTI, c.DUCKDB_STATEMENT_TYPE_INVALID }) |ty|
+        try t.expect(!readsOnly(ty));
 }
 
 test "rejects bad extension and missing file" {

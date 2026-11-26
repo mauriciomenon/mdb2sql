@@ -12,7 +12,7 @@ pub const search_rule = "Todas as palavras, em qualquer ordem, na mesma célula;
 pub const col_table = "Tabela";
 pub const col_rows = "Linhas";
 pub const tab_data = "Dados";
-pub const tab_schema = "Esquema";
+pub const tab_schema = "Schema";
 pub const tab_sql = "SQL";
 pub const select_table = "Selecione uma tabela";
 pub const search = "Pesquisar na tabela inteira";
@@ -21,8 +21,12 @@ pub const columns_tip = "Pesquisa e exportação usam todas as colunas";
 pub const rows_label = "Linhas";
 pub const rows_showing = "{s}: mostrando {d} de {d} linhas";
 pub const rows_showing_one = "{s}: mostrando {d} de {d} linha";
-pub const rows_found = "{s}: mostrando {d} de {d} linhas encontradas";
-pub const rows_found_one = "{s}: mostrando {d} de {d} linha encontrada";
+pub const rows_page = "{s}: linhas {d} a {d} de {d}";
+pub const rows_page_one = "{s}: linha {d} a {d} de {d}";
+pub const rows_page_found = "{s}: linhas {d} a {d} de {d} encontradas";
+pub const rows_page_found_one = "{s}: linha {d} a {d} de {d} encontrada";
+pub const page_prev = "Anterior";
+pub const page_next = "Próxima";
 pub const hidden_cols = "{d} colunas ocultas";
 pub const hidden_cols_one = "{d} coluna oculta";
 pub const filters_label = "Filtros:";
@@ -57,12 +61,59 @@ pub const show_all = "Mostrar todas";
 pub const hide_all = "Ocultar todas";
 pub const columns_title = "Colunas de {s}";
 pub const sql_result = "Resultado SQL";
+pub const mark_tip = "Marcar linhas";
+pub const marked_count = ", {d} marcadas";
+pub const marked_count_one = ", {d} marcada";
+pub const only_marked = "Só as marcadas";
+pub const menu_mark = "Marcar ou desmarcar linha";
+pub const menu_unmark_all = "Desmarcar todas as linhas";
+pub const ctx_export_marked = "Exportar linhas marcadas";
+pub const key_space = "Espaço";
+pub const fmt_csv = "CSV...";
+pub const fmt_xlsx = "Excel (.xlsx)...";
+pub const fmt_sqlite = "SQLite (.sqlite)...";
+pub const fmt_duckdb = "DuckDB (.duckdb)...";
+
+// aba Pesquisa Avançada (pesquisa de termos)
+pub const tab_terms = "Pesquisa Avançada";
+pub const terms_hint = "Cole os termos, um por linha (por exemplo, uma coluna do Excel). Exemplo:\ntexto1\ntexto2\ntexto3\npesquisa os 3 termos em todas as tabelas ou só na tabela selecionada.";
+pub const match_whole = "Valor inteiro";
+pub const match_contains = "Contém";
+pub const match_tip = "Valor inteiro: a célula inteira é igual ao termo. Contém: a célula contém o termo. Maiúsculas e espaços nas pontas não contam.";
+pub const menu_term_match = "Comparação dos termos";
+pub const terms_run = "Pesquisar termos";
+pub const terms_count = "{d} termos";
+pub const terms_count_one = "{d} termo";
+pub const terms_repeated = ", {d} repetidos";
+pub const terms_repeated_one = ", {d} repetido";
+pub const terms_summary = "{s}: {s} em {s}";
+pub const terms_found = "{d} de {d} termos encontrados";
+pub const terms_found_one = "{d} de {d} termo encontrado";
+pub const terms_rows = "{d} linhas";
+pub const terms_rows_one = "{d} linha";
+pub const terms_tables = "{d} tabelas";
+pub const terms_tables_one = "{d} tabela";
+pub const terms_progress = "Pesquisando termos: tabela {d} de {d} ({s})";
+pub const col_term = "Termo";
+pub const col_status = "Situação";
+pub const term_found = "Encontrado";
+pub const term_not_found = "Não encontrado";
+pub const not_found_title = "Não encontrados ({d})";
+pub const copy_hits = "Copiar as linhas encontradas desta tabela";
+pub const sheet_result = "Resultado Filtro";
+pub const export_terms = "Relatório da Pesquisa Avançada";
+pub const overwrite_many = "{d} arquivos já existem nesta pasta. Substituir?";
+pub const overwrite_many_one = "{d} arquivo já existe nesta pasta. Substituir?";
 pub const find_column = "Filtrar colunas";
 pub const columns_shown = "{d} de {d} visíveis";
 
 // menus
 pub const menu_file = "Arquivo";
 pub const menu_open = "Abrir...";
+pub const menu_open_typed = "Abrir o caminho digitado";
+pub const menu_reopen = "Reabrir";
+pub const menu_save = "Salvar";
+pub const menu_save_as = "Salvar como...";
 pub const menu_export = "Exportar";
 pub const menu_close = "Fechar";
 pub const menu_exit = "Sair";
@@ -78,15 +129,23 @@ pub const menu_search_scope = "Escopo padrão da busca";
 pub const menu_show_null = "Exibir NULL";
 pub const menu_help = "Ajuda";
 pub const menu_about = "Sobre o mdb2sql";
-pub const export_db_sqlite = "Banco para SQLite (.sqlite)...";
-pub const export_db_xlsx = "Banco para Excel (.xlsx, uma aba por tabela)...";
-pub const export_db_duckdb = "Banco para DuckDB (.duckdb)...";
-pub const export_table_csv = "Tabela atual para CSV...";
-pub const export_table_xlsx = "Tabela atual para Excel (.xlsx)...";
-pub const export_schema_csv = "Esquema da tabela atual para CSV...";
-pub const export_schema_xlsx = "Esquema da tabela atual para Excel (.xlsx)...";
-pub const export_result_csv = "Resultado do SQL para CSV...";
-pub const export_result_xlsx = "Resultado do SQL para Excel (.xlsx)...";
+pub const export_table = "Tabela atual";
+pub const export_marked = "Linhas marcadas";
+pub const export_schema = "Schema da tabela atual";
+pub const export_dbschema = "Schema do banco";
+pub const export_all_csv = "Todas as tabelas em CSV (um arquivo por tabela)...";
+pub const export_result = "Resultado do SQL";
+pub const export_global = "Resultado da busca em todas as tabelas (Excel)...";
+pub const menu_edit = "Editar";
+pub const menu_copy_log = "Copiar todo o Log";
+pub const menu_search = "Pesquisar";
+pub const menu_search_in = "Buscar em";
+pub const menu_only_marked = "Só as linhas marcadas";
+pub const menu_goto_tables = "Ir para a lista de tabelas";
+pub const fav_add = "Favoritar";
+pub const fav_remove = "Desfavoritar";
+pub const fav_toggle = "Favoritar ou desfavoritar tabela";
+pub const menu_run_sql = "Executar SQL";
 pub const export_scope_text = "A busca está ativa em {s}. Exportar:";
 pub const export_whole = "Tabela inteira";
 pub const export_found = "Só as {d} linhas encontradas";
@@ -102,6 +161,8 @@ pub const about_database = "Bancos";
 pub const about_access = "Leitura do Access";
 pub const about_access_win = "mdbtools {s} (incluído) ou o driver ODBC do Access, convertido uma vez para SQLite";
 pub const about_access_unix = "mdbtools {s} (incluído), convertido uma vez para SQLite";
+pub const about_write = "Gravação";
+pub const about_write_value = "SQLite, DuckDB, Excel e CSV. Arquivos .mdb e .accdb não podem ser gravados: o formato do Access é proprietário da Microsoft.";
 pub const about_author = "Autor";
 pub const about_license = "Licença";
 pub const about_license_text = "GPL v2 ou posterior (GPL-2.0-or-later)";
@@ -110,19 +171,25 @@ pub const about_open_browser = "Abrir no navegador";
 // botoes comuns
 pub const close = "Fechar";
 pub const cancel = "Cancelar";
-pub const save = "Salvar...";
-pub const delete = "Apagar";
 pub const copy = "Copiar";
 pub const copy_all = "Copiar tudo";
 pub const clear = "Limpar";
 
-// SQLite convertido
+// SQLite convertido, Salvar e Sair
 pub const converted_title = "SQLite convertido";
-pub const converted_text = "Salvar o arquivo SQLite convertido do Access ({s})?";
-pub const converted_remember = "Lembrar nesta sessão";
-pub const converted_reused = "{s}: aberto o SQLite salvo dele ({s})";
+pub const exit_text = "O banco convertido de {s} não foi salvo. Salvar antes de sair?";
+pub const btn_save = "Salvar";
+pub const btn_back = "Voltar";
+pub const btn_exit = "Sair";
+pub const log_discarded = "SQLite convertido de {s} descartado";
+pub const export_run_title = "Exportação em andamento";
+pub const export_run_text = "Sair cancela a exportação de {s}.";
+pub const save_title = "Salvar como SQLite, DuckDB ou Excel (arquivos .mdb e .accdb não podem ser gravados)";
+pub const copy_name = "{s} (cópia)";
+pub const converted_reused = "{s}: aberto o {s} salvo dele ({s})";
 pub const converted_saved = "SQLite salvo: {s}";
-pub const converted_deleted = "SQLite convertido apagado";
+pub const log_stale_removed = "{d} arquivos convertidos de uma sessão anterior removidos";
+pub const log_stale_removed_one = "{d} arquivo convertido de uma sessão anterior removido";
 
 // janela Log
 pub const log_title = "Log";
@@ -170,6 +237,7 @@ pub const err_not_db = "Não é um arquivo de banco: use .accdb, .mdb, .sqlite, 
 pub const err_cannot_write = "Não foi possível gravar o arquivo: ele está aberto em outro programa ou a pasta é somente leitura ({t})";
 pub const err_generic = "Erro: {t}";
 pub const err_sql = "Erro na consulta SQL: {s}";
+pub const sql_read_only = "A aba SQL só lê o banco: este comando não é permitido";
 pub const err_db = "Erro no banco: {s}";
 pub const err_plain = "{s}";
 pub const err_worker = "Não foi possível iniciar a tarefa em segundo plano: {t}";
@@ -213,7 +281,7 @@ pub const usage =
     \\  MDB2SQL_ACCESS_READER=odbc|mdbtools força o leitor de arquivos .accdb/.mdb
     \\  as opções definem o estado inicial: tabela selecionada, SQL a executar, pesquisa da aba Dados,
     \\  célula selecionada com o menu de cópia aberto, cores e idioma (só nesta execução),
-    \\  Sobre aberto, um menu aberto (File, View, Settings, Help, Export)
+    \\  Sobre aberto, um menu aberto (File, Edit, View, Settings, Help, Export)
     \\  --export db_sqlite|db_xlsx|db_duckdb|table_csv|table_xlsx|result_csv|result_xlsx
     \\  abre o diálogo de salvar dessa exportação quando o arquivo é carregado
     \\

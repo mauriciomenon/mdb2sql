@@ -86,9 +86,9 @@ test "UI texts: one Export button, no copyright line, no lecturing hints" {
     const ui = @embedFile("main.zig");
     try std.testing.expectEqual(1, std.mem.count(u8, ui, "button(tr(\"export_button\"))")); // o Exportar... da barra de cima
     try std.testing.expectEqual(1, std.mem.count(u8, ui, "button(tr(\"columns_button\"))"));
-    // cada exportacao aparece uma vez (o botao e o menu Arquivo > Exportar usam a mesma lista exportItems)
-    inline for (.{ "export_db_sqlite", "export_db_xlsx", "export_db_duckdb" }) |k|
-        try std.testing.expectEqual(1, std.mem.count(u8, ui, "tr(\"" ++ k ++ "\")"));
+    // o botao e o menu Arquivo > Exportar usam a mesma lista exportItems; o banco inteiro saiu dela (Arquivo > Salvar)
+    try std.testing.expectEqual(2, std.mem.count(u8, ui, "app.exportItems()"));
+    try std.testing.expect(std.mem.indexOf(u8, ui, "export_db_") == null);
     for ([_][]const u8{ "Copyright", "(C) 20", "read-only\")", "not available\")", "any order, ignores", "Remember", "Please ", "Make sure" }) |bad| {
         try std.testing.expect(std.mem.indexOf(u8, ui, bad) == null);
     }
@@ -123,15 +123,36 @@ test "All tables result: the count line and the list \"table (n)\" (Python and R
     try expectOrder("fn drawGlobal(", &.{ "\"global_found\"", "\"{s} ({d})\"" });
 }
 
-test "Data tab below the search (standard 24): filters line, grid, then the count line; no pages" {
-    try expectOrder("fn drawData(", &.{ "tr(\"rows_label\")", "tr(\"columns_button\")", "tr(\"filters_label\")", "drawGrid(\"##data\"", "\"rows_showing\"" });
+test "Data tab below the search (standard 24): filters line, grid, then the count line with the pages (item 13 h)" {
+    try expectOrder("fn drawData(", &.{ "tr(\"rows_label\")", "tr(\"columns_button\")", "tr(\"filters_label\")", "drawGrid(\"##data\"", "\"rows_page_found\"", "\"rows_page\"", "tr(\"page_prev\")", "tr(\"page_next\")" });
     const ui = @embedFile("main.zig");
     for ([_][]const u8{ "tr(\"prev\")", "tr(\"next\")", "page_line" }) |gone| try std.testing.expect(std.mem.indexOf(u8, ui, gone) == null);
 }
 
-test "File menu (Open... Ctrl+O, Export, Close, Exit Ctrl+Q) and the Python shortcuts" {
-    try expectOrder("if (ig.igBeginMenu(file_l", &.{ "tr(\"menu_open\"), \"Ctrl+O\"", "igBeginMenu(export_l", "tr(\"menu_close\")", "tr(\"menu_exit\"), \"Ctrl+Q\"" });
-    try expectOrder("const chord = ig.igIsKeyChordPressed_Nil;", &.{ "ImGuiKey_O)", "ImGuiKey_L)", "ImGuiKey_Q)", "ImGuiKey_F)", "ImGuiKey_F5,", "ImGuiKey_1)", "ImGuiKey_2)", "ImGuiKey_3)", "ImGuiKey_Enter)" });
+test "item 13 f: every button has the height of its line (none taller to show hierarchy) and the default padding" {
+    const ui = @embedFile("main.zig");
+    var it = std.mem.splitSequence(u8, ui, "ig.igButton(");
+    _ = it.next();
+    var n: usize = 0;
+    while (it.next()) |rest| : (n += 1) {
+        const line = rest[0 .. std.mem.indexOfScalar(u8, rest, '\n') orelse rest.len];
+        try std.testing.expect(std.mem.indexOf(u8, line, ".y = 0 }") != null);
+    }
+    try std.testing.expect(n > 5);
+    // os segmentos tem a altura do quadro; o preenchimento so muda na caixa de marcar da grade
+    try std.testing.expect(std.mem.indexOf(u8, ui, ".y = ig.igGetFrameHeight() }, 0)) clicked = i;") != null);
+    try std.testing.expectEqual(1, std.mem.count(u8, ui, "ImGuiStyleVar_FramePadding"));
+}
+
+test "File menu (item 28: Open..., Open the typed path, Reopen, Save, Save as..., Export, Close, Exit) and the shortcuts" {
+    try expectOrder("if (ig.igBeginMenu(file_l", &.{ "tr(\"menu_open\"), \"Ctrl+O\"", "tr(\"menu_open_typed\")", "tr(\"menu_reopen\"), \"F5\"", "igSeparator", "tr(\"menu_save\"), \"Ctrl+S\"", "tr(\"menu_save_as\"), \"Ctrl+Shift+S\"", "igBeginMenu(export_l", "igSeparator", "tr(\"menu_close\"), \"Ctrl+W\"", "igSeparator", "tr(\"menu_exit\"), \"Ctrl+Q\"" });
+    try expectOrder("const chord = ig.igIsKeyChordPressed_Nil;", &.{ "ImGuiKey_O)", "ImGuiKey_L)", "ImGuiKey_Q)", "ImGuiKey_S)", "ImGuiMod_Shift | ig.ImGuiKey_S)", "ImGuiKey_W)", "ImGuiKey_F)", "ImGuiKey_F5,", "ImGuiKey_1)", "ImGuiKey_2)", "ImGuiKey_3)", "ImGuiKey_Enter)" });
+}
+
+test "exit question (item 27): Save on the left, Back and Exit on the right; no Remember for this session" {
+    try expectOrder("fn drawExit(", &.{ "\"exit_text\"", "tr(\"btn_save\")", "tr(\"btn_back\")", "tr(\"btn_exit\")", "igButton(save_l", "igButton(back_l", "igButton(exit_l" });
+    const ui = @embedFile("main.zig");
+    for ([_][]const u8{ "converted_remember", "session_choice", "requestLeave" }) |gone| try std.testing.expect(std.mem.indexOf(u8, ui, gone) == null);
 }
 
 test "About as in Rust (Build, Stack, Window, Databases, Access reading, Author, License, links), titled About mdb2sql" {
@@ -139,11 +160,26 @@ test "About as in Rust (Build, Stack, Window, Databases, Access reading, Author,
     try std.testing.expectEqualStrings("Sobre o mdb2sql", pt.about_title);
     inline for (.{ .{ "about_build", "Build" }, .{ "about_stack", "Stack" }, .{ "about_window", "Janela" }, .{ "about_database", "Bancos" }, .{ "about_access", "Leitura do Access" }, .{ "about_author", "Autor" }, .{ "about_license", "Licença" } }) |p|
         try std.testing.expectEqualStrings(p[1], @field(pt, p[0]));
-    try expectOrder("fn drawAbout(", &.{ "tr(\"about_build\")", "tr(\"about_stack\")", "tr(\"about_window\")", "tr(\"about_database\")", "tr(\"about_access\")", "tr(\"about_author\")", "tr(\"about_license\")", "about.links" });
+    // item 28: a linha Gravacao logo depois de Leitura do Access
+    try expectOrder("fn drawAbout(", &.{ "tr(\"about_build\")", "tr(\"about_stack\")", "tr(\"about_window\")", "tr(\"about_database\")", "tr(\"about_access\")", "tr(\"about_write\")", "tr(\"about_author\")", "tr(\"about_license\")", "about.links" });
+    try std.testing.expectEqualStrings("Gravação", pt.about_write);
 }
 
-test "export menu order: SQLite, DuckDB, Excel, then CSV and Excel of the table, schema or result" {
-    try expectOrder("fn exportItems(", &.{ "tr(\"export_db_sqlite\")", "tr(\"export_db_duckdb\")", "tr(\"export_db_xlsx\")", "tr(\"export_table_csv\")", "tr(\"export_table_xlsx\")" });
+test "Terms tab (item 32), top to bottom: box, matching, scope, button and count, summary, tables and grid, not found" {
+    try expectOrder("fn drawTerms(", &.{ "\"##terms\"", "tr(\"terms_hint\")", "tr(\"match_whole\")", "tr(\"match_contains\")", "tr(\"match_tip\")", "tr(\"scope_table\")", "tr(\"scope_all\")", "tr(\"terms_run\")", "\"terms_count\"", "\"terms_summary\"", "\"##terms_tables\"", "drawGrid(\"##termsgrid\"", "\"rows_showing\"", "\"not_found_title\"", "tr(\"copy\")", "\"##notfound\"" });
+    // a aba nova vem depois da SQL; Ctrl+4 a abre
+    try expectOrder("fn drawContent(", &.{ "\"tab_data\"", "\"tab_schema\"", "\"tab_sql\"", "\"tab_terms\"" });
+    try expectOrder("const chord = ig.igIsKeyChordPressed_Nil;", &.{ "ImGuiKey_3)", "ImGuiKey_4)" });
+}
+
+test "menus of item 28: the fixed Export list, Edit, View and Settings in the brief's order; menu bar File, Edit, View, Settings, Help" {
+    try expectOrder("fn exportItems(", &.{ "tr(\"export_table\")", "tr(\"export_marked\")", "tr(\"export_schema\")", "tr(\"export_dbschema\")", "tr(\"export_all_csv\")", "tr(\"export_result\")", "tr(\"export_global\")", "termsReportMenu(" });
+    try expectOrder("fn formatMenu(", &.{ "tr(\"fmt_csv\")", "tr(\"fmt_xlsx\")" });
+    try expectOrder("fn termsReportMenu(", &.{ "tr(\"fmt_xlsx\")", "tr(\"fmt_csv\")", "tr(\"fmt_sqlite\")", "tr(\"fmt_duckdb\")" });
+    try expectOrder("if (ig.igBeginMenu(edit_l", &.{ "tr(\"copy_value\"), \"Ctrl+C\"", "tr(\"copy_row\"), \"Ctrl+Shift+C\"", "tr(\"copy_row_header\")", "tr(\"menu_copy_log\")", "igSeparator", "tr(\"menu_search\"), \"Ctrl+F\"", "tr(\"filter_by_value\")", "tr(\"clear_filters\")", "igSeparator", "tr(\"menu_mark\"), tr(\"key_space\")", "tr(\"menu_unmark_all\")" });
+    try expectOrder("if (ig.igBeginMenu(view_l", &.{ "tr(\"tab_data\"), \"Ctrl+1\"", "tr(\"tab_schema\"), \"Ctrl+2\"", "tr(\"tab_sql\"), \"Ctrl+3\"", "tr(\"tab_terms\"), \"Ctrl+4\"", "igSeparator", "\"rows_label\"", "tr(\"columns_button\")", "\"menu_search_in\"", "tr(\"menu_only_marked\")", "tr(\"menu_goto_tables\"), \"Ctrl+T\"", "tr(\"fav_toggle\"), \"Ctrl+D\"", "igSeparator", "tr(\"menu_run_sql\"), \"Ctrl+Enter\"", "tr(\"terms_run\"), \"Ctrl+Enter\"", "igSeparator", "tr(\"menu_log\"), \"Ctrl+L\"" });
+    try expectOrder("if (ig.igBeginMenu(settings_l", &.{ "\"menu_theme\"", "igBeginMenu(lang_l", "\"menu_search_scope\"", "\"menu_term_match\"", "tr(\"menu_show_null\")" });
+    try expectOrder("fn drawMenu(", &.{ "igBeginMenu(file_l", "igBeginMenu(edit_l", "igBeginMenu(view_l", "igBeginMenu(settings_l", "igBeginMenu(help_l" });
 }
 
 test "license: GPL v2 or later in About (three languages), LICENSE file is the GPL v2 text" {

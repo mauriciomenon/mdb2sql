@@ -33,6 +33,9 @@ extern fn ImGui_ImplOpenGL3_Shutdown() void;
 // src/shim.c: campos de structs que o translate-c deixa opacos
 extern fn shim_io_setup() void;
 extern fn shim_add_font(path: [*:0]const u8, size_pixels: f32) ?*ig.ImFont;
+extern fn shim_merge_glyphs(path: [*:0]const u8, size_pixels: f32, ranges: [*]const ig.ImWchar) ?*ig.ImFont;
+// juntados da fonte de simbolos: setas das paginas da aba Dados e a estrela das favoritas (pares inicio-fim, 0 no fim)
+const symbol_glyphs = [_]ig.ImWchar{ 0x25B6, 0x25B6, 0x25C0, 0x25C0, 0x2605, 0x2605, 0 };
 extern fn shim_clipper_range(clipper: *const ig.ImGuiListClipper, start: *c_int, end: *c_int) void;
 extern fn shim_capture_setup() void;
 extern fn shim_capture_frame(w: f32, h: f32) void;
@@ -120,7 +123,8 @@ const Capture = struct {
     failed: ?[]const u8 = null,
     skipped: std.ArrayList(u8) = .empty,
     deleted_tmp: ?access.TempPath = null, // passo final: o temporario que tem de sumir
-    save_end: bool = false, // MDB2SQL_CAPTURE_SAVE=1: o passo final responde Salvar em vez de Apagar
+    // MDB2SQL_CAPTURE_SAVE=sqlite|duckdb|xlsx: o passo final salva (sem a caixa, na pasta das capturas) antes de fechar
+    save_type: ?dialog.SaveType = null,
     saved_path: ?[]const u8 = null, // Salvar: o arquivo que tem de existir (do gpa)
     esc_frames: u32 = 0, // passo exit_esc: quadros desde o pedido de saida; Esc solto aos 12
     wrong: std.ArrayList(u8) = .empty, // conferencias que falharam (a captura segue; saida 2 no fim)
@@ -129,6 +133,19 @@ const Capture = struct {
     hit_rows: u64 = 0, // open_hit: linhas que a busca global listou para a tabela
     release_key: ?c_int = null, // passos key_*: tecla apertada, solta no quadro seguinte
     source_path: [1024:0]u8 = @splat(0), // prompt_delete: o Access de origem (reopen_saved abre de novo)
+    pending_mark: bool = false, // search_mark: a busca rodou, falta marcar a 1a linha nao marcada
+    terms_phase: u8 = 0, // terms: 1 = pesquisando; 2 = RANGER_SOSTAT escolhida na lista
+    terms_file: []const u8 = "", // MDB2SQL_CAPTURE_TERMS: a lista colada na aba Termos
+    terms_report: std.ArrayList(u8) = .empty, // capture_terms.txt
+    dialog: bool = false, // MDB2SQL_CAPTURE_DIALOG=1: o passo save_dialog abre a caixa nativa
+    log_mark: usize = 0, // prompt_delete: tamanho do Log antes de Fechar
+    only: []const u8 = "", // MDB2SQL_CAPTURE_ONLY: comecos de nome dos passos que rodam (vazio = todos)
+
+    fn wanted(only: []const u8, name: []const u8) bool {
+        var it = std.mem.tokenizeScalar(u8, only, ',');
+        while (it.next()) |prefix| if (std.mem.startsWith(u8, name, prefix)) return true;
+        return false;
+    }
 
     fn size(c: *const Capture) [2]u32 {
         const s = dbm.capture.plan[@min(c.step, dbm.capture.plan.len - 1)];
@@ -139,18 +156,69 @@ const Capture = struct {
     fn ready(app: *const App) bool {
         if (app.slot.busy() or app.want_open or app.want_reload or app.want_run or app.want_select != null or app.want_global or
             app.search_wait.due != null or app.want_filter != null or app.want_unfilter != null or app.want_clear_filters or
-            app.choice != null) return false;
+            app.want_close or app.want_save != null or app.want_mark != null or app.want_unmark_all or
+            app.want_terms or app.want_terms_page != null or app.want_terms_copy) return false;
         return app.db.isOpen() and app.selected != null;
     }
 
-    // O estado pedido pelo passo ja esta na tela (o passo Apagar termina sem banco aberto)
+    // O estado pedido pelo passo ja esta na tela (o passo Fechar termina sem banco aberto)
     fn settled(c: *const Capture, app: *const App) bool {
-        // saida pedida, pergunta aberta, Esc: a pergunta fecha e o programa continua aberto
-        if (dbm.capture.plan[c.step].action == .exit_esc)
-            return c.esc_frames > 14 and app.leave == null and !app.quit and ready(app);
-        if (dbm.capture.plan[c.step].action == .prompt_delete)
-            return !app.slot.busy() and app.choice == null and app.leave == null and !app.db.isOpen() and app.converted == null;
-        return ready(app);
+        switch (dbm.capture.plan[c.step].action) {
+            // saida pedida, pergunta aberta, Esc: a pergunta fecha e o programa continua aberto
+            .exit_esc => return c.esc_frames > 14 and app.exit_ask == null and !app.quit and ready(app),
+            .prompt => return app.exit_ask == .unsaved and !app.slot.busy(),
+            .prompt_delete => return !app.slot.busy() and !app.want_close and !app.db.isOpen() and app.converted == null,
+            .search_mark => return !c.pending_mark and ready(app),
+            .terms => return c.terms_phase == 2 and ready(app),
+            else => return ready(app),
+        }
+    }
+
+    // Passos de duas fases: depois da busca, marca a 1a linha nao marcada; depois da pesquisa de termos, escolhe a
+    // tabela RANGER_SOSTAT na lista
+    fn secondPhase(c: *Capture, app: *App) void {
+        if (!c.applied or !ready(app)) return;
+        if (c.pending_mark) {
+            c.pending_mark = false;
+            const rows = if (app.data) |g| g.rows.len else 0;
+            if (app.marked_top < rows) app.want_mark = app.marked_top else c.note(app.gpa, "the search found no row to mark");
+        }
+        if (c.terms_phase == 1) {
+            c.terms_phase = 2;
+            const res = app.terms_res orelse return c.note(app.gpa, "the term search gave no result");
+            for (res.tables, 0..) |hit, i| if (std.mem.eql(u8, app.db.table_names[hit.table], dbm.capture.first_table)) {
+                if (i != app.terms_hit) app.want_terms_page = i;
+            };
+        }
+    }
+
+    // capture_terms.txt: o resumo, o tempo, as tabelas com acerto, os nao encontrados e as linhas de RANGER_SOSTAT
+    fn recordTerms(c: *Capture, app: *const App, how: []const u8) void {
+        const res = app.terms_res orelse return;
+        const rep = &c.terms_report; // texto do --capture (auxiliar de teste)
+        const a = app.gpa;
+        var sb: [3][96]u8 = undefined;
+        var summary: [400]u8 = undefined;
+        rep.print(a, "[{s}] {s}\r\ntempo: {d:.2} s\r\ntabelas:", .{ how, i18n.fmt(&summary, "terms_summary", .{
+            i18n.fmtCount(&sb[0], "terms_found", res.terms.len, .{ res.found, res.terms.len }),
+            i18n.fmtCount(&sb[1], "terms_rows", res.rows, .{res.rows}),
+            i18n.fmtCount(&sb[2], "terms_tables", res.tables.len, .{res.tables.len}),
+        }), app.terms_seconds }) catch return;
+        for (res.tables) |hit| rep.print(a, " {s} ({d});", .{ app.db.table_names[hit.table], hit.rows }) catch return;
+        rep.print(a, "\r\nnao encontrados: {s}\r\n", .{res.not_found}) catch return;
+        const g = app.terms_grid orelse return;
+        if (app.terms_hit >= res.tables.len) return;
+        rep.print(a, "{s}:\r\n", .{app.db.table_names[res.tables[app.terms_hit].table]}) catch return;
+        // Termo e as colunas que identificam o ponto
+        var picks: [4]?usize = .{ 0, null, null, null };
+        for (g.columns, 0..) |col, i| for ([_][]const u8{ "RTUNO", "PNTNO", "SUBNAM" }, 1..) |want, k| {
+            if (std.ascii.eqlIgnoreCase(col, want)) picks[k] = i;
+        };
+        for (g.rows) |row| {
+            for (picks, 0..) |p, k| if (p) |i| rep.print(a, "{s}{s}", .{ if (k > 0) " | " else "  ", row[i] orelse "" }) catch return;
+            rep.appendSlice(a, "\r\n") catch return;
+        }
+        rep.appendSlice(a, "\r\n") catch {};
     }
 
     fn skip(c: *Capture, gpa: std.mem.Allocator, why: []const u8) void {
@@ -167,6 +235,7 @@ const Capture = struct {
             shim_key(ig.ImGuiMod_Ctrl, false);
             c.release_key = null;
         }
+        c.secondPhase(app);
         // global_clear: o termo e apagado com a busca rodando, como o usuario apagando a caixa
         if (c.applied and c.step < dbm.capture.plan.len and dbm.capture.plan[c.step].action == .global_clear and
             !c.cleared and app.slot.busyWith(.search_all))
@@ -177,9 +246,14 @@ const Capture = struct {
         }
         while (true) {
             if (c.step == dbm.capture.plan.len or c.applied) return;
+            // MDB2SQL_CAPTURE_ONLY=u_,v_: so os passos que comecam assim (medicao rapida); os outros nem rodam
+            if (c.only.len > 0 and !wanted(c.only, dbm.capture.plan[c.step].name)) {
+                c.step += 1;
+                continue;
+            }
             // reopen_saved comeca com o arquivo fechado (depois do Salvar)
             if (dbm.capture.plan[c.step].action == .reopen_saved) {
-                if (app.slot.busy() or app.choice != null or app.leave != null) return;
+                if (app.slot.busy() or app.exit_ask != null) return;
                 if (c.apply(app)) return;
                 continue;
             }
@@ -209,14 +283,15 @@ const Capture = struct {
         if (action != .export_ask) app.ask_export = null;
         app.close_popups = true;
         switch (action) {
-            .sql_tab, .sql_error, .key_ctrl_enter => app.want_tab = .sql,
+            .sql_tab, .sql_error, .sql_write, .key_ctrl_enter => app.want_tab = .sql,
+            .terms, .terms_show, .terms_empty => app.want_tab = .terms,
             .key_ctrl_1, .key_ctrl_2, .key_ctrl_f => {},
             else => app.want_tab = .data,
         }
         // so os passos de Log abrem o painel (a captura nao le nem grava as configuracoes)
         app.prefs.log_open = action == .log or action == .log_error_open;
         if (app.prefs.log_open) markLogRead();
-        if (action != .prompt and action != .prompt_delete) app.leave = null;
+        if (action != .prompt) app.exit_ask = null;
         if (action != .display_warning) app.display_dismiss = true;
         switch (action) {
             .exit_esc => {
@@ -249,6 +324,66 @@ const Capture = struct {
             },
             .file_menu => app.start_menu = .File,
             .export_menu => app.start_menu = .Export,
+            .edit_menu => app.start_menu = .Edit,
+            .view_menu => app.start_menu = .View,
+            .table => {
+                const i = indexOf(app.db.table_names, cap.plan[c.step].arg) orelse {
+                    c.skip(app.gpa, "table not found");
+                    return false;
+                };
+                if (app.selected != i) app.want_select = i;
+            },
+            .search_mark, .search_only => {
+                // busca digitada na aba Dados (Esta tabela); search_mark marca depois a 1a linha nao marcada
+                app.scope = .table;
+                copyZ(&app.search, cap.plan[c.step].arg);
+                app.runSearch();
+                c.pending_mark = action == .search_mark;
+            },
+            .only_marked => {
+                app.only_marked = true;
+                app.reloadFirstPage();
+            },
+            .unmark_all => app.want_unmark_all = true,
+            .page_next => {
+                app.page += 1;
+                app.want_reload = true;
+            },
+            .favorites => {
+                // as 3 favoritas (as que o arquivo tiver) e o menu do clique direito na tabela aberta
+                for (cap.fav_tables) |name| if (indexOf(app.db.table_names, name)) |i| {
+                    if (!dbm.gridtools.isFavorite(app.favorites.items, name)) app.toggleFavorite(i);
+                };
+                app.fav_menu = app.selected;
+            },
+            .terms => {
+                if (c.terms_file.len == 0) {
+                    c.skip(app.gpa, "no term list (MDB2SQL_CAPTURE_TERMS=<file>)");
+                    return false;
+                }
+                // a lista colada, Todas as tabelas, a comparacao do passo
+                const text = std.Io.Dir.cwd().readFile(app.io, c.terms_file, app.terms_text[0 .. app.terms_text.len - 1]) catch {
+                    c.skip(app.gpa, "the term list could not be read");
+                    return false;
+                };
+                app.terms_text[text.len] = 0;
+                app.countTerms();
+                app.terms_match = if (std.mem.eql(u8, cap.plan[c.step].arg, "contains")) .contains else .whole;
+                app.terms_scope = .all;
+                app.want_terms = true;
+                c.terms_phase = 1;
+            },
+            .terms_show => if (app.terms_res == null) {
+                c.skip(app.gpa, "no term search result");
+                return false;
+            },
+            .save_dialog => {
+                if (!c.dialog) {
+                    c.skip(app.gpa, "the native save box blocks (MDB2SQL_CAPTURE_DIALOG=1 and a script that closes it)");
+                    return false;
+                }
+                app.want_save = .save;
+            },
             .sql_tab => {
                 app.sql[0] = 0;
                 app.clearResult();
@@ -256,6 +391,10 @@ const Capture = struct {
             },
             .sql_error => {
                 copyZ(&app.sql, "SELEC 1");
+                app.want_run = true;
+            },
+            .sql_write => {
+                copyZ(&app.sql, cap.plan[c.step].arg);
                 app.want_run = true;
             },
             .key_ctrl_enter => {
@@ -267,8 +406,8 @@ const Capture = struct {
             .key_ctrl_f => c.press(true, ig.ImGuiKey_F),
             .key_f5 => c.press(false, ig.ImGuiKey_F5),
             .reopen_saved => {
-                if (!c.save_end or c.source_path[0] == 0) {
-                    c.skip(app.gpa, "the converted SQLite was not saved (MDB2SQL_CAPTURE_SAVE=1 saves it)");
+                if (c.save_type == null or c.save_type == .xlsx or c.source_path[0] == 0) {
+                    c.skip(app.gpa, "the converted SQLite was not saved as SQLite or DuckDB (MDB2SQL_CAPTURE_SAVE=sqlite|duckdb)");
                     return false;
                 }
                 app.setPath(zstr(&c.source_path));
@@ -304,7 +443,7 @@ const Capture = struct {
                 if (app.selected != i) app.want_select = i;
             },
             .about => app.want_about = true,
-            .log, .log_error_open => {},
+            .log, .log_error_open, .terms_empty => {},
             .log_error => {
                 // erro de verdade (SQL errado) com o Log recolhido: a barra de status mostra o erro em destaque
                 copyZ(&app.sql, "SELEC 1");
@@ -348,11 +487,7 @@ const Capture = struct {
                 app.pickGlobal(hit.table, &g.term);
             },
             .reopen => {
-                if (app.converted != null) {
-                    c.skip(app.gpa, "an Access file asks before closing");
-                    return false;
-                }
-                // filtro da lista de tabelas, busca e escopo diferentes do padrao; depois abre de novo o mesmo arquivo
+                // (abrir de novo nao pergunta mais, nem com o Access convertido) filtro da lista de tabelas, busca e escopo diferentes do padrao; depois abre de novo o mesmo arquivo
                 copyZ(&app.table_filter, "SOX");
                 app.table_filter_applied = app.table_filter;
                 copyZ(&app.search, cap.filter_value);
@@ -361,24 +496,25 @@ const Capture = struct {
                 app.want_open = true;
             },
             .prompt, .prompt_delete => {
-                if (app.converted == null) {
+                const cv = app.converted orelse {
                     c.skip(app.gpa, "not an Access file (nothing was converted)");
                     return false;
-                }
-                const tmp = app.converted.?.tmp;
-                c.source_path = app.converted.?.source;
-                if (action == .prompt) app.requestLeave(.close) else {
-                    app.requestLeave(.close);
-                    c.deleted_tmp = tmp;
-                    if (c.save_end) {
-                        // resposta "Salvar" lembrada, com a pasta das capturas: grava <origem>.sqlite sem dialogo
+                };
+                c.source_path = cv.source;
+                if (action == .prompt) {
+                    // a pergunta ao sair (Ctrl+Q, X): Access convertido e nao salvo
+                    app.requestExit();
+                } else {
+                    // Fechar: sem pergunta; o temporario some (descartado, ou salvo antes como na caixa de Salvar)
+                    c.deleted_tmp = cv.tmp;
+                    c.log_mark = session_log.slice().len; // a linha do descarte tem de vir depois daqui
+                    if (c.save_type) |ty| {
                         var nb: [600]u8 = undefined;
-                        const file = settings.fileName(&nb, std.fs.path.stem(zstr(&app.converted.?.source)), ".sqlite");
+                        const file = settings.fileName(&nb, std.fs.path.stem(zstr(&cv.source)), ty.ext());
                         c.saved_path = std.fs.path.join(app.gpa, &.{ c.out_dir, file }) catch null;
-                        app.session_choice = .save;
-                        copyZ(&app.save_dir, c.out_dir);
-                        app.choice = .save;
-                    } else app.choice = .delete;
+                        if (c.saved_path) |p| app.saveTo(p, ty);
+                    }
+                    app.want_close = true;
                 }
             },
         }
@@ -393,11 +529,11 @@ const Capture = struct {
         if (c.applied and dbm.capture.plan[c.step].action == .exit_esc) {
             c.esc_frames += 1;
             if (c.esc_frames == 12) {
-                if (app.leave == null) c.failed = "the exit prompt did not open";
+                if (app.exit_ask == null) c.failed = "the exit prompt did not open";
                 shim_key(ig.ImGuiKey_Escape, true);
             }
             if (c.esc_frames == 13) shim_key(ig.ImGuiKey_Escape, false);
-            if (c.esc_frames == 200 and app.leave != null) c.failed = "Esc did not close the exit prompt";
+            if (c.esc_frames == 200 and app.exit_ask != null) c.failed = "Esc did not close the exit prompt";
             if (app.quit) c.failed = "Esc on the exit prompt closed the program";
         }
         if (!c.applied or !c.settled(app)) {
@@ -408,21 +544,27 @@ const Capture = struct {
         if (c.settle == 1) c.since = ig.igGetTime();
         // popups, auto-ajuste das colunas e o escurecimento do fundo do modal levam alguns quadros e ~0,3 s
         if (c.settle < 8 or ig.igGetTime() - c.since < 0.5) return false;
-        // Apagar ou Salvar: o temporario tem de ter sumido do disco; Salvar: o arquivo salvo e um SQLite
+        // Fechar: o temporario tem de ter sumido do disco; Salvar: o arquivo salvo e do tipo pedido
         if (c.deleted_tmp) |tmp| {
             if (std.Io.Dir.cwd().access(io, tmp.slice(), .{})) |_| {
-                c.failed = "the temporary SQLite still exists after the answer";
+                c.failed = "the temporary SQLite still exists after closing";
                 return true;
             } else |_| {}
+            c.deleted_tmp = null;
         }
-        if (c.saved_path) |p| {
+        if (c.saved_path) |p| if (c.save_type) |ty| {
             var hb: [16]u8 = undefined;
             const head = std.Io.Dir.cwd().readFile(io, p, &hb) catch "";
-            if (!std.mem.eql(u8, head, "SQLite format 3\x00")) {
-                c.failed = "the saved SQLite file is missing or is not a SQLite file";
+            const ok = switch (ty) {
+                .sqlite => std.mem.eql(u8, head, "SQLite format 3\x00"),
+                .duckdb => head.len >= 12 and std.mem.eql(u8, head[8..12], "DUCK"),
+                .xlsx => std.mem.startsWith(u8, head, &.{ 'P', 'K', 3, 4 }), // zip
+            };
+            if (!ok) {
+                c.failed = "the saved file is missing or is not of the type saved";
                 return true;
             }
-        }
+        };
         c.check(app);
         c.save(app.gpa, io) catch |e| {
             c.failed = @errorName(e);
@@ -453,9 +595,49 @@ const Capture = struct {
             .key_ctrl_2 => if (app.tab != .schema) c.note(app.gpa, "Ctrl+2 did not show the Schema tab"),
             .key_ctrl_f => if (app.tab != .data or app.focus_search) c.note(app.gpa, "Ctrl+F did not focus the Data search"),
             .sql_error => if (alert.len == 0 or !app.sql_msg.is_err) c.note(app.gpa, "the SQL error is not on the status bar"),
+            .sql_write => if (!std.mem.eql(u8, app.sql_msg.text(), tr("sql_read_only")) or indexOf(app.db.table_names, cap.first_table) == null)
+                c.note(app.gpa, "the SQL tab ran a statement that writes"),
             .key_ctrl_enter => if (app.result == null or alert.len > 0 or app.sql_msg.is_err) c.note(app.gpa, "Ctrl+Enter with a SQL that works did not clear the previous error"),
             .key_f5 => if (!app.db.isOpen() or !app.status.loaded) c.note(app.gpa, "F5 did not open the file again"),
-            .reopen_saved => if (app.converted != null or app.source != .sqlite) c.note(app.gpa, "the saved SQLite was not reused (the Access file was converted again)"),
+            .reopen_saved => {
+                if (app.converted != null or (app.source != .sqlite and app.source != .duckdb)) c.note(app.gpa, "the saved file was not reused (the Access file was converted again)");
+                // a linha do Log diz o formato real do salvo
+                const saved_as: dbm.Source = if (c.save_type == .duckdb) .duckdb else .sqlite;
+                var lb: [2200]u8 = undefined;
+                const line = i18n.fmt(&lb, "converted_reused", .{ std.fs.path.basename(zstr(&c.source_path)), saved_as.label(), c.saved_path orelse "" });
+                if (std.mem.indexOf(u8, session_log.slice(), line) == null) c.note(app.gpa, "the Log line of the reused file does not say its format");
+            },
+            .search_only => if (app.marked_top != 3) c.note(app.gpa, "the 3 marked rows are not on top during another search"),
+            .only_marked => if (app.data == null or app.data.?.rows.len != app.marksOf(app.selected).len) c.note(app.gpa, "Only marked does not show just the marked rows"),
+            .unmark_all => if (app.marksOf(app.selected).len != 0 or app.only_marked) c.note(app.gpa, "Unmark all rows left marks"),
+            // pagina 2 da tabela: as linhas depois das primeiras `limit`
+            .page_next => if (app.page != 1 or app.data == null or app.data.?.rows.len == 0) c.note(app.gpa, "the next page of the Data tab did not load"),
+            // as favoritas no topo da lista, em ordem alfabetica
+            .favorites => {
+                const order = app.table_order.items;
+                const want = [_][]const u8{ "RANGER_SOEQID", "RANGER_SOSTAT", "RANGER_SOTEXT" };
+                for (want, 0..) |name, k| if (k >= order.len or !std.mem.eql(u8, app.db.table_names[order[k]], name))
+                    return c.note(app.gpa, "the favorite tables are not at the top in alphabetical order");
+            },
+            .terms => {
+                c.recordTerms(app, cap.plan[c.step].arg);
+                const res = app.terms_res orelse return;
+                for (res.tables) |hit| {
+                    if (std.mem.eql(u8, app.db.table_names[hit.table], cap.first_table)) break;
+                } else c.note(app.gpa, "the term search did not find " ++ cap.first_table);
+                // a grade da tabela escolhida mostra as linhas contadas (ate o limite de Linhas)
+                const shown = if (app.terms_grid) |g| g.rows.len else 0;
+                if (app.terms_hit < res.tables.len and shown != @min(res.tables[app.terms_hit].rows, app.limit))
+                    c.note(app.gpa, "the grid of the chosen table does not show the rows counted");
+            },
+            // Fechar nao pergunta: o convertido nao salvo e descartado com a linha do Log
+            .prompt_delete => {
+                var lb: [1200]u8 = undefined;
+                const line = i18n.fmt(&lb, "log_discarded", .{std.fs.path.basename(zstr(&c.source_path))});
+                const log_now = session_log.slice();
+                const logged = std.mem.indexOf(u8, log_now[@min(c.log_mark, log_now.len)..], line) != null;
+                if (logged == (c.save_type != null)) c.note(app.gpa, "closing logged the discard wrongly (missing, or after saving)");
+            },
             else => {},
         }
     }
@@ -485,7 +667,13 @@ const Capture = struct {
     fn report(c: *Capture, gpa: std.mem.Allocator, io: std.Io) void {
         defer c.skipped.deinit(gpa);
         defer c.wrong.deinit(gpa);
+        defer c.terms_report.deinit(gpa);
         defer if (c.saved_path) |p| gpa.free(p);
+        if (c.terms_report.items.len > 0) {
+            const path = std.fs.path.join(gpa, &.{ c.out_dir, "capture_terms.txt" }) catch return;
+            defer gpa.free(path);
+            std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = c.terms_report.items }) catch {};
+        }
         if (c.skipped.items.len > 0) {
             const path = std.fs.path.join(gpa, &.{ c.out_dir, "capture_skipped.txt" }) catch return;
             defer gpa.free(path);
@@ -638,6 +826,13 @@ fn markLogRead() void {
     alert.markRead();
 }
 
+// Linha do Log (a do Go): temporarios de uma sessao anterior (programa que caiu) apagados ao iniciar
+fn logStale(n: usize) void {
+    if (n == 0) return;
+    var b: [200]u8 = undefined;
+    logLine(i18n.fmtCount(&b, "log_stale_removed", n, .{n}));
+}
+
 const Msg = struct {
     buf: [1024]u8 = undefined,
     len: usize = 0,
@@ -788,10 +983,21 @@ fn dialogKeyClose() bool {
     return dbm.gridtools.dialogCloses(ig.igIsKeyPressed_Bool(ig.ImGuiKey_Escape, false), enter, ig.igIsAnyItemFocused() or ig.igIsAnyItemActive());
 }
 
-// Botoes de dialogo do mesmo tamanho, alinhados a direita
-fn dialogButtonWidth(labels: []const [:0]const u8) f32 {
+// Foco de teclado visivel no item anterior (o botao padrao) quando o dialogo aparece; Enter o aciona
+fn focusOnAppear() void {
+    if (!ig.igIsWindowAppearing()) return;
+    ig.igSetItemDefaultFocus();
+    ig.igSetKeyboardFocusHere(-1);
+    ig.igSetNavCursorVisible(true);
+}
+
+// Botoes de um dialogo todos do mesmo tamanho (a altura e a de sempre): a largura do maior texto entre eles nos 3
+// idiomas, assim nenhum botao muda de tamanho com o idioma nem com o vizinho (pedido do dono, 26/11)
+fn dialogButtonWidth(comptime keys: []const []const u8) f32 {
     var w: f32 = 88;
-    for (labels) |l| w = @max(w, buttonWidth(l));
+    inline for (i18n.catalogs) |C| inline for (keys) |k| {
+        w = @max(w, buttonWidth(@field(C, k)));
+    };
     return w;
 }
 
@@ -815,14 +1021,20 @@ fn setClipboard(s: []const u8) void {
 
 // ------------------------------------------------------------------- app
 
-const Tab = enum { data, schema, sql };
+const Tab = enum { data, schema, sql, terms };
+
+// Caixa da aba Termos: 1 MiB (uma coluna do Excel com dezenas de milhares de termos)
+// shortcut: a fixed box, text beyond 1 MiB is not accepted; grow it with ImGuiInputTextFlags_CallbackResize if needed
+const terms_box_size = 1 << 20;
 
 // Busca em todas as tabelas: o termo buscado e as tabelas com linhas (hits do gpa)
 const Global = struct { term: [256:0]u8, hits: []worker.Hit };
 
-// O que fazer depois de responder sobre o SQLite convertido
-const Leave = enum { open, close, exit };
-const Choice = enum { save, delete };
+// Pergunta aberta ao sair do programa: exportacao em andamento (Voltar / Sair) ou Access convertido e nao salvo
+// (Salvar / Voltar / Sair)
+const ExitAsk = enum { export_running, unsaved };
+// Arquivo > Salvar (pasta do original) e Salvar como... (ultima pasta em que o usuario salvou ou exportou)
+const SaveMode = enum { save, save_as };
 // Exportar a tabela com busca ou filtro: a tabela inteira ou so as linhas encontradas
 const ExportScope = enum { whole, found };
 
@@ -850,16 +1062,17 @@ const App = struct {
     tables_w: f32 = 0, // largura inicial do painel das tabelas (0 = calcular)
     opened: u32 = 0, // arquivos abertos na sessao (ID do painel das tabelas)
 
-    // Access aberto = SQLite temporario; ao fechar, abrir outro ou sair a UI pergunta se salva ou apaga
-    converted: ?struct { tmp: access.TempPath, source: [1024:0]u8 } = null,
-    leave: ?Leave = null, // acao esperando a resposta (o dialogo fica aberto enquanto isto existir)
-    choice: ?Choice = null, // resposta, executada em update() quando nenhum trabalho roda
-    session_choice: ?Choice = null, // resposta com "Lembrar nesta sessao": vale ate o programa fechar
-    remember_box: bool = false, // a caixa "Lembrar nesta sessao" do dialogo (desmarcada a cada pergunta)
-    choice_remember: bool = false, // a resposta em `choice` veio com a caixa marcada
+    // Access aberto = SQLite temporario. Fechar, abrir outro e Reabrir o apagam sem perguntar; so ao sair do programa,
+    // e so se ele nao foi salvo (Arquivo > Salvar), a UI pergunta
+    converted: ?struct { tmp: access.TempPath, source: [1024:0]u8, saved: bool = false } = null,
+    exit_ask: ?ExitAsk = null, // pergunta de saida aberta
+    exit_save: bool = false, // "Salvar" na pergunta de saida: o programa fecha quando o arquivo estiver salvo
+    saving: bool = false, // a exportacao em andamento e um Salvar (no fim o Access conta como salvo)
+    want_save: ?SaveMode = null, // abre a caixa de salvar quando nenhum trabalho roda
+    want_close: bool = false, // Arquivo > Fechar
     open_request: [1024:0]u8 = @splat(0), // arquivo pedido no open em andamento (o Access, mesmo abrindo o SQLite salvo)
     opened_file: [1024:0]u8 = @splat(0), // arquivo que o banco tem aberto (o SQLite salvo, quando reaproveitado)
-    save_dir: [1024:0]u8 = @splat(0), // pasta escolhida no primeiro "Salvar" da sessao
+    save_dir: [1024:0]u8 = @splat(0), // ultima pasta em que o usuario salvou ou exportou nesta sessao
     quit: bool = false,
     capture_mode: bool = false, // --capture (auxiliar de teste)
     // Linux sem X11: aviso da abertura (texto copiavel, terminado em 0); null = sem aviso
@@ -879,7 +1092,8 @@ const App = struct {
     select_search: bool = false, // o proximo select abre a tabela com a busca da caixa (escolha na busca global)
     sort_col: ?usize = null,
     sort_desc: bool = false,
-    limit: u32 = query.default_limit, // linhas carregadas na aba Dados (lista 100 / 500 / 1000)
+    limit: u32 = query.default_limit, // linhas por pagina na aba Dados (lista 100 / 500 / 1000)
+    page: u64 = 0, // pagina da aba Dados (0 = a primeira); as marcadas ficam fora dela, no topo
     total: u64 = 0,
     // busca que vale para as linhas na tela (a caixa de busca pode ter texto ainda nao aplicado)
     applied_search: [256:0]u8 = @splat(0),
@@ -889,6 +1103,28 @@ const App = struct {
     want_filter: ?struct { col: usize, value: ?[]u8 } = null, // novo filtro pedido (valor do gpa; null = NULL)
     want_unfilter: ?usize = null, // remover o filtro de indice N
     want_clear_filters: bool = false,
+    // Linhas marcadas (item 31), por tabela (indice em db.table_names), enquanto o arquivo estiver aberto: a identidade
+    // de cada linha (rowid ou md5 da linha, do gpa). Mudam so sem trabalho rodando (o pedido le a lista).
+    marks: []std.ArrayList([]const u8) = &.{},
+    data_key: ?query.RowKey = null, // identidade de linha da tabela aberta
+    marked_top: usize = 0, // as primeiras linhas de `data` sao as marcadas
+    only_marked: bool = false, // Exibir > So as linhas marcadas (a caixa "So as marcadas")
+    want_mark: ?usize = null, // marcar ou desmarcar esta linha da grade de Dados
+    want_unmark_all: bool = false,
+
+    // Aba Termos (item 32)
+    terms_text: []u8 = &.{}, // a caixa (terms_box_size + 1 bytes do gpa, terminada em 0)
+    terms_counted: [2]usize = .{ 0, 0 }, // termos sem os repetidos e os repetidos da caixa (refeito ao editar)
+    terms_match: settings.TermMatch = .whole, // Valor inteiro | Contem (padrao em Configuracoes)
+    terms_scope: settings.SearchScope = .table, // Esta tabela | Todas as tabelas (padrao: Escopo padrao da busca)
+    terms_res: ?dbm.terms.Result = null, // resultado mostrado
+    terms_hit: usize = 0, // tabela escolhida na lista (indice em terms_res.tables)
+    terms_grid: ?dbm.Grid = null, // as linhas achadas da tabela escolhida (coluna Termo + as da tabela)
+    terms_sel: GridSel = .{},
+    terms_seconds: f64 = 0, // tempo da ultima pesquisa
+    want_terms: bool = false, // Pesquisar termos (botao, Ctrl+Enter)
+    want_terms_page: ?usize = null, // outra tabela escolhida na lista
+    want_terms_copy: bool = false, // Copiar as linhas encontradas desta tabela
 
     sql: [8192:0]u8 = @splat(0),
     result: ?dbm.Grid = null,
@@ -919,6 +1155,7 @@ const App = struct {
     log_seen: usize = 0, // tamanho do log no ultimo quadro (linha nova: rola para o fim)
     want_tab: ?Tab = null, // aba a selecionar no proximo quadro (atalhos, --sql)
     focus_search: bool = false, // Ctrl+F: foco na busca da aba Dados
+    focus_tables: bool = false, // Ctrl+T: foco no filtro da lista de tabelas
     want_refresh: bool = false, // F5: abre de novo o arquivo aberto
     close_popups: bool = false, // --capture: cada passo comeca sem os menus do passo anterior
     reveal_selected: bool = false, // rola a lista de tabelas ate a selecionada (ex.: --table)
@@ -926,8 +1163,27 @@ const App = struct {
     start_sql: bool = false, // --sql: roda depois do primeiro open
     start_search: []const u8 = "", // --search: busca na aba Data depois do primeiro open
     start_cell: ?[2]usize = null, // --cell: linha e coluna (base 0) que abrem com o menu de copia
-    start_menu: ?enum { File, View, Settings, Help, Export } = null, // --menu: menu aberto quando o banco abrir (capturas)
+    start_menu: ?enum { File, Edit, View, Settings, Help, Export } = null, // --menu: menu aberto quando o banco abrir (capturas)
     start_export: ?ExportKind = null, // --export: abre o dialogo de salvar dessa exportacao quando o banco abrir
+    // Tabelas favoritas (item 34): pelo nome (do gpa), so na memoria; valem em qualquer arquivo aberto na sessao
+    favorites: std.ArrayList([]const u8) = .empty,
+    table_order: std.ArrayList(usize) = .empty, // ordem da lista de tabelas no quadro (favoritas primeiro)
+    want_fav: ?usize = null, // favoritar ou desfavoritar esta tabela (indice em db.table_names)
+    fav_menu: ?usize = null, // --capture: abre o menu do clique direito desta tabela da lista
+
+    // Favorita sai da lista ou entra nela (pelo nome); a lista rola ate a tabela aberta (que pode ter ido ao topo)
+    fn toggleFavorite(app: *App, table: usize) void {
+        if (table >= app.db.table_names.len) return;
+        const name = app.db.table_names[table];
+        for (app.favorites.items, 0..) |f, i| if (std.mem.eql(u8, f, name)) {
+            app.gpa.free(app.favorites.orderedRemove(i));
+            app.reveal_selected = true;
+            return;
+        };
+        const copy = app.gpa.dupe(u8, name) catch return;
+        app.favorites.append(app.gpa, copy) catch return app.gpa.free(copy);
+        app.reveal_selected = true;
+    }
 
     fn deinit(app: *App) void {
         // fechar com trabalho em andamento: pede para parar e espera a thread antes de soltar o banco
@@ -942,13 +1198,21 @@ const App = struct {
         app.clearTable();
         app.clearResult();
         app.clearGlobal();
+        app.clearTerms();
+        app.gpa.free(app.terms_text);
+        app.gpa.free(app.slot.req.terms_text); // pesquisa cortada pela saida
+        app.gpa.free(app.slot.req.hits); // exportacao da busca global cortada pela saida
         app.gpa.free(app.counts);
+        app.freeMarks();
+        for (app.favorites.items) |f| app.gpa.free(f);
+        app.favorites.deinit(app.gpa);
+        app.table_order.deinit(app.gpa);
         app.filter_scratch.deinit(app.gpa);
         app.filters.deinit(app.gpa);
         app.db.close();
         // saida sem resposta (conversao terminada no Cancelar, erro ao iniciar): nada de temporario orfao
-        if (late.len > 0) access.deleteQuiet(app.io, late.slice());
-        if (app.converted) |cv| access.deleteQuiet(app.io, cv.tmp.slice());
+        if (late.len > 0) access.deleteTemp(app.io, late.slice(), zstr(&app.slot.req.path));
+        if (app.converted) |cv| access.deleteTemp(app.io, cv.tmp.slice(), zstr(&cv.source));
     }
 
     fn clearFilters(app: *App) void {
@@ -972,6 +1236,71 @@ const App = struct {
         if (f.value) |v| app.gpa.free(v);
     }
 
+    fn freeMarks(app: *App) void {
+        for (app.marks) |*list| {
+            for (list.items) |k| app.gpa.free(k);
+            list.deinit(app.gpa);
+        }
+        app.gpa.free(app.marks);
+        app.marks = &.{};
+        app.only_marked = false;
+    }
+
+    // Arquivo novo: nenhuma linha marcada, uma lista por tabela
+    fn resetMarks(app: *App, n: usize) void {
+        app.freeMarks();
+        app.marks = app.gpa.alloc(std.ArrayList([]const u8), n) catch &.{};
+        for (app.marks) |*list| list.* = .empty;
+    }
+
+    fn marksOf(app: *const App, table: ?usize) []const []const u8 {
+        const i = table orelse return &.{};
+        return if (i < app.marks.len) app.marks[i].items else &.{};
+    }
+
+    // Marca ou desmarca a linha pedida da grade de Dados, ou desmarca todas (so sem trabalho rodando)
+    fn editMarks(app: *App) void {
+        const row = app.want_mark;
+        const all = app.want_unmark_all;
+        app.want_mark = null;
+        app.want_unmark_all = false;
+        const index = app.selected orelse return;
+        if (index >= app.marks.len) return;
+        const list = &app.marks[index];
+        if (all) {
+            for (list.items) |k| app.gpa.free(k);
+            list.clearRetainingCapacity();
+        }
+        if (row) |r| if (app.data) |g| if (r < g.keys.len) {
+            const at = for (list.items, 0..) |k, i| {
+                if (std.mem.eql(u8, k, g.keys[r])) break i;
+            } else null;
+            if (at) |i| {
+                app.gpa.free(list.orderedRemove(i));
+            } else if (app.gpa.dupe(u8, g.keys[r])) |k| {
+                list.append(app.gpa, k) catch app.gpa.free(k);
+            } else |_| {}
+        };
+        if (list.items.len == 0) app.only_marked = false;
+    }
+
+    // Sem resultado de termos (pesquisa nova, outro arquivo): o velho nunca aparece
+    fn clearTerms(app: *App) void {
+        if (app.terms_res) |*r| r.deinit();
+        if (app.terms_grid) |*g| g.deinit();
+        app.terms_res = null;
+        app.terms_grid = null;
+        app.terms_hit = 0;
+        app.terms_sel = .{};
+    }
+
+    // Contagem da caixa de termos ("8 termos, 1 repetido"): refeita quando o texto muda
+    fn countTerms(app: *App) void {
+        const list = dbm.terms.parse(app.gpa, std.mem.sliceTo(app.terms_text, 0)) catch return;
+        defer app.gpa.free(list.terms);
+        app.terms_counted = .{ list.terms.len, list.repeated };
+    }
+
     fn clearTable(app: *App) void {
         app.clearFilters();
         if (app.data) |*g| g.deinit();
@@ -989,14 +1318,17 @@ const App = struct {
         app.global = null;
     }
 
+    // A grade da aba Dados de novo, da pagina 1: a busca, os filtros, a ordenacao, Linhas ou So as marcadas mudou
+    fn reloadFirstPage(app: *App) void {
+        app.page = 0;
+        app.want_reload = true;
+    }
+
     // Busca da caixa da aba Data no escopo atual (Enter ou 300 ms depois da ultima tecla). Todas as tabelas: a lista
     // anterior some ate o resultado do termo novo chegar
     fn runSearch(app: *App) void {
         app.search_wait.due = null;
-        if (app.scope == .table) {
-            app.want_reload = true;
-            return;
-        }
+        if (app.scope == .table) return app.reloadFirstPage();
         app.clearGlobal();
         app.want_global = std.mem.indexOfNone(u8, zstr(&app.search), &std.ascii.whitespace) != null;
     }
@@ -1054,6 +1386,7 @@ const App = struct {
             error.DuckDb => if (msg == &app.sql_msg) msg.setEngineError("err_sql", app.db.lastError()) else msg.setEngineError("err_db", app.db.lastError()),
             error.Failed => msg.setEngineError("err_plain", app.db.lastError()),
             error.Canceled => msg.set(true, "canceled", .{}),
+            error.SqlReadOnly => msg.set(true, "sql_read_only", .{}),
             error.UnsupportedExtension => msg.set(true, "err_not_db", .{}),
             error.AccessDenied, error.FileBusy, error.PermissionDenied => msg.set(true, "err_cannot_write", .{err}),
             else => msg.set(true, "err_generic", .{err}),
@@ -1077,21 +1410,33 @@ const App = struct {
         switch (kind) {
             .open => {
                 r.path = app.path;
+                app.page = 0;
                 app.open_request = app.path;
                 // Access ja convertido e salvo (chave caminho + tamanho + data, gravada nas configuracoes) e sem mudanca
                 // desde entao: abre o SQLite salvo, sem converter de novo nem perguntar ao fechar
                 const access_file = if (query.sourceKind(zstr(&app.path))) |k| k == .access else |_| false;
+                if (access_file) {
+                    // a ultima pasta possivel do convertido e a subpasta ao lado do original: as sobras dela saem aqui
+                    var bb: [1100]u8 = undefined;
+                    const beside = std.fmt.bufPrint(&bb, "{s}{s}" ++ access.temp_subdir, .{ std.fs.path.dirname(zstr(&app.path)) orelse ".", std.fs.path.sep_str }) catch "";
+                    logStale(access.cleanupStale(app.io, beside));
+                    std.Io.Dir.cwd().deleteDir(app.io, beside) catch {}; // vazia, some
+                }
                 if (access_file) if (app.prefs.savedFor(app.io, zstr(&app.path))) |dest| {
                     copyZ(&r.path, dest);
                     var lb: [2200]u8 = undefined;
-                    logLine(i18n.fmt(&lb, "converted_reused", .{ std.fs.path.basename(zstr(&app.path)), dest }));
+                    // o formato real do salvo, lido do proprio arquivo: SQLite ou DuckDB
+                    const saved_as = dbm.fileFormat(app.io, dest) orelse .sqlite;
+                    logLine(i18n.fmt(&lb, "converted_reused", .{ std.fs.path.basename(zstr(&app.path)), saved_as.label(), dest }));
                 };
                 r.table_name = app.start_table;
                 app.start_table = "";
             },
             .select => {
                 r.table = app.want_select orelse return;
+                app.page = 0; // outra tabela: pagina 1
                 r.search = if (app.select_search) app.search else @splat(0);
+                r.marks = app.marksOf(r.table); // as marcadas desta tabela vem no topo
                 app.select_search = false;
             },
             .search_all => r.search = app.search,
@@ -1102,9 +1447,26 @@ const App = struct {
                 r.filters = app.filters.items;
                 r.sort_col = app.sort_col;
                 r.sort_desc = app.sort_desc;
+                r.key = app.data_key;
+                r.marks = app.marksOf(r.table);
+                r.only_marked = app.only_marked and r.marks.len > 0;
+                r.offset = app.page * app.limit;
             },
             .sql => r.sql = app.sql,
             .export_ => {}, // preenchido em startExport
+            .terms => {
+                app.clearTerms();
+                // copia: a caixa continua editavel durante a pesquisa (solta em apply)
+                r.terms_text = app.gpa.dupe(u8, std.mem.sliceTo(app.terms_text, 0)) catch return app.status.set(true, "err_generic", .{error.OutOfMemory});
+                r.term_match = app.terms_match;
+                r.terms_only = if (app.terms_scope == .table) app.selected else null;
+                r.terms_titles = termsTitles();
+            },
+            .terms_page, .terms_copy => {
+                r.terms_res = if (app.terms_res) |*res| res else return;
+                r.terms_hit = if (kind == .terms_page) (app.want_terms_page orelse return) else app.terms_hit;
+                r.terms_titles = termsTitles();
+            },
         }
         app.busy_since = ig.igGetTime();
         app.slot.start() catch |e| app.status.set(true, "err_worker", .{e});
@@ -1119,6 +1481,7 @@ const App = struct {
                 app.clearTable();
                 app.clearResult();
                 app.clearGlobal();
+                app.clearTerms();
                 // arquivo novo comeca sem o filtro da lista de tabelas e sem a busca da aba Data, no escopo de Settings
                 app.table_filter = @splat(0);
                 app.table_filter_applied = @splat(0);
@@ -1134,6 +1497,7 @@ const App = struct {
                 app.gpa.free(app.counts);
                 app.counts = out.counts;
                 out.counts = &.{};
+                app.resetMarks(if (app.db.isOpen()) app.db.table_names.len else 0);
                 app.source = if (app.db.isOpen()) out.source else null;
                 app.loaded_path = if (app.db.isOpen()) app.open_request else @splat(0);
                 app.opened_file = if (app.db.isOpen()) app.slot.req.path else @splat(0);
@@ -1171,8 +1535,15 @@ const App = struct {
                 app.data = out.data;
                 out.data = null;
                 app.data_sel.row = null; // as colunas ocultas continuam valendo na mesma tabela
+                app.marked_top = out.marked;
                 app.total = out.total;
                 app.applied_search = app.slot.req.search;
+                // a pagina passou do fim (linhas que sairam dela foram marcadas): a ultima que existe
+                const listed = app.total -| app.marked_top;
+                if (app.page > 0 and !app.only_marked and app.page * app.limit >= listed) {
+                    app.page = if (listed == 0) 0 else (listed - 1) / app.limit;
+                    app.want_reload = true;
+                }
             },
             .sql => {
                 // erro: a grade velha some; certo: o erro anterior sai da linha do botao e da barra de baixo
@@ -1189,8 +1560,33 @@ const App = struct {
                         app.sql_msg.setText(false, sqlRowsCols(&app.sql_msg.buf, g.rows.len, g.columns.len));
                 }
             },
+            .terms => {
+                app.gpa.free(app.slot.req.terms_text);
+                app.slot.req.terms_text = "";
+                app.terms_seconds = ig.igGetTime() - app.busy_since;
+                if (out.err == null) {
+                    app.terms_res = out.terms;
+                    app.terms_grid = out.data;
+                    out.terms = null;
+                    out.data = null;
+                }
+            },
+            .terms_page => if (out.err == null) {
+                if (app.terms_grid) |*g| g.deinit();
+                app.terms_grid = out.data;
+                out.data = null;
+                app.terms_hit = app.slot.req.terms_hit;
+                app.terms_sel = .{};
+            },
+            .terms_copy => if (out.copied) |text| setClipboard(text),
             .export_ => if (out.err == null) {
                 const r = &app.slot.req;
+                // Salvar em DuckDB, Excel (ou SQLite de um banco que nao e Access): o arquivo aberto conta como salvo
+                if (app.saving) app.saved(r.destPath(), switch (r.export_kind) {
+                    .db_sqlite => .sqlite,
+                    .db_duckdb => .duckdb,
+                    else => .xlsx,
+                });
                 // .xlsx: o que o Excel nao comporta aparece na mesma linha, em destaque (nada some calado)
                 const p = &app.slot.progress;
                 var cells_buf: [96]u8 = undefined;
@@ -1200,6 +1596,12 @@ const App = struct {
                 const unit = if (r.export_kind.countsTables()) i18n.trCount("unit_tables", out.exported) else i18n.trCount("unit_rows", out.exported);
                 app.status.setText(cells_s.len + cols_s.len > 0, i18n.fmtCount(&app.status.buf, "status_exported", out.exported, .{ out.exported, unit, std.fs.path.basename(r.destPath()), cells_s, cols_s }));
             },
+        }
+        if (out.kind == .export_) {
+            app.gpa.free(app.slot.req.hits);
+            app.slot.req.hits = &.{};
+            app.saving = false;
+            if (out.err != null) app.exit_save = false; // nao salvou: o programa fica aberto
         }
         if (out.err) |e| return app.fail(if (out.kind == .sql) &app.sql_msg else &app.status, e);
 
@@ -1255,6 +1657,7 @@ const App = struct {
         return switch (app.tab) {
             .data => hiddenText(buf, &app.data_sel, if (app.data) |g| g.columns.len else 0),
             .sql => hiddenText(buf, &app.result_sel, if (app.result) |g| g.columns.len else 0),
+            .terms => hiddenText(buf, &app.terms_sel, if (app.terms_grid) |g| g.columns.len else 0),
             .schema => "",
         };
     }
@@ -1270,6 +1673,8 @@ const App = struct {
         app.data = out.data;
         out.schema = null;
         out.data = null;
+        app.data_key = out.key;
+        app.marked_top = out.marked;
         app.total = out.total;
         copyZ(&app.search, search);
         copyZ(&app.applied_search, search);
@@ -1291,22 +1696,112 @@ const App = struct {
         app.prefs.save(app.io, app.prefs_path) catch |e| app.status.set(true, "err_settings", .{e});
     }
 
-    // Fechar o arquivo, abrir outro ou sair. update() executa quando nenhum trabalho roda; com SQLite convertido,
-    // antes pergunta (ou usa a resposta da sessao)
-    fn requestLeave(app: *App, action: Leave) void {
-        if (action == .exit) app.slot.cancel(); // um trabalho longo nao segura a saida
-        if (app.leave == null or action == .exit) app.leave = action;
-    }
-
-    fn finishLeave(app: *App, action: Leave) void {
-        switch (action) {
-            .open => app.want_open = true,
-            .close => app.closeFile(),
-            .exit => app.quit = true,
+    // Sair do programa (X da janela, Arquivo > Sair, Ctrl+Q, Alt+F4). Antes de tudo, com uma exportacao em andamento,
+    // pergunta (Voltar / Sair); busca ou outro trabalho e cancelado sem perguntar. So com Access convertido e nao salvo
+    // vem a pergunta Salvar / Voltar / Sair.
+    fn requestExit(app: *App) void {
+        if (app.exit_ask != null) return;
+        if (app.slot.busyWith(.export_)) {
+            app.exit_ask = .export_running;
+            return;
         }
+        app.slot.cancel();
+        app.exitUnlessUnsaved();
     }
 
-    // Solta o arquivo aberto (so sem trabalho rodando) e apaga o SQLite temporario, se houver
+    fn exitUnlessUnsaved(app: *App) void {
+        const unsaved = if (app.converted) |cv| !cv.saved else false;
+        if (unsaved) app.exit_ask = .unsaved else app.quit = true;
+    }
+
+    // O arquivo aberto e `path`: o original, o SQLite salvo que o substitui ou o SQLite temporario do Access
+    fn isOpenFile(app: *const App, path: []const u8) bool {
+        if (std.ascii.eqlIgnoreCase(path, zstr(&app.loaded_path)) or std.ascii.eqlIgnoreCase(path, zstr(&app.opened_file))) return true;
+        return if (app.converted) |cv| std.ascii.eqlIgnoreCase(path, cv.tmp.slice()) else false;
+    }
+
+    // Caixa de salvar de Arquivo > Salvar e Salvar como...: nome do original, tipos SQLite, DuckDB e Excel, ja marcado
+    // o tipo do arquivo aberto (Access e SQLite: SQLite; DuckDB: DuckDB). Salvar abre na pasta do original; Salvar
+    // como, na ultima pasta em que o usuario salvou ou exportou (sem ela, a do original).
+    fn startSave(app: *App, mode: SaveMode) void {
+        if (!app.db.isOpen()) return;
+        const loaded = zstr(&app.loaded_path);
+        const first: dialog.SaveType = if (app.source == .duckdb) .duckdb else .sqlite;
+        var dir = std.fs.path.dirname(loaded) orelse "";
+        if (mode == .save_as and app.save_dir[0] != 0) dir = zstr(&app.save_dir);
+        if (dir.len > 0) std.Io.Dir.cwd().access(app.io, dir, .{}) catch {
+            dir = "";
+        };
+        const stem = std.fs.path.stem(loaded);
+        var name_buf: [600]u8 = undefined;
+        var sugg_buf: [4096]u8 = undefined;
+        var initial = settings.suggest(&sugg_buf, dir, settings.fileName(&name_buf, stem, first.ext()));
+        // o nome sugerido e o do proprio arquivo aberto: "<nome> (copia)"
+        if (app.isOpenFile(initial)) {
+            var cb: [400]u8 = undefined;
+            initial = settings.suggest(&sugg_buf, dir, settings.fileName(&name_buf, i18n.fmt(&cb, "copy_name", .{stem}), first.ext()));
+        }
+        var path_buf: dialog.PathBuf = undefined;
+        const picked = dialog.pickSave(app.io, app.hwnd, tr("save_title"), initial, first, &path_buf) orelse {
+            if (dialog.unavailable) app.status.set(true, "err_no_dialog", .{});
+            // caixa cancelada: veio da pergunta de saida, ela volta
+            if (app.exit_save) app.exit_ask = .unsaved;
+            app.exit_save = false;
+            return;
+        };
+        app.saveTo(picked.path, picked.type);
+    }
+
+    // Grava o banco aberto em `dest`. Access convertido para SQLite: o temporario e copiado. O resto usa a exportacao
+    // do banco inteiro (gravacao segura em .part, progresso, Cancelar).
+    fn saveTo(app: *App, dest: []const u8, ty: dialog.SaveType) void {
+        if (app.isOpenFile(dest)) {
+            app.exit_save = false;
+            return app.status.set(true, "err_choose_other", .{});
+        }
+        copyZ(&app.save_dir, std.fs.path.dirname(dest) orelse "");
+        if (app.converted) |cv| if (ty == .sqlite) {
+            std.Io.Dir.cwd().copyFile(cv.tmp.slice(), std.Io.Dir.cwd(), dest, app.io, .{}) catch |e| {
+                app.exit_save = false;
+                return app.status.set(true, "err_save_sqlite", .{e});
+            };
+            // so o nome do arquivo na linha de status (o caminho inteiro quebraria a linha); a pasta vai para o log
+            logLine(dest);
+            app.status.set(false, "converted_saved", .{std.fs.path.basename(dest)});
+            return app.saved(dest, ty);
+        };
+        const r = &app.slot.req;
+        r.setDest(dest);
+        r.total_hint = 0;
+        if (ty == .xlsx) for (app.counts) |n| {
+            r.total_hint += n;
+        };
+        r.export_kind = switch (ty) {
+            .sqlite => .db_sqlite,
+            .duckdb => .db_duckdb,
+            .xlsx => .db_xlsx,
+        };
+        app.saving = true;
+        app.start(.export_);
+    }
+
+    // O banco aberto foi salvo em `dest`. Access: a pergunta ao sair some e, salvo em SQLite ou DuckDB, a conversao
+    // fica lembrada (o mesmo Access, sem mudanca, abre o arquivo salvo, tambem em outra execucao). Veio da pergunta
+    // de saida: o programa fecha.
+    fn saved(app: *App, dest: []const u8, ty: dialog.SaveType) void {
+        if (app.converted) |*cv| {
+            cv.saved = true;
+            if (ty != .xlsx) {
+                app.prefs.rememberSaved(app.io, zstr(&cv.source), dest);
+                app.savePrefs();
+            }
+        }
+        if (app.exit_save) app.quit = true;
+        app.exit_save = false;
+    }
+
+    // Solta o arquivo aberto (so sem trabalho rodando) e apaga o SQLite temporario, se houver. Fechar, abrir outro e
+    // Reabrir passam por aqui sem perguntar: o convertido que nao foi salvo e descartado e o Log diz
     fn closeFile(app: *App) void {
         if (!app.db.isOpen() and app.converted == null) return;
         const name = std.fs.path.basename(zstr(&app.loaded_path));
@@ -1316,76 +1811,25 @@ const App = struct {
         app.clearTable();
         app.clearResult();
         app.clearGlobal();
+        app.clearTerms();
         app.sql_msg.len = 0;
         app.db.closeSource();
         app.gpa.free(app.counts);
         app.counts = &.{};
+        app.freeMarks();
         app.source = null;
         app.loaded_path = @splat(0);
         app.opened_file = @splat(0);
         if (app.converted) |cv| {
-            access.deleteQuiet(app.io, cv.tmp.slice());
+            access.deleteTemp(app.io, cv.tmp.slice(), zstr(&cv.source));
+            if (!cv.saved) {
+                var lb: [1200]u8 = undefined;
+                logLine(i18n.fmt(&lb, "log_discarded", .{std.fs.path.basename(zstr(&cv.source))}));
+            }
             app.converted = null;
         }
         app.updateTitle();
         if (shown.len > 0) app.status.set(false, "status_closed", .{shown});
-    }
-
-    // Executa a resposta do dialogo do SQLite convertido (na thread da UI, sem trabalho rodando)
-    // from_prompt: respondida no dialogo (cancelar o dialogo de arquivo volta para a pergunta); senao e a resposta
-    // lembrada da sessao (cancelar desiste da acao)
-    fn resolve(app: *App, ch: Choice, from_prompt: bool) void {
-        const cv = app.converted orelse {
-            app.leave = null;
-            return;
-        };
-        var saved: ?[]const u8 = null;
-        var sugg_buf: [4096]u8 = undefined;
-        var path_buf: dialog.PathBuf = undefined;
-        if (ch == .save) {
-            const stem = std.fs.path.stem(zstr(&cv.source));
-            var name_buf: [600]u8 = undefined;
-            const file = settings.fileName(&name_buf, stem, ".sqlite");
-            var dest: ?[]const u8 = null;
-            // resposta lembrada: grava direto na pasta escolhida da primeira vez, se o nome estiver livre
-            if (app.session_choice == .save and app.save_dir[0] != 0) {
-                const p = settings.suggest(&sugg_buf, zstr(&app.save_dir), file);
-                if (std.Io.Dir.cwd().access(app.io, p, .{})) |_| {} else |_| dest = p;
-            }
-            if (dest == null) {
-                // padrao: ao lado do arquivo de origem, <origem>.sqlite
-                const initial = settings.suggest(&sugg_buf, std.fs.path.dirname(zstr(&cv.source)) orelse "", file);
-                dest = dialog.pick(app.io, .save_sqlite, app.hwnd, initial, &path_buf);
-                if (dest == null) {
-                    if (dialog.unavailable) app.status.set(true, "err_no_dialog", .{});
-                    // cancelou o dialogo de salvar: nada fecha; veio da pergunta, ela volta (Esc continua valendo)
-                    if (!from_prompt) app.leave = null;
-                    return;
-                }
-            }
-            std.Io.Dir.cwd().copyFile(cv.tmp.slice(), std.Io.Dir.cwd(), dest.?, app.io, .{}) catch |e| {
-                app.status.set(true, "err_save_sqlite", .{e});
-                app.leave = null; // nada fecha: o usuario tenta de novo
-                return;
-            };
-            copyZ(&app.save_dir, std.fs.path.dirname(dest.?) orelse "");
-            saved = dest;
-            // o mesmo Access, sem mudanca, abre este SQLite da proxima vez (tambem em outra execucao)
-            app.prefs.rememberSaved(app.io, zstr(&cv.source), dest.?);
-            app.savePrefs();
-        }
-        // so com "Lembrar nesta sessao" marcado a resposta vale para as proximas perguntas
-        if (from_prompt and app.choice_remember) app.session_choice = ch;
-        const action = app.leave orelse .close;
-        app.leave = null;
-        app.closeFile();
-        // a ultima linha de status diz o que aconteceu com o SQLite (o "Fechado" fica no log)
-        // so o nome do arquivo na linha de status (o caminho inteiro quebraria a linha); a pasta vai para o log
-        if (saved) |d| {
-            logLine(d);
-            app.status.set(false, "converted_saved", .{std.fs.path.basename(d)});
-        } else app.status.set(false, "converted_deleted", .{});
-        app.finishLeave(action);
     }
 
     fn update(app: *App) void {
@@ -1422,17 +1866,17 @@ const App = struct {
         // busca nova ou a outra acao nao esperarem por ela
         if (app.slot.busyWith(.search_all) and !app.slot.progress.cancel.load(.monotonic) and !app.wantsGlobal(&app.slot.req.search))
             app.slot.cancel();
-        if (app.slot.busy()) return; // um trabalho por vez; os pedidos abaixo ficam para depois
-        if (app.choice) |ch| {
-            app.choice = null;
-            app.resolve(ch, true);
-        } else if (app.leave) |action| {
-            if (app.converted == null) {
-                app.leave = null;
-                app.finishLeave(action);
-            } else if (app.session_choice) |ch| app.resolve(ch, false);
+        // a exportacao acabou com a pergunta "Sair cancela a exportacao" aberta: a saida continua
+        if (app.exit_ask == .export_running and !app.slot.busyWith(.export_)) {
+            app.exit_ask = null;
+            app.exitUnlessUnsaved();
         }
-        if (app.leave != null) return; // esperando a resposta sobre o SQLite convertido
+        if (app.slot.busy()) return; // um trabalho por vez; os pedidos abaixo ficam para depois
+        if (app.exit_ask != null or app.quit) return; // esperando a resposta da pergunta de saida
+        if (app.want_close) {
+            app.want_close = false;
+            app.closeFile();
+        }
         // F5 (o do Python): abre de novo o arquivo aberto; o SQLite convertido dele e trocado pelo novo, sem pergunta
         if (app.want_refresh) {
             app.want_refresh = false;
@@ -1445,18 +1889,31 @@ const App = struct {
         }
         if (app.want_filter != null or app.want_unfilter != null or app.want_clear_filters) {
             app.editFilters();
+            app.reloadFirstPage();
+        }
+        if (app.want_mark != null or app.want_unmark_all) {
+            app.editMarks();
             app.want_reload = true;
+        }
+        if (app.want_fav) |i| {
+            app.want_fav = null;
+            app.toggleFavorite(i);
         }
         if (app.start_export != null and app.db.isOpen() and !app.want_open and !app.want_reload and !app.want_run) {
             app.want_export = app.start_export;
             app.start_export = null;
         }
-        if (app.want_export) |kind| {
+        if (app.want_save) |mode| {
+            app.want_save = null;
+            app.startSave(mode);
+        } else if (app.want_export) |kind| {
             app.want_export = null;
             app.startExport(kind);
         } else if (app.want_open) {
             app.want_open = false;
-            if (app.converted != null) app.requestLeave(.open) else app.start(.open);
+            // abrir outro arquivo nao pergunta: o convertido do anterior, se nao foi salvo, e descartado
+            if (app.converted != null) app.closeFile();
+            app.start(.open);
         } else if (app.want_select != null) {
             app.start(.select);
             app.want_select = null;
@@ -1469,16 +1926,16 @@ const App = struct {
         } else if (app.want_global) {
             app.want_global = false;
             app.start(.search_all);
+        } else if (app.want_terms) {
+            app.want_terms = false;
+            if (app.terms_counted[0] > 0) app.start(.terms);
+        } else if (app.want_terms_page != null) {
+            app.start(.terms_page);
+            app.want_terms_page = null;
+        } else if (app.want_terms_copy) {
+            app.want_terms_copy = false;
+            app.start(.terms_copy);
         }
-    }
-
-    // O que a aba atual exporta: tabela (Data), esquema (Schema, via DESCRIBE) ou resultado (SQL)
-    fn canExportCurrent(app: *const App) bool {
-        if (app.opening() or !app.db.isOpen()) return false;
-        return switch (app.tab) {
-            .data, .schema => app.selected != null,
-            .sql => app.result != null,
-        };
     }
 
     // Dialogo de salvar (pasta do arquivo aberto; sem arquivo, a ultima usada) e dispara o trabalho
@@ -1487,7 +1944,8 @@ const App = struct {
         // tabela da aba Dados com busca ou filtro: antes pergunta se vai a tabela inteira ou so as linhas encontradas
         const narrowed = app.applied_search[0] != 0 or app.filters.items.len > 0;
         var whole = false;
-        if (worker.asksExportScope(kind_in, app.tab == .data, narrowed)) {
+        // Tabela atual e sempre a tabela da aba Dados (com a busca e os filtros dela), de qualquer aba
+        if (worker.asksExportScope(kind_in, true, narrowed)) {
             const answer = app.export_scope orelse {
                 app.ask_export = kind_in;
                 return;
@@ -1495,17 +1953,19 @@ const App = struct {
             app.export_scope = null;
             whole = answer == .whole;
         }
-        var kind = kind_in;
+        const kind = kind_in;
         const r = &app.slot.req;
         const loaded = zstr(&app.loaded_path);
         var name_buf: [512]u8 = undefined;
         const base: []const u8 = switch (kind) {
-            .db_duckdb, .db_sqlite, .db_xlsx => std.fs.path.stem(loaded),
-            .table_csv, .table_xlsx => switch (app.tab) {
-                .schema => std.fmt.bufPrint(&name_buf, "{s}_schema", .{app.db.table_names[app.selected orelse return]}) catch "schema",
-                else => app.db.table_names[app.selected orelse return],
-            },
+            .db_duckdb, .db_sqlite, .db_xlsx, .all_csv => std.fs.path.stem(loaded),
+            .table_csv, .table_xlsx => app.db.table_names[app.selected orelse return],
+            .schema_csv, .schema_xlsx => std.fmt.bufPrint(&name_buf, "{s}_schema", .{app.db.table_names[app.selected orelse return]}) catch "schema",
+            .dbschema_csv, .dbschema_xlsx => std.fmt.bufPrint(&name_buf, "{s}_schema", .{std.fs.path.stem(loaded)}) catch "schema",
             .result_csv, .result_xlsx => "query",
+            .marked_csv, .marked_xlsx => std.fmt.bufPrint(&name_buf, "{s}_marcadas", .{app.db.table_names[app.selected orelse return]}) catch "marcadas",
+            .terms_xlsx, .terms_csv, .terms_sqlite, .terms_duckdb => std.fmt.bufPrint(&name_buf, "{s}_termos", .{std.fs.path.stem(loaded)}) catch "termos",
+            .global_xlsx => std.fmt.bufPrint(&name_buf, "{s}_busca", .{std.fs.path.stem(loaded)}) catch "busca",
         };
         var file_buf: [600]u8 = undefined;
         var file = settings.fileName(&file_buf, base, kind.ext());
@@ -1522,43 +1982,65 @@ const App = struct {
         };
         const initial = settings.suggest(&sugg_buf, dir, file);
         const dkind: dialog.Kind = switch (kind) {
-            .db_duckdb => .save_duckdb,
-            .db_sqlite => .save_sqlite,
-            .db_xlsx, .table_xlsx, .result_xlsx => .save_xlsx,
-            .table_csv, .result_csv => .save_csv,
+            .db_duckdb, .terms_duckdb => .save_duckdb,
+            .db_sqlite, .terms_sqlite => .save_sqlite,
+            .db_xlsx, .table_xlsx, .result_xlsx, .marked_xlsx, .terms_xlsx, .schema_xlsx, .dbschema_xlsx, .global_xlsx => .save_xlsx,
+            .table_csv, .result_csv, .marked_csv, .terms_csv, .schema_csv, .dbschema_csv, .all_csv => .save_csv,
         };
         var path_buf: dialog.PathBuf = undefined;
-        const dest = dialog.pick(app.io, dkind, app.hwnd, initial, &path_buf) orelse {
-            if (dialog.unavailable) app.status.set(true, "err_no_dialog", .{});
+        // um CSV por tabela ou por aba: o seletor de pasta nativo
+        const picked = if (kind.toFolder()) app.pickExportFolder(kind, dir, &path_buf) else dialog.pick(app.io, dkind, app.hwnd, initial, &path_buf);
+        const dest = picked orelse {
+            if (!kind.toFolder() and dialog.unavailable) app.status.set(true, "err_no_dialog", .{});
             return;
         };
         // nem o arquivo aberto nem o SQLite salvo que o substitui (Access reaproveitado)
         if (std.ascii.eqlIgnoreCase(dest, loaded) or std.ascii.eqlIgnoreCase(dest, zstr(&app.opened_file))) return app.status.set(true, "err_choose_other", .{});
         if (app.converted) |cv| if (std.ascii.eqlIgnoreCase(dest, cv.tmp.slice())) return app.status.set(true, "err_choose_other", .{});
-        app.rememberDir(dest);
+        if (!kind.toFolder()) app.rememberDir(dest);
+        copyZ(&app.save_dir, if (kind.toFolder()) dest else std.fs.path.dirname(dest) orelse ""); // onde "Salvar como..." comeca
 
         r.setDest(dest);
         r.total_hint = 0;
         if (kind == .table_csv or kind == .table_xlsx) {
+            // todas as linhas na ordem da tela: so as encontradas (busca e filtros aplicados) ou a tabela inteira
             const index = app.selected orelse return;
-            if (app.tab == .schema) {
-                // o esquema exportado e o mesmo da aba: coluna, tipo, aceita nulo (titulos e Sim/Nao no idioma da tela)
-                const sql = query.buildSchemaExport(app.gpa, app.db.table_names[index], .{ tr("schema_column"), tr("schema_type"), tr("schema_null") }, tr("yes"), tr("no")) catch "";
-                defer app.gpa.free(sql);
-                if (sql.len == 0 or sql.len >= r.sql.len) return app.status.set(true, "err_table_name_long", .{});
-                @memcpy(r.sql[0..sql.len], sql);
-                r.sql[sql.len] = 0;
-                kind = if (kind == .table_csv) .result_csv else .result_xlsx;
-            } else {
-                // todas as linhas na ordem da tela: so as encontradas (busca e filtros aplicados) ou a tabela inteira
-                r.table = index;
-                r.columns = app.col_names;
-                r.search = if (whole) @splat(0) else app.applied_search;
-                r.filters = if (whole) &.{} else app.filters.items;
-                r.sort_col = app.sort_col;
-                r.sort_desc = app.sort_desc;
-                r.total_hint = if (whole and index < app.counts.len) app.counts[index] else app.total;
-            }
+            r.table = index;
+            r.columns = app.col_names;
+            r.search = if (whole) @splat(0) else app.applied_search;
+            r.filters = if (whole) &.{} else app.filters.items;
+            r.sort_col = app.sort_col;
+            r.sort_desc = app.sort_desc;
+            r.key = app.data_key;
+            r.total_hint = if (whole and index < app.counts.len) app.counts[index] else app.total;
+        } else if (kind == .schema_csv or kind == .schema_xlsx or kind == .dbschema_csv or kind == .dbschema_xlsx) {
+            // o esquema da aba Esquema (coluna, tipo, aceita nulo) ou o do banco (com a tabela na frente): titulos e
+            // Sim/Nao no idioma da tela; vai como o resultado de um SQL
+            const one = kind == .schema_csv or kind == .schema_xlsx;
+            const sql = (if (one)
+                query.buildSchemaExport(app.gpa, app.db.table_names[app.selected orelse return], .{ tr("schema_column"), tr("schema_type"), tr("schema_null") }, tr("yes"), tr("no"))
+            else
+                query.buildDbSchemaExport(app.gpa, .{ tr("col_table"), tr("schema_column"), tr("schema_type"), tr("schema_null") }, tr("yes"), tr("no"))) catch "";
+            defer app.gpa.free(sql);
+            if (sql.len == 0 or sql.len >= r.sql.len) return app.status.set(true, "err_table_name_long", .{});
+            @memcpy(r.sql[0..sql.len], sql);
+            r.sql[sql.len] = 0;
+        } else if (kind == .all_csv) {
+            for (app.counts) |n| r.total_hint += n;
+        } else if (kind == .global_xlsx) {
+            // as tabelas da busca em todas as tabelas (copia: a UI troca a lista a cada busca; solta em apply)
+            const g = app.global orelse return;
+            r.hits = app.gpa.dupe(worker.Hit, g.hits) catch return;
+            r.search = g.term;
+            for (g.hits) |h| r.total_hint += h.rows;
+        } else if (kind == .marked_csv or kind == .marked_xlsx) {
+            // as linhas marcadas da tabela atual: todas as colunas, na ordem da tabela, nome <tabela>_marcadas
+            const index = app.selected orelse return;
+            r.table = index;
+            r.columns = app.col_names;
+            r.key = app.data_key;
+            r.marks = app.marksOf(index);
+            r.total_hint = r.marks.len;
         } else if (kind == .result_csv or kind == .result_xlsx) {
             r.sql = app.result_sql;
             if (app.result) |g| if (!g.truncated) {
@@ -1566,9 +2048,49 @@ const App = struct {
             };
         } else if (kind == .db_xlsx) {
             for (app.counts) |n| r.total_hint += n;
+        } else if (kind == .terms_xlsx or kind == .terms_csv or kind == .terms_sqlite or kind == .terms_duckdb) {
+            // relatorio da pesquisa mostrada: resumo, uma aba por tabela com acerto, nao encontrados
+            const res = if (app.terms_res) |*x| x else return;
+            r.terms_res = res;
+            r.terms_titles = termsTitles();
+            r.total_hint = res.rows + res.pairs.len + res.terms.len;
         }
         r.export_kind = kind;
         app.start(.export_);
+    }
+
+    // Exportacao para uma pasta (um CSV por tabela ou por aba): o seletor de pasta nativo; se algum dos arquivos ja
+    // existe nela, uma pergunta so (T.overwriteMany, Sim/Nao nativo)
+    fn pickExportFolder(app: *App, kind: ExportKind, initial: []const u8, buf: *dialog.PathBuf) ?[]const u8 {
+        const dir = dialog.pickFolder(app.io, app.hwnd, initial, buf) orelse {
+            if (dialog.unavailable) app.status.set(true, "err_no_dialog", .{});
+            return null;
+        };
+        var arena: std.heap.ArenaAllocator = .init(app.gpa);
+        defer arena.deinit();
+        const names = app.folderFiles(arena.allocator(), kind) catch return null;
+        var existing: usize = 0;
+        for (names) |n| {
+            var pb: [4096]u8 = undefined;
+            const p = dbm.exporter.csvPath(&pb, dir, n) catch continue;
+            if (std.Io.Dir.cwd().access(app.io, p, .{})) |_| existing += 1 else |_| {}
+        }
+        if (existing > 0) {
+            var qb: [200]u8 = undefined;
+            if (!platform.confirm(app.io, app.hwnd, app_title, i18n.fmtCount(&qb, "overwrite_many", existing, .{existing}))) return null;
+        }
+        return dir;
+    }
+
+    // Nomes (sem o .csv) dos arquivos de uma exportacao para pasta
+    fn folderFiles(app: *App, a: std.mem.Allocator, kind: ExportKind) ![]const []const u8 {
+        if (kind == .all_csv) return app.db.table_names;
+        if (kind != .terms_csv) return &.{};
+        const res = if (app.terms_res) |*x| x else return &.{};
+        const items = try dbm.terms.reportItems(a, app.db.table_names, res, termsTitles());
+        const names = try a.alloc([]const u8, items.len);
+        for (names, items) |*n, item| n.* = item.sheet;
+        return names;
     }
 
     fn draw(app: *App) void {
@@ -1584,7 +2106,7 @@ const App = struct {
             ig.ImGuiWindowFlags_NoSavedSettings | ig.ImGuiWindowFlags_NoBringToFrontOnFocus);
         defer ig.igEnd();
         app.drawAbout();
-        app.drawConverted();
+        app.drawExit();
         app.drawExportScope();
         app.drawDisplayWarning();
 
@@ -1669,37 +2191,48 @@ const App = struct {
         app.savePrefs();
     }
 
-    // Itens de exportacao (menu Arquivo > Exportar e botao Exportar...)
+    // Exportar (Arquivo > Exportar e o botao Exportar...): a lista fixa do item 28, igual nas 4 versoes; o que nao se
+    // aplica fica desabilitado. O banco inteiro e Arquivo > Salvar.
     fn exportItems(app: *App) void {
-        const can_db = !app.opening() and app.db.isOpen();
-        // ordem do padrao: SQLite, DuckDB, Excel; depois CSV e Excel da tabela, do esquema ou do resultado
-        if (ig.igMenuItem_Bool(tr("export_db_sqlite"), null, false, can_db)) app.want_export = .db_sqlite;
-        if (ig.igMenuItem_Bool(tr("export_db_duckdb"), null, false, can_db)) app.want_export = .db_duckdb;
-        if (ig.igMenuItem_Bool(tr("export_db_xlsx"), null, false, can_db)) app.want_export = .db_xlsx;
-        ig.igSeparator();
-        const cur = app.canExportCurrent();
-        const csv_key, const xlsx_key = switch (app.tab) {
-            .data => .{ tr("export_table_csv"), tr("export_table_xlsx") },
-            .schema => .{ tr("export_schema_csv"), tr("export_schema_xlsx") },
-            .sql => .{ tr("export_result_csv"), tr("export_result_xlsx") },
+        const has_db = !app.opening() and app.db.isOpen();
+        const has_table = has_db and app.selected != null;
+        if (formatMenu(tr("export_table"), has_table)) |csv| app.want_export = if (csv) .table_csv else .table_xlsx;
+        if (formatMenu(tr("export_marked"), has_table and app.marksOf(app.selected).len > 0)) |csv| app.want_export = if (csv) .marked_csv else .marked_xlsx;
+        if (formatMenu(tr("export_schema"), has_table)) |csv| app.want_export = if (csv) .schema_csv else .schema_xlsx;
+        if (formatMenu(tr("export_dbschema"), has_db)) |csv| app.want_export = if (csv) .dbschema_csv else .dbschema_xlsx;
+        if (ig.igMenuItem_Bool(tr("export_all_csv"), null, false, has_db)) app.want_export = .all_csv;
+        if (formatMenu(tr("export_result"), has_db and app.result != null)) |csv| app.want_export = if (csv) .result_csv else .result_xlsx;
+        const has_global = if (app.global) |g| g.hits.len > 0 else false;
+        if (ig.igMenuItem_Bool(tr("export_global"), null, false, has_db and has_global)) app.want_export = .global_xlsx;
+        if (termsReportMenu(has_db and app.terms_res != null)) |k| app.want_export = k;
+    }
+
+    // A grade da aba atual e a celula escolhida nela (Editar > Copiar, Ctrl+Shift+C); `skip`: a coluna Termo
+    const Current = struct { g: *const dbm.Grid, sel: *GridSel, skip: usize };
+    fn currentGrid(app: *App) ?Current {
+        return switch (app.tab) {
+            .data => if (app.data) |*g| .{ .g = g, .sel = &app.data_sel, .skip = 0 } else null,
+            .schema => if (app.schema) |*g| .{ .g = g, .sel = &app.schema_sel, .skip = 0 } else null,
+            .sql => if (app.result) |*g| .{ .g = g, .sel = &app.result_sel, .skip = 0 } else null,
+            .terms => if (app.terms_grid) |*g| .{ .g = g, .sel = &app.terms_sel, .skip = 1 } else null,
         };
-        if (ig.igMenuItem_Bool(csv_key, null, false, cur)) app.want_export = if (app.tab == .sql) .result_csv else .table_csv;
-        if (ig.igMenuItem_Bool(xlsx_key, null, false, cur)) app.want_export = if (app.tab == .sql) .result_xlsx else .table_xlsx;
     }
 
     fn drawMenu(app: *App) void {
         if (!ig.igBeginMainMenuBar()) return;
         defer ig.igEndMainMenuBar();
-        var lb: [6][96]u8 = undefined;
+        var lb: [7][96]u8 = undefined;
         const file_l = idLabel(&lb[0], "menu_file", "file");
         const view_l = idLabel(&lb[1], "menu_view", "view");
         const settings_l = idLabel(&lb[2], "menu_settings", "settings");
         const help_l = idLabel(&lb[3], "menu_help", "help");
         const export_l = idLabel(&lb[4], "menu_export", "export");
         const lang_l = idLabel(&lb[5], "menu_language", "language");
+        const edit_l = idLabel(&lb[6], "menu_edit", "edit");
         // --menu: abre o menu (e o submenu Exportar / Idioma) no mesmo quadro, para as capturas de tela
         const open_file = app.takeStartMenu(.File);
         const open_settings = app.takeStartMenu(.Settings);
+        if (app.takeStartMenu(.Edit)) _ = ig.igOpenPopup_Str(edit_l, 0);
         if (open_file) _ = ig.igOpenPopup_Str(file_l, 0);
         if (open_settings) _ = ig.igOpenPopup_Str(settings_l, 0);
         if (app.takeStartMenu(.View)) _ = ig.igOpenPopup_Str(view_l, 0);
@@ -1708,17 +2241,98 @@ const App = struct {
         if (ig.igBeginMenu(file_l, true)) {
             defer ig.igEndMenu();
             if (ig.igMenuItem_Bool(tr("menu_open"), "Ctrl+O", false, true)) app.want_browse = true;
+            if (ig.igMenuItem_Bool(tr("menu_open_typed"), null, false, true)) app.want_open = true;
+            if (ig.igMenuItem_Bool(tr("menu_reopen"), "F5", false, has_db)) app.want_refresh = true;
+            ig.igSeparator();
+            if (ig.igMenuItem_Bool(tr("menu_save"), "Ctrl+S", false, has_db)) app.want_save = .save;
+            if (ig.igMenuItem_Bool(tr("menu_save_as"), "Ctrl+Shift+S", false, has_db)) app.want_save = .save_as;
             if (open_file) _ = ig.igOpenPopup_Str(export_l, 0);
             if (ig.igBeginMenu(export_l, has_db)) {
                 defer ig.igEndMenu();
                 app.exportItems();
             }
-            if (ig.igMenuItem_Bool(tr("menu_close"), null, false, has_db)) app.requestLeave(.close);
             ig.igSeparator();
-            if (ig.igMenuItem_Bool(tr("menu_exit"), "Ctrl+Q", false, true)) app.requestLeave(.exit);
+            if (ig.igMenuItem_Bool(tr("menu_close"), "Ctrl+W", false, has_db)) app.want_close = true;
+            ig.igSeparator();
+            if (ig.igMenuItem_Bool(tr("menu_exit"), "Ctrl+Q", false, true)) app.requestExit();
+        }
+        // Editar: o que os menus das grades fazem, na grade da aba atual
+        if (ig.igBeginMenu(edit_l, true)) {
+            defer ig.igEndMenu();
+            const cur = app.currentGrid();
+            const cell = if (cur) |c| c.sel.row != null else false;
+            if (ig.igMenuItem_Bool(tr("copy_value"), "Ctrl+C", false, cell)) copySelection(cur.?.g, cur.?.sel, false, false, 0);
+            if (ig.igMenuItem_Bool(tr("copy_row"), "Ctrl+Shift+C", false, cell)) copySelection(cur.?.g, cur.?.sel, true, false, cur.?.skip);
+            if (ig.igMenuItem_Bool(tr("copy_row_header"), null, false, cell)) copySelection(cur.?.g, cur.?.sel, true, true, cur.?.skip);
+            if (ig.igMenuItem_Bool(tr("menu_copy_log"), null, false, session_log.text.items.len > 0)) setClipboard(session_log.slice());
+            ig.igSeparator();
+            if (ig.igMenuItem_Bool(tr("menu_search"), "Ctrl+F", false, has_db)) {
+                app.want_tab = .data;
+                app.focus_search = true;
+            }
+            const data_cell = has_db and app.tab == .data and app.data_sel.row != null;
+            if (ig.igMenuItem_Bool(tr("filter_by_value"), null, false, data_cell)) app.data_sel.want_filter = true;
+            if (ig.igMenuItem_Bool(tr("clear_filters"), null, false, has_db and app.filters.items.len > 0)) app.want_clear_filters = true;
+            ig.igSeparator();
+            const keyed = if (app.data) |g| g.keys.len == g.rows.len else false;
+            if (ig.igMenuItem_Bool(tr("menu_mark"), tr("key_space"), false, data_cell and keyed)) app.want_mark = app.data_sel.row;
+            if (ig.igMenuItem_Bool(tr("menu_unmark_all"), null, false, has_db and app.marksOf(app.selected).len > 0)) app.want_unmark_all = true;
         }
         if (ig.igBeginMenu(view_l, true)) {
             defer ig.igEndMenu();
+            if (ig.igMenuItem_Bool(tr("tab_data"), "Ctrl+1", false, has_db)) app.want_tab = .data;
+            if (ig.igMenuItem_Bool(tr("tab_schema"), "Ctrl+2", false, has_db)) app.want_tab = .schema;
+            if (ig.igMenuItem_Bool(tr("tab_sql"), "Ctrl+3", false, has_db)) app.want_tab = .sql;
+            if (ig.igMenuItem_Bool(tr("tab_terms"), "Ctrl+4", false, has_db)) app.want_tab = .terms;
+            ig.igSeparator();
+            // Linhas > 100 / 500 / 1000 (a lista da aba Dados)
+            var rb: [96]u8 = undefined;
+            if (ig.igBeginMenu(idLabel(&rb, "rows_label", "rows"), has_db)) {
+                defer ig.igEndMenu();
+                for (query.row_limits) |n| {
+                    var nb: [16]u8 = undefined;
+                    const item = std.fmt.bufPrintSentinel(&nb, "{d}", .{n}, 0) catch continue;
+                    if (ig.igMenuItem_Bool(item, null, app.limit == n, true) and n != app.limit) {
+                        app.limit = n;
+                        app.reloadFirstPage();
+                    }
+                }
+            }
+            // Colunas... da grade da aba atual (o Esquema nao tem)
+            const cols_sel: ?*GridSel = switch (app.tab) {
+                .data => if (app.data != null) &app.data_sel else null,
+                .sql => if (app.result != null) &app.result_sel else null,
+                .terms => if (app.terms_grid != null) &app.terms_sel else null,
+                .schema => null,
+            };
+            if (ig.igMenuItem_Bool(tr("columns_button"), null, false, has_db and cols_sel != null)) cols_sel.?.open_columns = true;
+            var sb: [96]u8 = undefined;
+            if (ig.igBeginMenu(idLabel(&sb, "menu_search_in", "search_in"), has_db)) {
+                defer ig.igEndMenu();
+                const pick: ?settings.SearchScope = if (ig.igMenuItem_Bool(tr("scope_table"), null, app.scope == .table, true))
+                    .table
+                else if (ig.igMenuItem_Bool(tr("scope_all"), null, app.scope == .all, true)) .all else null;
+                if (pick) |s| {
+                    app.want_tab = .data; // a busca e a da aba Dados
+                    app.setScope(s);
+                }
+            }
+            if (ig.igMenuItem_Bool(tr("menu_only_marked"), null, app.only_marked, has_db and app.marksOf(app.selected).len > 0)) {
+                app.only_marked = !app.only_marked;
+                app.reloadFirstPage();
+            }
+            if (ig.igMenuItem_Bool(tr("menu_goto_tables"), "Ctrl+T", false, has_db)) app.focus_tables = true;
+            if (ig.igMenuItem_Bool(tr("fav_toggle"), "Ctrl+D", false, has_db and app.selected != null)) app.want_fav = app.selected;
+            ig.igSeparator();
+            if (ig.igMenuItem_Bool(tr("menu_run_sql"), "Ctrl+Enter", false, has_db and zstr(&app.sql).len > 0)) {
+                app.want_tab = .sql;
+                app.want_run = true;
+            }
+            if (ig.igMenuItem_Bool(tr("terms_run"), "Ctrl+Enter", false, has_db and app.terms_counted[0] > 0)) {
+                app.want_tab = .terms;
+                app.want_terms = true;
+            }
+            ig.igSeparator();
             if (ig.igMenuItem_Bool(tr("menu_log"), "Ctrl+L", app.prefs.log_open, true)) app.setLogOpen(!app.prefs.log_open);
         }
         if (ig.igBeginMenu(settings_l, true)) {
@@ -1753,6 +2367,21 @@ const App = struct {
                     app.prefs.search_scope = s;
                     app.savePrefs();
                     app.setScope(s);
+                    app.terms_scope = s;
+                }
+            }
+            // padrao da aba Termos: Valor inteiro ou Contem
+            var mb: [96]u8 = undefined;
+            if (ig.igBeginMenu(idLabel(&mb, "menu_term_match", "term_match"), true)) {
+                defer ig.igEndMenu();
+                const cur = app.prefs.term_match;
+                const pick: ?settings.TermMatch = if (ig.igMenuItem_Bool(tr("match_whole"), null, cur == .whole, true))
+                    .whole
+                else if (ig.igMenuItem_Bool(tr("match_contains"), null, cur == .contains, true)) .contains else null;
+                if (pick) |m| {
+                    app.prefs.term_match = m;
+                    app.savePrefs();
+                    app.terms_match = m;
                 }
             }
             if (ig.igMenuItem_Bool(tr("menu_show_null"), null, app.prefs.show_null, true)) {
@@ -1770,19 +2399,36 @@ const App = struct {
         const ctrl = ig.ImGuiMod_Ctrl;
         if (chord(ctrl | ig.ImGuiKey_O)) app.want_browse = true;
         if (chord(ctrl | ig.ImGuiKey_L)) app.setLogOpen(!app.prefs.log_open);
-        if (chord(ctrl | ig.ImGuiKey_Q)) app.requestLeave(.exit);
+        if (chord(ctrl | ig.ImGuiKey_Q)) app.requestExit();
         if (has_db) {
+            if (chord(ctrl | ig.ImGuiKey_S)) app.want_save = .save;
+            if (chord(ctrl | ig.ImGuiMod_Shift | ig.ImGuiKey_S)) app.want_save = .save_as;
+            if (chord(ctrl | ig.ImGuiKey_W)) app.want_close = true;
+            if (chord(ctrl | ig.ImGuiKey_T)) app.focus_tables = true;
+            if (chord(ctrl | ig.ImGuiKey_D)) app.want_fav = app.selected; // favoritar a tabela aberta
+            // Ctrl+Shift+C: copiar a linha da celula escolhida na grade da aba atual
+            if (chord(ctrl | ig.ImGuiMod_Shift | ig.ImGuiKey_C)) if (app.currentGrid()) |c| copySelection(c.g, c.sel, true, false, c.skip);
             if (chord(ctrl | ig.ImGuiKey_F)) {
                 app.want_tab = .data;
                 app.focus_search = true;
             }
             if (ig.igIsKeyPressed_Bool(ig.ImGuiKey_F5, false)) app.want_refresh = true;
+            // Espaco na aba Dados (fora de uma caixa de texto): marca ou desmarca a linha da celula selecionada
+            if (app.tab == .data and !ig.igIsAnyItemActive() and ig.igIsKeyPressed_Bool(ig.ImGuiKey_Space, false)) if (app.data_sel.row) |r| {
+                app.want_mark = r;
+            };
             if (chord(ctrl | ig.ImGuiKey_1)) app.want_tab = .data;
             if (chord(ctrl | ig.ImGuiKey_2)) app.want_tab = .schema;
             if (chord(ctrl | ig.ImGuiKey_3)) app.want_tab = .sql;
-            if ((chord(ctrl | ig.ImGuiKey_Enter) or chord(ctrl | ig.ImGuiKey_KeypadEnter)) and zstr(&app.sql).len > 0) {
-                app.want_tab = .sql;
-                app.want_run = true;
+            if (chord(ctrl | ig.ImGuiKey_4)) app.want_tab = .terms;
+            // Ctrl+Enter: na aba Termos pesquisa os termos; nas outras roda o SQL
+            if (chord(ctrl | ig.ImGuiKey_Enter) or chord(ctrl | ig.ImGuiKey_KeypadEnter)) {
+                if (app.tab == .terms) {
+                    app.want_terms = true;
+                } else if (zstr(&app.sql).len > 0) {
+                    app.want_tab = .sql;
+                    app.want_run = true;
+                }
             }
         }
     }
@@ -1825,17 +2471,22 @@ const App = struct {
             .{ tr("about_window"), std.fmt.bufPrint(&bufs[2], "GLFW {d}.{d}.{d} + OpenGL 3.3", .{ glfw_ver[0], glfw_ver[1], glfw_ver[2] }) catch "" },
             .{ tr("about_database"), std.fmt.bufPrint(&bufs[3], "DuckDB {s}", .{std.mem.trimStart(u8, dbm.libraryVersion(), "v")}) catch "" },
             .{ tr("about_access"), if (platform.is_windows) i18n.fmt(&bufs[4], "about_access_win", .{about.mdbtools_version}) else i18n.fmt(&bufs[4], "about_access_unix", .{about.mdbtools_version}) },
+            .{ tr("about_write"), tr("about_write_value") },
             .{ tr("about_author"), about.author },
             .{ tr("about_license"), tr("about_license_text") },
         };
         if (ig.igBeginTable("##about_rows", 2, ig.ImGuiTableFlags_SizingFixedFit, .{ .x = 0, .y = 0 }, 0)) {
             defer ig.igEndTable();
+            // a linha de Gravacao (mais longa) quebra na largura da de Leitura do Access: o dialogo fica do mesmo tamanho
+            const wrap_w = rawWidth(rows[4][1]) + 1;
             for (rows) |row| {
                 ig.igTableNextRow(0, 0);
                 _ = ig.igTableNextColumn();
                 ig.igTextDisabled("%s", row[0].ptr);
                 _ = ig.igTableNextColumn();
+                ig.igPushTextWrapPos(ig.igGetCursorPosX() + wrap_w);
                 textSlice(row[1]);
+                ig.igPopTextWrapPos();
             }
             for (about.links) |link| {
                 ig.igTableNextRow(0, 0);
@@ -1851,7 +2502,7 @@ const App = struct {
         ig.igSpacing();
         // Fechar a direita, do mesmo tamanho dos botoes dos outros dialogos
         const close_l = tr("close");
-        const bw = dialogButtonWidth(&.{close_l});
+        const bw = dialogButtonWidth(&.{"close"});
         ig.igSetCursorPosX(ig.igGetCursorPosX() + ig.igGetContentRegionAvail().x - bw);
         if (ig.igButton(close_l, .{ .x = bw, .y = 0 }) or dialogKeyClose()) ig.igCloseCurrentPopup();
     }
@@ -1880,7 +2531,7 @@ const App = struct {
         ig.igPopTextWrapPos();
         const copy_l = tr("copy");
         const ok_l = tr("ok");
-        const bw = dialogButtonWidth(&.{ copy_l, ok_l });
+        const bw = dialogButtonWidth(&.{ "copy", "ok" });
         if (w.command_len > 0) {
             // "<distro>:" e o comando numa caixa somente leitura (selecionavel) com Copiar ao lado
             ig.igAlignTextToFramePadding();
@@ -1903,59 +2554,66 @@ const App = struct {
         }
     }
 
-    // Pergunta sobre o SQLite convertido do Access, a do Go: texto, "Lembrar nesta sessao" e Salvar... / Apagar /
-    // Cancelar (o X e o Esc cancelam)
-    fn drawConverted(app: *App) void {
-        var tb: [96]u8 = undefined;
-        const title = idLabel(&tb, "converted_title", "converted");
-        const want = app.leave != null and app.choice == null and app.converted != null;
-        if (want and !ig.igIsPopupOpen_Str(title, 0)) _ = ig.igOpenPopup_Str(title, 0);
-        centerNext();
-        // X do dialogo, Esc ou Cancelar fecham a pergunta (inclusive na saida do programa); Enter = Salvar...
-        var open = true;
-        if (!ig.igBeginPopupModal(title, &open, ig.ImGuiWindowFlags_AlwaysAutoResize | ig.ImGuiWindowFlags_NoSavedSettings)) {
-            if (!open) app.leave = null; // o X fecha o popup antes de chegar aqui
-            return;
-        }
-        defer ig.igEndPopup();
-        if (!want) return ig.igCloseCurrentPopup();
-        if (!open or ig.igIsKeyPressed_Bool(ig.ImGuiKey_Escape, false)) {
-            app.leave = null;
-            return ig.igCloseCurrentPopup();
-        }
-        const cv = app.converted.?;
-        if (ig.igIsWindowAppearing()) app.remember_box = false;
-        var mb: [600]u8 = undefined;
-        var nb: [600]u8 = undefined;
-        // "<origem>.sqlite", o nome que o Salvar... sugere; largura controlada: o nome longo quebra a linha
-        const file = settings.fileName(&nb, std.fs.path.stem(zstr(&cv.source)), ".sqlite");
-        ig.igPushTextWrapPos(ig.igGetFontSize() * 30);
-        textSlice(i18n.fmt(&mb, "converted_text", .{file}));
-        ig.igPopTextWrapPos();
-        ig.igSpacing();
-        _ = ig.igCheckbox(tr("converted_remember"), &app.remember_box);
-        ig.igSpacing();
-        const save_l = tr("save");
-        const delete_l = tr("delete");
-        const cancel_l = tr("cancel");
-        const bw = dialogButtonWidth(&.{ save_l, delete_l, cancel_l });
-        const st = ig.igGetStyle();
-        const row_w = 3 * bw + 2 * st.*.ItemSpacing.x;
-        ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - row_w));
-        if (ig.igButton(save_l, .{ .x = bw, .y = 0 })) app.choice = .save;
-        // foco inicial visivel no botao padrao; Enter (com o foco nele) salva
-        if (ig.igIsWindowAppearing()) {
-            ig.igSetItemDefaultFocus();
-            ig.igSetKeyboardFocusHere(-1);
-            ig.igSetNavCursorVisible(true);
-        }
-        ig.igSameLine(0, -1);
-        if (ig.igButton(delete_l, .{ .x = bw, .y = 0 })) app.choice = .delete;
-        app.choice_remember = app.remember_box;
-        ig.igSameLine(0, -1);
-        if (ig.igButton(cancel_l, .{ .x = bw, .y = 0 })) {
-            app.leave = null;
-            ig.igCloseCurrentPopup();
+    // Perguntas ao sair do programa. Access convertido e nao salvo: "Salvar" a esquerda; "Voltar" e "Sair" a direita,
+    // lado a lado. Exportacao em andamento: "Voltar" e "Sair" (Sair cancela a exportacao; o arquivo pela metade e
+    // apagado). Esc e o X da caixa = Voltar.
+    fn drawExit(app: *App) void {
+        var tb: [2][96]u8 = undefined;
+        const titles = [_][:0]const u8{ idLabel(&tb[0], "export_run_title", "exit_export"), idLabel(&tb[1], "converted_title", "exit_unsaved") };
+        for (titles, [_]ExitAsk{ .export_running, .unsaved }) |title, kind| {
+            const want = app.exit_ask == kind;
+            if (want and !ig.igIsPopupOpen_Str(title, 0)) _ = ig.igOpenPopup_Str(title, 0);
+            centerNext();
+            var open = true;
+            if (!ig.igBeginPopupModal(title, &open, ig.ImGuiWindowFlags_AlwaysAutoResize | ig.ImGuiWindowFlags_NoSavedSettings)) {
+                if (!open and want) app.exit_ask = null; // o X fecha o popup antes de chegar aqui
+                continue;
+            }
+            defer ig.igEndPopup();
+            if (!want or !open or ig.igIsKeyPressed_Bool(ig.ImGuiKey_Escape, false)) {
+                if (want) app.exit_ask = null;
+                ig.igCloseCurrentPopup();
+                continue;
+            }
+            var mb: [1300]u8 = undefined;
+            const source = if (app.converted) |*cv| zstr(&cv.source) else "";
+            ig.igPushTextWrapPos(ig.igGetFontSize() * 30);
+            textSlice(if (kind == .unsaved)
+                i18n.fmt(&mb, "exit_text", .{std.fs.path.basename(source)})
+            else
+                i18n.fmt(&mb, "export_run_text", .{std.fs.path.basename(app.slot.req.destPath())}));
+            ig.igPopTextWrapPos();
+            ig.igSpacing();
+            const save_l = tr("btn_save");
+            const back_l = tr("btn_back");
+            const exit_l = tr("btn_exit");
+            const bw = dialogButtonWidth(&.{ "btn_save", "btn_back", "btn_exit" });
+            if (kind == .unsaved) {
+                // Salvar abre a caixa de Arquivo > Salvar; cancelada, esta pergunta volta
+                if (ig.igButton(save_l, .{ .x = bw, .y = 0 })) {
+                    app.exit_ask = null;
+                    app.exit_save = true;
+                    app.want_save = .save;
+                    ig.igCloseCurrentPopup();
+                }
+                focusOnAppear(); // foco inicial visivel em Salvar
+                ig.igSameLine(0, -1);
+            }
+            ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - 2 * bw - ig.igGetStyle().*.ItemSpacing.x));
+            if (ig.igButton(back_l, .{ .x = bw, .y = 0 })) {
+                app.exit_ask = null;
+                ig.igCloseCurrentPopup();
+            }
+            if (kind == .export_running) focusOnAppear(); // exportacao em andamento: foco em Voltar
+            ig.igSameLine(0, -1);
+            if (ig.igButton(exit_l, .{ .x = bw, .y = 0 })) {
+                app.exit_ask = null;
+                ig.igCloseCurrentPopup();
+                if (kind == .export_running) {
+                    app.slot.cancel();
+                    app.exitUnlessUnsaved();
+                } else app.quit = true;
+            }
         }
     }
 
@@ -1991,7 +2649,13 @@ const App = struct {
         const whole_l = tr("export_whole");
         const found_l = i18n.fmtCountZ(&fb, "export_found", app.total, .{app.total});
         const cancel_l = tr("cancel");
-        const bw = dialogButtonWidth(&.{ whole_l, found_l, cancel_l });
+        // "So as N linhas encontradas" tem o numero: a largura dele nos 3 idiomas entra na conta
+        var bw = dialogButtonWidth(&.{ "export_whole", "cancel" });
+        inline for (i18n.catalogs) |C| {
+            var cb: [160]u8 = undefined;
+            const s = (if (app.total == 1) std.fmt.bufPrint(&cb, C.export_found_one, .{app.total}) else std.fmt.bufPrint(&cb, C.export_found, .{app.total})) catch "";
+            bw = @max(bw, textWidth(s) + 2 * ig.igGetStyle().*.FramePadding.x);
+        }
         const answer: ?ExportScope = blk: {
             if (ig.igButton(whole_l, .{ .x = bw, .y = 0 })) break :blk .whole;
             if (ig.igIsWindowAppearing()) {
@@ -2085,15 +2749,22 @@ const App = struct {
             const done = app.slot.progress.done.load(.monotonic);
             const total = app.slot.progress.total.load(.monotonic);
             ig.igAlignTextToFramePadding();
+            var wb: [600]u8 = undefined;
             const what = switch (r.kind) {
                 .open => if (query.sourceKind(zstr(&r.path)) catch .duckdb == .access) tr("busy_converting") else tr("busy_opening"),
-                .select, .reload => tr("busy_loading"),
-                .sql => tr("busy_running"),
+                .select, .reload, .terms_page => tr("busy_loading"),
+                .sql, .terms_copy => tr("busy_running"),
                 .export_ => tr("busy_exporting"),
                 .search_all => tr("busy_searching"),
+                // "Pesquisando termos: tabela 3 de 287 (RANGER_SOSTAT)"
+                .terms => blk: {
+                    const names = app.db.table_names;
+                    const at = if (r.terms_only) |o| o else @min(done, names.len -| 1);
+                    break :blk i18n.fmt(&wb, "terms_progress", .{ @min(done + 1, @max(total, 1)), @max(total, 1), if (at < names.len) names[at] else "" });
+                },
             };
             textT("busy_elapsed", .{ what, elapsed });
-            if (total > 0 and (r.kind == .open or r.kind == .export_ or r.kind == .search_all)) {
+            if (total > 0 and (r.kind == .open or r.kind == .export_ or r.kind == .search_all or r.kind == .terms)) {
                 ig.igSameLine(0, -1);
                 var buf: [64]u8 = undefined;
                 const unit = if (r.kind != .export_ or r.export_kind.countsTables()) i18n.trCount("unit_tables", total) else i18n.trCount("unit_rows", total);
@@ -2153,6 +2824,10 @@ const App = struct {
     }
 
     fn drawTables(app: *App) void {
+        if (app.focus_tables) { // Ctrl+T
+            app.focus_tables = false;
+            ig.igSetKeyboardFocusHere(0);
+        }
         ig.igSetNextItemWidth(-1);
         // filtra 300 ms depois da ultima tecla; Enter filtra na hora
         var hb: [96]u8 = undefined;
@@ -2176,9 +2851,11 @@ const App = struct {
         }
         var fbuf: [app.table_filter.len]u8 = undefined;
         const words = dbm.gridtools.fold(&fbuf, zstr(&app.table_filter_applied));
-        for (app.db.table_names, 0..) |name, i| {
-            const row = [_]?[]const u8{name};
-            if (!(dbm.gridtools.rowMatches(app.gpa, &app.filter_scratch, &row, words) catch true)) continue;
+        // favoritas primeiro, em ordem alfabetica; depois as outras na ordem do arquivo (o filtro vale para todas)
+        dbm.gridtools.tableOrder(app.gpa, &app.table_order, &app.filter_scratch, app.db.table_names, app.favorites.items, words) catch {};
+        for (app.table_order.items) |i| {
+            const name = app.db.table_names[i];
+            const fav = dbm.gridtools.isFavorite(app.favorites.items, name);
             ig.igTableNextRow(0, 0);
             _ = ig.igTableNextColumn();
             ig.igPushID_Int(@intCast(i));
@@ -2188,6 +2865,16 @@ const App = struct {
                 app.scope = .table; // a aba Data mostra a tabela escolhida
             }
             const hovered = ig.igIsItemHovered(0);
+            // clique direito: Favoritar / Desfavoritar (--capture abre o menu sem mouse, logo abaixo da linha)
+            if (app.fav_menu == i) {
+                app.fav_menu = null;
+                _ = ig.igOpenPopup_Str("##tablemenu", 0);
+                ig.igSetNextWindowPos(.{ .x = ig.igGetItemRectMin().x + 24, .y = ig.igGetItemRectMax().y }, ig.ImGuiCond_Always, .{ .x = 0, .y = 0 });
+            }
+            if (ig.igBeginPopupContextItem("##tablemenu", ig.ImGuiPopupFlags_MouseButtonRight)) {
+                defer ig.igEndPopup();
+                if (ig.igMenuItem_Bool(if (fav) tr("fav_remove") else tr("fav_add"), null, false, true)) app.want_fav = i;
+            }
             ig.igPopID();
             if (app.selected == i and app.reveal_selected) {
                 ig.igSetScrollHereY(0.5);
@@ -2196,6 +2883,11 @@ const App = struct {
             ig.igSameLine(0, 0);
             // nome mais largo que a coluna (painel estreito): o nome inteiro aparece no tooltip
             if (hovered and textWidth(name) > ig.igGetContentRegionAvail().x) tooltip(name);
+            // favorita: "★ " antes do nome, na cor do texto
+            if (fav) {
+                textSlice("\u{2605} ");
+                ig.igSameLine(0, 0);
+            }
             textSlice(name);
             _ = ig.igTableNextColumn();
             if (i < app.counts.len) {
@@ -2210,8 +2902,8 @@ const App = struct {
     fn drawContent(app: *App) void {
         if (!ig.igBeginTabBar("##tabs", 0)) return;
         defer ig.igEndTabBar();
-        var lb: [3][64]u8 = undefined;
-        // aba pedida por atalho (Ctrl+1/2/3, Ctrl+F, Ctrl+Enter) ou pelo --sql
+        var lb: [4][64]u8 = undefined;
+        // aba pedida por atalho (Ctrl+1/2/3/4, Ctrl+F, Ctrl+Enter) ou pelo --sql
         const pick = app.want_tab;
         app.want_tab = null;
         const sel = ig.ImGuiTabItemFlags_SetSelected;
@@ -2232,7 +2924,7 @@ const App = struct {
                 // um pouco mais de espaco entre as colunas (so o horizontal das celulas, +6 px de cada lado)
                 const pad = ig.igGetStyle().*.CellPadding;
                 ig.igPushStyleVar_Vec2(ig.ImGuiStyleVar_CellPadding, .{ .x = pad.x * 2, .y = pad.y });
-                _ = drawGrid("##schema", &shown, null, &app.schema_sel, null, .plain, &app.prefs, "", 0);
+                _ = drawGrid("##schema", &shown, null, &app.schema_sel, null, .plain, &app.prefs, "", 0, null);
                 ig.igPopStyleVar(1);
             }
         }
@@ -2241,6 +2933,103 @@ const App = struct {
             app.tab = .sql;
             app.drawSql();
         }
+        if (ig.igBeginTabItem(idLabel(&lb[3], "tab_terms", "terms"), null, if (pick == .terms) sel else 0)) {
+            defer ig.igEndTabItem();
+            app.tab = .terms;
+            app.drawTerms();
+        }
+    }
+
+    // Aba Termos (item 32), de cima para baixo: a caixa dos termos; Valor inteiro | Contem, Esta tabela | Todas as
+    // tabelas, Pesquisar termos e a contagem; o resumo; as tabelas com acerto e a grade da escolhida; os nao
+    // encontrados numa caixa copiavel
+    fn drawTerms(app: *App) void {
+        const st = ig.igGetStyle();
+        const box_h = ig.igGetTextLineHeight() * 8 + 2 * st.*.FramePadding.y;
+        // Ctrl+Enter na caixa pesquisa (Enter quebra a linha)
+        if (ig.igInputTextEx("##terms", tr("terms_hint"), app.terms_text.ptr, @intCast(app.terms_text.len), .{ .x = -1, .y = box_h }, ig.ImGuiInputTextFlags_Multiline | ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) app.want_terms = true;
+        if (ig.igIsItemEdited()) app.countTerms();
+        const match_l = [_][:0]const u8{ tr("match_whole"), tr("match_contains") };
+        var match_hover = false;
+        if (segmented(1, &match_l, @intFromBool(app.terms_match == .contains), &match_hover)) |i| app.terms_match = if (i == 0) .whole else .contains;
+        if (match_hover) tooltip(tr("match_tip"));
+        const scope_l = [_][:0]const u8{ tr("scope_table"), tr("scope_all") };
+        sameLineIfFits(segmentedWidth(&scope_l), -1);
+        if (segmented(2, &scope_l, @intFromBool(app.terms_scope == .all), null)) |i| app.terms_scope = if (i == 0) .table else .all;
+        const run_l = tr("terms_run");
+        sameLineIfFits(buttonWidth(run_l), -1);
+        ig.igBeginDisabled(app.slot.busyWith(.terms) or app.terms_counted[0] == 0);
+        if (button(run_l)) app.want_terms = true;
+        ig.igEndDisabled();
+        // "8 termos, 1 repetido"
+        var cb: [64]u8 = undefined;
+        var rb: [64]u8 = undefined;
+        var lb: [140]u8 = undefined;
+        const n, const rep = app.terms_counted;
+        const count_s = std.fmt.bufPrint(&lb, "{s}{s}", .{ i18n.fmtCount(&cb, "terms_count", n, .{n}), if (rep > 0) i18n.fmtCount(&rb, "terms_repeated", rep, .{rep}) else "" }) catch "";
+        sameLineIfFits(rawWidth(count_s), -1);
+        ig.igAlignTextToFramePadding();
+        textSlice(count_s);
+
+        const res = if (app.terms_res) |*x| x else return;
+        // "6 de 9 termos encontrados: 14 linhas em 3 tabelas"
+        var sb: [3][96]u8 = undefined;
+        var summary: [400]u8 = undefined;
+        const n_terms = res.terms.len;
+        textSlice(i18n.fmt(&summary, "terms_summary", .{
+            i18n.fmtCount(&sb[0], "terms_found", n_terms, .{ res.found, n_terms }),
+            i18n.fmtCount(&sb[1], "terms_rows", res.rows, .{res.rows}),
+            i18n.fmtCount(&sb[2], "terms_tables", res.tables.len, .{res.tables.len}),
+        }));
+        // embaixo: o titulo dos nao encontrados com Copiar e a caixa deles (4 linhas)
+        const nf_box_h = ig.igGetTextLineHeight() * 4 + 2 * st.*.FramePadding.y;
+        const nf_h = ig.igGetFrameHeightWithSpacing() + nf_box_h + st.*.ItemSpacing.y;
+        const mid_h = @max(ig.igGetFrameHeight() * 3, ig.igGetContentRegionAvail().y - nf_h);
+        if (res.tables.len > 0) {
+            // lista "tabela (n)", na largura do nome mais longo (ate 35% da aba)
+            var longest: f32 = 0;
+            var nb: [600]u8 = undefined;
+            for (res.tables) |hit| longest = @max(longest, rawWidth(std.fmt.bufPrint(&nb, "{s} ({d})", .{ app.db.table_names[hit.table], hit.rows }) catch ""));
+            const list_w = std.math.clamp(longest + 2 * st.*.WindowPadding.x + st.*.ScrollbarSize, 160, @max(160, ig.igGetContentRegionAvail().x * 0.35));
+            if (ig.igBeginChild_Str("##terms_tables", .{ .x = list_w, .y = mid_h }, ig.ImGuiChildFlags_Borders, 0)) {
+                for (res.tables, 0..) |hit, i| {
+                    ig.igPushID_Int(@intCast(i));
+                    if (ig.igSelectable_Bool("##h", app.terms_hit == i, 0, .{ .x = 0, .y = 0 }) and i != app.terms_hit) app.want_terms_page = i;
+                    ig.igPopID();
+                    ig.igSameLine(0, 0);
+                    textSlice(std.fmt.bufPrint(&nb, "{s} ({d})", .{ app.db.table_names[hit.table], hit.rows }) catch app.db.table_names[hit.table]);
+                }
+            }
+            ig.igEndChild();
+            ig.igSameLine(0, -1);
+            if (ig.igBeginChild_Str("##terms_grid", .{ .x = 0, .y = mid_h }, 0, 0)) if (app.terms_hit < res.tables.len) {
+                const hit = res.tables[app.terms_hit];
+                const name = app.db.table_names[hit.table];
+                const count_h = ig.igGetFrameHeight() + st.*.ItemSpacing.y;
+                if (app.terms_grid) |*g| _ = drawGrid("##termsgrid", g, null, &app.terms_sel, null, .terms, &app.prefs, name, count_h, null);
+                // "<tabela>: mostrando X de Y linhas" (as linhas achadas; copiar e exportar usam todas)
+                const shown: u64 = if (app.terms_grid) |g| g.rows.len else 0;
+                var rlb: [700]u8 = undefined;
+                var fb: [760]u8 = undefined;
+                const line = i18n.fmtCount(&rlb, "rows_showing", hit.rows, .{ name, shown, hit.rows });
+                ig.igAlignTextToFramePadding();
+                const fitted = fitLine(&fb, line, ig.igGetContentRegionAvail().x);
+                textSlice(fitted);
+                if (fitted.len != line.len and ig.igIsItemHovered(0)) tooltip(line);
+            };
+            ig.igEndChild();
+            // pedidos do menu da grade
+            if (app.terms_sel.want_copy_hits) app.want_terms_copy = true;
+            if (app.terms_sel.want_export) |k| app.want_export = k;
+            app.terms_sel.want_copy_hits = false;
+            app.terms_sel.want_export = null;
+        } else ig.igDummy(.{ .x = 1, .y = mid_h });
+        // "Nao encontrados (2)" + Copiar; um termo por linha, na ordem colada
+        ig.igAlignTextToFramePadding();
+        textT("not_found_title", .{n_terms - res.found});
+        ig.igSameLine(0, -1);
+        if (button(tr("copy"))) setClipboard(res.not_found);
+        _ = ig.igInputTextMultiline("##notfound", @constCast(res.not_found.ptr), res.not_found.len + 1, .{ .x = -1, .y = nf_box_h }, ig.ImGuiInputTextFlags_ReadOnly, null, null);
     }
 
     fn drawData(app: *App) void {
@@ -2288,7 +3077,7 @@ const App = struct {
                 const item = std.fmt.bufPrintSentinel(&nb, "{d}", .{n}, 0) catch continue;
                 if (ig.igSelectable_Bool(item, n == app.limit, 0, .{ .x = 0, .y = 0 }) and n != app.limit) {
                     app.limit = n;
-                    app.want_reload = true;
+                    app.reloadFirstPage();
                 }
             }
         }
@@ -2297,7 +3086,7 @@ const App = struct {
         columnsButton(&app.data_sel);
 
         // Abaixo da busca, igual nas 4 (padrao 24): so com filtros por valor, a linha deles; a grade; embaixo dela a
-        // contagem. Nada mais (sem paginas, sem contagem acima da grade).
+        // contagem com as paginas ◀ ▶ (item 13 h). Nada acima da grade.
         // Filtros ativos: um botao por filtro (clicar remove) e Limpar filtros; o que nao cabe desce de linha
         const filters_l = tr("filters_label");
         for (app.filters.items, 0..) |f, i| {
@@ -2322,26 +3111,76 @@ const App = struct {
         app.data_sel.has_filters = app.filters.items.len > 0;
         // a grade deixa embaixo a linha da contagem
         const count_h = ig.igGetFrameHeight() + st.*.ItemSpacing.y;
-        if (app.data) |*g| if (drawGrid("##data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null, .filter, &app.prefs, name, count_h)) |s| {
+        const n_marked = app.marksOf(index).len;
+        // a coluna das caixas de marcar so com a identidade das linhas (a grade carregada com ela)
+        const marking: ?Marking = if (app.data) |g| (if (g.keys.len == g.rows.len) Marking{ .top = app.marked_top, .count = n_marked } else null) else null;
+        if (app.data) |*g| if (drawGrid("##data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null, .filter, &app.prefs, name, count_h, marking)) |s| {
             app.sort_col = s.col;
             app.sort_desc = s.desc;
-            app.want_reload = true;
+            app.reloadFirstPage();
         };
-        // "<tabela>: mostrando X de Y linhas" (com busca ou filtro: "X de Y linhas encontradas"); as colunas ocultas
-        // ficam na barra de baixo. Uma linha: o que nao cabe termina em "..." (inteira no tooltip)
+        // "<tabela>: linhas 1 a 100 de 36804" (com busca ou filtro: "... encontradas") + ", N marcadas" e as paginas
+        // ◀ ▶ (a pagina = a lista Linhas; as marcadas ficam fora dela, no topo de toda pagina); as colunas ocultas
+        // ficam na barra de baixo. Uma linha: o que nao cabe termina em "..." (inteira no tooltip). Com marcadas, a
+        // direita a caixa "So as marcadas" (= Exibir > So as linhas marcadas).
         const shown: u64 = if (app.data) |g| g.rows.len else 0;
+        const top: u64 = if (app.only_marked) 0 else app.marked_top;
+        const listed = app.total -| top;
+        const on_page = shown -| top;
+        const first_row = if (on_page == 0) 0 else app.page * app.limit + 1;
+        const last_row = app.page * app.limit + on_page;
         var cb: [700]u8 = undefined;
-        const count_line = if (app.applied_search[0] != 0 or app.filters.items.len > 0)
-            i18n.fmtCount(&cb, "rows_found", app.total, .{ name, shown, app.total })
+        const rows_line = if (app.applied_search[0] != 0 or app.filters.items.len > 0)
+            i18n.fmtCount(&cb, "rows_page_found", listed, .{ name, first_row, last_row, listed })
         else
-            i18n.fmtCount(&cb, "rows_showing", app.total, .{ name, shown, app.total });
+            i18n.fmtCount(&cb, "rows_page", listed, .{ name, first_row, last_row, listed });
+        var mb: [64]u8 = undefined;
+        var clb: [780]u8 = undefined;
+        const count_line = if (n_marked > 0) std.fmt.bufPrint(&clb,"{s}{s}", .{ rows_line, i18n.fmtCount(&mb, "marked_count", n_marked, .{n_marked}) }) catch rows_line else rows_line;
+        const only_l = tr("only_marked");
+        const box_w = if (n_marked > 0) ig.igGetFrameHeight() + st.*.ItemInnerSpacing.x + textWidth(only_l) + 2 * gap else 0;
+        const prev_l = "\u{25C0}##page_prev";
+        const next_l = "\u{25B6}##page_next";
+        const pager_w = buttonWidth(prev_l) + buttonWidth(next_l) + 2 * gap;
         ig.igAlignTextToFramePadding();
-        var fb: [760]u8 = undefined;
-        const fitted = fitLine(&fb, count_line, ig.igGetContentRegionAvail().x);
+        var fb: [800]u8 = undefined;
+        const fitted = fitLine(&fb, count_line, ig.igGetContentRegionAvail().x - box_w - pager_w);
         textSlice(fitted);
         if (fitted.len != count_line.len and ig.igIsItemHovered(0)) tooltip(count_line);
-        // pedidos do menu da celula
+        const last_page = if (listed == 0) 0 else (listed - 1) / app.limit;
+        ig.igSameLine(0, -1);
+        ig.igBeginDisabled(app.page == 0 or app.only_marked);
+        if (button(prev_l)) {
+            app.page -= 1;
+            app.want_reload = true;
+        }
+        itemTooltip(tr("page_prev"));
+        ig.igEndDisabled();
+        ig.igSameLine(0, -1);
+        ig.igBeginDisabled(app.page >= last_page or app.only_marked);
+        if (button(next_l)) {
+            app.page += 1;
+            app.want_reload = true;
+        }
+        itemTooltip(tr("page_next"));
+        ig.igEndDisabled();
+        if (n_marked > 0) {
+            ig.igSameLine(0, -1);
+            ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - (box_w - 2 * gap)));
+            var only = app.only_marked;
+            if (ig.igCheckbox(only_l, &only)) {
+                app.only_marked = only;
+                app.reloadFirstPage();
+            }
+        }
+        // pedidos da grade (caixas de marcar) e do menu da celula
         const sel = &app.data_sel;
+        if (sel.want_mark) |r| app.want_mark = r;
+        if (sel.want_unmark_all) app.want_unmark_all = true;
+        if (sel.want_export) |k| app.want_export = k;
+        sel.want_mark = null;
+        sel.want_unmark_all = false;
+        sel.want_export = null;
         if (sel.want_clear) app.want_clear_filters = true;
         if (sel.want_filter and app.want_filter == null) if (app.data) |g| if (sel.row) |r| if (r < g.rows.len and sel.col < g.columns.len) {
             // o valor e copiado agora: a pagina pode ser trocada antes de o filtro ser aplicado
@@ -2377,29 +3216,14 @@ const App = struct {
             var mb: [96]u8 = undefined;
             textSlice(i18n.fmtCount(&mb, "rows_match", g.rows.len, .{ rows.len, g.rows.len }));
         }
-        _ = drawGrid("##result", g, null, &app.result_sel, app.result_rows, .hide, &app.prefs, tr("sql_result"), 0);
+        _ = drawGrid("##result", g, null, &app.result_sel, app.result_rows, .hide, &app.prefs, tr("sql_result"), 0, null);
     }
 
     // Escopo da busca ao lado da caixa: "Esta tabela" | "Todas as tabelas", dois segmentos colados; o escolhido com
     // a cor de botao do tema, o outro com a cor das caixas de texto
     fn scopeSelector(app: *App) void {
-        const st = ig.igGetStyle();
-        const dl = ig.igGetWindowDrawList();
         const labels = [_][:0]const u8{ tr("scope_table"), tr("scope_all") };
-        for (labels, 0..) |label, i| {
-            const s: settings.SearchScope = if (i == 0) .table else .all;
-            if (i > 0) ig.igSameLine(0, 0);
-            ig.igPushID_Int(@intCast(i));
-            if (ig.igInvisibleButton("##scope", .{ .x = textWidth(label) + 2 * st.*.FramePadding.x, .y = ig.igGetFrameHeight() }, 0)) app.setScope(s);
-            ig.igPopID();
-            const col: c_int = if (app.scope == s) ig.ImGuiCol_Button else if (ig.igIsItemHovered(0)) ig.ImGuiCol_FrameBgHovered else ig.ImGuiCol_FrameBg;
-            const corners: c_int = if (i == 0) ig.ImDrawFlags_RoundLeft else ig.ImDrawFlags_RoundRight;
-            const min = ig.igGetItemRectMin();
-            const max = ig.igGetItemRectMax();
-            ig.ImDrawList_AddRectFilled(dl, min, max, ig.igGetColorU32_Col(col, 1), st.*.FrameRounding, corners);
-            ig.ImDrawList_AddRect(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_Border, 1), st.*.FrameRounding, st.*.FrameBorderSize, corners);
-            ig.ImDrawList_AddText_Vec2(dl, .{ .x = min.x + st.*.FramePadding.x, .y = min.y + st.*.FramePadding.y }, ig.igGetColorU32_Col(ig.ImGuiCol_Text, 1), label.ptr, label.ptr + label.len);
-        }
+        if (segmented(0, &labels, @intFromBool(app.scope == .all), null)) |i| app.setScope(if (i == 0) .table else .all);
     }
 
     // Busca em todas as tabelas: "<n> tabelas com linhas que contem ..." e a lista "tabela (linhas)" (Python e Rust);
@@ -2425,6 +3249,73 @@ const App = struct {
     }
 };
 
+// Segmentos colados ("Esta tabela | Todas as tabelas", "Valor inteiro | Contem"): o escolhido com a cor de botao do
+// tema, os outros com a cor das caixas de texto. Devolve o segmento clicado; `hovered`: o mouse esta sobre ele.
+fn segmented(id: c_int, labels: []const [:0]const u8, current: usize, hovered: ?*bool) ?usize {
+    const st = ig.igGetStyle();
+    const dl = ig.igGetWindowDrawList();
+    var clicked: ?usize = null;
+    ig.igPushID_Int(id);
+    defer ig.igPopID();
+    for (labels, 0..) |label, i| {
+        if (i > 0) ig.igSameLine(0, 0);
+        ig.igPushID_Int(@intCast(i));
+        if (ig.igInvisibleButton("##seg", .{ .x = textWidth(label) + 2 * st.*.FramePadding.x, .y = ig.igGetFrameHeight() }, 0)) clicked = i;
+        ig.igPopID();
+        const over = ig.igIsItemHovered(0);
+        if (hovered) |h| h.* = h.* or over;
+        const col: c_int = if (current == i) ig.ImGuiCol_Button else if (over) ig.ImGuiCol_FrameBgHovered else ig.ImGuiCol_FrameBg;
+        const corners: c_int = if (i == 0) ig.ImDrawFlags_RoundLeft else if (i + 1 == labels.len) ig.ImDrawFlags_RoundRight else ig.ImDrawFlags_RoundNone;
+        const min = ig.igGetItemRectMin();
+        const max = ig.igGetItemRectMax();
+        ig.ImDrawList_AddRectFilled(dl, min, max, ig.igGetColorU32_Col(col, 1), st.*.FrameRounding, corners);
+        ig.ImDrawList_AddRect(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_Border, 1), st.*.FrameRounding, st.*.FrameBorderSize, corners);
+        ig.ImDrawList_AddText_Vec2(dl, .{ .x = min.x + st.*.FramePadding.x, .y = min.y + st.*.FramePadding.y }, ig.igGetColorU32_Col(ig.ImGuiCol_Text, 1), label.ptr, label.ptr + label.len);
+    }
+    return clicked;
+}
+
+fn segmentedWidth(labels: []const [:0]const u8) f32 {
+    var w: f32 = 0;
+    for (labels) |l| w += buttonWidth(l);
+    return w;
+}
+
+// Submenu "CSV... / Excel (.xlsx)..." da lista Exportar: true = CSV, false = Excel, null = nada escolhido
+fn formatMenu(label: [:0]const u8, enabled: bool) ?bool {
+    if (!ig.igBeginMenu(label, enabled)) return null;
+    defer ig.igEndMenu();
+    if (ig.igMenuItem_Bool(tr("fmt_csv"), null, false, true)) return true;
+    if (ig.igMenuItem_Bool(tr("fmt_xlsx"), null, false, true)) return false;
+    return null;
+}
+
+// Relatorio da pesquisa de termos > Excel / CSV / SQLite / DuckDB (menu Exportar e menu da grade de Termos)
+fn termsReportMenu(enabled: bool) ?ExportKind {
+    var pick: ?ExportKind = null;
+    if (ig.igBeginMenu(tr("export_terms"), enabled)) {
+        defer ig.igEndMenu();
+        if (ig.igMenuItem_Bool(tr("fmt_xlsx"), null, false, true)) pick = .terms_xlsx;
+        if (ig.igMenuItem_Bool(tr("fmt_csv"), null, false, true)) pick = .terms_csv;
+        if (ig.igMenuItem_Bool(tr("fmt_sqlite"), null, false, true)) pick = .terms_sqlite;
+        if (ig.igMenuItem_Bool(tr("fmt_duckdb"), null, false, true)) pick = .terms_duckdb;
+    }
+    return pick;
+}
+
+// Titulos da coluna do termo e do relatorio, no idioma da tela (textos estaticos do catalogo)
+fn termsTitles() dbm.terms.Titles {
+    return .{
+        .term = tr("col_term"),
+        .status = tr("col_status"),
+        .table = tr("col_table"),
+        .rows = tr("col_rows"),
+        .found = tr("term_found"),
+        .not_found = tr("term_not_found"),
+        .sheet_result = tr("sheet_result"),
+    };
+}
+
 // Botao "Colunas..." da barra da grade: o dialogo e desenhado por drawGrid
 fn columnsButton(sel: *GridSel) void {
     if (button(tr("columns_button"))) sel.open_columns = true;
@@ -2438,9 +3329,14 @@ fn sqlRowsCols(buf: []u8, rows: usize, cols: usize) []const u8 {
     return std.fmt.bufPrint(buf, "{s}, {s}", .{ i18n.fmtCount(&rb, "sql_rows", rows, .{rows}), i18n.fmtCount(&cb, "sql_cols", cols, .{cols}) }) catch "";
 }
 
+var schema_titles: [3][:0]const u8 = .{ "", "", "" }; // titulos da grade do Esquema no idioma da tela
+
 // Coluna "Aceita nulo" do Esquema no idioma da tela (Sim/Nao, Si/No, Yes/No): o YES/NO do DuckDB troca pelo texto
 // do catalogo (estatico); refeito ao trocar o idioma
 fn localizeSchema(g: *dbm.Grid) void {
+    // titulos tambem (Editar > Copiar linha com cabecalho)
+    schema_titles = .{ tr("schema_column"), tr("schema_type"), tr("schema_null") };
+    if (g.columns.len == schema_titles.len) g.columns = &schema_titles;
     for (g.rows) |row| if (row.len > 2) if (row[2]) |v| {
         row[2] = i18n.yesNo(v);
     };
@@ -2471,6 +3367,10 @@ const GridSel = struct {
     has_filters: bool = false, // habilita "Limpar filtros" no menu da celula
     want_filter: bool = false, // menu da celula: filtrar pelo valor da celula selecionada
     want_clear: bool = false, // menu da celula: limpar filtros
+    want_mark: ?usize = null, // caixa da linha ou menu da celula: marcar ou desmarcar a linha
+    want_unmark_all: bool = false, // menu da celula: desmarcar todas
+    want_export: ?ExportKind = null, // menu da celula: exportar as linhas marcadas (Dados) ou o relatorio (Termos)
+    want_copy_hits: bool = false, // menu da grade de Termos: copiar as linhas achadas da tabela
 
     // Clique (esquerdo ou direito) na celula: so a selecao muda (refazer o GridSel inteiro mostrava as ocultas de novo)
     fn pick(sel: *GridSel, row: usize, col: usize) void {
@@ -2488,18 +3388,22 @@ const GridSel = struct {
 // shortcut: ImGui tables hold at most 512 columns, wider results are cut at 512
 const max_grid_cols = 512;
 
-// plain: so copia; hide: tambem ocultar colunas; filter: tambem "Filtrar por este valor" (aba Dados)
-const GridMode = enum { plain, hide, filter };
+// plain: so copia; hide: tambem ocultar colunas; filter: tambem "Filtrar por este valor" (aba Dados); terms: grade da
+// aba Termos (copiar linha sem a coluna Termo, copiar as linhas achadas, relatorio)
+const GridMode = enum { plain, hide, filter, terms };
+
+// Coluna das caixas de marcar da aba Dados: as `top` primeiras linhas sao as marcadas; `count` marcadas na tabela
+const Marking = struct { top: usize, count: usize };
 
 // Poe na area de transferencia o valor da celula selecionada ou a linha dela separada por TAB (NULL = vazio);
-// `header`: a linha de nomes das colunas vem antes
-fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool, header: bool) void {
+// `header`: a linha de nomes das colunas vem antes; `skip`: colunas do comeco que a linha nao leva (Termo)
+fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool, header: bool, skip: usize) void {
     const r = sel.row orelse return;
-    if (r >= g.rows.len or sel.col >= g.columns.len) return;
+    if (r >= g.rows.len or sel.col >= g.columns.len or skip >= g.columns.len) return;
     var out: std.Io.Writer.Allocating = .init(std.heap.page_allocator);
     defer out.deinit();
     const w = &out.writer;
-    (if (whole_row) dbm.gridtools.writeRow(w, g.columns, g.rows[r], header) else w.writeAll(g.rows[r][sel.col] orelse "")) catch return;
+    (if (whole_row) dbm.gridtools.writeRow(w, g.columns[skip..], g.rows[r][skip..], header) else w.writeAll(g.rows[r][sel.col] orelse "")) catch return;
     w.writeByte(0) catch return;
     ig.igSetClipboardText(out.written().ptr);
 }
@@ -2510,30 +3414,38 @@ fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool, heade
 // Com `mode` != .plain o clique direito no cabecalho abre o menu do cabecalho: ajustar a largura, ocultar e mostrar
 // colunas. NULL aparece como "NULL" ou como celula vazia (Configuracoes > Exibir NULL). `bottom`: altura livre embaixo
 // da grade (a linha da contagem na aba Dados). `owner`: tabela ou resultado,
-// no titulo do dialogo Colunas.
-fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, rows: ?[]const usize, mode: GridMode, prefs: *settings.Settings, owner: []const u8, bottom: f32) ?Sort {
-    const n_cols: usize = @min(g.columns.len, max_grid_cols);
+// no titulo do dialogo Colunas. `mark` (aba Dados): a 1a coluna e a das caixas de marcar a linha.
+fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, rows: ?[]const usize, mode: GridMode, prefs: *settings.Settings, owner: []const u8, bottom: f32, mark: ?Marking) ?Sort {
+    const off: usize = @intFromBool(mark != null); // colunas do ImGui = a das caixas + as do banco
+    const n_cols: usize = @min(g.columns.len, max_grid_cols - off);
     if (n_cols == 0) return null;
     const can_hide = mode != .plain;
     var flags: c_int = ig.ImGuiTableFlags_Borders | ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_Resizable |
         ig.ImGuiTableFlags_ScrollX | ig.ImGuiTableFlags_ScrollY | ig.ImGuiTableFlags_SizingFixedFit;
     if (sort != null) flags |= ig.ImGuiTableFlags_Sortable | ig.ImGuiTableFlags_SortTristate;
     if (can_hide) flags |= ig.ImGuiTableFlags_Hideable;
-    if (!ig.igBeginTable(id, @intCast(n_cols), flags, .{ .x = 0, .y = -bottom }, 0)) return null;
+    if (!ig.igBeginTable(id, @intCast(n_cols + off), flags, .{ .x = 0, .y = -bottom }, 0)) return null;
     defer ig.igEndTable();
     const table = ig.igGetCurrentTable(); // "Ajustar coluna" do menu do cabecalho
 
-    ig.igTableSetupScrollFreeze(0, 1);
+    // a coluna das caixas, estreita e sem titulo, fica parada na rolagem horizontal
+    ig.igTableSetupScrollFreeze(@intCast(off), 1);
+    if (mark != null) ig.igTableSetupColumn("##mark", ig.ImGuiTableColumnFlags_WidthFixed | ig.ImGuiTableColumnFlags_NoResize | ig.ImGuiTableColumnFlags_NoHide |
+        ig.ImGuiTableColumnFlags_NoSort | ig.ImGuiTableColumnFlags_NoReorder, ig.igGetFontSize(), 0);
     for (g.columns[0..n_cols]) |name| ig.igTableSetupColumn(name.ptr, 0, 0, 0);
     var open_header = false;
     var header_at: ?[2]f32 = null; // --capture: onde o menu do cabecalho abre
     if (can_hide) {
         // a lista de ocultas e nossa (GridSel.hidden); o ImGui so executa
-        for (0..n_cols) |c| ig.igTableSetColumnEnabled(@intCast(c), !sel.hidden.isSet(c));
+        for (0..n_cols) |c| ig.igTableSetColumnEnabled(@intCast(c + off), !sel.hidden.isSet(c));
         // cabecalho como o TableHeadersRow, mais o clique direito com o nosso menu
         ig.igTableNextRow(ig.ImGuiTableRowFlags_Headers, ig.igTableGetHeaderRowHeight());
+        if (mark != null and ig.igTableSetColumnIndex(0)) {
+            ig.igTableHeader("##mark");
+            if (ig.igIsItemHovered(0)) tooltip(tr("mark_tip"));
+        }
         for (g.columns[0..n_cols], 0..) |name, c| {
-            if (!ig.igTableSetColumnIndex(@intCast(c))) continue;
+            if (!ig.igTableSetColumnIndex(@intCast(c + off))) continue;
             const avail = ig.igGetContentRegionAvail().x;
             ig.igPushID_Int(@intCast(c));
             var hovered = false;
@@ -2564,8 +3476,8 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
     var changed: ?Sort = null;
     if (sort) |cur| if (ig.igTableGetSortSpecs()) |specs| if (specs.*.SpecsDirty) {
         specs.*.SpecsDirty = false;
-        const new: Sort = if (specs.*.SpecsCount > 0)
-            .{ .col = @intCast(specs.*.Specs[0].ColumnIndex), .desc = specs.*.Specs[0].SortDirection == ig.ImGuiSortDirection_Descending }
+        const new: Sort = if (specs.*.SpecsCount > 0 and specs.*.Specs[0].ColumnIndex >= off)
+            .{ .col = @as(usize, @intCast(specs.*.Specs[0].ColumnIndex)) - off, .desc = specs.*.Specs[0].SortDirection == ig.ImGuiSortDirection_Descending }
         else
             .{ .col = null, .desc = false };
         if (new.col != cur.col or new.desc != cur.desc) changed = new;
@@ -2582,6 +3494,15 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         for (@intCast(start)..@intCast(end)) |shown| {
             const r = if (rows) |list| list[shown] else shown;
             ig.igTableNextRow(0, 0);
+            if (mark) |m| if (ig.igTableNextColumn()) {
+                // caixa da altura do texto: a linha nao cresce
+                var on = r < m.top;
+                ig.igPushID_Int(@intCast(r));
+                ig.igPushStyleVar_Vec2(ig.ImGuiStyleVar_FramePadding, .{ .x = 0, .y = 0 });
+                if (ig.igCheckbox("##m", &on)) sel.want_mark = r;
+                ig.igPopStyleVar(1);
+                ig.igPopID();
+            };
             for (g.rows[r][0..n_cols], 0..) |cell, c| {
                 if (!ig.igTableNextColumn()) continue; // coluna oculta ou fora da tela
                 ig.igPushID_Int(@intCast(r * n_cols + c));
@@ -2614,7 +3535,9 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         }
     }
 
-    if (ig.igIsWindowFocused(0) and ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_C)) copySelection(g, sel, false, false);
+    // aba Termos: copiar linha e linha com cabecalho sem a coluna Termo
+    const skip: usize = @intFromBool(mode == .terms);
+    if (ig.igIsWindowFocused(0) and ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_C)) copySelection(g, sel, false, false, 0);
     if (open_menu) _ = ig.igOpenPopup_Str("##copy", 0);
     // menu da celula do Go: filtros por valor (aba Dados), depois copiar valor, linha e linha com o cabecalho
     if (ig.igBeginPopup("##copy", 0)) {
@@ -2624,9 +3547,26 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
             if (ig.igMenuItem_Bool(tr("clear_filters"), null, false, sel.has_filters)) sel.want_clear = true;
             ig.igSeparator();
         }
-        if (ig.igMenuItem_Bool(tr("copy_value"), "Ctrl+C", false, true)) copySelection(g, sel, false, false);
-        if (ig.igMenuItem_Bool(tr("copy_row"), null, false, true)) copySelection(g, sel, true, false);
-        if (ig.igMenuItem_Bool(tr("copy_row_header"), null, false, true)) copySelection(g, sel, true, true);
+        if (ig.igMenuItem_Bool(tr("copy_value"), "Ctrl+C", false, true)) copySelection(g, sel, false, false, 0);
+        if (ig.igMenuItem_Bool(tr("copy_row"), null, false, true)) copySelection(g, sel, true, false, skip);
+        if (ig.igMenuItem_Bool(tr("copy_row_header"), null, false, true)) copySelection(g, sel, true, true, skip);
+        // aba Termos: todas as linhas achadas da tabela (sem a coluna Termo) e o relatorio
+        if (mode == .terms) {
+            ig.igSeparator();
+            if (ig.igMenuItem_Bool(tr("copy_hits"), null, false, true)) sel.want_copy_hits = true;
+            if (termsReportMenu(true)) |k| sel.want_export = k;
+        }
+        // aba Dados: marcar a linha, exportar as marcadas, desmarcar todas (item 31)
+        if (mark) |m| {
+            ig.igSeparator();
+            if (ig.igMenuItem_Bool(tr("menu_mark"), tr("key_space"), false, sel.row != null)) sel.want_mark = sel.row;
+            if (ig.igBeginMenu(tr("ctx_export_marked"), m.count > 0)) {
+                defer ig.igEndMenu();
+                if (ig.igMenuItem_Bool(tr("fmt_csv"), null, false, true)) sel.want_export = .marked_csv;
+                if (ig.igMenuItem_Bool(tr("fmt_xlsx"), null, false, true)) sel.want_export = .marked_xlsx;
+            }
+            if (ig.igMenuItem_Bool(tr("menu_unmark_all"), null, false, m.count > 0)) sel.want_unmark_all = true;
+        }
     }
     if (!can_hide) return changed;
 
@@ -2638,7 +3578,7 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
     if (ig.igBeginPopup("##header", 0)) {
         defer ig.igEndPopup();
         const visible = n_cols - sel.hiddenCount(n_cols);
-        if (ig.igMenuItem_Bool(tr("fit_column"), null, false, true)) ig.igTableSetColumnWidthAutoSingle(table, @intCast(sel.header_col));
+        if (ig.igMenuItem_Bool(tr("fit_column"), null, false, true)) ig.igTableSetColumnWidthAutoSingle(table, @intCast(sel.header_col + off));
         if (ig.igMenuItem_Bool(tr("fit_all_columns"), null, false, true)) ig.igTableSetColumnWidthAutoAll(table);
         ig.igSeparator();
         if (ig.igMenuItem_Bool(tr("hide_column"), null, false, visible > 1)) sel.hidden.set(sel.header_col);
@@ -2721,7 +3661,7 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         const show_l = tr("show_all");
         const hide_l = tr("hide_all");
         const close_l = tr("close");
-        const bw = dialogButtonWidth(&.{ show_l, hide_l, close_l });
+        const bw = dialogButtonWidth(&.{ "show_all", "hide_all", "close" });
         const full = ig.igGetContentRegionAvail().x;
         ig.igAlignTextToFramePadding();
         textT("columns_shown", .{ n_cols - sel.hiddenCount(n_cols), n_cols });
@@ -2833,16 +3773,23 @@ fn run(init: std.process.Init) !void {
     const exe_dir = std.process.executableDirPathAlloc(init.io, arena) catch "";
     const sqlite_ext = try std.fs.path.join(arena, &.{ exe_dir, "sqlite_scanner.duckdb_extension" });
     if (std.Io.Dir.cwd().access(init.io, sqlite_ext, .{})) |_| app.db.sqlite_ext = sqlite_ext else |_| {}
-    // temporarios (SQLite convertido do Access, CSVs do mdbtools): <TEMP>/mdb2sql-zig; os de um programa que caiu
-    // sao apagados aqui
-    const sys_tmp = init.environ_map.get("TEMP") orelse init.environ_map.get("TMP") orelse init.environ_map.get("TMPDIR") orelse
-        (if (platform.is_windows) "." else "/tmp");
-    const temp_dir = try std.fs.path.join(arena, &.{ sys_tmp, "mdb2sql-zig" });
-    _ = access.cleanupStale(init.io, temp_dir);
+    // temporarios (SQLite convertido do Access, CSVs do mdbtools), na subpasta mdb2sql-zig: a pasta temporaria do
+    // usuario, senao a do sistema; por ultimo (access.pickTempDir) a pasta do arquivo de origem. Os de um programa
+    // que caiu sao apagados aqui (os da pasta do original, ao abrir o arquivo)
+    const env = init.environ_map;
+    const user_tmp = env.get("TEMP") orelse env.get("TMP") orelse env.get("TMPDIR") orelse "";
+    const sys_tmp = if (platform.is_windows) try std.fs.path.join(arena, &.{ env.get("SystemRoot") orelse "C:\\Windows", "Temp" }) else "/tmp";
+    var temp_dirs: std.ArrayList([]const u8) = .empty;
+    var stale: usize = 0;
+    for ([_][]const u8{ user_tmp, sys_tmp }) |dir| {
+        if (dir.len == 0 or std.mem.eql(u8, dir, user_tmp) and temp_dirs.items.len > 0) continue;
+        try temp_dirs.append(arena, try std.fs.path.join(arena, &.{ dir, access.temp_subdir }));
+        stale += access.cleanupStale(init.io, temp_dirs.getLast());
+    }
     app.slot = .{ .db = &app.db, .gpa = init.gpa, .env = .{ .io = init.io, .access = .{
         .forced = init.environ_map.get("MDB2SQL_ACCESS_READER") orelse "",
         .tools_dir = try std.fs.path.join(arena, &.{ exe_dir, "mdbtools" }),
-        .temp_dir = temp_dir,
+        .temp_dirs = temp_dirs.items,
     } } };
     defer app.deinit();
     app.gtk_theme = init.environ_map.get("GTK_THEME") orelse "";
@@ -2859,6 +3806,11 @@ fn run(init: std.process.Init) !void {
     };
     i18n.lang = app.prefs.lang;
     app.scope = app.prefs.search_scope;
+    // aba Termos: comparacao e escopo padrao das configuracoes; a caixa vazia
+    app.terms_match = app.prefs.term_match;
+    app.terms_scope = app.prefs.search_scope;
+    app.terms_text = try init.gpa.alloc(u8, terms_box_size + 1);
+    @memset(app.terms_text, 0);
     var theme = app.prefs.theme;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -2904,6 +3856,7 @@ fn run(init: std.process.Init) !void {
     app.start_sql = app.want_open and app.sql[0] != 0;
     if (capture_opts != null and app.start_table.len == 0) app.start_table = dbm.capture.first_table;
     app.capture_mode = capture_opts != null;
+    logStale(stale); // ja no idioma da tela
 
     // Linux: X11 (XWayland, se houver) antes do Wayland nativo (REGRA_X11, src/display.zig). No Wayland o GLFW decora a
     // janela pelo libdecor, que carrega o GTK; no WSLg recem-reiniciado o programa caiu 2 vezes dentro dele.
@@ -2939,6 +3892,11 @@ fn run(init: std.process.Init) !void {
     const ui_font = for (platform.fonts) |font| {
         if (std.Io.Dir.cwd().access(init.io, font, .{})) |_| {
             _ = shim_add_font(font, 18.6 * scale);
+            // a estrela das favoritas (U+2605) e as setas das paginas (U+25B6, U+25C0) de outra fonte, juntada a esta
+            for (platform.star_fonts) |star| if (std.Io.Dir.cwd().access(init.io, star, .{})) |_| {
+                _ = shim_merge_glyphs(star, 18.6 * scale, &symbol_glyphs);
+                break;
+            } else |_| {};
             break true;
         } else |_| {}
     } else blk: {
@@ -2962,8 +3920,11 @@ fn run(init: std.process.Init) !void {
     if (capture_opts) |o| {
         shim_capture_setup();
         try std.Io.Dir.cwd().createDirPath(init.io, o.out_dir);
-        const save_end = if (init.environ_map.get("MDB2SQL_CAPTURE_SAVE")) |v| std.mem.eql(u8, v, "1") else false;
-        capture = .{ .out_dir = o.out_dir, .fbo = try Fbo.load(), .save_end = save_end };
+        const save_type = if (init.environ_map.get("MDB2SQL_CAPTURE_SAVE")) |v| std.meta.stringToEnum(dialog.SaveType, v) else null;
+        capture = .{ .out_dir = o.out_dir, .fbo = try Fbo.load(), .save_type = save_type };
+        capture.?.terms_file = init.environ_map.get("MDB2SQL_CAPTURE_TERMS") orelse "";
+        capture.?.dialog = if (init.environ_map.get("MDB2SQL_CAPTURE_DIALOG")) |v| std.mem.eql(u8, v, "1") else false;
+        capture.?.only = init.environ_map.get("MDB2SQL_CAPTURE_ONLY") orelse "";
     }
     defer if (capture) |*c| {
         if (c.failed != null or c.wrong.items.len > 0) capture_failed = true;
@@ -2972,10 +3933,10 @@ fn run(init: std.process.Init) !void {
 
     while (!app.quit) {
         glfw.pollEvents();
-        // fechar a janela passa pela pergunta do SQLite convertido (Cancelar mantem o programa aberto)
+        // X da janela e Alt+F4: a mesma saida de Arquivo > Sair (Voltar mantem o programa aberto)
         if (window.shouldClose()) {
             window.setShouldClose(false);
-            app.requestLeave(.exit);
+            app.requestExit();
         }
         if (dropped[0] != 0) {
             app.setPath(zstr(&dropped));

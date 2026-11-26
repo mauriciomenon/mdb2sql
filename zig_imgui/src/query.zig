@@ -72,6 +72,29 @@ pub const Criterion = struct {
     value: []const u8 = "",
 };
 
+// !T: Row identity of the marked rows and of the term search: the engine's rowid when the table has one; a view, or
+// a table with a column of its own called rowid, has none and uses the text of the whole row (identical rows are
+// then one row: they are marked together).
+pub const RowKey = enum { rowid, hash };
+
+pub const row_alias = "mdb2sql_row"; // alias da tabela nas consultas que usam a identidade da linha
+
+pub fn keyExpr(k: RowKey) []const u8 {
+    return switch (k) {
+        .rowid => row_alias ++ ".rowid",
+        .hash => "md5(CAST(" ++ row_alias ++ " AS VARCHAR))",
+    };
+}
+
+pub fn hasRowidColumn(columns: []const []const u8) bool {
+    for (columns) |c| if (std.ascii.eqlIgnoreCase(c, "rowid")) return true;
+    return false;
+}
+
+// Linhas marcadas na consulta: todas as linhas; so as nao marcadas (o resto da busca, embaixo das marcadas); so as
+// marcadas (na ordem da tabela, qualquer que seja a busca, os filtros e a ordenacao)
+pub const Marked = enum { any, without, only };
+
 pub const Spec = struct {
     table: []const u8,
     tables: []const []const u8, // tabelas conhecidas (whitelist)
@@ -83,6 +106,10 @@ pub const Spec = struct {
     sort_desc: bool = false,
     limit: u32 = default_limit,
     offset: u64 = 0,
+    key: ?RowKey = null, // identidade de linha da tabela (precisa dela quem usa `marks` ou `with_key`)
+    with_key: bool = false, // a identidade vem como 1a coluna do SELECT (a grade guarda uma por linha)
+    marks: []const []const u8 = &.{}, // identidades das linhas marcadas
+    marked: Marked = .any,
 };
 
 pub const BuildError = error{ TableNotFound, ColumnNotFound } || Allocator.Error;
@@ -154,6 +181,8 @@ fn writeFromWhere(out: *std.ArrayList(u8), params: *std.ArrayList([]const u8), a
     if (!contains(spec.tables, spec.table)) return error.TableNotFound;
     try out.appendSlice(a, " FROM ");
     try writeIdent(out, a, spec.table);
+    if (spec.key != null) try out.appendSlice(a, " AS " ++ row_alias);
+    if (spec.marked == .only) return writeMarks(out, params, a, spec, " WHERE ", " IN ");
 
     var n_groups: usize = 0;
 
@@ -188,6 +217,23 @@ fn writeFromWhere(out: *std.ArrayList(u8), params: *std.ArrayList([]const u8), a
         try writeCriterion(out, params, a, c);
     }
     if (!first) try out.append(a, ')');
+    if (spec.marked == .without and spec.marks.len > 0)
+        try writeMarks(out, params, a, spec, if (n_groups == 0 and first) " WHERE " else " AND ", " NOT IN ");
+}
+
+// "<identidade> IN (?, ...)" com as linhas marcadas (ou NOT IN); sem marcas, nenhuma linha
+fn writeMarks(out: *std.ArrayList(u8), params: *std.ArrayList([]const u8), a: Allocator, spec: Spec, lead: []const u8, op: []const u8) Allocator.Error!void {
+    try out.appendSlice(a, lead);
+    const key = spec.key orelse .rowid;
+    if (spec.marks.len == 0 or spec.key == null) return out.appendSlice(a, "1 = 0");
+    try out.appendSlice(a, keyExpr(key));
+    try out.appendSlice(a, op);
+    for (spec.marks, 0..) |m, i| {
+        try out.appendSlice(a, if (i == 0) "(" else ", ");
+        try out.appendSlice(a, if (key == .rowid) "CAST(? AS BIGINT)" else "?");
+        try params.append(a, m);
+    }
+    try out.append(a, ')');
 }
 
 fn finish(out: *std.ArrayList(u8), params: *std.ArrayList([]const u8), a: Allocator) Allocator.Error!Built {
@@ -203,13 +249,19 @@ pub fn buildSelect(a: Allocator, spec: Spec) BuildError!Built {
     var params: std.ArrayList([]const u8) = .empty;
     errdefer params.deinit(a);
 
-    try out.appendSlice(a, "SELECT *");
+    try out.appendSlice(a, "SELECT ");
+    if (spec.with_key) try out.print(a, "{s} AS mdb2sql_key, ", .{keyExpr(spec.key orelse .rowid)});
+    try out.append(a, '*');
     try writeFromWhere(&out, &params, a, spec);
-    if (spec.sort_column) |col| {
+    if (spec.marked == .only) {
+        if (spec.key == .rowid) try out.appendSlice(a, " ORDER BY " ++ row_alias ++ ".rowid");
+    } else if (spec.sort_column) |col| {
         if (!contains(spec.columns, col)) return error.ColumnNotFound;
         try out.appendSlice(a, " ORDER BY ");
         try writeIdent(&out, a, col);
         try out.appendSlice(a, if (spec.sort_desc) " DESC NULLS LAST" else " ASC NULLS LAST");
+        // empates na ordem da tabela: as paginas nao repetem nem pulam linhas (a ordenacao do motor nao e estavel)
+        if (spec.key == .rowid) try out.appendSlice(a, ", " ++ row_alias ++ ".rowid");
     }
     // limit 0 = todas as linhas (exportacao da tabela inteira)
     if (spec.limit > 0) try out.print(a, " LIMIT {d} OFFSET {d}", .{ spec.limit, spec.offset });
@@ -256,6 +308,28 @@ pub fn buildSchemaExport(a: Allocator, table: []const u8, titles: [3][]const u8,
     try out.appendSlice(a, " FROM (DESCRIBE ");
     try writeIdent(&out, a, table);
     try out.append(a, ')');
+    return out.toOwnedSliceSentinel(a, 0);
+}
+
+// !T: SQL of the database schema export: one row per column of every table of the open file (table, column, type,
+// nullable), with the titles and the Yes/No of the screen language, in the order of the table list
+pub fn buildDbSchemaExport(a: Allocator, titles: [4][]const u8, yes: []const u8, no: []const u8) Allocator.Error![:0]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(a);
+    try out.appendSlice(a, "SELECT table_name AS ");
+    try writeIdent(&out, a, titles[0]);
+    try out.appendSlice(a, ", column_name AS ");
+    try writeIdent(&out, a, titles[1]);
+    try out.appendSlice(a, ", data_type AS ");
+    try writeIdent(&out, a, titles[2]);
+    try out.appendSlice(a, ", CASE WHEN is_nullable THEN ");
+    try writeLiteral(&out, a, yes);
+    try out.appendSlice(a, " ELSE ");
+    try writeLiteral(&out, a, no);
+    try out.appendSlice(a, " END AS ");
+    try writeIdent(&out, a, titles[3]);
+    try out.appendSlice(a, " FROM duckdb_columns() WHERE database_name = current_database() AND schema_name = current_schema() " ++
+        "ORDER BY table_name, column_index");
     return out.toOwnedSliceSentinel(a, 0);
 }
 
@@ -351,6 +425,34 @@ test "search words: all of them in the same column, any order; blank search filt
     const blank = try buildCount(t.allocator, .{ .table = "RANGER_SOACCU", .tables = &t_tables, .columns = &t_cols, .search = "  " });
     defer blank.deinit(t.allocator);
     try t.expectEqualStrings("SELECT COUNT(*) FROM \"RANGER_SOACCU\"", blank.sql);
+}
+
+test "marked rows: only them in table order, or the rest of the search without them; the identity as first column" {
+    const marks = [_][]const u8{ "7", "42" };
+    const rid = "mdb2sql_row.rowid";
+    const in = "(CAST(? AS BIGINT), CAST(? AS BIGINT))";
+    // so as marcadas: a busca, os filtros e a ordenacao da tela nao valem; ordem da tabela
+    const top = try buildSelect(t.allocator, .{ .table = "RANGER_SOACCU", .tables = &t_tables, .columns = &t_cols, .search = "x", .sort_column = "NAME", .limit = 0, .key = .rowid, .with_key = true, .marks = &marks, .marked = .only });
+    defer top.deinit(t.allocator);
+    try t.expectEqualStrings("SELECT " ++ rid ++ " AS mdb2sql_key, * FROM \"RANGER_SOACCU\" AS mdb2sql_row WHERE " ++ rid ++ " IN " ++ in ++ " ORDER BY " ++ rid, top.sql);
+    try t.expectEqualStrings("42", top.params[1]);
+    // o resto da busca, sem repetir as marcadas (tabela sem rowid: o texto da linha inteira)
+    const rest = try buildCount(t.allocator, .{ .table = "RANGER_SOACCU", .tables = &t_tables, .columns = &t_cols, .search = "x", .key = .hash, .marks = &marks, .marked = .without });
+    defer rest.deinit(t.allocator);
+    try t.expect(std.mem.endsWith(u8, rest.sql, ")) AND md5(CAST(mdb2sql_row AS VARCHAR)) NOT IN (?, ?)"));
+    try t.expectEqual(4, rest.params.len);
+    try t.expectEqual(rest.params.len, std.mem.count(u8, rest.sql, "?"));
+    const plain = try buildCount(t.allocator, .{ .table = "RANGER_SOACCU", .tables = &t_tables, .columns = &t_cols, .key = .rowid, .marks = &marks, .marked = .without });
+    defer plain.deinit(t.allocator);
+    try t.expectEqualStrings("SELECT COUNT(*) FROM \"RANGER_SOACCU\" AS mdb2sql_row WHERE " ++ rid ++ " NOT IN " ++ in, plain.sql);
+    // nenhuma marcada: "so as marcadas" nao traz linha nenhuma, e a busca fica como era
+    const none = try buildCount(t.allocator, .{ .table = "RANGER_SOACCU", .tables = &t_tables, .columns = &t_cols, .key = .rowid, .marked = .only });
+    defer none.deinit(t.allocator);
+    try t.expectEqualStrings("SELECT COUNT(*) FROM \"RANGER_SOACCU\" AS mdb2sql_row WHERE 1 = 0", none.sql);
+    const same = try buildSelect(t.allocator, .{ .table = "RANGER_SOACCU", .tables = &t_tables, .columns = &t_cols, .key = .rowid, .marked = .without });
+    defer same.deinit(t.allocator);
+    try t.expectEqualStrings("SELECT * FROM \"RANGER_SOACCU\" AS mdb2sql_row LIMIT 100 OFFSET 0", same.sql);
+    try t.expect(hasRowidColumn(&.{ "ID", "RowId" }) and !hasRowidColumn(&t_cols));
 }
 
 test "count shares the filter and has no paging" {
