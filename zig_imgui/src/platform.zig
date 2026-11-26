@@ -121,12 +121,3 @@ pub const star_fonts = if (is_windows)
 else
     [_][:0]const u8{ "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf" };
 
-// Fonte monoespacada do painel de Log
-pub const mono_fonts = if (is_windows)
-    [_][:0]const u8{ "C:\\Windows\\Fonts\\consola.ttf", "C:\\Windows\\Fonts\\cour.ttf" }
-else
-    [_][:0]const u8{
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
-        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
-    };

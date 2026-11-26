@@ -177,6 +177,13 @@ test "item 18 d: the Log starts closed, whatever was saved by the last run" {
 
 const settings_defaults: @import("settings.zig").Settings = .{};
 
+test "item 18 e: one font only: the UI font at one size in tabs, boxes, grids, labels, the About and the Log" {
+    const ui = @embedFile("main.zig");
+    try std.testing.expect(std.mem.indexOf(u8, ui, "igPushFont") == null);
+    try std.testing.expectEqual(2, std.mem.count(u8, ui, "shim_add_font(")); // a declaracao e a fonte da interface
+    try std.testing.expect(std.mem.indexOf(u8, ui, "mono_font") == null);
+}
+
 test "item 19 e: the Advanced Search report is suggested as \"<database> - Pesquisa Avançada.xlsx\" (the tab name), never _termos or .xls" {
     try expectOrder("// item 19 e:", &.{ ".terms_xlsx, .terms_csv, .terms_sqlite, .terms_duckdb => std.fmt.bufPrint(&name_buf, \"{s} - {s}\"", "tr(\"tab_terms\")" });
     const ui = @embedFile("main.zig");

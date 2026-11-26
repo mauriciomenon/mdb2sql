@@ -798,7 +798,6 @@ fn setupSizes(scale: f32) void {
 
 var session_log: dbm.log.Log = .{};
 const log_pad_y: f32 = 4; // margem vertical do painel de Log
-var mono_font: ?*ig.ImFont = null; // fonte monoespacada do painel de Log (null = a fonte da interface)
 var log_gpa: std.mem.Allocator = std.heap.page_allocator; // trocado pelo gpa do programa em run()
 
 fn logLine(s: []const u8) void {
@@ -2697,9 +2696,8 @@ const App = struct {
         const len = if (session_log.text.items.len > 0) session_log.text.items.len else 1;
         if (len != app.log_seen) ig.igSetNextWindowScroll(.{ .x = 0, .y = 1e9 }); // linha nova: vai para o fim
         app.log_seen = len;
-        ig.igPushFont(mono_font, @max(13, ig.igGetFontSize() - 2));
+        // a mesma fonte e o mesmo tamanho de toda a tela (item 18 e)
         _ = ig.igInputTextMultiline("##logtext", @ptrCast(buf), len, .{ .x = -1, .y = -1 }, ig.ImGuiInputTextFlags_ReadOnly, null, null);
-        ig.igPopFont();
     }
 
     // Barra de baixo (a do Go): a esquerda a seta que abre/recolhe o Log e a mensagem (ou o trabalho em andamento,
@@ -3883,13 +3881,6 @@ fn run(init: std.process.Init) !void {
     } else blk: {
         ig.igGetStyle().*.FontScaleDpi = scale;
         break :blk false;
-    };
-    // monoespacada para o painel de Log (Consolas, DejaVu Sans Mono), so depois da fonte da interface (a 1a e a padrao)
-    if (ui_font) for (platform.mono_fonts) |font| {
-        if (std.Io.Dir.cwd().access(init.io, font, .{})) |_| {
-            mono_font = shim_add_font(font, 14 * scale);
-            break;
-        } else |_| {}
     };
 
     // no --capture o GLFW nao entrega mouse nem teclado reais ao ImGui

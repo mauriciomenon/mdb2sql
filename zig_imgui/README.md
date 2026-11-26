@@ -212,7 +212,7 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   (Ctrl+T), **Favorite or unfavorite table** (Ctrl+D); **Run SQL** and **Search terms** (Ctrl+Enter); **Log**
   (Ctrl+L).
 - **Log** panel at the bottom (**View > Log**, Ctrl+L, or the arrow at the left of the status bar and in the panel
-  header): every message of the session with its time, in a monospace font one step smaller; select and Ctrl+C, or
+  header): every message of the session with its time, in the font and size of the whole window; select and Ctrl+C, or
   **Copy all**, **Clear**. About 10% of the window high (at least 3 lines, at most 25%), resized by dragging its top
   edge; open/closed state and height are saved; closed by default. While it is closed, the status bar shows the most
   important message not yet seen in the log (last error in red, else last warning, else the last action) and, on the
