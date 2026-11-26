@@ -33,8 +33,6 @@ export function GetAppInfo():Promise<main.AppInfo>;
 
 export function GetLanguage():Promise<string>;
 
-export function GetLogOpen():Promise<boolean>;
-
 export function GetRowCount(arg1:string,arg2:Array<backend.Filter>,arg3:string):Promise<number>;
 
 export function GetSearchScope():Promise<string>;
@@ -66,8 +64,6 @@ export function SearchTerms(arg1:Array<string>,arg2:boolean,arg3:string):Promise
 export function SelectDatabase():Promise<string>;
 
 export function SetLanguage(arg1:string):Promise<void>;
-
-export function SetLogOpen(arg1:boolean):Promise<void>;
 
 export function SetSearchScope(arg1:string):Promise<void>;
 
