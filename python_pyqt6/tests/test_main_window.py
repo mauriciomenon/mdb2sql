@@ -430,6 +430,36 @@ def test_terms_box_background_text_has_the_example_in_separate_lines(window: Mai
     assert window.terms_edit.height() >= 5 * window.terms_edit.fontMetrics().lineSpacing()
 
 
+def test_buttons_of_a_row_have_one_height_and_do_not_touch_the_boxes(qtbot, window: MainWindow) -> None:
+    # 13 f): numa linha, todos os botoes da mesma altura (o Pesquisar termos e o Executar eram maiores); nenhum encosta
+    # na caixa de cima ou de baixo
+    from PyQt6.QtWidgets import QToolButton
+
+    window.resize(1280, 800)
+    for page in (window.data_page, window.terms_page, window.sql_page):
+        window.tabs.setCurrentWidget(page)
+        QApplication.processEvents()
+        buttons = [b for b in page.findChildren(QAbstractButton) if b.isVisible() and b.text()]
+        assert buttons and all(isinstance(b, QToolButton) for b in buttons), page
+        rows: dict[int, set[int]] = {}
+        for button in buttons:
+            center = button.mapTo(page, button.rect().center()).y()
+            rows.setdefault(center // 6, set()).add(button.height())
+        assert all(len(heights) == 1 for heights in rows.values()), rows
+    window.tabs.setCurrentWidget(window.terms_page)
+    QApplication.processEvents()
+
+    def top(widget) -> int:
+        return widget.mapTo(window.terms_page, widget.rect().topLeft()).y()
+
+    assert top(window.terms_run_button) > top(window.terms_edit) + window.terms_edit.height()
+    window.tabs.setCurrentWidget(window.sql_page)
+    QApplication.processEvents()
+    run = next(b for b in window.sql_page.findChildren(QToolButton) if b.isVisible())
+    edit_bottom = window.sql_edit.mapTo(window.sql_page, window.sql_edit.rect().bottomLeft()).y()
+    assert run.mapTo(window.sql_page, run.rect().topLeft()).y() > edit_bottom
+
+
 def test_menu_items_are_disabled_like_their_buttons(qtbot, window: MainWindow) -> None:
     # Linhas do menu = lista Linhas da aba Dados; Pesquisar em = Esta tabela | Todas as tabelas
     window.rows_actions[2].trigger()

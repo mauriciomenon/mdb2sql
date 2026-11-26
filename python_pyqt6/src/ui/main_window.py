@@ -503,7 +503,8 @@ class MainWindow(QMainWindow):
         sql_font.setPointSizeF(self.font().pointSizeF())  # monoespacada no tamanho da base (14 px), nao nos 9 pt
         self.sql_edit.setFont(sql_font)
         self.sql_edit.addAction(self.run_sql_action)
-        run_button = QPushButton()
+        # botao do mesmo tipo dos outros das abas (QToolButton): mesma altura e preenchimento numa linha (13 f)
+        run_button = QToolButton()
         self._t(run_button.setText, "button.run")
         self._t(run_button.setAccessibleName, "action.run_sql", plain=True)
         self._t(run_button.setToolTip, "tip.run_sql")
@@ -518,7 +519,8 @@ class MainWindow(QMainWindow):
         sql_bar.addWidget(run_button)
         editor = QWidget()
         editor_layout = QVBoxLayout(editor)
-        editor_layout.setContentsMargins(0, 0, 0, 0)
+        editor_layout.setContentsMargins(0, 0, 0, 4)
+        editor_layout.setSpacing(6)  # o botao Executar nao encosta na caixa do SQL
         editor_layout.addWidget(self.sql_edit)
         editor_layout.addLayout(sql_bar)
         self.sql_page = QSplitter(Qt.Orientation.Vertical)
@@ -701,7 +703,7 @@ class MainWindow(QMainWindow):
         self.terms_edit.textChanged.connect(self._count_terms)
         self.terms_edit.addAction(self.run_terms_action)  # Ctrl+Enter na caixa
 
-        self.terms_run_button = QPushButton()
+        self.terms_run_button = QToolButton()  # como as alternancias da mesma linha: mesma altura (13 f)
         self._t(self.terms_run_button.setText, "terms.run")
         self.terms_run_button.clicked.connect(self.run_terms)
         self.terms_count = QLabel()
@@ -740,7 +742,7 @@ class MainWindow(QMainWindow):
 
         # nao encontrados: texto so leitura, copiavel, um termo por linha, na ordem colada
         self.not_found_title = QLabel()
-        copy = QPushButton()
+        copy = QToolButton()
         self._t(copy.setText, "action.copy", plain=True)
         copy.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.not_found_edit.toPlainText()))
         title_row = QHBoxLayout()
