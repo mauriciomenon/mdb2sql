@@ -126,12 +126,20 @@ pub const menu_search_scope = "Alcance predeterminado de la búsqueda";
 pub const menu_show_null = "Mostrar NULL";
 pub const menu_help = "Ayuda";
 pub const menu_about = "Acerca de mdb2sql";
-pub const export_table_csv = "Tabla actual a CSV...";
-pub const export_table_xlsx = "Tabla actual a Excel (.xlsx)...";
-pub const export_schema_csv = "Esquema de la tabla actual a CSV...";
-pub const export_schema_xlsx = "Esquema de la tabla actual a Excel (.xlsx)...";
-pub const export_result_csv = "Resultado SQL a CSV...";
-pub const export_result_xlsx = "Resultado SQL a Excel (.xlsx)...";
+pub const export_table = "Tabla actual";
+pub const export_marked = "Filas marcadas";
+pub const export_schema = "Esquema de la tabla actual";
+pub const export_dbschema = "Esquema de la base de datos";
+pub const export_all_csv = "Todas las tablas a CSV (un archivo por tabla)...";
+pub const export_result = "Resultado del SQL";
+pub const export_global = "Resultado de la búsqueda en todas las tablas (Excel)...";
+pub const menu_edit = "Editar";
+pub const menu_copy_log = "Copiar todo el registro";
+pub const menu_search = "Buscar";
+pub const menu_search_in = "Buscar en";
+pub const menu_only_marked = "Solo las filas marcadas";
+pub const menu_goto_tables = "Ir a la lista de tablas";
+pub const menu_run_sql = "Ejecutar SQL";
 pub const export_scope_text = "La búsqueda está activa en {s}. Exportar:";
 pub const export_whole = "Tabla entera";
 pub const export_found = "Solo las {d} filas encontradas";
@@ -267,7 +275,7 @@ pub const usage =
     \\  MDB2SQL_ACCESS_READER=odbc|mdbtools fuerza el lector de archivos .accdb/.mdb
     \\  las opciones fijan el estado inicial: tabla seleccionada, SQL a ejecutar, búsqueda de la pestaña Datos,
     \\  celda seleccionada con su menú de copia abierto, colores e idioma (solo en esta ejecución),
-    \\  Acerca de abierto, un menú abierto (File, View, Settings, Help, Export)
+    \\  Acerca de abierto, un menú abierto (File, Edit, View, Settings, Help, Export)
     \\  --export db_sqlite|db_xlsx|db_duckdb|table_csv|table_xlsx|result_csv|result_xlsx
     \\  abre el diálogo de guardar de esa exportación al cargar el archivo
     \\

@@ -126,12 +126,20 @@ pub const menu_search_scope = "Escopo padrão da busca";
 pub const menu_show_null = "Exibir NULL";
 pub const menu_help = "Ajuda";
 pub const menu_about = "Sobre o mdb2sql";
-pub const export_table_csv = "Tabela atual para CSV...";
-pub const export_table_xlsx = "Tabela atual para Excel (.xlsx)...";
-pub const export_schema_csv = "Esquema da tabela atual para CSV...";
-pub const export_schema_xlsx = "Esquema da tabela atual para Excel (.xlsx)...";
-pub const export_result_csv = "Resultado do SQL para CSV...";
-pub const export_result_xlsx = "Resultado do SQL para Excel (.xlsx)...";
+pub const export_table = "Tabela atual";
+pub const export_marked = "Linhas marcadas";
+pub const export_schema = "Esquema da tabela atual";
+pub const export_dbschema = "Esquema do banco";
+pub const export_all_csv = "Todas as tabelas em CSV (um arquivo por tabela)...";
+pub const export_result = "Resultado do SQL";
+pub const export_global = "Resultado da busca em todas as tabelas (Excel)...";
+pub const menu_edit = "Editar";
+pub const menu_copy_log = "Copiar todo o Log";
+pub const menu_search = "Pesquisar";
+pub const menu_search_in = "Buscar em";
+pub const menu_only_marked = "Só as linhas marcadas";
+pub const menu_goto_tables = "Ir para a lista de tabelas";
+pub const menu_run_sql = "Executar SQL";
 pub const export_scope_text = "A busca está ativa em {s}. Exportar:";
 pub const export_whole = "Tabela inteira";
 pub const export_found = "Só as {d} linhas encontradas";
@@ -267,7 +275,7 @@ pub const usage =
     \\  MDB2SQL_ACCESS_READER=odbc|mdbtools força o leitor de arquivos .accdb/.mdb
     \\  as opções definem o estado inicial: tabela selecionada, SQL a executar, pesquisa da aba Dados,
     \\  célula selecionada com o menu de cópia aberto, cores e idioma (só nesta execução),
-    \\  Sobre aberto, um menu aberto (File, View, Settings, Help, Export)
+    \\  Sobre aberto, um menu aberto (File, Edit, View, Settings, Help, Export)
     \\  --export db_sqlite|db_xlsx|db_duckdb|table_csv|table_xlsx|result_csv|result_xlsx
     \\  abre o diálogo de salvar dessa exportação quando o arquivo é carregado
     \\

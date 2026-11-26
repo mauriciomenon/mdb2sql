@@ -126,12 +126,20 @@ pub const menu_search_scope = "Default search scope";
 pub const menu_show_null = "Show NULL";
 pub const menu_help = "Help";
 pub const menu_about = "About mdb2sql";
-pub const export_table_csv = "Current table to CSV...";
-pub const export_table_xlsx = "Current table to Excel (.xlsx)...";
-pub const export_schema_csv = "Current table schema to CSV...";
-pub const export_schema_xlsx = "Current table schema to Excel (.xlsx)...";
-pub const export_result_csv = "Current SQL result to CSV...";
-pub const export_result_xlsx = "Current SQL result to Excel (.xlsx)...";
+pub const export_table = "Current table";
+pub const export_marked = "Marked rows";
+pub const export_schema = "Current table schema";
+pub const export_dbschema = "Database schema";
+pub const export_all_csv = "All tables to CSV (one file per table)...";
+pub const export_result = "SQL result";
+pub const export_global = "All-tables search result (Excel)...";
+pub const menu_edit = "Edit";
+pub const menu_copy_log = "Copy the whole log";
+pub const menu_search = "Search";
+pub const menu_search_in = "Search in";
+pub const menu_only_marked = "Only marked rows";
+pub const menu_goto_tables = "Go to the table list";
+pub const menu_run_sql = "Run SQL";
 pub const export_scope_text = "The search is active on {s}. Export:";
 pub const export_whole = "Whole table";
 pub const export_found = "Only the {d} rows found";
@@ -267,7 +275,7 @@ pub const usage =
     \\  MDB2SQL_ACCESS_READER=odbc|mdbtools forces the reader of .accdb/.mdb files
     \\  the flags set the start state: selected table, SQL to run, search text of the Data tab,
     \\  grid cell selected with its copy menu open, colors and language (this run only),
-    \\  About open, a menu open (File, View, Settings, Help, Export)
+    \\  About open, a menu open (File, Edit, View, Settings, Help, Export)
     \\  --export db_sqlite|db_xlsx|db_duckdb|table_csv|table_xlsx|result_csv|result_xlsx
     \\  opens the save dialog of that export when the file is loaded
     \\

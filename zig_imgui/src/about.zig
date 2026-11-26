@@ -157,8 +157,14 @@ test "Terms tab (item 32), top to bottom: box, matching, scope, button and count
     try expectOrder("const chord = ig.igIsKeyChordPressed_Nil;", &.{ "ImGuiKey_3)", "ImGuiKey_4)" });
 }
 
-test "export menu: CSV and Excel of the table, schema or result" {
-    try expectOrder("fn exportItems(", &.{ "tr(\"export_table_csv\")", "tr(\"export_table_xlsx\")" });
+test "menus of item 28: the fixed Export list, Edit, View and Settings in the brief's order; menu bar File, Edit, View, Settings, Help" {
+    try expectOrder("fn exportItems(", &.{ "tr(\"export_table\")", "tr(\"export_marked\")", "tr(\"export_schema\")", "tr(\"export_dbschema\")", "tr(\"export_all_csv\")", "tr(\"export_result\")", "tr(\"export_global\")", "termsReportMenu(" });
+    try expectOrder("fn formatMenu(", &.{ "tr(\"fmt_csv\")", "tr(\"fmt_xlsx\")" });
+    try expectOrder("fn termsReportMenu(", &.{ "tr(\"fmt_xlsx\")", "tr(\"fmt_csv\")", "tr(\"fmt_sqlite\")", "tr(\"fmt_duckdb\")" });
+    try expectOrder("if (ig.igBeginMenu(edit_l", &.{ "tr(\"copy_value\"), \"Ctrl+C\"", "tr(\"copy_row\"), \"Ctrl+Shift+C\"", "tr(\"copy_row_header\")", "tr(\"menu_copy_log\")", "igSeparator", "tr(\"menu_search\"), \"Ctrl+F\"", "tr(\"filter_by_value\")", "tr(\"clear_filters\")", "igSeparator", "tr(\"menu_mark\"), tr(\"key_space\")", "tr(\"menu_unmark_all\")" });
+    try expectOrder("if (ig.igBeginMenu(view_l", &.{ "tr(\"tab_data\"), \"Ctrl+1\"", "tr(\"tab_schema\"), \"Ctrl+2\"", "tr(\"tab_sql\"), \"Ctrl+3\"", "tr(\"tab_terms\"), \"Ctrl+4\"", "igSeparator", "\"rows_label\"", "tr(\"columns_button\")", "\"menu_search_in\"", "tr(\"menu_only_marked\")", "tr(\"menu_goto_tables\"), \"Ctrl+T\"", "igSeparator", "tr(\"menu_run_sql\"), \"Ctrl+Enter\"", "tr(\"terms_run\"), \"Ctrl+Enter\"", "igSeparator", "tr(\"menu_log\"), \"Ctrl+L\"" });
+    try expectOrder("if (ig.igBeginMenu(settings_l", &.{ "\"menu_theme\"", "igBeginMenu(lang_l", "\"menu_search_scope\"", "\"menu_term_match\"", "tr(\"menu_show_null\")" });
+    try expectOrder("fn drawMenu(", &.{ "igBeginMenu(file_l", "igBeginMenu(edit_l", "igBeginMenu(view_l", "igBeginMenu(settings_l", "igBeginMenu(help_l" });
 }
 
 test "license: GPL v2 or later in About (three languages), LICENSE file is the GPL v2 text" {

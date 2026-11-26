@@ -28,13 +28,19 @@ pub const ExportKind = enum {
     terms_csv,
     terms_sqlite,
     terms_duckdb,
+    schema_csv, // esquema da tabela atual (a UI monta o SQL e exporta como resultado)
+    schema_xlsx,
+    dbschema_csv, // esquema do banco (idem)
+    dbschema_xlsx,
+    all_csv, // todas as tabelas, um CSV por tabela numa pasta
+    global_xlsx, // resultado da busca em todas as tabelas: uma aba por tabela com acerto
 
     pub fn ext(k: ExportKind) []const u8 {
         return switch (k) {
             .db_duckdb, .terms_duckdb => ".duckdb",
             .db_sqlite, .terms_sqlite => ".sqlite",
-            .db_xlsx, .table_xlsx, .result_xlsx, .marked_xlsx, .terms_xlsx => ".xlsx",
-            .table_csv, .result_csv, .marked_csv, .terms_csv => ".csv",
+            .db_xlsx, .table_xlsx, .result_xlsx, .marked_xlsx, .terms_xlsx, .schema_xlsx, .dbschema_xlsx, .global_xlsx => ".xlsx",
+            .table_csv, .result_csv, .marked_csv, .terms_csv, .schema_csv, .dbschema_csv, .all_csv => ".csv",
         };
     }
 
@@ -45,7 +51,7 @@ pub const ExportKind = enum {
 
     // Destino e uma pasta (um CSV por tabela ou por aba)
     pub fn toFolder(k: ExportKind) bool {
-        return k == .terms_csv;
+        return k == .terms_csv or k == .all_csv;
     }
 };
 
@@ -91,6 +97,7 @@ pub const Req = struct {
     terms_res: ?*const terms.Result = null, // terms_page, terms_copy, relatorio: o resultado mostrado (da UI)
     terms_hit: usize = 0, // terms_page, terms_copy: indice em terms_res.tables
     terms_titles: terms.Titles = undefined, // titulos da coluna do termo e do relatorio, no idioma da tela
+    hits: []const Hit = &.{}, // export global_xlsx: as tabelas da busca em todas as tabelas (copia do gpa da UI)
 
     pub fn destPath(r: *const Req) []const u8 {
         return r.dest[0..r.dest_len];
@@ -208,6 +215,10 @@ fn exec(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *expor
     }
 }
 
+// Colunas de todas as tabelas do arquivo aberto (tabela, coluna), na ordem das colunas
+const columns_sql = "SELECT table_name, column_name FROM duckdb_columns() WHERE database_name = current_database() " ++
+    "AND schema_name = current_schema() ORDER BY table_name, column_index";
+
 // !T: Search in every table with the rule and the query of the Data tab search (query.buildCount: every column as
 // text, every word in one cell, ignoring case and accents), so the count listed is the row count the table shows
 // when opened with the same search. The columns of all tables come from one query and the counts go in UNION ALL
@@ -219,8 +230,7 @@ pub fn searchAll(db: *dbm.Db, gpa: Allocator, term: []const u8, progress: *expor
     if (std.mem.indexOfNone(u8, term, &std.ascii.whitespace) == null) return hits.toOwnedSlice(gpa);
     const names = db.table_names;
     // o catalogo inteiro: com o teto do SQL livre (max_rows) as tabelas depois da coluna 10.000 ficavam de fora
-    var cols = try db.runMax("SELECT table_name, column_name FROM duckdb_columns() WHERE database_name = current_database() " ++
-        "AND schema_name = current_schema() ORDER BY table_name, column_index", &.{}, std.math.maxInt(usize));
+    var cols = try db.runMax(columns_sql, &.{}, std.math.maxInt(usize));
     defer cols.deinit();
     var text: std.ArrayList([]const u8) = .empty; // colunas da tabela
     defer text.deinit(gpa);
@@ -303,9 +313,40 @@ fn exportJob(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *
             const format: exporter.FileFormat = if (req.export_kind == .table_csv or req.export_kind == .marked_csv) .csv else .xlsx;
             return exporter.selection(db, env.io, format, .{ .sql = built.sql, .params = built.params, .sheet = spec.table }, dest, progress, req.total_hint);
         },
-        .result_csv, .result_xlsx => {
-            const format: exporter.FileFormat = if (req.export_kind == .result_csv) .csv else .xlsx;
-            return exporter.selection(db, env.io, format, .{ .sql = std.mem.sliceTo(&req.sql, 0), .sheet = "Query" }, dest, progress, req.total_hint);
+        // os esquemas chegam aqui como resultado (a UI monta o SQL)
+        .result_csv, .result_xlsx, .schema_csv, .schema_xlsx, .dbschema_csv, .dbschema_xlsx => {
+            const csv_file = req.export_kind == .result_csv or req.export_kind == .schema_csv or req.export_kind == .dbschema_csv;
+            return exporter.selection(db, env.io, if (csv_file) .csv else .xlsx, .{ .sql = std.mem.sliceTo(&req.sql, 0), .sheet = "Query" }, dest, progress, req.total_hint);
+        },
+        .all_csv => {
+            // <pasta>/<tabela>.csv, todas as linhas e colunas
+            var arena: std.heap.ArenaAllocator = .init(gpa);
+            defer arena.deinit();
+            const a = arena.allocator();
+            const items = try a.alloc(exporter.Select, db.table_names.len);
+            for (items, db.table_names) |*item, name| {
+                const built = try query.buildSelect(a, .{ .table = name, .tables = db.table_names, .columns = &.{}, .limit = 0 });
+                item.* = .{ .sql = built.sql, .sheet = name };
+            }
+            return exporter.bundle(db, env.io, .csv_dir, items, dest, progress, req.total_hint);
+        },
+        .global_xlsx => {
+            // uma aba por tabela com acerto: as linhas que a busca acha (a regra da aba Dados), todas as colunas
+            var arena: std.heap.ArenaAllocator = .init(gpa);
+            defer arena.deinit();
+            const a = arena.allocator();
+            var cols = try db.runMax(columns_sql, &.{}, std.math.maxInt(usize));
+            defer cols.deinit();
+            const items = try a.alloc(exporter.Select, req.hits.len);
+            for (items, req.hits) |*item, hit| {
+                if (hit.table >= db.table_names.len) return error.TableNotFound;
+                const name = db.table_names[hit.table];
+                var text: std.ArrayList([]const u8) = .empty;
+                for (cols.rows) |row| if (std.mem.eql(u8, row[0] orelse "", name)) try text.append(a, row[1] orelse "");
+                const built = try query.buildSelect(a, .{ .table = name, .tables = db.table_names, .columns = text.items, .search = std.mem.sliceTo(&req.search, 0), .limit = 0 });
+                item.* = .{ .sql = built.sql, .params = built.params, .sheet = name };
+            }
+            return exporter.bundle(db, env.io, .xlsx, items, dest, progress, req.total_hint);
         },
         .terms_xlsx, .terms_csv, .terms_sqlite, .terms_duckdb => {
             // resumo, uma aba por tabela com acerto e os nao encontrados (a mesma lista nos 4 formatos)
@@ -888,6 +929,47 @@ test "term search jobs (item 32): result with the first table's grid, another ta
     var b3: [300]u8 = undefined;
     var cbuf: [256]u8 = undefined;
     try t.expectEqualStrings("\xEF\xBB\xBFTermo\r\nnada\r\n", try std.Io.Dir.cwd().readFile(t.io, try exporter.csvPath(&b3, dbm.tmpPath(&b2, &tmp, ""), "Não encontrados"), &cbuf));
+}
+
+test "Export list (item 28): every table to CSV in a folder, the all-tables search to Excel, the database schema" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var b1: [256]u8 = undefined;
+    const path = dbm.tmpPath(&b1, &tmp, "e.duckdb");
+    try dbm.makeSample(path);
+    var db = dbm.testDb();
+    defer db.close();
+    try db.openReadOnly(path);
+    var p: exporter.Progress = .{};
+    // um CSV por tabela: <pasta>/<tabela>.csv com todas as linhas (big 250, people 4, strict 0)
+    var b2: [256]u8 = undefined;
+    const folder = dbm.tmpPath(&b2, &tmp, "");
+    var req: Req = .{ .kind = .export_, .export_kind = .all_csv };
+    req.setDest(folder);
+    try t.expectEqual(254, try exportJob(&db, t.allocator, .{ .io = t.io }, &req, &p));
+    var b3: [300]u8 = undefined;
+    var cbuf: [256]u8 = undefined;
+    try t.expectEqualStrings("\xEF\xBB\xBFid,note\r\n", try std.Io.Dir.cwd().readFile(t.io, try exporter.csvPath(&b3, folder, "strict"), &cbuf));
+    // busca em todas as tabelas: as linhas que ela acha, uma aba por tabela com acerto
+    const hits = try searchAll(&db, t.allocator, "acao", &p);
+    defer t.allocator.free(hits);
+    req = .{ .kind = .export_, .export_kind = .global_xlsx, .hits = hits };
+    setZ(&req.search, "acao");
+    var b4: [256]u8 = undefined;
+    req.setDest(dbm.tmpPath(&b4, &tmp, "e_busca.xlsx"));
+    try t.expectEqual(2, try exportJob(&db, t.allocator, .{ .io = t.io }, &req, &p));
+    // esquema do banco: tabela, coluna, tipo, aceita nulo (no idioma da tela), na ordem da lista de tabelas
+    const sql = try query.buildDbSchemaExport(t.allocator, .{ "Tabela", "Coluna", "Tipo", "Aceita nulo" }, "Sim", "Não");
+    defer t.allocator.free(sql);
+    var g = try db.run(sql, &.{});
+    defer g.deinit();
+    try t.expectEqual(6, g.rows.len);
+    try t.expectEqualStrings("Aceita nulo", g.columns[3]);
+    try t.expectEqualStrings("big", g.rows[0][0].?);
+    try t.expectEqualStrings("strict", g.rows[4][0].?);
+    try t.expectEqualStrings("id", g.rows[4][1].?);
+    try t.expectEqualStrings("INTEGER", g.rows[4][2].?);
+    try t.expectEqualStrings("Não", g.rows[4][3].?);
 }
 
 test "identical rows of a table without rowid are one row for the marks" {

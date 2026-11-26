@@ -970,6 +970,7 @@ const App = struct {
     log_seen: usize = 0, // tamanho do log no ultimo quadro (linha nova: rola para o fim)
     want_tab: ?Tab = null, // aba a selecionar no proximo quadro (atalhos, --sql)
     focus_search: bool = false, // Ctrl+F: foco na busca da aba Dados
+    focus_tables: bool = false, // Ctrl+T: foco no filtro da lista de tabelas
     want_refresh: bool = false, // F5: abre de novo o arquivo aberto
     close_popups: bool = false, // --capture: cada passo comeca sem os menus do passo anterior
     reveal_selected: bool = false, // rola a lista de tabelas ate a selecionada (ex.: --table)
@@ -977,7 +978,7 @@ const App = struct {
     start_sql: bool = false, // --sql: roda depois do primeiro open
     start_search: []const u8 = "", // --search: busca na aba Data depois do primeiro open
     start_cell: ?[2]usize = null, // --cell: linha e coluna (base 0) que abrem com o menu de copia
-    start_menu: ?enum { File, View, Settings, Help, Export } = null, // --menu: menu aberto quando o banco abrir (capturas)
+    start_menu: ?enum { File, Edit, View, Settings, Help, Export } = null, // --menu: menu aberto quando o banco abrir (capturas)
     start_export: ?ExportKind = null, // --export: abre o dialogo de salvar dessa exportacao quando o banco abrir
 
     fn deinit(app: *App) void {
@@ -996,6 +997,7 @@ const App = struct {
         app.clearTerms();
         app.gpa.free(app.terms_text);
         app.gpa.free(app.slot.req.terms_text); // pesquisa cortada pela saida
+        app.gpa.free(app.slot.req.hits); // exportacao da busca global cortada pela saida
         app.gpa.free(app.counts);
         app.freeMarks();
         app.filter_scratch.deinit(app.gpa);
@@ -1375,6 +1377,8 @@ const App = struct {
             },
         }
         if (out.kind == .export_) {
+            app.gpa.free(app.slot.req.hits);
+            app.slot.req.hits = &.{};
             app.saving = false;
             if (out.err != null) app.exit_save = false; // nao salvou: o programa fica aberto
         }
@@ -1709,23 +1713,14 @@ const App = struct {
         }
     }
 
-    // O que a aba atual exporta: tabela (Data), esquema (Schema, via DESCRIBE) ou resultado (SQL)
-    fn canExportCurrent(app: *const App) bool {
-        if (app.opening() or !app.db.isOpen()) return false;
-        return switch (app.tab) {
-            .data, .schema => app.selected != null,
-            .sql => app.result != null,
-            .terms => false, // o relatorio tem o seu item
-        };
-    }
-
     // Dialogo de salvar (pasta do arquivo aberto; sem arquivo, a ultima usada) e dispara o trabalho
     fn startExport(app: *App, kind_in: ExportKind) void {
         if (!app.db.isOpen()) return;
         // tabela da aba Dados com busca ou filtro: antes pergunta se vai a tabela inteira ou so as linhas encontradas
         const narrowed = app.applied_search[0] != 0 or app.filters.items.len > 0;
         var whole = false;
-        if (worker.asksExportScope(kind_in, app.tab == .data, narrowed)) {
+        // Tabela atual e sempre a tabela da aba Dados (com a busca e os filtros dela), de qualquer aba
+        if (worker.asksExportScope(kind_in, true, narrowed)) {
             const answer = app.export_scope orelse {
                 app.ask_export = kind_in;
                 return;
@@ -1733,19 +1728,19 @@ const App = struct {
             app.export_scope = null;
             whole = answer == .whole;
         }
-        var kind = kind_in;
+        const kind = kind_in;
         const r = &app.slot.req;
         const loaded = zstr(&app.loaded_path);
         var name_buf: [512]u8 = undefined;
         const base: []const u8 = switch (kind) {
-            .db_duckdb, .db_sqlite, .db_xlsx => std.fs.path.stem(loaded),
-            .table_csv, .table_xlsx => switch (app.tab) {
-                .schema => std.fmt.bufPrint(&name_buf, "{s}_schema", .{app.db.table_names[app.selected orelse return]}) catch "schema",
-                else => app.db.table_names[app.selected orelse return],
-            },
+            .db_duckdb, .db_sqlite, .db_xlsx, .all_csv => std.fs.path.stem(loaded),
+            .table_csv, .table_xlsx => app.db.table_names[app.selected orelse return],
+            .schema_csv, .schema_xlsx => std.fmt.bufPrint(&name_buf, "{s}_schema", .{app.db.table_names[app.selected orelse return]}) catch "schema",
+            .dbschema_csv, .dbschema_xlsx => std.fmt.bufPrint(&name_buf, "{s}_schema", .{std.fs.path.stem(loaded)}) catch "schema",
             .result_csv, .result_xlsx => "query",
             .marked_csv, .marked_xlsx => std.fmt.bufPrint(&name_buf, "{s}_marcadas", .{app.db.table_names[app.selected orelse return]}) catch "marcadas",
             .terms_xlsx, .terms_csv, .terms_sqlite, .terms_duckdb => std.fmt.bufPrint(&name_buf, "{s}_termos", .{std.fs.path.stem(loaded)}) catch "termos",
+            .global_xlsx => std.fmt.bufPrint(&name_buf, "{s}_busca", .{std.fs.path.stem(loaded)}) catch "busca",
         };
         var file_buf: [600]u8 = undefined;
         var file = settings.fileName(&file_buf, base, kind.ext());
@@ -1764,8 +1759,8 @@ const App = struct {
         const dkind: dialog.Kind = switch (kind) {
             .db_duckdb, .terms_duckdb => .save_duckdb,
             .db_sqlite, .terms_sqlite => .save_sqlite,
-            .db_xlsx, .table_xlsx, .result_xlsx, .marked_xlsx, .terms_xlsx => .save_xlsx,
-            .table_csv, .result_csv, .marked_csv, .terms_csv => .save_csv,
+            .db_xlsx, .table_xlsx, .result_xlsx, .marked_xlsx, .terms_xlsx, .schema_xlsx, .dbschema_xlsx, .global_xlsx => .save_xlsx,
+            .table_csv, .result_csv, .marked_csv, .terms_csv, .schema_csv, .dbschema_csv, .all_csv => .save_csv,
         };
         var path_buf: dialog.PathBuf = undefined;
         // um CSV por tabela ou por aba: o seletor de pasta nativo
@@ -1783,26 +1778,36 @@ const App = struct {
         r.setDest(dest);
         r.total_hint = 0;
         if (kind == .table_csv or kind == .table_xlsx) {
+            // todas as linhas na ordem da tela: so as encontradas (busca e filtros aplicados) ou a tabela inteira
             const index = app.selected orelse return;
-            if (app.tab == .schema) {
-                // o esquema exportado e o mesmo da aba: coluna, tipo, aceita nulo (titulos e Sim/Nao no idioma da tela)
-                const sql = query.buildSchemaExport(app.gpa, app.db.table_names[index], .{ tr("schema_column"), tr("schema_type"), tr("schema_null") }, tr("yes"), tr("no")) catch "";
-                defer app.gpa.free(sql);
-                if (sql.len == 0 or sql.len >= r.sql.len) return app.status.set(true, "err_table_name_long", .{});
-                @memcpy(r.sql[0..sql.len], sql);
-                r.sql[sql.len] = 0;
-                kind = if (kind == .table_csv) .result_csv else .result_xlsx;
-            } else {
-                // todas as linhas na ordem da tela: so as encontradas (busca e filtros aplicados) ou a tabela inteira
-                r.table = index;
-                r.columns = app.col_names;
-                r.search = if (whole) @splat(0) else app.applied_search;
-                r.filters = if (whole) &.{} else app.filters.items;
-                r.sort_col = app.sort_col;
-                r.sort_desc = app.sort_desc;
-                r.key = app.data_key;
-                r.total_hint = if (whole and index < app.counts.len) app.counts[index] else app.total;
-            }
+            r.table = index;
+            r.columns = app.col_names;
+            r.search = if (whole) @splat(0) else app.applied_search;
+            r.filters = if (whole) &.{} else app.filters.items;
+            r.sort_col = app.sort_col;
+            r.sort_desc = app.sort_desc;
+            r.key = app.data_key;
+            r.total_hint = if (whole and index < app.counts.len) app.counts[index] else app.total;
+        } else if (kind == .schema_csv or kind == .schema_xlsx or kind == .dbschema_csv or kind == .dbschema_xlsx) {
+            // o esquema da aba Esquema (coluna, tipo, aceita nulo) ou o do banco (com a tabela na frente): titulos e
+            // Sim/Nao no idioma da tela; vai como o resultado de um SQL
+            const one = kind == .schema_csv or kind == .schema_xlsx;
+            const sql = (if (one)
+                query.buildSchemaExport(app.gpa, app.db.table_names[app.selected orelse return], .{ tr("schema_column"), tr("schema_type"), tr("schema_null") }, tr("yes"), tr("no"))
+            else
+                query.buildDbSchemaExport(app.gpa, .{ tr("col_table"), tr("schema_column"), tr("schema_type"), tr("schema_null") }, tr("yes"), tr("no"))) catch "";
+            defer app.gpa.free(sql);
+            if (sql.len == 0 or sql.len >= r.sql.len) return app.status.set(true, "err_table_name_long", .{});
+            @memcpy(r.sql[0..sql.len], sql);
+            r.sql[sql.len] = 0;
+        } else if (kind == .all_csv) {
+            for (app.counts) |n| r.total_hint += n;
+        } else if (kind == .global_xlsx) {
+            // as tabelas da busca em todas as tabelas (copia: a UI troca a lista a cada busca; solta em apply)
+            const g = app.global orelse return;
+            r.hits = app.gpa.dupe(worker.Hit, g.hits) catch return;
+            r.search = g.term;
+            for (g.hits) |h| r.total_hint += h.rows;
         } else if (kind == .marked_csv or kind == .marked_xlsx) {
             // as linhas marcadas da tabela atual: todas as colunas, na ordem da tabela, nome <tabela>_marcadas
             const index = app.selected orelse return;
@@ -1854,6 +1859,7 @@ const App = struct {
 
     // Nomes (sem o .csv) dos arquivos de uma exportacao para pasta
     fn folderFiles(app: *App, a: std.mem.Allocator, kind: ExportKind) ![]const []const u8 {
+        if (kind == .all_csv) return app.db.table_names;
         if (kind != .terms_csv) return &.{};
         const res = if (app.terms_res) |*x| x else return &.{};
         const items = try dbm.terms.reportItems(a, app.db.table_names, res, termsTitles());
@@ -1960,33 +1966,48 @@ const App = struct {
         app.savePrefs();
     }
 
-    // Itens de exportacao (menu Arquivo > Exportar e botao Exportar...)
+    // Exportar (Arquivo > Exportar e o botao Exportar...): a lista fixa do item 28, igual nas 4 versoes; o que nao se
+    // aplica fica desabilitado. O banco inteiro e Arquivo > Salvar.
     fn exportItems(app: *App) void {
-        // o banco inteiro para SQLite, DuckDB ou Excel e Arquivo > Salvar e Salvar como...
-        const cur = app.canExportCurrent();
-        const csv_key, const xlsx_key = switch (app.tab) {
-            .data, .terms => .{ tr("export_table_csv"), tr("export_table_xlsx") },
-            .schema => .{ tr("export_schema_csv"), tr("export_schema_xlsx") },
-            .sql => .{ tr("export_result_csv"), tr("export_result_xlsx") },
+        const has_db = !app.opening() and app.db.isOpen();
+        const has_table = has_db and app.selected != null;
+        if (formatMenu(tr("export_table"), has_table)) |csv| app.want_export = if (csv) .table_csv else .table_xlsx;
+        if (formatMenu(tr("export_marked"), has_table and app.marksOf(app.selected).len > 0)) |csv| app.want_export = if (csv) .marked_csv else .marked_xlsx;
+        if (formatMenu(tr("export_schema"), has_table)) |csv| app.want_export = if (csv) .schema_csv else .schema_xlsx;
+        if (formatMenu(tr("export_dbschema"), has_db)) |csv| app.want_export = if (csv) .dbschema_csv else .dbschema_xlsx;
+        if (ig.igMenuItem_Bool(tr("export_all_csv"), null, false, has_db)) app.want_export = .all_csv;
+        if (formatMenu(tr("export_result"), has_db and app.result != null)) |csv| app.want_export = if (csv) .result_csv else .result_xlsx;
+        const has_global = if (app.global) |g| g.hits.len > 0 else false;
+        if (ig.igMenuItem_Bool(tr("export_global"), null, false, has_db and has_global)) app.want_export = .global_xlsx;
+        if (termsReportMenu(has_db and app.terms_res != null)) |k| app.want_export = k;
+    }
+
+    // A grade da aba atual e a celula escolhida nela (Editar > Copiar, Ctrl+Shift+C); `skip`: a coluna Termo
+    const Current = struct { g: *const dbm.Grid, sel: *GridSel, skip: usize };
+    fn currentGrid(app: *App) ?Current {
+        return switch (app.tab) {
+            .data => if (app.data) |*g| .{ .g = g, .sel = &app.data_sel, .skip = 0 } else null,
+            .schema => if (app.schema) |*g| .{ .g = g, .sel = &app.schema_sel, .skip = 0 } else null,
+            .sql => if (app.result) |*g| .{ .g = g, .sel = &app.result_sel, .skip = 0 } else null,
+            .terms => if (app.terms_grid) |*g| .{ .g = g, .sel = &app.terms_sel, .skip = 1 } else null,
         };
-        if (ig.igMenuItem_Bool(csv_key, null, false, cur)) app.want_export = if (app.tab == .sql) .result_csv else .table_csv;
-        if (ig.igMenuItem_Bool(xlsx_key, null, false, cur)) app.want_export = if (app.tab == .sql) .result_xlsx else .table_xlsx;
-        if (termsReportMenu(app.terms_res != null)) |k| app.want_export = k;
     }
 
     fn drawMenu(app: *App) void {
         if (!ig.igBeginMainMenuBar()) return;
         defer ig.igEndMainMenuBar();
-        var lb: [6][96]u8 = undefined;
+        var lb: [7][96]u8 = undefined;
         const file_l = idLabel(&lb[0], "menu_file", "file");
         const view_l = idLabel(&lb[1], "menu_view", "view");
         const settings_l = idLabel(&lb[2], "menu_settings", "settings");
         const help_l = idLabel(&lb[3], "menu_help", "help");
         const export_l = idLabel(&lb[4], "menu_export", "export");
         const lang_l = idLabel(&lb[5], "menu_language", "language");
+        const edit_l = idLabel(&lb[6], "menu_edit", "edit");
         // --menu: abre o menu (e o submenu Exportar / Idioma) no mesmo quadro, para as capturas de tela
         const open_file = app.takeStartMenu(.File);
         const open_settings = app.takeStartMenu(.Settings);
+        if (app.takeStartMenu(.Edit)) _ = ig.igOpenPopup_Str(edit_l, 0);
         if (open_file) _ = ig.igOpenPopup_Str(file_l, 0);
         if (open_settings) _ = ig.igOpenPopup_Str(settings_l, 0);
         if (app.takeStartMenu(.View)) _ = ig.igOpenPopup_Str(view_l, 0);
@@ -2010,8 +2031,82 @@ const App = struct {
             ig.igSeparator();
             if (ig.igMenuItem_Bool(tr("menu_exit"), "Ctrl+Q", false, true)) app.requestExit();
         }
+        // Editar: o que os menus das grades fazem, na grade da aba atual
+        if (ig.igBeginMenu(edit_l, true)) {
+            defer ig.igEndMenu();
+            const cur = app.currentGrid();
+            const cell = if (cur) |c| c.sel.row != null else false;
+            if (ig.igMenuItem_Bool(tr("copy_value"), "Ctrl+C", false, cell)) copySelection(cur.?.g, cur.?.sel, false, false, 0);
+            if (ig.igMenuItem_Bool(tr("copy_row"), "Ctrl+Shift+C", false, cell)) copySelection(cur.?.g, cur.?.sel, true, false, cur.?.skip);
+            if (ig.igMenuItem_Bool(tr("copy_row_header"), null, false, cell)) copySelection(cur.?.g, cur.?.sel, true, true, cur.?.skip);
+            if (ig.igMenuItem_Bool(tr("menu_copy_log"), null, false, session_log.text.items.len > 0)) setClipboard(session_log.slice());
+            ig.igSeparator();
+            if (ig.igMenuItem_Bool(tr("menu_search"), "Ctrl+F", false, has_db)) {
+                app.want_tab = .data;
+                app.focus_search = true;
+            }
+            const data_cell = has_db and app.tab == .data and app.data_sel.row != null;
+            if (ig.igMenuItem_Bool(tr("filter_by_value"), null, false, data_cell)) app.data_sel.want_filter = true;
+            if (ig.igMenuItem_Bool(tr("clear_filters"), null, false, has_db and app.filters.items.len > 0)) app.want_clear_filters = true;
+            ig.igSeparator();
+            const keyed = if (app.data) |g| g.keys.len == g.rows.len else false;
+            if (ig.igMenuItem_Bool(tr("menu_mark"), tr("key_space"), false, data_cell and keyed)) app.want_mark = app.data_sel.row;
+            if (ig.igMenuItem_Bool(tr("menu_unmark_all"), null, false, has_db and app.marksOf(app.selected).len > 0)) app.want_unmark_all = true;
+        }
         if (ig.igBeginMenu(view_l, true)) {
             defer ig.igEndMenu();
+            if (ig.igMenuItem_Bool(tr("tab_data"), "Ctrl+1", false, has_db)) app.want_tab = .data;
+            if (ig.igMenuItem_Bool(tr("tab_schema"), "Ctrl+2", false, has_db)) app.want_tab = .schema;
+            if (ig.igMenuItem_Bool(tr("tab_sql"), "Ctrl+3", false, has_db)) app.want_tab = .sql;
+            if (ig.igMenuItem_Bool(tr("tab_terms"), "Ctrl+4", false, has_db)) app.want_tab = .terms;
+            ig.igSeparator();
+            // Linhas > 100 / 500 / 1000 (a lista da aba Dados)
+            var rb: [96]u8 = undefined;
+            if (ig.igBeginMenu(idLabel(&rb, "rows_label", "rows"), has_db)) {
+                defer ig.igEndMenu();
+                for (query.row_limits) |n| {
+                    var nb: [16]u8 = undefined;
+                    const item = std.fmt.bufPrintSentinel(&nb, "{d}", .{n}, 0) catch continue;
+                    if (ig.igMenuItem_Bool(item, null, app.limit == n, true) and n != app.limit) {
+                        app.limit = n;
+                        app.want_reload = true;
+                    }
+                }
+            }
+            // Colunas... da grade da aba atual (o Esquema nao tem)
+            const cols_sel: ?*GridSel = switch (app.tab) {
+                .data => if (app.data != null) &app.data_sel else null,
+                .sql => if (app.result != null) &app.result_sel else null,
+                .terms => if (app.terms_grid != null) &app.terms_sel else null,
+                .schema => null,
+            };
+            if (ig.igMenuItem_Bool(tr("columns_button"), null, false, has_db and cols_sel != null)) cols_sel.?.open_columns = true;
+            var sb: [96]u8 = undefined;
+            if (ig.igBeginMenu(idLabel(&sb, "menu_search_in", "search_in"), has_db)) {
+                defer ig.igEndMenu();
+                const pick: ?settings.SearchScope = if (ig.igMenuItem_Bool(tr("scope_table"), null, app.scope == .table, true))
+                    .table
+                else if (ig.igMenuItem_Bool(tr("scope_all"), null, app.scope == .all, true)) .all else null;
+                if (pick) |s| {
+                    app.want_tab = .data; // a busca e a da aba Dados
+                    app.setScope(s);
+                }
+            }
+            if (ig.igMenuItem_Bool(tr("menu_only_marked"), null, app.only_marked, has_db and app.marksOf(app.selected).len > 0)) {
+                app.only_marked = !app.only_marked;
+                app.want_reload = true;
+            }
+            if (ig.igMenuItem_Bool(tr("menu_goto_tables"), "Ctrl+T", false, has_db)) app.focus_tables = true;
+            ig.igSeparator();
+            if (ig.igMenuItem_Bool(tr("menu_run_sql"), "Ctrl+Enter", false, has_db and zstr(&app.sql).len > 0)) {
+                app.want_tab = .sql;
+                app.want_run = true;
+            }
+            if (ig.igMenuItem_Bool(tr("terms_run"), "Ctrl+Enter", false, has_db and app.terms_counted[0] > 0)) {
+                app.want_tab = .terms;
+                app.want_terms = true;
+            }
+            ig.igSeparator();
             if (ig.igMenuItem_Bool(tr("menu_log"), "Ctrl+L", app.prefs.log_open, true)) app.setLogOpen(!app.prefs.log_open);
         }
         if (ig.igBeginMenu(settings_l, true)) {
@@ -2083,6 +2178,9 @@ const App = struct {
             if (chord(ctrl | ig.ImGuiKey_S)) app.want_save = .save;
             if (chord(ctrl | ig.ImGuiMod_Shift | ig.ImGuiKey_S)) app.want_save = .save_as;
             if (chord(ctrl | ig.ImGuiKey_W)) app.want_close = true;
+            if (chord(ctrl | ig.ImGuiKey_T)) app.focus_tables = true;
+            // Ctrl+Shift+C: copiar a linha da celula escolhida na grade da aba atual
+            if (chord(ctrl | ig.ImGuiMod_Shift | ig.ImGuiKey_C)) if (app.currentGrid()) |c| copySelection(c.g, c.sel, true, false, c.skip);
             if (chord(ctrl | ig.ImGuiKey_F)) {
                 app.want_tab = .data;
                 app.focus_search = true;
@@ -2497,6 +2595,10 @@ const App = struct {
     }
 
     fn drawTables(app: *App) void {
+        if (app.focus_tables) { // Ctrl+T
+            app.focus_tables = false;
+            ig.igSetKeyboardFocusHere(0);
+        }
         ig.igSetNextItemWidth(-1);
         // filtra 300 ms depois da ultima tecla; Enter filtra na hora
         var hb: [96]u8 = undefined;
@@ -2907,6 +3009,15 @@ fn segmentedWidth(labels: []const [:0]const u8) f32 {
     return w;
 }
 
+// Submenu "CSV... / Excel (.xlsx)..." da lista Exportar: true = CSV, false = Excel, null = nada escolhido
+fn formatMenu(label: [:0]const u8, enabled: bool) ?bool {
+    if (!ig.igBeginMenu(label, enabled)) return null;
+    defer ig.igEndMenu();
+    if (ig.igMenuItem_Bool(tr("fmt_csv"), null, false, true)) return true;
+    if (ig.igMenuItem_Bool(tr("fmt_xlsx"), null, false, true)) return false;
+    return null;
+}
+
 // Relatorio da pesquisa de termos > Excel / CSV / SQLite / DuckDB (menu Exportar e menu da grade de Termos)
 fn termsReportMenu(enabled: bool) ?ExportKind {
     var pick: ?ExportKind = null;
@@ -2947,9 +3058,14 @@ fn sqlRowsCols(buf: []u8, rows: usize, cols: usize) []const u8 {
     return std.fmt.bufPrint(buf, "{s}, {s}", .{ i18n.fmtCount(&rb, "sql_rows", rows, .{rows}), i18n.fmtCount(&cb, "sql_cols", cols, .{cols}) }) catch "";
 }
 
+var schema_titles: [3][:0]const u8 = .{ "", "", "" }; // titulos da grade do Esquema no idioma da tela
+
 // Coluna "Aceita nulo" do Esquema no idioma da tela (Sim/Nao, Si/No, Yes/No): o YES/NO do DuckDB troca pelo texto
 // do catalogo (estatico); refeito ao trocar o idioma
 fn localizeSchema(g: *dbm.Grid) void {
+    // titulos tambem (Editar > Copiar linha com cabecalho)
+    schema_titles = .{ tr("schema_column"), tr("schema_type"), tr("schema_null") };
+    if (g.columns.len == schema_titles.len) g.columns = &schema_titles;
     for (g.rows) |row| if (row.len > 2) if (row[2]) |v| {
         row[2] = i18n.yesNo(v);
     };
