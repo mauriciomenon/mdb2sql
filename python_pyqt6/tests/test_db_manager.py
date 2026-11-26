@@ -118,12 +118,21 @@ def test_table_counts_for_duckdb_and_sqlite_files(tmp_path: Path, people_db: Pat
 
 READS = ("SELECT count(*) FROM people", "WITH p AS (SELECT * FROM people) SELECT name FROM p", "SHOW TABLES",
          "DESCRIBE people", "SUMMARIZE people", "EXPLAIN SELECT * FROM people", "EXPLAIN ANALYZE SELECT * FROM people",
-         "PRAGMA table_info('people')", "VALUES (1)", "FROM people", "select 1; select 2")
+         "PRAGMA table_info('people')", "VALUES (1)", "FROM people", "select 1; select 2",
+         "SELECT * FROM range(3)", "SELECT * FROM query_table('people')")
 WRITES = ("CREATE TABLE made (a INT)", "CREATE TEMP TABLE made AS SELECT 1", "CREATE VIEW made AS SELECT 1",
           "INSERT INTO people VALUES (4, 'Dora', 1)", "UPDATE people SET name = 'x'", "DELETE FROM people",
           "DROP TABLE people", "ALTER TABLE people ADD COLUMN z INT", "ATTACH ':memory:' AS made", "SET threads = 1",
           "PRAGMA threads = 1", "COPY people TO 'made.csv'", "SELECT 1; DROP TABLE people", "CHECKPOINT",
-          "CALL pragma_version()", "BEGIN", "LOAD sqlite", "EXPORT DATABASE 'made'", "VACUUM")
+          "CALL pragma_version()", "BEGIN", "LOAD sqlite", "EXPORT DATABASE 'made'", "VACUUM",
+          # SELECT que chama uma funcao que anexa (troca as views da memoria), grava ou roda outro SQL
+          "SELECT * FROM sqlite_attach('made.sqlite', overwrite=true)", "SELECT * FROM SQLITE_ATTACH('made.sqlite')",
+          "WITH a AS (SELECT * FROM sqlite_attach('made.sqlite')) SELECT 1",
+          "SELECT * FROM people WHERE id IN (SELECT 1 FROM sqlite_attach('made.sqlite'))",
+          "SELECT * FROM sqlite_query('made.sqlite', 'DELETE FROM people')",
+          "SELECT * FROM query('SELECT * FROM sqlite_attach(''made.sqlite'')')", "SELECT * FROM checkpoint()",
+          "SELECT * FROM force_checkpoint()", "SELECT * FROM enable_logging()",
+          "EXPLAIN ANALYZE SELECT * FROM sqlite_attach('made.sqlite')")
 # o tipo e de leitura (EXPLAIN, PRAGMA), mas rodariam uma escrita: o motor recusa (transacao so de leitura)
 ENGINE_REFUSED = ("EXPLAIN ANALYZE CREATE TABLE made AS SELECT 1", "EXPLAIN ANALYZE DELETE FROM people",
                   "IMPORT DATABASE 'made'")

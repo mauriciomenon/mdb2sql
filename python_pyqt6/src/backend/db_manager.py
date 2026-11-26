@@ -3,6 +3,7 @@
 # !T: read-only through the bundled sqlite extension (typed views on top), DuckDB file read-only. Each call uses
 # !T: its own cursor (threads); close() waits for the cursors still in use
 
+import json
 import re
 import shutil
 import sqlite3
@@ -39,14 +40,48 @@ READ_STATEMENTS = {"SELECT", "EXPLAIN", "PRAGMA", "MULTI"}
 MARK_KEY = "mdb2sql_mark"
 
 
+# funcoes que um SELECT pode chamar e que anexam, gravam, rodam outro SQL ou mudam o estado do motor: sqlite_attach
+# (e qualquer *_attach) troca ou cria as views da memoria; sqlite_query/*_query/*_execute e query() rodam um SQL que a
+# checagem nao ve; checkpoint, logs, perfil e recursos externos mexem no arquivo ou no motor
+_WRITING_FUNCTIONS = re.compile(
+    r"\w+_(?:attach|query|execute)|query|checkpoint|force_checkpoint|\w*external_resource\w*"
+    r"|(?:enable|disable)_(?:logging|profiling)|truncate_duckdb_logs",
+    re.IGNORECASE,
+)
+
+
+def _function_names(node: Any) -> Iterator[str]:
+    """Nomes das funcoes (de tabela e escalares) na arvore do comando, inclusive em subconsultas e CTEs."""
+    if isinstance(node, dict):
+        if isinstance(node.get("function_name"), str):
+            yield node["function_name"]
+        for value in node.values():
+            yield from _function_names(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _function_names(value)
+
+
+def _calls_writer(statement: str) -> bool:
+    with duckdb.connect() as conn:
+        tree = json.loads(conn.execute("SELECT json_serialize_sql(?)", [statement]).fetchone()[0])
+    if tree.get("error"):
+        # !T: json_serialize_sql only takes a plain SELECT; for EXPLAIN ANALYZE, PRAGMA and MULTI the call is looked
+        # !T: for in the text (a name in a string or a comment also counts: refused, never run)
+        return re.search(rf"\b(?:{_WRITING_FUNCTIONS.pattern})\s*\(", statement, re.IGNORECASE) is not None
+    return any(_WRITING_FUNCTIONS.fullmatch(name) for name in _function_names(tree))
+
+
 def reads_only(query: str) -> bool:
-    """A aba SQL so le: todo comando de query e de leitura, pelo tipo que o DuckDB da a ele (nao pelo texto).
+    """A aba SQL so le: todo comando de query e de leitura, pelo tipo que o DuckDB da a ele (nao pelo texto), e
+    nenhum chama uma funcao que anexa, grava ou roda outro SQL (_WRITING_FUNCTIONS).
 
     !T: The engine also runs the query in a read-only transaction (execute_query), which refuses what these types can
     !T: still write: EXPLAIN ANALYZE of a write, IMPORT DATABASE (a PRAGMA)
     """
     try:
-        return all(statement.type.name in READ_STATEMENTS for statement in duckdb.extract_statements(query))
+        return all(statement.type.name in READ_STATEMENTS and not _calls_writer(statement.query)
+                   for statement in duckdb.extract_statements(query))
     except duckdb.ParserException:
         return True  # erro de sintaxe: a consulta roda e mostra o erro do motor
     except ValueError:
