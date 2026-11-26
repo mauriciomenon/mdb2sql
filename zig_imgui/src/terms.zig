@@ -153,22 +153,19 @@ fn isNumericType(ty: []const u8) bool {
 }
 
 // !T: Whole value with numbers (item 13 a, the loose rule): a term and a cell that read as numbers match when some
-// reading of one equals some reading of the other. Readings of a number text (sign, digits, "." and "," between
-// digits): with both "." and ",", the last of the two is the decimal mark (1.234,5 and 1,234.5 = 1234.5); one kind
-// repeated is the thousands mark (1.234.567); a single mark gives both readings (1,234 = 1.234 or 1234; 216,0 = 216
-// or 2160); no mark, the number. A numeric cell (integer, decimal, double) reads as its value. Each reading is the
-// key chr(1) || the DOUBLE as text (chr(1) never equals a text key; + 0 turns -0 into 0). n1 = the first reading,
-// n2 = the thousands reading of a single mark. The first character filters out most text before the regex.
+// reading of one equals some reading of the other. A number text has up to two readings, the same as the Python
+// version (python_pyqt6/src/backend/terms.py, _DOT and _COMMA): n1 = "." decimal with "," thousands, n2 = ","
+// decimal with "." thousands; a thousands mark only before groups of exactly 3 digits. So 1.234,5 and 1,234.5 =
+// 1234.5, 1.234.567 = 1234567, 1,234 = 1.234 or 1234, 216,0 = 216 (never 2160), 0,1 = 0.1 (never 1). A numeric
+// cell (integer, decimal, double) reads as its value. Each reading is the key chr(1) || the DOUBLE as text (chr(1)
+// never equals a text key; + 0 turns -0 into 0). The first character filters out most text before the regex.
 const number_macros = [_][:0]const u8{
     "CREATE OR REPLACE TEMP MACRO mdb2sql_n1(s) AS CASE WHEN left(s, 1) BETWEEN '+' AND '9' THEN " ++
-        "CASE WHEN regexp_full_match(s, '[+-]?[0-9]+([.,][0-9]+)*') THEN chr(1) || CAST(TRY_CAST(" ++
-        "CASE WHEN contains(s, '.') AND contains(s, ',') THEN CASE WHEN strpos(reverse(s), ',') < strpos(reverse(s), '.') " ++
-        "THEN replace(replace(s, '.', ''), ',', '.') ELSE replace(s, ',', '') END " ++
-        "WHEN length(s) - length(replace(replace(s, '.', ''), ',', '')) > 1 THEN replace(replace(s, '.', ''), ',', '') " ++
-        "ELSE replace(s, ',', '.') END AS DOUBLE) + 0 AS VARCHAR) END END",
+        "CASE WHEN regexp_full_match(s, '[+-]?(?:\\d+|\\d{1,3}(?:,\\d{3})+)(?:\\.\\d+)?') THEN chr(1) || " ++
+        "CAST(TRY_CAST(replace(s, ',', '') AS DOUBLE) + 0 AS VARCHAR) END END",
     "CREATE OR REPLACE TEMP MACRO mdb2sql_n2(s) AS CASE WHEN left(s, 1) BETWEEN '+' AND '9' THEN " ++
-        "CASE WHEN regexp_full_match(s, '[+-]?[0-9]+[.,][0-9]+') THEN chr(1) || " ++
-        "CAST(TRY_CAST(replace(replace(s, '.', ''), ',', '') AS DOUBLE) + 0 AS VARCHAR) END END",
+        "CASE WHEN regexp_full_match(s, '[+-]?(?:\\d+|\\d{1,3}(?:\\.\\d{3})+)(?:,\\d+)?') THEN chr(1) || " ++
+        "CAST(TRY_CAST(replace(replace(s, '.', ''), ',', '.') AS DOUBLE) + 0 AS VARCHAR) END END",
 };
 
 // Chaves de Valor inteiro com numeros: o termo em minusculas e as leituras dele como numero
@@ -629,8 +626,8 @@ test "term search on a real database: every table's grid has the rows counted (o
 }
 
 // Valor inteiro com numeros (item 13 a): 216 acha 216.0 (DOUBLE), "216,0" (texto) e 216 (INTEGER), nao 2160 nem
-// 216.5; 0,1 acha 0.1 (DECIMAL); 1234.5 acha 1234.5 (DECIMAL) e "1.234,5"; 2160 acha tambem "216,0" (um separador so:
-// as duas leituras); texto segue como texto
+// 216.5; 0,1 acha 0.1 (DECIMAL); 1234.5 acha 1234.5 (DECIMAL) e "1.234,5"; 2160 acha "2160" e 2160.0, nunca "216,0"
+// (milhar so antes de grupos de 3 digitos); texto segue como texto
 fn expectNumbers(db: *Db) !void {
     var p: Progress = .{};
     var res = try search(db, t.allocator, "216\n0,1\n1234.5\n216.5\n2160\nx", .whole, null, &p);
@@ -638,11 +635,18 @@ fn expectNumbers(db: *Db) !void {
     try t.expectEqual(1, res.tables.len);
     var per: [6]u64 = @splat(0);
     for (res.pairs) |pair| per[pair.term] = pair.rows;
-    try t.expectEqualSlices(u64, &.{ 3, 1, 2, 0, 3, 1 }, &per);
+    try t.expectEqualSlices(u64, &.{ 3, 1, 2, 0, 2, 1 }, &per);
     try t.expectEqualStrings("216.5", res.not_found);
     var g = try page(db, t.allocator, &res, res.tables[0], "Termo", 0);
     defer g.deinit();
-    try t.expectEqual(3 + 1 + 2 + 3 + 1, g.rows.len);
+    try t.expectEqual(3 + 1 + 2 + 2 + 1, g.rows.len);
+    // as leituras de cada texto, as mesmas do Python (_DOT e _COMMA): ponto decimal | virgula decimal
+    var r = try db.run("SELECT replace(coalesce(mdb2sql_n1(s), '-'), chr(1), '') || ' ' || replace(coalesce(mdb2sql_n2(s), '-'), chr(1), '') " ++
+        "FROM (VALUES ('216,0'), ('0,1'), ('1,234'), ('1.234,5'), ('1,234.5'), ('1.234.567'), ('216'), ('abc'), ('1,2345')) v(s)", &.{});
+    defer r.deinit();
+    const want = [_][]const u8{ "- 216.0", "- 0.1", "1234.0 1.234", "- 1234.5", "1234.5 -", "- 1234567.0", "216.0 216.0", "- -", "- 1.2345" };
+    try t.expectEqual(want.len, r.rows.len);
+    for (r.rows, want) |row_, w| try t.expectEqualStrings(w, row_[0].?);
     // Contem nao muda: 216 esta no texto de 216.0, 216,0, 2160 e 2160.0
     var c = try search(db, t.allocator, "0,1", .contains, null, &p);
     defer c.deinit();

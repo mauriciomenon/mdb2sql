@@ -163,9 +163,10 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   default search scope), **Search terms** (Ctrl+Enter) and the count `<n> terms, <n> repeated` (empty lines and the
   spaces at the ends do not count; a repeated term is searched once). Whole value: the cell as text, without the spaces
   at the ends, equals the term ignoring case; when a term reads as a number it also matches by value, with a loose
-  rule for US and BR/European formats: the last of "." and "," is the decimal mark, one kind repeated is the thousands
-  mark, a single mark gives both readings (216 finds 216.0, 216,0 and "216"; 0,1 finds 0.1; 1234.5 finds "1.234,5";
-  216 does not find 2160 or 216.5); a numeric column matches by its value; contains: the cell holds the term ignoring
+  rule for US and BR/European formats: a text has up to two readings, "." decimal with "," thousands and "," decimal
+  with "." thousands, a thousands mark only before groups of 3 digits (1,234 = 1.234 or 1234; 216,0 = 216, never
+  2160; 0,1 = 0.1; 216 finds 216.0, 216,0 and "216"; 1234.5 finds "1.234,5"; 216 does not find 2160 or 216.5); a
+  numeric column matches by its value; contains: the cell holds the term ignoring
   case; every column of every
   table in the scope, numbers and dates as text. The search runs in the database (a temporary table of terms joined to
   each table), with progress `Searching terms: table i of n (name)` and **Cancel**. Then the summary
