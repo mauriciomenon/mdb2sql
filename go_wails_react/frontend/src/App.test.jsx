@@ -55,9 +55,13 @@ const sizers = (b) => [...b.querySelectorAll('.sized > .ghost')].map((g) => g.te
 const menuTree = (menuEl) =>
   [...menuEl.children].map((el) => (el.tagName === 'HR' ? '--' : el.classList.contains('menu-root') ? el.querySelector('button').textContent : el.textContent));
 
-// F5 (Reopen) with nothing open: the default database (MDB2SQL_DB_PATH or the sample); the Open... button of the path
-// bar is the file dialog since standard 14
-const openDefault = () => fireEvent.keyDown(window, { key: 'F5' });
+// opens a database as a path typed in the path bar and Enter (Open..., F5 and File > Reopen with nothing open are the
+// file dialog since standard 14); the field found by its class, in any language
+const openDefault = () => {
+  const field = document.querySelector('.pathbar input');
+  fireEvent.change(field, { target: { value: 'C:\\data\\sample.duckdb' } });
+  fireEvent.keyDown(field, { key: 'Enter' });
+};
 
 // File > Open... (the native file dialog)
 const OPEN_DIALOG = /^Open\.\.\./;
@@ -179,7 +183,11 @@ describe('App IPC flow', () => {
     const key = (init) => fireEvent.keyDown(window, init);
 
     expect(key({ key: 'F5' })).toBe(false); // never the webview's page reload
-    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('')); // nothing open: the default database
+    await waitFor(() => expect(SelectDatabase).toHaveBeenCalledTimes(1)); // nothing open: the file dialog (standard 14)
+    pick('File', 'Reopen'); // the same from the menu
+    await waitFor(() => expect(SelectDatabase).toHaveBeenCalledTimes(2));
+    expect(bridge.LoadDatabase).not.toHaveBeenCalled(); // the dialog was cancelled: no default database
+    openDefault();
     await screen.findByText('Alpha');
     key({ key: 'F5' });
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('C:\\data\\db.duckdb')); // the open file again
@@ -296,7 +304,7 @@ describe('App IPC flow', () => {
     openDefault();
 
     expect(await screen.findByText(/Loaded: DB4\.duckdb \(2 tables\)/)).toBeInTheDocument();
-    expect(bridge.LoadDatabase).toHaveBeenCalledWith('');
+    expect(bridge.LoadDatabase).toHaveBeenCalledWith('C:\\data\\sample.duckdb');
   });
 
   it('shows Help > About with version, build, full stack and the two links opened in the browser', async () => {

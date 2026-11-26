@@ -1171,7 +1171,8 @@ function App() {
   const shownStatus = logOpen ? { text: error || status, level: error ? 'error' : 'info', unread: 0 } : statusLine(logLines, readMark, status, error);
   const viewName = (v: View) => t(`tab.${v}`); // "Schema" without the column count (standard item 15)
 
-  const reload = () => openPath(openedPath); // nothing open: the default database, as the Python version
+  // F5 and File > Reopen: the open file again; nothing open: the file dialog (standard 14)
+  const reload = () => (openedPath ? openPath(openedPath) : loadDatabase());
   const focusSearch = () => {
     const focus = () => {
       searchRef.current?.focus();
