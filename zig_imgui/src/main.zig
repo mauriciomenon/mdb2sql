@@ -810,6 +810,14 @@ fn dialogKeyClose() bool {
     return dbm.gridtools.dialogCloses(ig.igIsKeyPressed_Bool(ig.ImGuiKey_Escape, false), enter, ig.igIsAnyItemFocused() or ig.igIsAnyItemActive());
 }
 
+// Foco de teclado visivel no item anterior (o botao padrao) quando o dialogo aparece; Enter o aciona
+fn focusOnAppear() void {
+    if (!ig.igIsWindowAppearing()) return;
+    ig.igSetItemDefaultFocus();
+    ig.igSetKeyboardFocusHere(-1);
+    ig.igSetNavCursorVisible(true);
+}
+
 // Botoes de dialogo do mesmo tamanho, alinhados a direita
 fn dialogButtonWidth(labels: []const [:0]const u8) f32 {
     var w: f32 = 88;
@@ -2369,6 +2377,7 @@ const App = struct {
                     app.want_save = .save;
                     ig.igCloseCurrentPopup();
                 }
+                focusOnAppear(); // foco inicial visivel em Salvar
                 ig.igSameLine(0, -1);
             }
             ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - 2 * bw - ig.igGetStyle().*.ItemSpacing.x));
@@ -2376,12 +2385,7 @@ const App = struct {
                 app.exit_ask = null;
                 ig.igCloseCurrentPopup();
             }
-            // foco inicial visivel: Salvar (Access nao salvo) ou Voltar (exportacao em andamento)
-            if (ig.igIsWindowAppearing()) {
-                ig.igSetItemDefaultFocus();
-                ig.igSetKeyboardFocusHere(if (kind == .unsaved) -2 else -1);
-                ig.igSetNavCursorVisible(true);
-            }
+            if (kind == .export_running) focusOnAppear(); // exportacao em andamento: foco em Voltar
             ig.igSameLine(0, -1);
             if (ig.igButton(exit_l, .{ .x = bw, .y = 0 })) {
                 app.exit_ask = null;
