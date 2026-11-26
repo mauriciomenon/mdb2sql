@@ -390,6 +390,11 @@ describe('App IPC flow', () => {
     ]);
     expect(translate('es', 'about.tools', 'x') + ' ' + translate('es', 'about.odbc')).toBe('Herramientas: x Soporte del controlador ODBC, si está instalado.');
     expect(pt('about.title')).toBe('Sobre o mdb2sql');
+    // the version line with the 40-digit commit fits (640 px); a narrow window breaks it between words, not in the date
+    const css = readFileSync('src/App.css', 'utf8').replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = (sel) => css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*]/g, '\\$&')} \\{([^}]*)\\}`))?.[1] ?? '';
+    expect(rule('.about')).toMatch(/max-width: 640px;/);
+    expect(rule('.about p')).toMatch(/overflow-wrap: break-word;/);
   });
 
   it('hides several columns at once from Columns... and from the header menu', async () => {
@@ -1417,9 +1422,12 @@ describe('App IPC flow', () => {
     expect(screen.getByText('Searching terms: table 1 of 2 (RANGER_SOGEN)')).toBeInTheDocument();
     await act(async () => answer(res));
     expect(await screen.findByText('2 of 3 terms found: 3 rows in 2 tables')).toBeInTheDocument();
-    // standard 18c: Search terms | the box (input lines and the summary, no line below) | match, a thin line, scope
+    // standard 18c: Search terms | the box (input lines and the summary, no line below) | at the right, one piece that
+    // wraps together: match, a thin line, scope
     const bar = [...document.querySelector('.terms-bar').children];
-    expect(bar.map((el) => el.getAttribute('aria-label') ?? el.className ?? '')).toEqual(['', 'terms-status', 'Term matching', 'terms-sep', 'Search in']);
+    const labels = (els) => els.map((el) => el.getAttribute('aria-label') ?? el.className ?? '');
+    expect(labels(bar)).toEqual(['', 'terms-status', 'terms-right']);
+    expect(labels([...bar[2].children])).toEqual(['Term matching', 'terms-sep', 'Search in']);
     expect(bar[0].textContent).toBe('Search terms');
     expect([...bar[1].children].map((s) => s.textContent)).toEqual(['4 input lines', '2 of 3 terms found: 3 rows in 2 tables']);
 

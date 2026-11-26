@@ -591,6 +591,14 @@ td.mark input {
   white-space: nowrap;
 }
 
+/* Whole value | Contains, the thin line, This table | All tables: one piece at the right, wrapped together */
+.terms-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .terms-sep {
   align-self: stretch;
   width: 1px;
@@ -712,7 +720,7 @@ td[aria-selected='true'] {
 }
 
 .about {
-  max-width: 560px;
+  max-width: 640px; /* the version line with the full commit fits on one line at 14 px */
   padding: 22px 26px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -726,10 +734,10 @@ td[aria-selected='true'] {
   font-size: inherit;
 }
 
-/* one line each, the full commit may break anywhere */
+/* one line each; in a narrow window a line breaks between words, never inside the date */
 .about p {
   margin: 6px 0 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .about h2 + p {

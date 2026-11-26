@@ -1584,20 +1584,23 @@ function App() {
                       </span>
                     )}
                   </div>
-                  <div className="tabs" role="radiogroup" aria-label={t('menu.termMatch')} title={t('terms.matchTip')}>
-                    {MATCHES.map((m) => (
-                      <button key={m} role="radio" aria-checked={match === m} onClick={() => setMatch(m)}>
-                        {t(`terms.${m}`)}
-                      </button>
-                    ))}
-                  </div>
-                  <span className="terms-sep" aria-hidden="true" />
-                  <div className="tabs" role="radiogroup" aria-label={t('scope.label')}>
-                    {SCOPES.map((s) => (
-                      <button key={s} role="radio" aria-checked={termsScope === s} onClick={() => setTermsScope(s)}>
-                        {t(`scope.${s}`)}
-                      </button>
-                    ))}
+                  {/* the right block goes below as one piece when the line is too narrow (1280 px: it is) */}
+                  <div className="terms-right">
+                    <div className="tabs" role="radiogroup" aria-label={t('menu.termMatch')} title={t('terms.matchTip')}>
+                      {MATCHES.map((m) => (
+                        <button key={m} role="radio" aria-checked={match === m} onClick={() => setMatch(m)}>
+                          {t(`terms.${m}`)}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="terms-sep" aria-hidden="true" />
+                    <div className="tabs" role="radiogroup" aria-label={t('scope.label')}>
+                      {SCOPES.map((s) => (
+                        <button key={s} role="radio" aria-checked={termsScope === s} onClick={() => setTermsScope(s)}>
+                          {t(`scope.${s}`)}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
                 {termsRes && (
