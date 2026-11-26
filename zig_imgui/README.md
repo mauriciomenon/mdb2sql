@@ -175,14 +175,14 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   table in the scope, numbers and dates as text. The search runs in the database (a temporary table of terms joined to
   each table), with progress `Searching terms: table i of n (name)` and **Cancel**. Then the summary
   `<found> of <n> terms found: <rows> rows in <tables> tables`, the tables with rows found as `<table> (<rows>)` and
-  the grid of the chosen one: first the column **Term** (the term that found the row), then the table's columns, in
-  the order of the pasted list and then of the table (a row found by two terms shows twice), limited like the Data
-  tab with `showing X of Y rows`. Below, **Not found (<n>)**: a read-only box, one term per line in the pasted order,
-  with **Copy**. Grid menu: the three copies (rows without the Term column), **Copy the rows found in this table**
-  (every row found, with the header, TAB separated, no Term column) and **Advanced Search report** > Excel / CSV /
-  SQLite / DuckDB (`<database>_termos`): a **Filter Result** sheet (term, status, table, rows: one line per term and table; a term
-  not found has an empty table and 0), then one sheet per table with rows (Term + the table's columns), named after the table;
-  SQLite and DuckDB hold the same tables, CSV is a folder with one file per sheet.
+  the grid of the chosen one: only the table's columns, with their names, order and types; each row found once, in
+  the order of the first pasted term that found it and then of the table; limited like the Data tab with `showing X
+  of Y rows` (the rows count each row once). Below, **Not found (<n>)**: a read-only box, one term per line in the
+  pasted order, with **Copy**. Grid menu: the three copies, **Copy the rows found in this table** (every row found,
+  with the header, TAB separated) and **Advanced Search report** > Excel / CSV / SQLite / DuckDB (suggested name
+  `<database> - Advanced Search.xlsx` in the screen language): one sheet (table, CSV file) per table with rows found,
+  named after the table, with only its columns and types; no summary sheet and no term column. SQLite and DuckDB hold
+  the same tables, CSV is a folder with one file per sheet.
 - **Search rule**: the text is split into words; a row matches when one cell holds every word, in any order,
   ignoring case and accents (`Tensión campo` finds `EXCITACION TENSION DE CAMPO`; `tensao` does not: there is no
   fuzzy matching).

@@ -209,9 +209,9 @@ const Capture = struct {
         const g = app.terms_grid orelse return;
         if (app.terms_hit >= res.tables.len) return;
         rep.print(a, "{s}:\r\n", .{app.db.table_names[res.tables[app.terms_hit].table]}) catch return;
-        // Termo e as colunas que identificam o ponto
-        var picks: [4]?usize = .{ 0, null, null, null };
-        for (g.columns, 0..) |col, i| for ([_][]const u8{ "RTUNO", "PNTNO", "SUBNAM" }, 1..) |want, k| {
+        // as colunas que identificam o ponto (a grade so tem as colunas da tabela, item 19 d)
+        var picks: [4]?usize = .{ null, null, null, null };
+        for (g.columns, 0..) |col, i| for ([_][]const u8{ "PNTNAM", "RTUNO", "PNTNO", "SUBNAM" }, 0..) |want, k| {
             if (std.ascii.eqlIgnoreCase(col, want)) picks[k] = i;
         };
         for (g.rows) |row| {
@@ -1120,7 +1120,7 @@ const App = struct {
     terms_scope: settings.SearchScope = .all,
     terms_res: ?dbm.terms.Result = null, // resultado mostrado
     terms_hit: usize = 0, // tabela escolhida na lista (indice em terms_res.tables)
-    terms_grid: ?dbm.Grid = null, // as linhas achadas da tabela escolhida (coluna Termo + as da tabela)
+    terms_grid: ?dbm.Grid = null, // as linhas achadas da tabela escolhida (so as colunas dela, item 19 d)
     terms_sel: GridSel = .{},
     terms_seconds: f64 = 0, // tempo da ultima pesquisa
     want_terms: bool = false, // Pesquisar termos (botao, Ctrl+Enter)
@@ -1473,12 +1473,10 @@ const App = struct {
                 r.terms_text = app.gpa.dupe(u8, std.mem.sliceTo(app.terms_text, 0)) catch return app.status.set(true, "err_generic", .{error.OutOfMemory});
                 r.term_match = app.terms_match;
                 r.terms_only = if (app.terms_scope == .table) app.selected else null;
-                r.terms_titles = termsTitles();
             },
             .terms_page, .terms_copy => {
                 r.terms_res = if (app.terms_res) |*res| res else return;
                 r.terms_hit = if (kind == .terms_page) (app.want_terms_page orelse return) else app.terms_hit;
-                r.terms_titles = termsTitles();
             },
         }
         app.busy_since = ig.igGetTime();
@@ -2063,11 +2061,10 @@ const App = struct {
         } else if (kind == .db_xlsx) {
             for (app.counts) |n| r.total_hint += n;
         } else if (kind == .terms_xlsx or kind == .terms_csv or kind == .terms_sqlite or kind == .terms_duckdb) {
-            // relatorio da pesquisa mostrada: resumo, uma aba por tabela com acerto, nao encontrados
+            // relatorio da pesquisa mostrada: uma aba por tabela com acerto (item 19 d)
             const res = if (app.terms_res) |*x| x else return;
             r.terms_res = res;
-            r.terms_titles = termsTitles();
-            r.total_hint = res.rows + res.pairs.len + res.terms.len;
+            r.total_hint = res.rows;
         }
         r.export_kind = kind;
         app.start(.export_);
@@ -2101,7 +2098,7 @@ const App = struct {
         if (kind == .all_csv) return app.db.table_names;
         if (kind != .terms_csv) return &.{};
         const res = if (app.terms_res) |*x| x else return &.{};
-        const items = try dbm.terms.reportItems(a, app.db.table_names, res, termsTitles());
+        const items = try dbm.terms.reportItems(a, app.db.table_names, res);
         const names = try a.alloc([]const u8, items.len);
         for (names, items) |*n, item| n.* = item.sheet;
         return names;
@@ -2226,7 +2223,7 @@ const App = struct {
             .data => if (app.data) |*g| .{ .g = g, .sel = &app.data_sel, .skip = 0 } else null,
             .schema => if (app.schema) |*g| .{ .g = g, .sel = &app.schema_sel, .skip = 0 } else null,
             .sql => if (app.result) |*g| .{ .g = g, .sel = &app.result_sel, .skip = 0 } else null,
-            .terms => if (app.terms_grid) |*g| .{ .g = g, .sel = &app.terms_sel, .skip = 1 } else null,
+            .terms => if (app.terms_grid) |*g| .{ .g = g, .sel = &app.terms_sel, .skip = 0 } else null,
         };
     }
 
@@ -3298,19 +3295,6 @@ fn termsReportMenu(enabled: bool) ?ExportKind {
     return pick;
 }
 
-// Titulos da coluna do termo e do relatorio, no idioma da tela (textos estaticos do catalogo)
-fn termsTitles() dbm.terms.Titles {
-    return .{
-        .term = tr("col_term"),
-        .status = tr("col_status"),
-        .table = tr("col_table"),
-        .rows = tr("col_rows"),
-        .found = tr("term_found"),
-        .not_found = tr("term_not_found"),
-        .sheet_result = tr("sheet_result"),
-    };
-}
-
 // Botao "Colunas..." da barra da grade: o dialogo e desenhado por drawGrid
 fn columnsButton(sel: *GridSel) void {
     if (button(tr("columns_button"))) sel.open_columns = true;
@@ -3530,8 +3514,8 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         }
     }
 
-    // aba Termos: copiar linha e linha com cabecalho sem a coluna Termo
-    const skip: usize = @intFromBool(mode == .terms);
+    // a grade da Pesquisa Avançada so tem as colunas da tabela (item 19 d): nada a pular ao copiar
+    const skip: usize = 0;
     if (ig.igIsWindowFocused(0) and ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_C)) copySelection(g, sel, false, false, 0);
     if (open_menu) _ = ig.igOpenPopup_Str("##copy", 0);
     // menu da celula do Go: filtros por valor (aba Dados), depois copiar valor, linha e linha com o cabecalho
