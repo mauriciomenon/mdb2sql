@@ -732,6 +732,7 @@
       search = keep;
       hidden = new Set();
       filters = [];
+      onlyMarked = false;
       dropFound();
     }
     selectedTable = tableName;
@@ -763,16 +764,21 @@
     }
   }
 
-  // linhas marcadas de uma tabela (lista vazia tira a tabela do Map)
+  // linhas marcadas de uma tabela (lista vazia tira a tabela do Map e desliga "So as marcadas")
   function setMarks(table, list) {
     const next = new Map(marks);
     if (list.length) next.set(table, list);
     else next.delete(table);
     marks = next;
+    if (!list.length && table === selectedTable) onlyMarked = false;
   }
 
-  // caixa da linha, Espaco na linha da celula escolhida, menu da celula e Editar > Marcar ou desmarcar linha
-  const toggleMark = (row) => setMarks(selectedTable, toggleMarked(markedRows, row));
+  // caixa da linha, Espaco na linha da celula escolhida, menu da celula e Editar > Marcar ou desmarcar linha. Sem
+  // rowid (view) a identidade e texto e a marcada entra no fim: a tabela e relida para elas voltarem na ordem dela
+  function toggleMark(row) {
+    setMarks(selectedTable, toggleMarked(markedRows, row));
+    if (typeof row[ROW_ID] !== 'number') openTable(selectedTable);
+  }
   const unmarkAll = () => setMarks(selectedTable, []);
 
   // lista de tabelas: setas, Home e End trocam a tabela aberta

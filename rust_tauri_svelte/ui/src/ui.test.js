@@ -462,6 +462,11 @@ test('Data grid: mark column, marked rows on top, only-marked box', () => {
   assert.match(app, /marks=\{\{ has: \(row\) => markedRows\.includes\(row\), toggle: toggleMark \}\}\s*extra=\{dataExtra\}/);
   // as marcas sao por tabela e duram enquanto o arquivo estiver aberto: fechar, abrir outro e reabrir limpam
   assert.match(appFunction('resetTable'), /marks = new Map\(\);\s*onlyMarked = false;/);
+  // "So as marcadas" desliga quando a tabela fica sem marcas e ao trocar de tabela (nao volta ligado sozinho)
+  assert.match(appFunction('setMarks'), /if \(!list\.length && table === selectedTable\) onlyMarked = false;/);
+  assert.match(appFunction('openTable'), /filters = \[\];\s*onlyMarked = false;/);
+  // sem rowid (view) a marcada entraria no fim: a tabela e relida e elas voltam na ordem dela
+  assert.match(appFunction('toggleMark'), /setMarks\(selectedTable, toggleMarked\(markedRows, row\)\);\s*if \(typeof row\[ROW_ID\] !== 'number'\) openTable\(selectedTable\);/);
   // a consulta manda as identidades das marcadas e recebe as linhas delas a parte (qualquer que seja a pesquisa)
   assert.match(appFunction('openTable'), /marked: \(marked \?\? \[\]\)\.map\(\(row\) => row\[ROW_ID\]\) \}\),/);
   assert.match(appFunction('openTable'), /rows = withIds\(page\.rows, page\.ids\);[^\n]*\n[^\n]*\n\s*if \(marked && marks\.get\(tableName\) === marked\) setMarks\(tableName, withIds\(page\.marked, page\.marked_ids\)\);/);
