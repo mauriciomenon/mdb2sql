@@ -78,8 +78,10 @@ Tabs:
   the loaded rows: a row stays when one of its cells has all the words typed, in any order, ignoring case and
   accents (`tension de campo` finds `EXCITACIÓN TENSIÓN DE CAMPO`; words that are only in different cells do not
   match; `tensao` does not find `TENSIÓN`, there is no fuzzy match). "All tables" lists the tables with matching
-  rows as `table (n)`; choosing one opens it with the same search and no value filter. The line under the grid
-  says how many rows are shown (`RANGER_SOSTAT: showing 25 of 25 rows found` with a search or value filter).
+  rows as `table (n)`; choosing one opens it with the same search and no value filter. The table is shown in
+  pages of "Rows" lines: the line under the grid says `RANGER_SOSTAT: rows 1 to 100 of 36,804` (with a search
+  or value filter: `... of 25 found`) and has the previous / next page buttons, disabled at the ends. A new
+  search, filter, Rows value or table goes back to page 1.
   Columns fit the header name and the longest loaded value, so nothing is cut with "..." (only above 1,200 px; the
   tooltip shows the full text; header tooltip: name and type).
   - **Columns...**: check boxes in a grid that follows the dialog width (1 to 6 per row,
@@ -110,7 +112,7 @@ Tabs:
   the "Rows" limit. Table names with spaces or symbols go in double quotes: `SELECT * FROM "My Table"`. The line of
   the Run button shows the result (`SQL result: 3 rows`) or the error; an error clears the previous result, and the
   next query that works clears the error there and in the status bar.
-- **Terms** (Ctrl+4): paste a list of terms (one per line, for example an Excel column), choose "Whole value |
+- **Advanced Search** (Ctrl+4): paste a list of terms (one per line, for example an Excel column), choose "Whole value |
   Contains" (default in Settings > Term matching) and "This table | All tables", and Search terms (Ctrl+Enter in
   the tab). Every column of every table is compared as text: whole value = the cell without spaces at the ends is
   the term; contains = the cell contains it; case does not count. Empty lines are skipped and a repeated term is
@@ -120,8 +122,11 @@ Tabs:
   of the pasted list and then of the table (a row found by two terms appears twice), limited by "Rows". The terms
   not found are listed below, one per line, with Copy. Right-click on the grid: the three copy items (without the
   Term column), Copy the rows found in this table (with header, TAB separated, pastes into Excel as exactly the
-  found rows) and the report (Excel, CSV folder, SQLite or DuckDB: Summary, one sheet/table per table with hits,
-  Not found; name `<database>_termos`). DB3 (287 tables), the owner's 9 terms, whole value, all tables: 6.8 s on the
+  found rows) and the report (Excel, CSV folder, SQLite or DuckDB: one Filter Result sheet with every term, where
+  it was found and how many rows, the terms not found included, then one sheet/table per table with hits; name
+  `<database>_termos`). In Whole value, numbers match loosely: a term and a cell that read as numbers match when
+  a reading of one equals a reading of the other (216 finds 216.0, 216,0 and "216"; 1234.5 finds "1.234,5";
+  never 2160 or 216.5). DB3 (287 tables), a list of 9 terms, whole value, all tables: 6.8 s on the
   SQLite file, 3.6 s on the DuckDB file.
 
 Menus:
@@ -132,7 +137,7 @@ Menus:
   (Column, Type, Nullable; `<table>_schema`), Database schema (Table, Column, Type, Nullable; `<database>_schema`),
   each to CSV or Excel; All tables to CSV (a folder, `<table>.csv` each; files that already exist: one question);
   SQL result to CSV or Excel; All-tables search result (Excel: one sheet per table with hits, the rows the search
-  finds; `<database>_busca`); Term search report (see Terms).
+  finds; `<database>_busca`); Advanced Search report (see Advanced Search).
   - Excel: sheet name = table name, cleaned of `[]:*?/\` and cut to the 31-character Excel limit (repeated names
     get `~2`, `~3`); header in row 1; a table with more than 1,048,575 rows continues in sheets `<name> (2)`, ...
   - Current table: the whole current table (not only the loaded rows). When the grid shows part of the
@@ -145,9 +150,9 @@ Menus:
   Filter by this value, Clear filters, Mark or unmark row (Space), Unmark all rows. Right-click on a cell of the
   Data grid: Filter by this value and Clear filters first, then the three copy items, then the mark items and
   Export marked rows (the other grids: copy only). Copied rows are TAB-separated: they paste as columns in Excel.
-- **View**: Data / Schema / SQL / Terms tabs (Ctrl+1 to Ctrl+4), Rows (100 / 500 / 1000), Columns..., Search in
+- **View**: Data / Schema / SQL / Advanced Search tabs (Ctrl+1 to Ctrl+4), Rows (100 / 500 / 1000), Columns..., Search in
   (This table / All tables), Only marked rows, Go to the table list (Ctrl+T), Run SQL (Ctrl+Enter), Search terms
-  (Ctrl+Enter in the Terms tab), Log (Ctrl+L). The tables panel cannot be closed.
+  (Ctrl+Enter in the Advanced Search tab), Log (Ctrl+L). The tables panel cannot be closed.
   The **Log** panel, at the bottom (about 10% of the height, drag the edge to resize), lists the messages of the
   session with the time in a smaller fixed font (selectable, Ctrl+C, "Copy all"). It starts collapsed and keeps
   the last state; the arrow in its header and the arrow at the left of the status bar collapse and expand it. While
@@ -156,7 +161,7 @@ Menus:
   opens the log. Right-click on the status bar: Copy (the whole message) and Log. Numeric columns and their headers
   are right-aligned.
 - **Settings**: Theme (System, Light or Dark; switching changes the whole window), Language (English by default,
-  Português (Brasil), Español; applies at once), Default search scope (This table or All tables; also the Terms
+  Português (Brasil), Español; applies at once), Default search scope (This table or All tables; also the Advanced Search
   tab), Term matching (Whole value or Contains) and Show NULL
   (off by default: a NULL cell is empty). All are saved (Windows registry `HKCU\Software\MDB2SQL`,
   Linux `~/.config/MDB2SQL/MDB2SQL.conf`; with the environment variable `MDB2SQL_SETTINGS=<file.ini>`, in that file).
@@ -205,8 +210,8 @@ the same files made by another converter as reference.
 - Search beyond the loaded rows, value filters, Save / Save as, the exit question, marked rows, the term search
   (whole value, contains, case, spaces, repeats, list order, not found), the read-only SQL tab, the temporary
   folder fallback, the menu tree, three language catalogs with the same keys and no screen text outside them.
-  182 automatic tests (pytest + pytest-qt); the real-database comparison runs with `MDB2SQL_TEST_ACCDB`.
-- 2026-11-26: copies of DB3 (`.accdb`, and its `.sqlite` and `.duckdb` conversions), the owner's list of 9 terms,
+  192 automatic tests (pytest + pytest-qt); the real-database comparison runs with `MDB2SQL_TEST_ACCDB`.
+- 2026-11-26: copies of DB3 (`.accdb`, and its `.sqlite` and `.duckdb` conversions), a list of 9 terms,
   whole value, all tables: RANGER_SOSTAT 8 rows (RTUNO 50, PNTNO 238, 242, 254, 256, 260, 304, 308, 2190, SUBNAM
   U9A) in the order of the list, RANGER_SOEQID 8 rows, `PNTNAM` not found; contains adds RANGER_SOTEXT (72 rows of
   `PNTNAM`).
