@@ -1006,7 +1006,10 @@ function App() {
   }, [markList, shownTable]);
   const shownMarked = markedRows.table === shownTable ? markedRows.rows : NO_ROWS;
   const markCount = shownMarked.length;
-  const onlyShown = onlyMarked && markCount > 0; // with no mark left the box goes away and every row shows
+  const onlyShown = onlyMarked && markCount > 0;
+  useEffect(() => {
+    if (markCount === 0) setOnlyMarked(false); // with no mark left the box goes away; the next mark shows every row
+  }, [markCount]);
   const isMarked = (row: Row) => !!tableMarks?.has(rowKey(row, tableColumns));
   const toggleMark = (row: Row) =>
     setMarks((old) => {
@@ -1042,7 +1045,8 @@ function App() {
     }
   }
 
-  // the rows of the table chosen in the Terms list, limited as in the Data tab (Rows)
+  // the rows of the table chosen in the Terms list, limited as in the Data tab (Rows); asked again in another language
+  // (Go names the Term column)
   useEffect(() => {
     const req = ++termGridReq.current;
     setTermGrid(null);
@@ -1050,7 +1054,7 @@ function App() {
     Promise.resolve(window.go?.main?.App?.TermRows?.(termsTable, termsRes.res.terms, termsRes.contains, limit))
       .then((r) => req === termGridReq.current && r && setTermGrid({ columns: r.columns ?? [], rows: r.rows ?? [], more: r.more }))
       .catch((err) => req === termGridReq.current && fail(err));
-  }, [termsRes, termsTable, limit]);
+  }, [termsRes, termsTable, limit, lang]);
   const termsHits = termsRes?.res.tables?.find((h) => h.table === termsTable)?.rows ?? 0;
 
   // "Copy the rows found in this table": every row found, not only the ones on screen, with the header and without the
