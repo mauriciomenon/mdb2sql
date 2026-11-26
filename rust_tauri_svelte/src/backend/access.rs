@@ -126,6 +126,10 @@ fn odbc_column(data_type: DataType) -> (String, Fetch) {
         DataType::BigInt => text("BIGINT"),
         DataType::Real => ("FLOAT".into(), Fetch::Float),
         DataType::Float { .. } | DataType::Double => ("DOUBLE".into(), Fetch::Float),
+        // Numeric(p,0) do Access e inteiro (secao 19 a: RTUNO, PNTNO); acima de 18 digitos fica DECIMAL (exato)
+        DataType::Numeric { precision, scale: 0 } | DataType::Decimal { precision, scale: 0 } if (1..=18).contains(&precision) => {
+            text("BIGINT")
+        }
         DataType::Numeric { precision, scale } | DataType::Decimal { precision, scale }
             if (1..=38).contains(&precision) && (0..=precision as i16).contains(&scale) =>
         {
@@ -324,6 +328,8 @@ pub(crate) fn pg_to_duck(pg: &str) -> String {
     if let Some(args) = t.strip_prefix("NUMERIC").map(|a| a.trim().trim_start_matches('(').trim_end_matches(')')) {
         let nums: Vec<u32> = args.split(',').filter_map(|a| a.trim().parse().ok()).collect();
         return match nums.as_slice() {
+            // Numeric(p,0) e inteiro (secao 19 a); acima de 18 digitos fica DECIMAL (exato)
+            [p, 0] if (1..=18).contains(p) => "BIGINT".into(),
             [p, s] if (1..=38).contains(p) && s <= p => format!("DECIMAL({p},{s})"),
             _ => "DOUBLE".into(),
         };
@@ -451,15 +457,11 @@ fn export_csv(dir: &Path, path: &str, table: &str) -> Result<PathBuf, String> {
 }
 
 // NIVEL BASICO: CSV do mdb-export vira tabela do DuckDB com os tipos do mdb-schema (por posicao); BLOB chega em hex
-// e e convertido depois. Sem tipos no esquema: tudo texto
+// e e convertido depois. Sem os tipos da tabela no esquema: erro (nunca tudo como texto, secao 19 a)
 fn load_csv(duck: &duckdb::Connection, csv: &Path, table: &str, types: Option<&Vec<String>>) -> Result<(), String> {
-    let typing = match types {
-        Some(t) => {
-            let list: Vec<String> = t.iter().map(|t| literal(if t == "BLOB" { "VARCHAR" } else { t })).collect();
-            format!("types = [{}]", list.join(", "))
-        }
-        None => "all_varchar = true".to_string(),
-    };
+    let types = types.ok_or_else(|| format!("{table}: mdb-schema did not list the columns of this table"))?;
+    let list: Vec<String> = types.iter().map(|t| literal(if t == "BLOB" { "VARCHAR" } else { t })).collect();
+    let typing = format!("types = [{}]", list.join(", "));
     // allow_quoted_nulls = false: "" e texto vazio; so o campo sem nada e NULL
     duck.execute_batch(&format!(
         "CREATE TABLE {} AS SELECT * FROM read_csv({}, header = true, delim = ',', quote = '\"', escape = '\"', \
@@ -469,7 +471,7 @@ fn load_csv(duck: &duckdb::Connection, csv: &Path, table: &str, types: Option<&V
     ))
     .map_err(|e| format!("{table}: {e}"))?;
 
-    for (c, t) in types.into_iter().flatten().enumerate() {
+    for (c, t) in types.iter().enumerate() {
         if t == "BLOB" {
             let name: String = duck
                 .query_row(&format!("SELECT name FROM pragma_table_info({}) WHERE cid = {c}", literal(table)), [], |r| r.get(0))

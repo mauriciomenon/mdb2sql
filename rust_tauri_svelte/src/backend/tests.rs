@@ -421,7 +421,9 @@ mod tests {
                    \t\"intrat\"\t\t\tDOUBLE PRECISION, \n\t\"when\"\t\t\tTIMESTAMP WITHOUT TIME ZONE, \n\t\"pic\"\t\t\tBYTEA, \n\
                    \t\"ok\"\t\t\tBOOLEAN\n);\n\nCREATE TABLE IF NOT EXISTS \"other\"\n (\n\t\"memo\"\t\t\tTEXT\n);\n";
         let tables = parse_pg_schema(sql);
-        assert_eq!(tables["ranger_sostat"], ["DECIMAL(10,0)", "VARCHAR", "DOUBLE", "TIMESTAMP", "BLOB", "BOOLEAN"]);
+        // secao 19 a: Numeric(p,0) e inteiro (RTUNO), nunca texto; acima de 18 digitos, DECIMAL exato
+        assert_eq!(tables["ranger_sostat"], ["BIGINT", "VARCHAR", "DOUBLE", "TIMESTAMP", "BLOB", "BOOLEAN"]);
+        assert_eq!(pg_to_duck("NUMERIC (20, 0)"), "DECIMAL(20,0)");
         assert_eq!(tables["other"], ["VARCHAR"]);
         assert_eq!(pg_to_duck("REAL"), "FLOAT");
         assert_eq!(pg_to_duck("SERIAL"), "INTEGER");
@@ -1563,6 +1565,18 @@ mod tests {
             let tables = manager.list_tables().unwrap();
             eprintln!("DB3 {}: opened in {:?}, {} tables", file.display(), started.elapsed(), tables.len());
             let conn = manager.export_connection().unwrap();
+            if file.extension().is_some_and(|e| e == "accdb") {
+                // secao 19 a: o Access convertido com os tipos do mdb-schema (1.681 inteiras, 5.816 double, 2.867 texto)
+                let count = |kinds: &str| -> i64 {
+                    let sql = format!("SELECT count(*) FROM duckdb_columns() WHERE database_name = current_database() AND data_type IN ({kinds})");
+                    conn.query_row(&sql, [], |r| r.get(0)).unwrap()
+                };
+                let counts = [count("'TINYINT', 'SMALLINT', 'INTEGER', 'BIGINT'"), count("'DOUBLE', 'FLOAT'"), count("'VARCHAR'")];
+                eprintln!("DB3 accdb column types (integer, double, text): {counts:?}");
+                assert_eq!(counts, [1681, 5816, 2867]);
+                let sostat: Vec<String> = ["RTUNO", "PNTNO"].iter().map(|c| manager.get_table_schema("RANGER_SOSTAT").unwrap().into_iter().find(|s| s.name == *c).unwrap().col_type).collect();
+                assert_eq!(sostat, ["BIGINT", "BIGINT"]);
+            }
             // busca em todas as tabelas: antes (dev 2f17599: so colunas VARCHAR), todas as colunas dobrando toda celula
             // (o commit wip) e agora (todas as colunas, numeros e datas sem dobrar): as duas ultimas acham o mesmo
             let columns = crate::backend::db_manager::all_columns(&conn).unwrap();
