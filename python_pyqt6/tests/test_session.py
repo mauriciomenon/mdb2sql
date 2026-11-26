@@ -284,6 +284,12 @@ def test_save_offers_sqlite_duckdb_and_excel_and_remembers_the_access_conversion
     again = MainWindow()  # proxima execucao: lembrado nas configuracoes
     qtbot.addWidget(again)
     assert again.saved_conversion(source) == lite
+    # BRIEF 19 b: o salvo por uma conversao de versao antiga (tipos errados) nao vale: converte de novo
+    entries = json.loads(again.settings.value("converted_files"))
+    old = {key: {k: v for k, v in entry.items() if k != "converter"} for key, entry in entries.items()}
+    again.settings.setValue("converted_files", json.dumps(old))
+    assert again.saved_conversion(source) is None
+    again.settings.setValue("converted_files", json.dumps(entries))
     win.close()
     assert not win.isVisible()  # nada a salvar: nao pergunta
 

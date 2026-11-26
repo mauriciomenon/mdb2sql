@@ -81,7 +81,7 @@ from backend.export import (
     export_sheets,
     table_schema_query,
 )
-from backend.access import quote
+from backend.access import CONVERTER_VERSION, quote
 from backend import temp_store
 from backend.terms import not_found, parse_terms, report_sheets, search_terms, table_hits
 from shared import i18n
@@ -1544,11 +1544,13 @@ class MainWindow(QMainWindow):
 
     def saved_conversion(self, source: Path) -> Path | None:
         """Arquivo salvo (SQLite ou DuckDB) deste Access, se nenhum dos dois mudou desde entao (caminho + tamanho +
-        data)."""
+        data) e se foi feito pela conversao de agora (um de versao antiga tem os tipos errados: converte de novo)."""
         if source.suffix.lower() not in (".accdb", ".mdb"):
             return None
         entry = self._saved_conversions().get(path_key(source))
         if not isinstance(entry, dict) or not file_key(source) or entry.get("source") != file_key(source):
+            return None
+        if entry.get("converter") != CONVERTER_VERSION:
             return None
         dest = Path(str(entry.get("dest", "")))
         return dest if entry.get("dest_key") and file_key(dest) == entry.get("dest_key") else None
@@ -1556,7 +1558,8 @@ class MainWindow(QMainWindow):
     def _remember_conversion(self, source: Path, source_key: str, dest: Path) -> None:
         saved = {k: v for k, v in self._saved_conversions().items()
                  if isinstance(v, dict) and Path(str(v.get("dest", ""))).is_file()}  # sem os apagados
-        saved[path_key(source)] = {"source": source_key, "dest": str(dest), "dest_key": file_key(dest)}
+        saved[path_key(source)] = {"source": source_key, "dest": str(dest), "dest_key": file_key(dest),
+                                   "converter": CONVERTER_VERSION}
         self.settings.setValue("converted_files", json.dumps(saved))
 
     def _on_database_loaded(self, request_id: int, result: object) -> None:

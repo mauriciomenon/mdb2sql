@@ -28,6 +28,9 @@ NULL = "\x01NULL\x01"  # nao aparece em texto real: separa NULL da string vazia 
 TIMESTAMP = "%Y-%m-%d %H:%M:%S"
 INVALID_DATE = "1900-01-00"  # data que o mdbtools 1.0.1 do Linux nao converte (fora de ~1900-9999)
 CHUNK = 10_000
+# versao da conversao: vai junto do convertido lembrado entre execucoes; um salvo por versao antiga e convertido de
+# novo. 2: Numeric(p,0) como inteiro (BRIEF 19 a, b)
+CONVERTER_VERSION = 2
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # so existe no Windows: exe GUI sem janela de console
 
 Progress = Callable[[int, int, str], None]
