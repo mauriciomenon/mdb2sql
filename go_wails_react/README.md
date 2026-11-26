@@ -235,9 +235,11 @@ machine, so the Debian package is kept.
 
 ## For developers
 
-Version: `wails.json` -> `info.productVersion` is the single source (About, exe resource, `.deb`). The build
-number (`git rev-list --count HEAD`) and date are set by the build scripts (`-ldflags -X`); outside them About
-shows "build dev".
+Version: `wails.json` -> `info.productVersion` is the single source (About, exe resource, `.deb`). The full commit
+(`git rev-parse HEAD`) and the date are set by the build scripts (`-ldflags -X`) and shown in About as
+"Version 1.3.0 - commit <40 digits> - <YYYY-MM-DD>"; outside them About shows "Version 1.3.0 - dev". About has the
+same lines in the four versions: name and stack, version, runtime, Tools (SQLite, DuckDB, mdbtools, real versions),
+ODBC driver support, Author, License (GPLv2), GitHub / GitLab.
 
 ### Stack and versions
 

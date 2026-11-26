@@ -705,46 +705,14 @@ td[aria-selected='true'] {
   font-size: inherit;
 }
 
-.about .version {
-  margin-left: 6px;
-  padding: 2px 9px;
-  font-size: 14px;
-  vertical-align: middle;
-  color: var(--accent-text);
-  background: var(--accent);
-  border-radius: 999px;
-}
-
+/* one line each, the full commit may break anywhere */
 .about p {
-  margin: 10px 0 0;
+  margin: 6px 0 0;
   overflow-wrap: anywhere;
 }
 
-.about .tagline {
-  color: var(--muted);
-}
-
-/* label column as wide as the longest label, values aligned */
-.about dl {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 7px 16px;
-  margin: 16px 0 0;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
-
-.about dl > div {
-  display: contents;
-}
-
-.about dt {
-  color: var(--muted);
-}
-
-.about dd {
-  margin: 0;
-  overflow-wrap: anywhere;
+.about h2 + p {
+  margin-top: 14px;
 }
 
 .about a {

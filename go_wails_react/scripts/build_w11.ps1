@@ -16,13 +16,16 @@ foreach ($f in 'mdb-tables.exe', 'mdb-schema.exe', 'mdb-export.exe', 'COPYING', 
 }
 Copy-Item $extension $embedded
 
-# Numero do build = commits ate HEAD; data = hoje. Gravados no exe e mostrados em Ajuda > Sobre.
+# Numero do build = commits ate HEAD (pasta de cache por build); commit completo e data = hoje, mostrados em
+# Ajuda > Sobre (padrao 18b: "Versao 1.3.0 - commit <40 digitos> - <AAAA-MM-DD>")
 $buildNumber = git rev-list --count HEAD
 if ($LASTEXITCODE) { throw 'git rev-list falhou' }
+$buildCommit = git rev-parse HEAD
+if ($LASTEXITCODE) { throw 'git rev-parse falhou' }
 $buildDate = Get-Date -Format 'yyyy-MM-dd'
-"build $buildNumber ($buildDate)"
+"build $buildNumber, commit $buildCommit ($buildDate)"
 
 # -trimpath tira do exe os caminhos da maquina de build (pasta do usuario, cache de modulos); -nsis gera o instalador
-wails build -clean -trimpath -nsis -ldflags "-X main.buildNumber=$buildNumber -X main.buildDate=$buildDate"
+wails build -clean -trimpath -nsis -ldflags "-X main.buildNumber=$buildNumber -X main.buildCommit=$buildCommit -X main.buildDate=$buildDate"
 if ($LASTEXITCODE) { throw "wails build falhou ($LASTEXITCODE)" }
 Get-Item build\bin\mdb2sql.exe, build\bin\mdb2sql-amd64-installer.exe | Select-Object Name, Length, LastWriteTime

@@ -2,7 +2,7 @@
 // !T: Single-screen viewer talking to Go through the Wails IPC bridge (window.go.main.App). Every visible text comes
 // from the catalogs in ../../i18n (see i18n.ts)
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, version as reactVersion } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import { LANGS, translate, translateN, type Lang, type T, type TN } from './i18n';
 
@@ -47,15 +47,14 @@ export type MenuItem =
 type DisplayWarning = { text: string; missing: string; distro: string; command: string; help: string };
 export type AppInfo = {
   version: string;
-  build?: string;
+  commit?: string; // full commit hash of the build; "" = not an official build ("dev")
   buildDate?: string;
   go: string;
   wails: string;
-  duckdb: string;
-  access?: string; // reader an Access file would use now: "Access ODBC", "mdbtools" or ""
   webview?: string; // what draws the window: "WebView2 158.0.4370.33" (runtime API), "WebKitGTK"
-  mdbtools?: string; // "mdbtools 1.0.1" (embedded) or "mdbtools" (on PATH: mdbtoolsSystem); "" = none
-  mdbtoolsSystem?: boolean;
+  duckdb: string;
+  sqlite?: string; // the SQLite inside DuckDB's sqlite extension, the one that reads the files
+  mdbtools?: string; // "mdbtools 1.0.1" (embedded) or "mdbtools" (on PATH); "" = none
 };
 export type Filter = { column: string; value: unknown }; // column = exact value, applied in the database query
 
@@ -162,32 +161,25 @@ export function parseTerms(text: string) {
   return { terms, repeated };
 }
 
-// How an Access file is read now: the ODBC driver (embedded mdbtools as fallback), mdbtools only, or nothing
-function accessReading(info: AppInfo, t: T): string {
-  const mdb = info.mdbtools ?? '';
-  if (info.access === 'Access ODBC') return mdb ? t('about.accessOdbc', mdb) : t('about.accessOdbcOnly');
-  if (info.access === 'mdbtools') return t(info.mdbtoolsSystem ? 'about.accessSystem' : 'about.accessEmbedded', mdb);
-  return t('about.reader.none');
-}
-
-// Linhas (rotulo, valor) do dialogo Sobre, as do Rust (Build, Stack, Janela, Bancos, Leitura do Access, Gravacao,
-// Autor, Licenca, links); versao de wails.json, numero/data do build gravados pelo build, runtimes lidos em execucao.
-// Valor que comeca com https:// vira link aberto no navegador padrao.
-export function aboutRows(info: AppInfo, t: T): [string, string][] {
-  const v = (s: string) => s.replace(/^v/, '');
+// The lines of the About dialog, the same in the 4 versions (standard 18b), in this order, technical text only; then
+// the GitHub / GitLab links (REPOS). Version from wails.json, commit and date written by the build, runtimes read now.
+export function aboutLines(info: AppInfo, t: T): string[] {
+  const v = (s = '') => s.replace(/^v/, '');
+  const tools = [info.sqlite && `SQLite ${v(info.sqlite)}`, `DuckDB ${v(info.duckdb)}`, info.mdbtools].filter(Boolean).join(', ');
   return [
-    [t('about.build'), info.build ? `${info.build} (${info.buildDate})` : 'dev'],
-    [t('about.stack'), `Go ${info.go} + Wails ${v(info.wails)} + React ${reactVersion}`],
-    [t('about.window'), info.webview ?? ''],
-    [t('about.engines'), `DuckDB ${v(info.duckdb)}`], // SQLite files are read by DuckDB (its sqlite extension)
-    [t('about.access'), accessReading(info, t)],
-    [t('about.write'), t('about.writeValue')], // .mdb and .accdb cannot be written (standard item 28)
-    [t('about.author'), 'Mauricio Menon'],
-    [t('about.license'), t('about.licenseText')],
-    ['GitHub', 'https://github.com/mauriciomenon/mdb2sql'],
-    ['GitLab', 'https://gitlab.com/mauricio.menon/mdb2sql'],
+    'MDB2SQL (Go)',
+    info.commit ? t('about.version', info.version, info.commit, info.buildDate ?? '') : t('about.versionDev', info.version),
+    [`Go ${info.go}`, `Wails ${v(info.wails)}`, info.webview].filter(Boolean).join(', '),
+    t('about.tools', tools),
+    t('about.odbc'),
+    `${t('about.author')}: Mauricio Menon`,
+    `${t('about.license')}: GPLv2`,
   ];
 }
+export const REPOS: [string, string][] = [
+  ['GitHub', 'https://github.com/mauriciomenon/mdb2sql'],
+  ['GitLab', 'https://gitlab.com/mauricio.menon/mdb2sql'],
+];
 
 // Texto do filtro ativo: SIGLA = 'U9A' | ID = 7 | NOTE IS NULL
 export function filterLabel(f: Filter): string {
@@ -1917,33 +1909,27 @@ function App() {
       {about && (
         <div className="backdrop" onClick={(e) => e.target === e.currentTarget && setAbout(null)}>
           <div className="about" role="dialog" aria-modal="true" aria-labelledby="about-title">
-            <h2 id="about-title">
-              {t('about.title')} <span className="version">{about.version}</span>
-            </h2>
-            <p className="tagline">{t('about.tagline')}</p>
-            <dl>
-              {aboutRows(about, t).map(([label, value]) => (
-                <div key={label}>
-                  <dt>{label}</dt>
-                  <dd>
-                    {value.startsWith('https://') ? (
-                      <a
-                        href={value}
-                        title={t('about.openLink')}
-                        onClick={(e) => {
-                          e.preventDefault(); // never navigate the app's own webview away
-                          window.runtime?.BrowserOpenURL?.(value);
-                        }}
-                      >
-                        {value}
-                      </a>
-                    ) : (
-                      value
-                    )}
-                  </dd>
-                </div>
+            <h2 id="about-title">{t('about.title')}</h2>
+            {aboutLines(about, t).map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+            <p>
+              {REPOS.map(([name, url], i) => (
+                <span key={name}>
+                  {i > 0 && ' / '}
+                  <a
+                    href={url}
+                    title={`${t('about.openLink')}: ${url}`}
+                    onClick={(e) => {
+                      e.preventDefault(); // never navigate the app's own webview away
+                      window.runtime?.BrowserOpenURL?.(url);
+                    }}
+                  >
+                    {name}
+                  </a>
+                </span>
               ))}
-            </dl>
+            </p>
             <button className="primary" autoFocus onClick={() => setAbout(null)}>
               {t('about.close')}
             </button>

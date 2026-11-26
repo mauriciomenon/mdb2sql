@@ -27,9 +27,11 @@ import (
 //go:embed wails.json
 var wailsJSON []byte
 
-// Numero e data do build, gravados por scripts\build_w11.ps1 (-ldflags -X); vazios = "build dev"
+// Numero (pasta de cache), commit completo e data do build, gravados por scripts\build_w11.ps1 (-ldflags -X); vazios
+// fora do build: o Sobre diz "dev"
 var (
 	buildNumber string
+	buildCommit string
 	buildDate   string
 )
 
@@ -66,16 +68,14 @@ type App struct {
 // !T: Data for the About dialog; React adds its own version on the frontend side
 type AppInfo struct {
 	Version   string `json:"version"`
-	Build     string `json:"build"`
+	Commit    string `json:"commit"` // full commit hash of the build; "" = not an official build ("dev")
 	BuildDate string `json:"buildDate"`
 	Go        string `json:"go"`
 	Wails     string `json:"wails"`
-	DuckDB    string `json:"duckdb"`
-	Access    string `json:"access"`  // reader an Access file would use now: "Access ODBC", "mdbtools" or ""
 	Webview   string `json:"webview"` // what draws the window: "WebView2 158.0.4370.33", "WebKitGTK"
-	// "mdbtools 1.0.1" (embedded) or "mdbtools" (on PATH, MdbtoolsSystem); "" = none
-	Mdbtools       string `json:"mdbtools"`
-	MdbtoolsSystem bool   `json:"mdbtoolsSystem"`
+	DuckDB    string `json:"duckdb"`
+	SQLite    string `json:"sqlite"`   // the SQLite inside DuckDB's sqlite extension, the one that reads the files; "" = none
+	Mdbtools  string `json:"mdbtools"` // "mdbtools 1.0.1" (embedded) or "mdbtools" (on PATH); "" = none
 }
 
 func productVersion() string {
@@ -108,18 +108,18 @@ func (a *App) GetAppInfo() AppInfo {
 	if err != nil {
 		duck = "unknown"
 	}
-	mdbtools, system := backend.MdbtoolsLabel()
+	lite, _ := backend.SQLiteVersion()
+	mdbtools, _ := backend.MdbtoolsLabel()
 	return AppInfo{
-		Version:        productVersion(),
-		Build:          buildNumber,
-		BuildDate:      buildDate,
-		Go:             strings.TrimPrefix(goruntime.Version(), "go"),
-		Wails:          wailsVersion(),
-		DuckDB:         duck,
-		Access:         backend.AccessReader(),
-		Webview:        webviewVersion(),
-		Mdbtools:       mdbtools,
-		MdbtoolsSystem: system,
+		Version:   productVersion(),
+		Commit:    buildCommit,
+		BuildDate: buildDate,
+		Go:        strings.TrimPrefix(goruntime.Version(), "go"),
+		Wails:     wailsVersion(),
+		Webview:   webviewVersion(),
+		DuckDB:    duck,
+		SQLite:    lite,
+		Mdbtools:  mdbtools,
 	}
 }
 

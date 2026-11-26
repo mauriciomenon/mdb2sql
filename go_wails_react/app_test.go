@@ -59,6 +59,14 @@ func TestGetAppInfo(t *testing.T) {
 	if !regexp.MustCompile(`^v\d+\.\d+\.\d+`).MatchString(info.DuckDB) {
 		t.Fatalf("unexpected DuckDB version %q", info.DuckDB)
 	}
+	// About > Ferramentas (standard 18b): the real SQLite of the sqlite extension (with an embedded extension) and
+	// the embedded mdbtools on Windows; no build here: commit empty, the About says "dev"
+	if lite, err := backend.SQLiteVersion(); err == nil && (info.SQLite != lite || !regexp.MustCompile(`^3\.\d+\.\d+$`).MatchString(lite)) {
+		t.Fatalf("unexpected SQLite version %q (%q)", info.SQLite, lite)
+	}
+	if info.Commit != "" {
+		t.Fatalf("commit %q outside a build", info.Commit)
+	}
 	// About > Janela: the full WebView2 version (Windows 11 has the runtime), not the 158.0.0.0 of the user agent
 	if goruntime.GOOS == "windows" && !regexp.MustCompile(`^WebView2 \d+\.\d+\.\d+\.\d+$`).MatchString(info.Webview) {
 		t.Fatalf("unexpected window engine %q", info.Webview)

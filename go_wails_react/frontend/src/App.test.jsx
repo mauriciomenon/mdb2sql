@@ -2,7 +2,7 @@ import React from 'react';
 import { readFileSync } from 'node:fs';
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { vi, beforeEach } from 'vitest';
-import App, { aboutRows, clampLogHeight, columnCellWidth, favoritesFirst, filterLabel, gridText, LOG_MIN, logLine, nullableText, parseTerms, progressText, ROWID, rowKey, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
+import App, { aboutLines, clampLogHeight, columnCellWidth, favoritesFirst, filterLabel, gridText, LOG_MIN, logLine, nullableText, parseTerms, progressText, ROWID, rowKey, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
 import { CATALOGS, LANGS, translate, translateN } from './i18n';
 
 const tables = ['RANGER_SOACCU', 'RANGER_SOGEN'];
@@ -345,9 +345,12 @@ describe('App IPC flow', () => {
     expect(bridge.LoadDatabase).toHaveBeenCalledWith('C:\\data\\sample.duckdb');
   });
 
-  it('shows Help > About with version, build, full stack and the two links opened in the browser', async () => {
+  // standard 18b (owner 26/11): the About of the 4 versions, only these lines in this order (technical text), then the
+  // GitHub / GitLab links, opened in the default browser
+  it('shows Help > About with the lines of the 4 versions and the two links opened in the browser', async () => {
+    const commit = '0123456789abcdef0123456789abcdef01234567';
     const GetAppInfo = vi.fn(async () => ({
-      version: '1.3.0', build: '412', buildDate: '2026-11-17', go: '1.26.10', wails: 'v2.13.0', duckdb: 'v2.0.0', access: 'Access ODBC', mdbtools: 'mdbtools 1.0.1', webview: 'WebView2 158.0.4370.33',
+      version: '1.3.0', commit, buildDate: '2026-11-26', go: '1.26.11', wails: 'v2.13.0', webview: 'WebView2 158.0.4370.33', duckdb: 'v2.0.0', sqlite: '3.38.1', mdbtools: 'mdbtools 1.0.1',
     }));
     const BrowserOpenURL = vi.fn();
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetAppInfo } } }, runtime: { BrowserOpenURL } });
@@ -356,29 +359,21 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Help' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'About mdb2sql' }));
 
-    // standard item 21: the rows of Rust under the title "About mdb2sql" of Zig
-    const dialog = await screen.findByRole('dialog', { name: 'About mdb2sql 1.3.0' });
-    // Access first, SQLite second, DuckDB last
-    expect(dialog.querySelector('.tagline').textContent).toMatch(/Microsoft Access, SQLite and DuckDB/);
-    const rowsShown = [...dialog.querySelectorAll('dl > div')].map((el) => [el.querySelector('dt').textContent, el.querySelector('dd').textContent]);
-    expect(rowsShown.map(([label]) => label)).toEqual(['Build', 'Stack', 'Window', 'Databases', 'Access reading', 'Writing', 'Author', 'License', 'GitHub', 'GitLab']);
-    expect(rowsShown).toEqual([
-      ['Build', '412 (2026-11-17)'],
-      ['Stack', `Go 1.26.10 + Wails 2.13.0 + React ${React.version}`],
-      ['Window', 'WebView2 158.0.4370.33'],
-      ['Databases', 'DuckDB 2.0.0'],
-      ['Access reading', 'Access ODBC driver (installed); fallback: embedded mdbtools 1.0.1'],
-      // standard item 28: .mdb and .accdb cannot be written
-      ['Writing', 'SQLite, DuckDB, Excel and CSV. .mdb and .accdb files cannot be written: the Access format is proprietary to Microsoft.'],
-      ['Author', 'Mauricio Menon'],
-      ['License', 'GPL v2 or later'],
-      ['GitHub', 'https://github.com/mauriciomenon/mdb2sql'],
-      ['GitLab', 'https://gitlab.com/mauricio.menon/mdb2sql'],
+    const dialog = await screen.findByRole('dialog', { name: 'About mdb2sql' });
+    expect([...dialog.querySelectorAll('p')].map((p) => p.textContent)).toEqual([
+      'MDB2SQL (Go)',
+      `Version 1.3.0 - commit ${commit} - 2026-11-26`,
+      'Go 1.26.11, Wails 2.13.0, WebView2 158.0.4370.33',
+      'Tools: SQLite 3.38.1, DuckDB 2.0.0, mdbtools 1.0.1',
+      'ODBC driver support, if installed.',
+      'Author: Mauricio Menon',
+      'License: GPLv2',
+      'GitHub / GitLab',
     ]);
 
     // the links open in the default browser, never inside the app's own webview
-    for (const url of ['https://github.com/mauriciomenon/mdb2sql', 'https://gitlab.com/mauricio.menon/mdb2sql']) {
-      const link = screen.getByRole('link', { name: url });
+    for (const [name, url] of [['GitHub', 'https://github.com/mauriciomenon/mdb2sql'], ['GitLab', 'https://gitlab.com/mauricio.menon/mdb2sql']]) {
+      const link = screen.getByRole('link', { name });
       expect(link).toHaveAttribute('href', url);
       expect(fireEvent.click(link)).toBe(false); // default navigation prevented
       expect(BrowserOpenURL).toHaveBeenLastCalledWith(url);
@@ -387,15 +382,13 @@ describe('App IPC flow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // outside a build: "dev"; no SQLite extension: DuckDB only
     const pt = (key, ...args) => translate('pt-BR', key, ...args);
-    const dev = Object.fromEntries(aboutRows({ version: '1.3.0', go: '1', wails: '2', duckdb: '3', access: 'mdbtools', mdbtools: 'mdbtools 1.0.1', webview: 'WebKitGTK' }, pt));
-    expect(dev.Build).toBe('dev');
-    expect(dev.Janela).toBe('WebKitGTK');
-    expect(dev['Leitura do Access']).toBe('mdbtools 1.0.1 embutido');
-    expect(dev['Licença']).toBe('GPL v2 ou posterior');
-    const sys = Object.fromEntries(aboutRows({ version: '1', go: '1', wails: '2', duckdb: '3', access: 'mdbtools', mdbtools: 'mdbtools', mdbtoolsSystem: true }, pt));
-    expect(sys['Leitura do Access']).toBe('mdbtools do sistema');
-    expect(Object.fromEntries(aboutRows({ version: '1', go: '1', wails: '2', duckdb: '3', access: '' }, pt))['Leitura do Access']).toBe('Indisponível neste computador');
+    expect(aboutLines({ version: '1.3.0', go: '1', wails: 'v2', duckdb: 'v3', webview: 'WebKitGTK' }, pt)).toEqual([
+      'MDB2SQL (Go)', 'Versão 1.3.0 - dev', 'Go 1, Wails 2, WebKitGTK', 'Ferramentas: DuckDB 3', 'Suporte ao driver ODBC, caso instalado.',
+      'Autor: Mauricio Menon', 'Licença: GPLv2',
+    ]);
+    expect(translate('es', 'about.tools', 'x') + ' ' + translate('es', 'about.odbc')).toBe('Herramientas: x Soporte del controlador ODBC, si está instalado.');
     expect(pt('about.title')).toBe('Sobre o mdb2sql');
   });
 
