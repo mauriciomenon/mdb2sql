@@ -381,7 +381,7 @@ def test_menu_tree_is_the_same_in_the_four_versions(window: MainWindow) -> None:
     assert _tree(_menu(window, "&View")) == [
         "Data Ctrl+1", "Schema Ctrl+2", "SQL Ctrl+3", "Terms Ctrl+4", "-", ("Rows", ["100", "500", "1000"]),
         "Columns...", ("Search in", ["This table", "All tables"]), "Only marked rows", "Go to the table list Ctrl+T",
-        "-", "Run SQL Ctrl+Return", "Search terms Ctrl+Return", "-", "Log Ctrl+L"]
+        "-", "Run SQL Ctrl+Enter", "Search terms Ctrl+Enter", "-", "Log Ctrl+L"]
     assert _tree(_menu(window, "&Settings")) == [
         ("Theme", ["System", "Light", "Dark"]), ("Language", ["English", "Português (Brasil)", "Español"]),
         ("Default search scope", ["This table", "All tables"]), ("Term matching", ["Whole value", "Contains"]),
@@ -914,7 +914,9 @@ def test_terms_tab_lists_hits_in_list_order_copies_and_reports(qtbot, tmp_path: 
     win.terms_tab_action.trigger()
     assert win.tabs.currentWidget() is win.terms_page
     # Ctrl+Enter na aba Termos pesquisa os termos; o do SQL so vale fora dela
-    assert win.run_terms_action.shortcut().toString() == win.run_sql_action.shortcut().toString() == "Ctrl+Return"
+    # o menu mostra Ctrl+Enter; Ctrl com o Enter principal (Return) tambem vale
+    for action in (win.run_terms_action, win.run_sql_action):
+        assert [k.toString() for k in action.shortcuts()] == ["Ctrl+Enter", "Ctrl+Return"]
     assert not win.run_sql_action.isEnabled() and not win.run_terms_action.isEnabled()  # caixa vazia
     win.terms_edit.setPlainText("PNTNAM\nu9a\n\n turbina cgi \nU9A\n")
     assert win.terms_count.text() == "3 terms, 1 repeated"

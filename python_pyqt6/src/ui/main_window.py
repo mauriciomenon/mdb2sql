@@ -403,7 +403,10 @@ class MainWindow(QMainWindow):
         # aba Termos (Ctrl+4); Ctrl+Enter nela pesquisa os termos (a acao do SQL fica desabilitada na aba Termos e a
         # dos termos fora dela: um atalho so valendo de cada vez)
         self.terms_tab_action = self._action("tab.terms_menu", self._focus_terms, "Ctrl+4")
-        self.run_terms_action = self._action("terms.run", self.run_terms, "Ctrl+Return")
+        self.run_terms_action = self._action("terms.run", self.run_terms)
+        # o menu mostra "Ctrl+Enter" (o texto das 4 versoes); Ctrl com o Enter principal (Return) tambem vale
+        for action in (self.run_sql_action, self.run_terms_action):
+            action.setShortcuts([QKeySequence("Ctrl+Enter"), QKeySequence("Ctrl+Return")])
         self.copy_hits_action = self._action("terms.copy_hits", self.copy_term_hits)
         self.export_terms_actions = []
         for suffix, key in ((".xlsx", "export.xlsx"), (".csv", "export.csv"), (".sqlite", "export.sqlite"),
