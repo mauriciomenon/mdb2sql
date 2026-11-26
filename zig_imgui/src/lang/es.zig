@@ -172,6 +172,7 @@ pub const err_not_db = "No es un archivo de base de datos: use .accdb, .mdb, .sq
 pub const err_cannot_write = "No se puede escribir el archivo: está abierto en otro programa o la carpeta es de solo lectura ({t})";
 pub const err_generic = "Error: {t}";
 pub const err_sql = "Error en la consulta SQL: {s}";
+pub const sql_read_only = "La pestaña SQL solo lee la base de datos: este comando no está permitido";
 pub const err_db = "Error de la base de datos: {s}";
 pub const err_plain = "{s}";
 pub const err_worker = "No se pudo iniciar la tarea en segundo plano: {t}";

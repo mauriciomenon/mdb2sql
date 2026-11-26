@@ -1061,6 +1061,7 @@ const App = struct {
             error.DuckDb => if (msg == &app.sql_msg) msg.setEngineError("err_sql", app.db.lastError()) else msg.setEngineError("err_db", app.db.lastError()),
             error.Failed => msg.setEngineError("err_plain", app.db.lastError()),
             error.Canceled => msg.set(true, "canceled", .{}),
+            error.SqlReadOnly => msg.set(true, "sql_read_only", .{}),
             error.UnsupportedExtension => msg.set(true, "err_not_db", .{}),
             error.AccessDenied, error.FileBusy, error.PermissionDenied => msg.set(true, "err_cannot_write", .{err}),
             else => msg.set(true, "err_generic", .{err}),

@@ -172,6 +172,7 @@ pub const err_not_db = "Não é um arquivo de banco: use .accdb, .mdb, .sqlite, 
 pub const err_cannot_write = "Não foi possível gravar o arquivo: ele está aberto em outro programa ou a pasta é somente leitura ({t})";
 pub const err_generic = "Erro: {t}";
 pub const err_sql = "Erro na consulta SQL: {s}";
+pub const sql_read_only = "A aba SQL só lê o banco: este comando não é permitido";
 pub const err_db = "Erro no banco: {s}";
 pub const err_plain = "{s}";
 pub const err_worker = "Não foi possível iniciar a tarefa em segundo plano: {t}";

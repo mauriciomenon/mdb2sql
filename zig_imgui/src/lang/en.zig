@@ -172,6 +172,7 @@ pub const err_not_db = "Not a database file: use .accdb, .mdb, .sqlite, .sqlite3
 pub const err_cannot_write = "Cannot write the file: it is open in another program or the folder is read-only ({t})";
 pub const err_generic = "Error: {t}";
 pub const err_sql = "SQL query error: {s}";
+pub const sql_read_only = "The SQL tab only reads the database: this command is not allowed";
 pub const err_db = "Database error: {s}";
 pub const err_plain = "{s}";
 pub const err_worker = "Could not start the worker thread: {t}";

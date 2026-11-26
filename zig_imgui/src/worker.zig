@@ -156,7 +156,7 @@ fn exec(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *expor
             spec.limit = req.limit;
             try loadRows(db, spec, out);
         },
-        .sql => out.result = try db.run(std.mem.sliceTo(&req.sql, 0), &.{}),
+        .sql => out.result = try db.runReadOnly(std.mem.sliceTo(&req.sql, 0)), // a aba SQL so le
         .export_ => out.exported = try exportJob(db, gpa, env, req, progress),
         .search_all => out.hits = try searchAll(db, gpa, std.mem.sliceTo(&req.search, 0), progress),
     }
@@ -488,6 +488,14 @@ test "jobs run on a worker thread: open, select, reload, sql, export, errors" {
     out = slot.wait().?;
     try t.expectEqual(error.DuckDb, out.err.?);
     try t.expect(out.result == null and db.lastError().len > 0);
+    out.deinit(t.allocator);
+
+    // a aba SQL so le: o comando que escreve e recusado antes de rodar
+    setZ(&slot.req.sql, "CREATE TABLE memory.main.x AS SELECT 1 AS a");
+    try slot.start();
+    out = slot.wait().?;
+    try t.expectEqual(error.SqlReadOnly, out.err.?);
+    try t.expect(out.result == null);
     out.deinit(t.allocator);
 
     slot.req = .{ .kind = .select, .table = 99 };

@@ -22,7 +22,15 @@ pub const log = @import("log.zig");
 pub const display = @import("display.zig");
 const Allocator = std.mem.Allocator;
 
-pub const Error = error{ DuckDb, Canceled } || query.BuildError || query.PathError;
+pub const Error = error{ DuckDb, Canceled, SqlReadOnly } || query.BuildError || query.PathError;
+
+// !T: The SQL tab only reads. The kind of a statement is the one DuckDB gives after preparing it (never its text):
+// queries (SELECT, WITH, VALUES, SHOW, DESCRIBE, SUMMARIZE and the PRAGMAs that DuckDB rewrites into a query) and
+// EXPLAIN are read; everything else (CREATE, INSERT, UPDATE, DELETE, DROP, ALTER, COPY, ATTACH, SET, a PRAGMA that
+// sets something, CALL, LOAD, transactions...) is refused before it runs.
+pub fn readsOnly(ty: c.duckdb_statement_type) bool {
+    return ty == c.DUCKDB_STATEMENT_TYPE_SELECT or ty == c.DUCKDB_STATEMENT_TYPE_EXPLAIN;
+}
 
 // Por onde o arquivo aberto foi lido (mostrado na barra de status)
 pub const Source = enum {
@@ -391,6 +399,34 @@ pub const Db = struct {
         return types;
     }
 
+    // Tipo do comando, como o DuckDB o classifica ao preparar (SQL errado: error.DuckDb com a mensagem dele)
+    pub fn statementType(self: *Db, sql: [:0]const u8) Error!c.duckdb_statement_type {
+        if (self.conn == null) {
+            self.setError("no database connected");
+            return error.DuckDb;
+        }
+        var stmt: c.duckdb_prepared_statement = null;
+        defer c.duckdb_destroy_prepare(&stmt);
+        if (c.duckdb_prepare(self.conn, sql, &stmt) != c.DuckDBSuccess) {
+            self.setError(c.duckdb_prepare_error(stmt));
+            return error.DuckDb;
+        }
+        return c.duckdb_prepared_statement_type(stmt);
+    }
+
+    // !T: SQL of the SQL tab: refused with error.SqlReadOnly unless the statement only reads (readsOnly). EXPLAIN
+    // ANALYZE runs the statement it explains, so an EXPLAIN goes inside a transaction that is rolled back: the
+    // open file, the converted copy and the memory database never change.
+    pub fn runReadOnly(self: *Db, sql: [:0]const u8) Error!Grid {
+        const ty = try self.statementType(sql);
+        if (!readsOnly(ty)) return error.SqlReadOnly;
+        if (ty != c.DUCKDB_STATEMENT_TYPE_EXPLAIN) return self.run(sql, &.{});
+        try self.exec("BEGIN TRANSACTION");
+        defer self.exec("ROLLBACK") catch {};
+        // como veio (o EXPLAIN ja devolve texto): uma tentativa que falha dentro da transacao a deixaria abortada
+        return self.collect(sql, &.{}, max_rows, .{ .wrap = false, .types = true });
+    }
+
     // Executa SQL com parametros '?' e devolve tudo como texto (no maximo max_rows linhas)
     pub fn run(self: *Db, sql: [:0]const u8, params: []const []const u8) Error!Grid {
         return self.runMax(sql, params, max_rows);
@@ -399,7 +435,11 @@ pub const Db = struct {
     // run com outro teto: consultas do programa que precisam de todas as linhas (o catalogo de colunas da busca em
     // todas as tabelas; o DB4 passa de 10.000 colunas)
     pub fn runMax(self: *Db, sql: [:0]const u8, params: []const []const u8, limit: usize) Error!Grid {
-        var rows = try self.stream(sql, params, .{ .types = true });
+        return self.collect(sql, params, limit, .{ .types = true });
+    }
+
+    fn collect(self: *Db, sql: [:0]const u8, params: []const []const u8, limit: usize, opts: QueryOpts) Error!Grid {
+        var rows = try self.stream(sql, params, opts);
         defer rows.deinit();
 
         var grid: Grid = .{ .arena = .init(self.gpa) };
@@ -578,6 +618,79 @@ test "Schema export: the tab titles and the nullable values in the screen langua
     try t.expectEqualStrings("id", g.rows[0][0].?);
     try t.expectEqualStrings("Não", g.rows[0][2].?); // id INTEGER NOT NULL
     try t.expectEqualStrings("Sim", g.rows[1][2].?);
+}
+
+test "SQL tab is read-only: reads run, every other statement is refused by its DuckDB statement type, nothing changes" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [256]u8 = undefined;
+    const path = tmpPath(&buf, &tmp, "ro.duckdb");
+    try makeSample(path);
+    var db = Db.init(t.allocator);
+    defer db.close();
+    try db.openReadOnly(path);
+    const reads = [_][:0]const u8{
+        "SELECT * FROM people",                             "WITH x AS (SELECT 1 AS a) SELECT a FROM x",
+        "FROM people",                                      "VALUES (1), (2)",
+        "TABLE people",                                     "SHOW TABLES",
+        "DESCRIBE people",                                  "SUMMARIZE people",
+        "EXPLAIN SELECT * FROM people",                     "PRAGMA version",
+        "PRAGMA table_info('people')",                      "PRAGMA database_list",
+        "select count(*) from big ;",                       "/* c */ SELECT 1 -- fim",
+    };
+    for (reads) |sql| {
+        var g = db.runReadOnly(sql) catch |e| {
+            std.debug.print("refused or failed: {s} ({t}: {s})\n", .{ sql, e, db.lastError() });
+            return e;
+        };
+        g.deinit();
+    }
+    // escrita na memoria (o arquivo esta anexado so para leitura), configuracao, arquivos, outros bancos: recusados
+    const writes = [_][:0]const u8{
+        "CREATE TABLE memory.main.x (a INTEGER)",           "CREATE TEMP TABLE x AS SELECT 1 AS a",
+        "CREATE VIEW memory.main.v AS SELECT 1",            "CREATE MACRO memory.main.f(a) AS a + 1",
+        "INSERT INTO people VALUES (9, 'x', 1.0)",          "UPDATE people SET name = 'x'",
+        "DELETE FROM people",                               "DROP TABLE people",
+        "ALTER TABLE people ADD COLUMN z INTEGER",          "WITH x AS (SELECT 1) INSERT INTO big SELECT * FROM x",
+        "ATTACH ':memory:' AS other",                       "DETACH src",
+        "USE memory",                                       "SET threads = 2",
+        "RESET threads",                                    "PRAGMA threads = 2",
+        "PRAGMA enable_profiling",                          "COPY people TO 'people_copy.csv'",
+        "COPY (SELECT 1) TO 'one.csv'",                     "EXPORT DATABASE 'exported'",
+        "CALL pragma_version()",                            "CHECKPOINT",
+        "VACUUM",                                           "BEGIN TRANSACTION",
+        "PREPARE p AS SELECT 1",                            "LOAD sqlite",
+    };
+    for (writes) |sql| {
+        if (db.runReadOnly(sql)) |g| {
+            var grid = g;
+            grid.deinit();
+            std.debug.print("ran, should be refused: {s}\n", .{sql});
+            return error.TestUnexpectedResult;
+        } else |e| if (e != error.SqlReadOnly) {
+            std.debug.print("{s}: {t} ({s})\n", .{ sql, e, db.lastError() });
+            return error.TestUnexpectedResult;
+        }
+    }
+    // EXPLAIN ANALYZE roda o comando explicado: a transacao desfeita nao deixa a tabela na memoria
+    if (db.runReadOnly("EXPLAIN ANALYZE CREATE TABLE memory.main.sneaky AS SELECT 1 AS a")) |g| {
+        var grid = g;
+        grid.deinit();
+    } else |_| {}
+    try t.expectError(error.DuckDb, db.exec("SELECT * FROM memory.main.sneaky"));
+    // varios comandos de uma vez nunca rodaram na aba SQL (o DuckDB recusa ao preparar)
+    try t.expectError(error.DuckDb, db.runReadOnly("SELECT 1; DROP TABLE people"));
+    // SQL errado: o erro do DuckDB, como antes
+    try t.expectError(error.DuckDb, db.runReadOnly("SELEC 1"));
+    try t.expect(std.mem.indexOf(u8, db.lastError(), "syntax error") != null);
+    // nada mudou, e o que foi recusado nao criou arquivo
+    try t.expectEqual(3, db.table_names.len);
+    try t.expectEqual(4, try db.count(.{ .table = "people", .tables = db.table_names, .columns = &.{} }));
+    try t.expectError(error.FileNotFound, std.Io.Dir.cwd().access(t.io, "one.csv", .{}));
+    try t.expectError(error.FileNotFound, std.Io.Dir.cwd().access(t.io, "people_copy.csv", .{}));
+    try t.expect(readsOnly(c.DUCKDB_STATEMENT_TYPE_SELECT) and readsOnly(c.DUCKDB_STATEMENT_TYPE_EXPLAIN));
+    for ([_]c.duckdb_statement_type{ c.DUCKDB_STATEMENT_TYPE_INSERT, c.DUCKDB_STATEMENT_TYPE_UPDATE, c.DUCKDB_STATEMENT_TYPE_DELETE, c.DUCKDB_STATEMENT_TYPE_CREATE, c.DUCKDB_STATEMENT_TYPE_DROP, c.DUCKDB_STATEMENT_TYPE_ALTER, c.DUCKDB_STATEMENT_TYPE_COPY, c.DUCKDB_STATEMENT_TYPE_ATTACH, c.DUCKDB_STATEMENT_TYPE_DETACH, c.DUCKDB_STATEMENT_TYPE_SET, c.DUCKDB_STATEMENT_TYPE_PRAGMA, c.DUCKDB_STATEMENT_TYPE_CALL, c.DUCKDB_STATEMENT_TYPE_LOAD, c.DUCKDB_STATEMENT_TYPE_TRANSACTION, c.DUCKDB_STATEMENT_TYPE_EXPORT, c.DUCKDB_STATEMENT_TYPE_MULTI, c.DUCKDB_STATEMENT_TYPE_INVALID }) |ty|
+        try t.expect(!readsOnly(ty));
 }
 
 test "rejects bad extension and missing file" {
