@@ -53,10 +53,9 @@ Changes in 1.3.0:
   without restarting. Every text (menus, dialogs, messages, About, tooltips, native dialogs) comes from
   `i18n/en.json`, `i18n/pt-BR.json`, `i18n/es.json` (same keys, shared by Go and React).
 - Log panel at the bottom: the session messages with the time (open, convert, save/delete, export, copy,
-  errors), read-only and selectable (Ctrl+A, Ctrl+C), "Copy all"; monospace one step smaller than the rest; about
-  10% of the window, resized by its top border (3 lines to 25%). Collapsed by default; the arrow in its header,
-  the arrow in the status bar, View > Log and Ctrl+L collapse or expand it, and the state is kept for the next
-  start. Collapsed, the status bar shows the last unread error (highlighted), else the last warning, else the
+  errors), read-only and selectable (Ctrl+A, Ctrl+C), "Copy all"; the font of the app; about
+  10% of the window, resized by its top border (3 lines to 25%). Collapsed when the app opens; the arrow in its
+  header, the arrow in the status bar, View > Log and Ctrl+L collapse or expand it. Collapsed, the status bar shows the last unread error (highlighted), else the last warning, else the
   last action, with a counter of unread errors and warnings; a click on it opens the log. The status bar text is
   selectable and right-click > Copy.
 - Numeric columns are right-aligned, their header too.

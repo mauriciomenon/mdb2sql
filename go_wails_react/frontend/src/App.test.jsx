@@ -965,14 +965,13 @@ describe('App IPC flow', () => {
     expect(logLine('x', new Date(2026, 0, 2, 3, 4, 5))).toBe('03:04:05  x');
   });
 
-  // owner's "Painel de Log": collapsed by default and remembered; arrow, View > Log and Ctrl+L; collapsed, the status
-  // bar shows the last unread error (then warning) with a counter, and a click on it expands the log
-  it('collapses and expands the log, remembers it, and shows the last unread error in the status bar', async () => {
-    const SetLogOpen = vi.fn(async () => {});
+  // owner's "Painel de Log": collapsed when the app opens (standard 18d); arrow, View > Log and Ctrl+L; collapsed, the
+  // status bar shows the last unread error (then warning) with a counter, and a click on it expands the log
+  it('collapses and expands the log and shows the last unread error in the status bar', async () => {
     const RunQuery = vi.fn(async () => {
       throw new Error(ENGINE_ERROR);
     });
-    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SetLogOpen, RunQuery, GetLogOpen: vi.fn(async () => false) } } } });
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, RunQuery } } } });
     render(<App />);
     expect(screen.queryByRole('textbox', { name: 'Log' })).not.toBeInTheDocument(); // collapsed by default
     openDefault();
@@ -991,13 +990,11 @@ describe('App IPC flow', () => {
 
     fireEvent.click(screen.getByRole('status')); // click: expands, the error counts as read
     expect(screen.getByRole('textbox', { name: 'Log' }).value).toContain(ENGINE_ERROR);
-    expect(SetLogOpen).toHaveBeenLastCalledWith(true);
     expect(screen.queryByTitle(/unread/)).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Log' }).style.height).toMatch(/px$/);
 
     fireEvent.keyDown(window, { key: 'l', ctrlKey: true }); // Ctrl+L collapses
     expect(screen.queryByRole('textbox', { name: 'Log' })).not.toBeInTheDocument();
-    expect(SetLogOpen).toHaveBeenLastCalledWith(false);
     fireEvent.click(screen.getByRole('button', { name: 'Show the log' })); // the status bar arrow expands
     expect(screen.getByRole('textbox', { name: 'Log' })).toBeInTheDocument();
 
@@ -1046,10 +1043,15 @@ describe('App IPC flow', () => {
     expect(screen.queryByTitle(/unread/)).not.toBeInTheDocument();
   });
 
-  it('opens with the log expanded when it was left expanded', async () => {
-    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetLogOpen: vi.fn(async () => true) } } } });
+  // standard 18d: the Log is collapsed when the app opens, also if an older version left it expanded
+  it('opens with the log collapsed', async () => {
+    const GetLogOpen = vi.fn(async () => true); // what an older Go would still answer
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetLogOpen } } } });
     render(<App />);
-    expect(await screen.findByRole('textbox', { name: 'Log' })).toBeInTheDocument();
+    openDefault();
+    await screen.findByText('Alpha');
+    expect(screen.queryByRole('textbox', { name: 'Log' })).not.toBeInTheDocument();
+    expect(GetLogOpen).not.toHaveBeenCalled();
   });
 
   it('leaves NULL cells empty by default; Settings > Show NULL shows NULL and saves the choice', async () => {

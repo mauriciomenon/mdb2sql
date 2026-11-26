@@ -87,8 +87,6 @@ declare global {
           ExportTerms?: (res: TermsResult, contains: boolean, format: string) => Promise<string>;
           CancelJob?: () => Promise<void>;
           GetTheme?: () => Promise<Theme>;
-          GetLogOpen?: () => Promise<boolean>;
-          SetLogOpen?: (open: boolean) => Promise<void>;
           SetTheme?: (theme: Theme) => Promise<void>;
           GetLanguage?: () => Promise<Lang>;
           SetLanguage?: (lang: Lang) => Promise<void>;
@@ -454,16 +452,14 @@ function App() {
     setErrorText(short);
     if (text) addLog(text, 'error', short);
   };
-  // collapse/expand (log header arrow, status bar, View > Log, Ctrl+L); remembered by Go between sessions. What
-  // was in the log when it is opened or closed counts as read.
+  // collapse/expand (log header arrow, status bar, View > Log, Ctrl+L); the app always opens with it collapsed
+  // (standard 18d). What was in the log when it is opened or closed counts as read.
   const logCount = useRef(0);
   logCount.current = logLines.length;
   const toggleLog = (open?: boolean) =>
     setLogOpen((old) => {
-      const next = open ?? !old;
       setReadMark(logCount.current);
-      if (next !== old) window.go?.main?.App?.SetLogOpen?.(next)?.catch(() => {});
-      return next;
+      return open ?? !old;
     });
 
   useEffect(() => {
@@ -577,7 +573,6 @@ function App() {
     if (started.current) return; // StrictMode runs effects twice in development
     started.current = true;
     const bridge = window.go?.main?.App;
-    bridge?.GetLogOpen?.().then((open) => open && setLogOpen(true)).catch(() => {});
     bridge?.GetTheme?.().then((th) => th && setThemeState(th)).catch(() => {});
     bridge?.GetShowNull?.().then((show) => setShowNull(show === true)).catch(() => {});
     bridge?.GetSearchScope?.()

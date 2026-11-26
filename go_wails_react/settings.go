@@ -15,7 +15,6 @@ type Settings struct {
 	Theme    string `json:"theme"`    // system, light or dark
 	Language string `json:"language"` // en (default), pt-BR or es
 	LastDir  string `json:"lastDir"`
-	LogOpen  bool   `json:"logOpen"`  // Log panel expanded (default: collapsed)
 	ShowNull bool   `json:"showNull"` // a NULL cell shows "NULL"; off (default) it stays empty
 	// Data tab search when the app starts: "all" (all tables, default, standard 18a) or "table" (the open table). A new
 	// key: older versions wrote "searchScope": "table" for everyone, chosen or not, so that one is no longer read
@@ -68,14 +67,6 @@ func (a *App) GetShowNull() bool { return a.settings.ShowNull }
 
 func (a *App) SetShowNull(show bool) error {
 	a.settings.ShowNull = show
-	return a.saveSettings()
-}
-
-// GetLogOpen / SetLogOpen: the Log panel state, remembered between sessions
-func (a *App) GetLogOpen() bool { return a.settings.LogOpen }
-
-func (a *App) SetLogOpen(open bool) error {
-	a.settings.LogOpen = open
 	return a.saveSettings()
 }
 
