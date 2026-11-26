@@ -515,7 +515,15 @@ func TestSavedConversionPersists(t *testing.T) {
 	}
 	write(src, "access")
 	write(dest, "sqlite")
+	// standard 19b: saved by an older conversion (its key has no converter version): converted again, entry dropped
 	NewApp().rememberConversion(src, fileKey(src), dest)
+	if got := NewApp().savedConversion(src); got != "" {
+		t.Fatalf("a conversion of an older converter reused: %q", got)
+	}
+	if _, ok := NewApp().settings.Converted[strings.ToLower(src)]; ok {
+		t.Fatal("entry of an older conversion kept")
+	}
+	NewApp().rememberConversion(src, accessKey(src), dest)
 	if got := NewApp().savedConversion(src); got != dest { // a new run
 		t.Fatalf("saved conversion after restart: %q", got)
 	}
@@ -526,7 +534,7 @@ func TestSavedConversionPersists(t *testing.T) {
 	if _, ok := NewApp().settings.Converted[strings.ToLower(src)]; ok {
 		t.Fatal("entry of a changed Access file kept")
 	}
-	NewApp().rememberConversion(src, fileKey(src), dest)
+	NewApp().rememberConversion(src, accessKey(src), dest)
 	write(dest, "sqlite, changed")
 	if got := NewApp().savedConversion(src); got != "" {
 		t.Fatalf("changed SQLite reused %q", got)

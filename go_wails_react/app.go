@@ -44,7 +44,7 @@ type App struct {
 
 	// Access file converted to SQLite: the temporary file it is read from and the Access file it came from
 	converted, convertedFrom string
-	convertedFromKey         string          // fileKey of the Access file converted now
+	convertedFromKey         string          // accessKey of the Access file converted now
 	convSaved                bool            // File > Save already wrote it somewhere: leaving it asks nothing
 	startLog                 []string        // Log lines of the startup, read by the UI once it listens (StartupLog)
 	displayWarn              *DisplayWarning // Linux: X11 missing, running on Wayland (display.go)
@@ -259,6 +259,18 @@ func fileKey(path string) string {
 	return fmt.Sprintf("%s|%d|%d", strings.ToLower(path), st.Size(), st.ModTime().UnixNano())
 }
 
+// converterVersion goes into the key of an Access file converted and saved (standard 19b): a file saved by an older
+// conversion (2 = Numeric(p,0) as integers, 19a) is converted again instead of reopened with the old column types
+const converterVersion = "2"
+
+// accessKey is the fileKey of an Access file plus the converter version
+func accessKey(path string) string {
+	if k := fileKey(path); k != "" {
+		return k + "|conv" + converterVersion
+	}
+	return ""
+}
+
 // rememberConversion keeps in the settings, between runs, the SQLite or DuckDB file saved from an Access file: the
 // Access file's fileKey (path, size, date), the saved file and its own fileKey (standard item 22). One entry per
 // Access file.
@@ -284,7 +296,7 @@ func (a *App) savedConversion(src string) string {
 	if !ok {
 		return ""
 	}
-	if s.Key != "" && s.Key == fileKey(src) && s.DestKey != "" && fileKey(s.Dest) == s.DestKey {
+	if s.Key != "" && s.Key == accessKey(src) && s.DestKey != "" && fileKey(s.Dest) == s.DestKey {
 		return s.Dest
 	}
 	delete(a.settings.Converted, id)
@@ -545,7 +557,7 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 	a.dbName = filepath.Base(validatedPath)
 	a.dbPath = validatedPath
 	if conv := a.dbManager.Converted(); conv != "" {
-		a.converted, a.convertedFrom, a.convertedFromKey = conv, validatedPath, fileKey(validatedPath)
+		a.converted, a.convertedFrom, a.convertedFromKey = conv, validatedPath, accessKey(validatedPath)
 		a.log("log.converted", a.dbName, a.dbManager.Source(), time.Since(start).Round(100*time.Millisecond), conv)
 	}
 
