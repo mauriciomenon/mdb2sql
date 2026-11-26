@@ -656,10 +656,11 @@ test('X11 warning is short, with a clickable Help link and a Copy command button
 
 // REGRA_VISUAL "Painel de Log": recolhido por padrao e lembrado, seta no log e na barra, View > Log, Ctrl+L,
 // ~10% da altura (3 linhas a 25%), fonte de codigo menor (11 px, o minimo do app), linhas sem "..."
-test('log panel collapses and expands in one click and remembers the choice', () => {
+test('log panel collapses and expands in one click and always starts closed', () => {
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
-  assert.match(app, /let logOpen = \$state\(loadSetting\(LOG_KEY\) === 'open'\);/);
-  assert.match(app, /saveSetting\(LOG_KEY, open \? 'open' : 'closed'\)/);
+  // secao 18 d: o Log sempre comeca FECHADO (nada gravado: o dono viu o Log aberto ao abrir)
+  assert.match(app, /let logOpen = \$state\(false\);/);
+  assert.doesNotMatch(app, /LOG_KEY/);
   assert.equal(count(app, 'onclick={() => setLog(false)}'), 1); // seta do cabecalho do log
   assert.equal(count(app, 'onclick={() => setLog(!logOpen)}'), 1); // seta da barra de status
   assert.match(app, /\n {6}log: \{ run: \(\) => setLog\(!logOpen\), on: logOpen \},/); // Exibir > Log e Ctrl+L

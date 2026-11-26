@@ -57,7 +57,6 @@
   const LAST_DIR_KEY = 'mdb2sql.lastDir';
   const SAVE_DIR_KEY = 'mdb2sql.lastSaveDir'; // ultima pasta em que o usuario salvou ou exportou (Salvar como...)
   const LANG_KEY = 'mdb2sql.lang';
-  const LOG_KEY = 'mdb2sql.log'; // 'open' = painel de log aberto (padrao: recolhido)
   const NULL_KEY = 'mdb2sql.showNull'; // 'on' = celula NULL mostra "NULL" (padrao, sem valor gravado: vazia)
   const SCOPE_KEY = 'mdb2sql.searchScope'; // 'table' = a pesquisa comeca em Esta tabela (padrao: Todas as tabelas, secao 18 a)
   const MATCH_KEY = 'mdb2sql.termMatch'; // 'contains' = a pesquisa de termos comeca em Contem (padrao: Valor inteiro)
@@ -195,7 +194,7 @@
   let contextMenu = $state.raw(null);
   // log da sessao: { time, level: 'error' | 'warning' | 'info', key, values } | { ..., err, context } | { ..., render }
   let log = $state.raw([]);
-  let logOpen = $state(loadSetting(LOG_KEY) === 'open');
+  let logOpen = $state(false); // o Log sempre comeca fechado (secao 18 d), nada gravado
   let seen = $state(0); // entradas do log ja vistas (painel aberto)
   let logArea = $state();
   const entryText = (e) => (e.render ? e.render() : e.err !== undefined ? errorLine(e.err, e.context) : t(e.key, e.values));
@@ -294,12 +293,11 @@
     note('error', error);
   };
 
-  // abre/recolhe o painel de log (seta no log e na barra de status, Exibir > Log, Ctrl+L); a escolha fica gravada
+  // abre/recolhe o painel de log (seta no log e na barra de status, Exibir > Log, Ctrl+L), so ate fechar o programa
   function setLog(open) {
     openMenu = null;
     logOpen = open;
     seen = log.length;
-    saveSetting(LOG_KEY, open ? 'open' : 'closed');
   }
 
   // NIVEL BASICO: O que cada exportacao precisa para estar habilitada (a lista e fixa; o que nao se aplica fica
