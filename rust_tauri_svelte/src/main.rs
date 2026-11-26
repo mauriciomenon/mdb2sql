@@ -110,7 +110,6 @@ fn startup_path() -> String {
 // NIVEL TECNICO: async so a long Access import runs off the main thread; progress goes as events
 #[tauri::command(async)]
 fn load_database(app: AppHandle, db_path: String, saved: Option<String>, state: State<'_, AppState>) -> Result<Opened, String> {
-    state.drop_terms();
     let manager = state.db_manager.lock().unwrap();
     let path = if db_path.is_empty() {
         match std::env::var("MDB2SQL_DB_PATH") {
@@ -123,6 +122,8 @@ fn load_database(app: AppHandle, db_path: String, saved: Option<String>, state: 
     let connected = manager.connect(saved.as_deref().unwrap_or(&path), &mut |step, done, total, item| {
         let _ = app.emit("open-progress", OpenProgress { step, done, total, item });
     })?;
+    // abriu: a pesquisa de termos do banco anterior para e some (se falhar, o anterior e o resultado dele continuam)
+    state.drop_terms();
     let has_converted = connected.converted.is_some();
     let beside = connected.converted.as_ref().and_then(Converted::beside).map(|dir| dir.to_string_lossy().into_owned());
     *state.converted.lock().unwrap() = connected.converted;
