@@ -380,9 +380,11 @@ function App() {
   const [about, setAbout] = useState<AppInfo | null>(null);
   const [search, setSearch] = useState('');
   const [tableSearch, setTableSearch] = useState(''); // search applied in the database (Data tab), after a pause
-  const [scope, setScope] = useState<Scope>('table'); // where the Data tab searches now
-  const [defaultScope, setDefaultScope] = useState<Scope>('table'); // Settings > Default search scope
-  const defaultScopeRef = useRef<Scope>('table'); // the same, for openPath started by an older render (startup file)
+  // the Data tab searches all tables unless Settings say otherwise (standard 18a: with the first table open, a search
+  // of that table only found nothing)
+  const [scope, setScope] = useState<Scope>('all'); // where the Data tab searches now
+  const [defaultScope, setDefaultScope] = useState<Scope>('all'); // Settings > Default search scope
+  const defaultScopeRef = useRef<Scope>('all'); // the same, for openPath started by an older render (startup file)
   // "All tables" result and the search it answers (null = searching or failed)
   const [hits, setHits] = useState<{ search: string; tables: TableHits[] } | null>(null);
   const [searching, setSearching] = useState(false);

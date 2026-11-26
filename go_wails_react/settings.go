@@ -17,8 +17,9 @@ type Settings struct {
 	LastDir  string `json:"lastDir"`
 	LogOpen  bool   `json:"logOpen"`  // Log panel expanded (default: collapsed)
 	ShowNull bool   `json:"showNull"` // a NULL cell shows "NULL"; off (default) it stays empty
-	// Data tab search when the app starts: "table" (the open table, default) or "all" (all tables)
-	SearchScope string `json:"searchScope"`
+	// Data tab search when the app starts: "all" (all tables, default, standard 18a) or "table" (the open table). A new
+	// key: older versions wrote "searchScope": "table" for everyone, chosen or not, so that one is no longer read
+	SearchScope string `json:"dataScope"`
 	// Terms tab comparison when the app starts: "whole" (the whole cell equals the term, default) or "contains"
 	TermMatch string `json:"termMatch"`
 	// SQLite or DuckDB saved from each Access file (lowercase path), so the same unchanged file opens it without converting
@@ -97,7 +98,7 @@ func loadSettings() Settings {
 		s.Theme = "system"
 	}
 	if !searchScopes[s.SearchScope] {
-		s.SearchScope = "table"
+		s.SearchScope = "all"
 	}
 	if !termMatches[s.TermMatch] {
 		s.TermMatch = "whole"

@@ -163,6 +163,12 @@ func TestRealDB_Terms(t *testing.T) {
 				t.Logf("DB3.accdb report of the 8 terms: sheets %v, %s titles %v..., RTUNO/PNTNO numeric", f.GetSheetList(), realBigTable, sheet[0][:3])
 			}
 
+			// standard 18a: the Data tab search, all tables (now the default), with the owner's text
+			if hits, err := m.SearchTables(context.Background(), "GENERADOR CGS VIBRACION ANORMAL 1 CANAL 1", noProgress); err != nil ||
+				!slices.Equal(hits, []TableHits{{"RANGER_SOEQID", 2}, {"RANGER_SOSTAT", 2}}) {
+				t.Errorf("%s: Data search in all tables %v (%v), want RANGER_SOEQID 2 and RANGER_SOSTAT 2", name, hits, err)
+			}
+
 			// the SQL tab only reads (standard item 33): a write is refused before it runs, a read works
 			for _, q := range []string{"CREATE TABLE x AS SELECT 1", "DELETE FROM " + realBigTable, "SELECT 1; DROP TABLE " + realBigTable} {
 				if _, err := m.RunQuery(context.Background(), q, 10); err == nil || !strings.Contains(err.Error(), i18n.T("err.sqlReadOnly")) {

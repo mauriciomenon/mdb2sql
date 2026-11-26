@@ -600,11 +600,15 @@ func TestSettingsPersist(t *testing.T) {
 	if err := app.SetShowNull(true); err != nil || !NewApp().GetShowNull() {
 		t.Fatalf("Show NULL after restart: %v", err)
 	}
-	// default search scope: this table, then what was chosen; an unknown one is refused
-	if app.GetSearchScope() != "table" {
+	// default search scope (standard 18a): all tables, also over the "searchScope": "table" that older versions wrote
+	// for everyone; then what was chosen; an unknown one is refused
+	if err := os.WriteFile(settingsPath(), []byte(`{"theme": "dark", "searchScope": "table"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if app = NewApp(); app.GetSearchScope() != "all" {
 		t.Fatalf("default search scope %q", app.GetSearchScope())
 	}
-	if err := app.SetSearchScope("all"); err != nil || app.SetSearchScope("everything") == nil || NewApp().GetSearchScope() != "all" {
+	if err := app.SetSearchScope("table"); err != nil || app.SetSearchScope("everything") == nil || NewApp().GetSearchScope() != "table" {
 		t.Fatalf("search scope after restart: %v", err)
 	}
 }

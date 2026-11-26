@@ -111,9 +111,9 @@ the dialog lists Access, SQLite and DuckDB files), by dropping the file on the w
     database: `tension de campo` finds "EXCITACION TENSION DE CAMPO" even beyond the first rows; there is no
     fuzzy match (`tensao` does not find "TENSION"). It runs after a 300 ms pause in typing (Enter: at once).
     Beside it, This table | All tables: All tables lists the tables with matching rows (same rule) as
-    `table (n)`; a click opens that table with the same search and no value filters. The default is in Settings >
-    Default search scope. Opening another file empties the search and the table list filter and returns to that
-    default.
+    `table (n)`; a click opens that table with the same search and no value filters. The default is All tables
+    (Settings > Default search scope changes it). Opening another file empties the search and the table list filter
+    and returns to that default. The Advanced Search always starts in All tables.
   - Schema: column names, types and nullability (Yes/No).
   - SQL: any DuckDB SQL over the open database (the field starts empty); Run or Ctrl+Enter; the search field
     filters its loaded result. A query that runs fine takes an earlier SQL error off the status bar.
