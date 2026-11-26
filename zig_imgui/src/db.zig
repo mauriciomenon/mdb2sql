@@ -33,6 +33,54 @@ pub fn readsOnly(ty: c.duckdb_statement_type) bool {
     return ty == c.DUCKDB_STATEMENT_TYPE_SELECT or ty == c.DUCKDB_STATEMENT_TYPE_EXPLAIN;
 }
 
+// !T: A call of a table function that attaches another database (sqlite_attach, postgres_attach, ... : a name
+// ending in _attach, plain or quoted, followed by "("), outside string literals and comments. The statement type of
+// such a SELECT is SELECT, so the type alone would let it run.
+pub fn callsAttach(sql: []const u8) bool {
+    var i: usize = 0;
+    while (i < sql.len) {
+        const ch = sql[i];
+        if (ch == '\'') { // texto: ate o apostrofo que fecha ('' e um apostrofo dentro)
+            i += 1;
+            while (i < sql.len) : (i += 1) if (sql[i] == '\'') {
+                if (i + 1 < sql.len and sql[i + 1] == '\'') i += 1 else break;
+            };
+            i += 1;
+        } else if (ch == '-' and i + 1 < sql.len and sql[i + 1] == '-') {
+            i = std.mem.indexOfScalarPos(u8, sql, i, '\n') orelse sql.len;
+        } else if (ch == '/' and i + 1 < sql.len and sql[i + 1] == '*') {
+            i = if (std.mem.indexOfPos(u8, sql, i + 2, "*/")) |e| e + 2 else sql.len;
+        } else if (ch == '"' or std.ascii.isAlphabetic(ch) or ch == '_') {
+            // nome (entre aspas ou nao) e, depois dos espacos, "("
+            const quoted = ch == '"';
+            const start = if (quoted) i + 1 else i;
+            var end = start;
+            if (quoted) {
+                end = std.mem.indexOfScalarPos(u8, sql, start, '"') orelse sql.len;
+            } else while (end < sql.len and (std.ascii.isAlphanumeric(sql[end]) or sql[end] == '_')) end += 1;
+            const name = sql[start..end];
+            i = if (quoted) @min(end + 1, sql.len) else end;
+            var j = i;
+            while (j < sql.len and std.ascii.isWhitespace(sql[j])) j += 1;
+            if (j < sql.len and sql[j] == '(' and name.len >= "_attach".len and
+                std.ascii.eqlIgnoreCase(name[name.len - "_attach".len ..], "_attach")) return true;
+        } else i += 1;
+    }
+    return false;
+}
+
+test "SQL tab: a SELECT that calls a table function attaching a database is caught; the same words in text are not" {
+    try t.expect(callsAttach("SELECT * FROM sqlite_attach('outro.sqlite', overwrite=true)"));
+    try t.expect(callsAttach("select * from SQLITE_ATTACH ('x.db')"));
+    try t.expect(callsAttach("SELECT * FROM \"sqlite_attach\"('x.db')"));
+    try t.expect(callsAttach("WITH a AS (SELECT * FROM postgres_attach('dbname=x')) SELECT * FROM a"));
+    try t.expect(!callsAttach("SELECT 'sqlite_attach(' AS s, 1 AS sqlite_attach"));
+    try t.expect(!callsAttach("SELECT * FROM t -- sqlite_attach('x')\n"));
+    try t.expect(!callsAttach("SELECT * FROM t /* sqlite_attach('x') */"));
+    try t.expect(!callsAttach("SELECT 'it''s sqlite_attach(' FROM t"));
+    try t.expect(!callsAttach("SELECT * FROM sqlite_scan('x.sqlite', 't')"));
+}
+
 // Por onde o arquivo aberto foi lido (mostrado na barra de status)
 pub const Source = enum {
     duckdb,
@@ -456,6 +504,9 @@ pub const Db = struct {
     // ANALYZE runs the statement it explains, so an EXPLAIN goes inside a transaction that is rolled back: the
     // open file, the converted copy and the memory database never change.
     pub fn runReadOnly(self: *Db, sql: [:0]const u8) Error!Grid {
+        // um SELECT pode chamar uma funcao de tabela que anexa outro banco (sqlite_attach cria views e abre o arquivo):
+        // recusado antes de preparar
+        if (callsAttach(sql)) return error.SqlReadOnly;
         const ty = try self.statementType(sql);
         if (!readsOnly(ty)) return error.SqlReadOnly;
         if (ty != c.DUCKDB_STATEMENT_TYPE_EXPLAIN) return self.run(sql, &.{});
@@ -719,6 +770,7 @@ test "SQL tab is read-only: reads run, every other statement is refused by its D
         "CALL pragma_version()",                            "CHECKPOINT",
         "VACUUM",                                           "BEGIN TRANSACTION",
         "PREPARE p AS SELECT 1",                            "LOAD sqlite",
+        "SELECT * FROM sqlite_attach('ro_other.sqlite', overwrite=true)",
     };
     for (writes) |sql| {
         if (db.runReadOnly(sql)) |g| {
@@ -747,6 +799,7 @@ test "SQL tab is read-only: reads run, every other statement is refused by its D
     try t.expectEqual(4, try db.count(.{ .table = "people", .tables = db.table_names, .columns = &.{} }));
     try t.expectError(error.FileNotFound, std.Io.Dir.cwd().access(t.io, "one.csv", .{}));
     try t.expectError(error.FileNotFound, std.Io.Dir.cwd().access(t.io, "people_copy.csv", .{}));
+    try t.expectError(error.FileNotFound, std.Io.Dir.cwd().access(t.io, "ro_other.sqlite", .{}));
     try t.expect(readsOnly(c.DUCKDB_STATEMENT_TYPE_SELECT) and readsOnly(c.DUCKDB_STATEMENT_TYPE_EXPLAIN));
     for ([_]c.duckdb_statement_type{ c.DUCKDB_STATEMENT_TYPE_INSERT, c.DUCKDB_STATEMENT_TYPE_UPDATE, c.DUCKDB_STATEMENT_TYPE_DELETE, c.DUCKDB_STATEMENT_TYPE_CREATE, c.DUCKDB_STATEMENT_TYPE_DROP, c.DUCKDB_STATEMENT_TYPE_ALTER, c.DUCKDB_STATEMENT_TYPE_COPY, c.DUCKDB_STATEMENT_TYPE_ATTACH, c.DUCKDB_STATEMENT_TYPE_DETACH, c.DUCKDB_STATEMENT_TYPE_SET, c.DUCKDB_STATEMENT_TYPE_PRAGMA, c.DUCKDB_STATEMENT_TYPE_CALL, c.DUCKDB_STATEMENT_TYPE_LOAD, c.DUCKDB_STATEMENT_TYPE_TRANSACTION, c.DUCKDB_STATEMENT_TYPE_EXPORT, c.DUCKDB_STATEMENT_TYPE_MULTI, c.DUCKDB_STATEMENT_TYPE_INVALID }) |ty|
         try t.expect(!readsOnly(ty));
