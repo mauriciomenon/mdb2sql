@@ -638,6 +638,13 @@ fn markLogRead() void {
     alert.markRead();
 }
 
+// Linha do Log (a do Go): temporarios de uma sessao anterior (programa que caiu) apagados ao iniciar
+fn logStale(n: usize) void {
+    if (n == 0) return;
+    var b: [200]u8 = undefined;
+    logLine(i18n.fmtCount(&b, "log_stale_removed", n, .{n}));
+}
+
 const Msg = struct {
     buf: [1024]u8 = undefined,
     len: usize = 0,
@@ -947,8 +954,8 @@ const App = struct {
         app.filters.deinit(app.gpa);
         app.db.close();
         // saida sem resposta (conversao terminada no Cancelar, erro ao iniciar): nada de temporario orfao
-        if (late.len > 0) access.deleteQuiet(app.io, late.slice());
-        if (app.converted) |cv| access.deleteQuiet(app.io, cv.tmp.slice());
+        if (late.len > 0) access.deleteTemp(app.io, late.slice(), zstr(&app.slot.req.path));
+        if (app.converted) |cv| access.deleteTemp(app.io, cv.tmp.slice(), zstr(&cv.source));
     }
 
     fn clearFilters(app: *App) void {
@@ -1081,6 +1088,13 @@ const App = struct {
                 // Access ja convertido e salvo (chave caminho + tamanho + data, gravada nas configuracoes) e sem mudanca
                 // desde entao: abre o SQLite salvo, sem converter de novo nem perguntar ao fechar
                 const access_file = if (query.sourceKind(zstr(&app.path))) |k| k == .access else |_| false;
+                if (access_file) {
+                    // a ultima pasta possivel do convertido e a subpasta ao lado do original: as sobras dela saem aqui
+                    var bb: [1100]u8 = undefined;
+                    const beside = std.fmt.bufPrint(&bb, "{s}{s}" ++ access.temp_subdir, .{ std.fs.path.dirname(zstr(&app.path)) orelse ".", std.fs.path.sep_str }) catch "";
+                    logStale(access.cleanupStale(app.io, beside));
+                    std.Io.Dir.cwd().deleteDir(app.io, beside) catch {}; // vazia, some
+                }
                 if (access_file) if (app.prefs.savedFor(app.io, zstr(&app.path))) |dest| {
                     copyZ(&r.path, dest);
                     var lb: [2200]u8 = undefined;
@@ -1324,7 +1338,7 @@ const App = struct {
         app.loaded_path = @splat(0);
         app.opened_file = @splat(0);
         if (app.converted) |cv| {
-            access.deleteQuiet(app.io, cv.tmp.slice());
+            access.deleteTemp(app.io, cv.tmp.slice(), zstr(&cv.source));
             app.converted = null;
         }
         app.updateTitle();
@@ -2833,16 +2847,23 @@ fn run(init: std.process.Init) !void {
     const exe_dir = std.process.executableDirPathAlloc(init.io, arena) catch "";
     const sqlite_ext = try std.fs.path.join(arena, &.{ exe_dir, "sqlite_scanner.duckdb_extension" });
     if (std.Io.Dir.cwd().access(init.io, sqlite_ext, .{})) |_| app.db.sqlite_ext = sqlite_ext else |_| {}
-    // temporarios (SQLite convertido do Access, CSVs do mdbtools): <TEMP>/mdb2sql-zig; os de um programa que caiu
-    // sao apagados aqui
-    const sys_tmp = init.environ_map.get("TEMP") orelse init.environ_map.get("TMP") orelse init.environ_map.get("TMPDIR") orelse
-        (if (platform.is_windows) "." else "/tmp");
-    const temp_dir = try std.fs.path.join(arena, &.{ sys_tmp, "mdb2sql-zig" });
-    _ = access.cleanupStale(init.io, temp_dir);
+    // temporarios (SQLite convertido do Access, CSVs do mdbtools), na subpasta mdb2sql-zig: a pasta temporaria do
+    // usuario, senao a do sistema; por ultimo (access.pickTempDir) a pasta do arquivo de origem. Os de um programa
+    // que caiu sao apagados aqui (os da pasta do original, ao abrir o arquivo)
+    const env = init.environ_map;
+    const user_tmp = env.get("TEMP") orelse env.get("TMP") orelse env.get("TMPDIR") orelse "";
+    const sys_tmp = if (platform.is_windows) try std.fs.path.join(arena, &.{ env.get("SystemRoot") orelse "C:\\Windows", "Temp" }) else "/tmp";
+    var temp_dirs: std.ArrayList([]const u8) = .empty;
+    var stale: usize = 0;
+    for ([_][]const u8{ user_tmp, sys_tmp }) |dir| {
+        if (dir.len == 0 or std.mem.eql(u8, dir, user_tmp) and temp_dirs.items.len > 0) continue;
+        try temp_dirs.append(arena, try std.fs.path.join(arena, &.{ dir, access.temp_subdir }));
+        stale += access.cleanupStale(init.io, temp_dirs.getLast());
+    }
     app.slot = .{ .db = &app.db, .gpa = init.gpa, .env = .{ .io = init.io, .access = .{
         .forced = init.environ_map.get("MDB2SQL_ACCESS_READER") orelse "",
         .tools_dir = try std.fs.path.join(arena, &.{ exe_dir, "mdbtools" }),
-        .temp_dir = temp_dir,
+        .temp_dirs = temp_dirs.items,
     } } };
     defer app.deinit();
     app.gtk_theme = init.environ_map.get("GTK_THEME") orelse "";
@@ -2904,6 +2925,7 @@ fn run(init: std.process.Init) !void {
     app.start_sql = app.want_open and app.sql[0] != 0;
     if (capture_opts != null and app.start_table.len == 0) app.start_table = dbm.capture.first_table;
     app.capture_mode = capture_opts != null;
+    logStale(stale); // ja no idioma da tela
 
     // Linux: X11 (XWayland, se houver) antes do Wayland nativo (REGRA_X11, src/display.zig). No Wayland o GLFW decora a
     // janela pelo libdecor, que carrega o GTK; no WSLg recem-reiniciado o programa caiu 2 vezes dentro dele.

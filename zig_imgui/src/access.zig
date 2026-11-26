@@ -3,7 +3,8 @@
 // !T: Access reader, in this order: (a) the 64-bit "Microsoft Access Driver (*.mdb, *.accdb)" ODBC driver
 // (Windows only, optional, faster), (b) the embedded mdbtools (mdb-tables / mdb-schema / mdb-export), (c) a clear
 // message. MDB2SQL_ACCESS_READER=odbc|mdbtools forces one of them. Either way the tables are written once into
-// a SQLite file in <TEMP>/mdb2sql-zig (through DuckDB's sqlite extension) and the program reads that file.
+// a SQLite file in the temporary folder (pickTempDir: the user's, else the system's, last the folder of the source
+// file; always in the subfolder mdb2sql-zig), through DuckDB's sqlite extension, and the program reads that file.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -37,8 +38,42 @@ pub fn choose(forced: []const u8, odbc_ok: bool, mdbtools_ok: bool) error{ NoAcc
 pub const Options = struct {
     forced: []const u8 = "", // MDB2SQL_ACCESS_READER
     tools_dir: []const u8 = "", // pasta com os mdb-*; vazio = sem mdbtools
-    temp_dir: []const u8 = ".", // SQLite convertido e CSVs do mdbtools (o programa usa <TEMP>/mdb2sql-zig)
+    // SQLite convertido e CSVs do mdbtools: as pastas temporarias em ordem (a do usuario, a do sistema), ja com a
+    // subpasta do programa; a pasta do arquivo de origem e a ultima tentativa (pickTempDir)
+    temp_dirs: []const []const u8 = &.{},
 };
+
+pub const temp_subdir = "mdb2sql-zig";
+
+// !T: Folder of the converted SQLite: the first of `dirs` where a file can be created (the user's temporary folder,
+// then the system's), last the folder of the source file, in the program's own subfolder. Nothing is asked.
+pub fn pickTempDir(io: Io, buf: []u8, dirs: []const []const u8, source_path: []const u8) ![]const u8 {
+    for (dirs) |d| if (canCreateIn(io, d)) |_| return d else |_| {};
+    const beside = std.fmt.bufPrint(buf, "{s}{s}" ++ temp_subdir, .{ std.fs.path.dirname(source_path) orelse ".", std.fs.path.sep_str }) catch return error.NameTooLong;
+    canCreateIn(io, beside) catch |e| {
+        Io.Dir.cwd().deleteDir(io, beside) catch {}; // nada fica na pasta do original
+        return e;
+    };
+    return beside;
+}
+
+fn canCreateIn(io: Io, dir: []const u8) !void {
+    try Io.Dir.cwd().createDirPath(io, dir);
+    var nb: [4200]u8 = undefined;
+    const probe = std.fmt.bufPrint(&nb, "{s}{s}{d}-probe.tmp", .{ dir, std.fs.path.sep_str, pid() }) catch return error.NameTooLong;
+    const file = try Io.Dir.cwd().createFile(io, probe, .{});
+    file.close(io);
+    deleteQuiet(io, probe);
+}
+
+// Apaga o SQLite convertido; a subpasta do programa criada ao lado do arquivo de origem (ultima tentativa de
+// pickTempDir) sai junto quando fica vazia
+pub fn deleteTemp(io: Io, tmp_path: []const u8, source_path: []const u8) void {
+    deleteQuiet(io, tmp_path);
+    const dir = std.fs.path.dirname(tmp_path) orelse return;
+    const beside = std.fs.path.dirname(source_path) orelse ".";
+    if (std.mem.eql(u8, std.fs.path.dirname(dir) orelse ".", beside)) Io.Dir.cwd().deleteDir(io, dir) catch {};
+}
 
 // Caminho do SQLite convertido: temporario ate a UI salvar ou apagar
 pub const TempPath = struct {
@@ -70,8 +105,9 @@ pub fn open(db: *Db, io: Io, path: []const u8, opts: Options, progress: *Progres
     try db.start();
     db.closeSource();
     try db.loadSqlite();
-    Io.Dir.cwd().createDirPath(io, opts.temp_dir) catch |e| return failFmt(db, "err_temp_dir", .{ opts.temp_dir, e });
-    const name = std.fmt.bufPrint(&tmp.buf, "{s}{s}{d}-{x}.sqlite", .{ opts.temp_dir, std.fs.path.sep_str, pid(), randomU64(io) }) catch return error.NameTooLong;
+    var dir_buf: [4096]u8 = undefined;
+    const temp_dir = pickTempDir(io, &dir_buf, opts.temp_dirs, path) catch |e| return failFmt(db, "err_temp_dir", .{ std.fs.path.dirname(path) orelse ".", e });
+    const name = std.fmt.bufPrint(&tmp.buf, "{s}{s}{d}-{x}.sqlite", .{ temp_dir, std.fs.path.sep_str, pid(), randomU64(io) }) catch return error.NameTooLong;
     tmp.len = name.len;
     errdefer {
         db.exec("ROLLBACK") catch {};
@@ -96,9 +132,9 @@ pub fn open(db: *Db, io: Io, path: []const u8, opts: Options, progress: *Progres
             try attachConv(db, tmp.slice());
             try db.exec("BEGIN TRANSACTION");
             used = .mdbtools;
-            try mdbtoolsImport(db, io, path, opts, progress);
+            try mdbtoolsImport(db, io, path, opts, temp_dir, progress);
         } else unreachable,
-        .mdbtools => try mdbtoolsImport(db, io, path, opts, progress),
+        .mdbtools => try mdbtoolsImport(db, io, path, opts, temp_dir, progress),
     }
     try db.exec("COMMIT");
     try db.exec("DETACH DATABASE conv");
@@ -255,7 +291,7 @@ fn msSince(io: Io, t0: Io.Timestamp) i64 {
     return t0.durationTo(Io.Timestamp.now(io, .awake)).toMilliseconds();
 }
 
-fn mdbtoolsImport(db: *Db, io: Io, path: []const u8, opts: Options, progress: *Progress) !void {
+fn mdbtoolsImport(db: *Db, io: Io, path: []const u8, opts: Options, temp_dir: []const u8, progress: *Progress) !void {
     stats = .{};
     const t_schema = Io.Timestamp.now(io, .awake);
     const gpa = db.gpa;
@@ -282,7 +318,7 @@ fn mdbtoolsImport(db: *Db, io: Io, path: []const u8, opts: Options, progress: *P
     var csv_bufs: [max_parallel][4096]u8 = undefined;
     var csv_paths: [max_parallel][]const u8 = undefined;
     for (&csv_paths, &csv_bufs, 0..) |*p, *b, i|
-        p.* = std.fmt.bufPrint(b, "{s}{s}{d}-{x}-{d}.csv", .{ opts.temp_dir, std.fs.path.sep_str, pid(), tag, i }) catch return error.NameTooLong;
+        p.* = std.fmt.bufPrint(b, "{s}{s}{d}-{x}-{d}.csv", .{ temp_dir, std.fs.path.sep_str, pid(), tag, i }) catch return error.NameTooLong;
     defer for (csv_paths) |p| deleteQuiet(io, p);
 
     var children: [max_parallel]?std.process.Child = @splat(null);
@@ -729,7 +765,7 @@ test "a file that is not Access fails with a message, through every reader avail
     var tb: [256]u8 = undefined;
     const temp_dir = try std.fmt.bufPrint(&tb, ".zig-cache/tmp/{s}/conv", .{tmp.sub_path});
     var out: TempPath = .{};
-    try t.expectError(error.Failed, open(&db, t.io, path, .{ .tools_dir = tools, .temp_dir = temp_dir }, &p, &out));
+    try t.expectError(error.Failed, open(&db, t.io, path, .{ .tools_dir = tools, .temp_dirs = &.{temp_dir} }, &p, &out));
     try t.expect(db.lastError().len > 0 and !db.isOpen() and out.len == 0);
     // nenhum .sqlite nem .csv ficou para tras
     if (Io.Dir.cwd().openDir(t.io, temp_dir, .{ .iterate = true })) |d| {
@@ -805,6 +841,45 @@ test "crash cleanup deletes temporaries of programs that no longer run, keeps th
     try t.expectEqual(0, cleanupStale(t.io, "nao/existe"));
 }
 
+test "temporary folder: the first where a file can be created, last the subfolder beside the source file" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var b: [4][256]u8 = undefined;
+    const root = try std.fmt.bufPrint(&b[0], ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    // um arquivo no lugar da pasta: nada pode ser criado dentro dele
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "blocked", .data = "x" });
+    const bad = try std.fmt.bufPrint(&b[1], "{s}/blocked/" ++ temp_subdir, .{root});
+    const user = try std.fmt.bufPrint(&b[2], "{s}/user/" ++ temp_subdir, .{root});
+    const source = try std.fmt.bufPrint(&b[3], "{s}/data/DB.accdb", .{root});
+    try tmp.dir.createDirPath(t.io, "data");
+    var buf: [512]u8 = undefined;
+    try t.expectEqualStrings(user, try pickTempDir(t.io, &buf, &.{ user, bad }, source)); // a do usuario serve
+    try t.expectEqualStrings(user, try pickTempDir(t.io, &buf, &.{ bad, user }, source)); // senao a do sistema
+    // nenhuma das duas: a subpasta ao lado do original
+    const beside = try pickTempDir(t.io, &buf, &.{ bad, bad }, source);
+    try t.expect(std.mem.endsWith(u8, beside, "data" ++ std.fs.path.sep_str ++ temp_subdir));
+    try tmp.dir.access(t.io, "data/" ++ temp_subdir, .{});
+    // nada sobra da tentativa (o arquivo de prova some) e, apagado o convertido, a subpasta ao lado do original sai
+    var it_dir = try tmp.dir.openDir(t.io, "data/" ++ temp_subdir, .{ .iterate = true });
+    var it = it_dir.iterate();
+    try t.expect(try it.next(t.io) == null);
+    it_dir.close(t.io);
+    var fb: [600]u8 = undefined;
+    const conv = try std.fmt.bufPrint(&fb, "{s}{s}1-ab.sqlite", .{ beside, std.fs.path.sep_str });
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = conv, .data = "x" });
+    deleteTemp(t.io, conv, source);
+    try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "data/" ++ temp_subdir, .{}));
+    // a pasta temporaria normal fica (outros programas a usam)
+    const conv2 = try std.fmt.bufPrint(&fb, "{s}/1-ab.sqlite", .{user});
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = conv2, .data = "x" });
+    deleteTemp(t.io, conv2, source);
+    try tmp.dir.access(t.io, "user/" ++ temp_subdir, .{});
+    try t.expectError(error.FileNotFound, Io.Dir.cwd().access(t.io, conv2, .{}));
+    // original numa pasta em que nada pode ser criado: erro, sem pasta nova
+    const nowhere = try std.fmt.bufPrint(&fb, "{s}/blocked/DB.accdb", .{root});
+    try t.expect(std.meta.isError(pickTempDir(t.io, &buf, &.{bad}, nowhere)));
+}
+
 fn cellOf(db: *Db, sql: [:0]const u8) ![]u8 {
     var g = try db.run(sql, &.{});
     defer g.deinit();
@@ -834,7 +909,7 @@ test "versioned .mdb through mdbtools becomes a SQLite file with types and NULLs
     defer db.close();
     var p: Progress = .{};
     var out: TempPath = .{};
-    const src = open(&db, t.io, mdb, .{ .forced = "mdbtools", .tools_dir = tools, .temp_dir = temp_dir }, &p, &out) catch |e| {
+    const src = open(&db, t.io, mdb, .{ .forced = "mdbtools", .tools_dir = tools, .temp_dirs = &.{temp_dir} }, &p, &out) catch |e| {
         std.debug.print("{s}\n", .{db.lastError()});
         return e;
     };
@@ -1051,7 +1126,7 @@ test "real Access file through the readers, compared with the reference converte
         var p: Progress = .{};
         var out: TempPath = .{};
         const t0 = std.Io.Timestamp.now(t.io, .awake);
-        _ = open(&db, t.io, path, .{ .forced = reader, .tools_dir = tools, .temp_dir = ".zig-cache/tmp" }, &p, &out) catch |e| {
+        _ = open(&db, t.io, path, .{ .forced = reader, .tools_dir = tools, .temp_dirs = &.{".zig-cache/tmp"} }, &p, &out) catch |e| {
             std.debug.print("{s}: {s}\n", .{ reader, db.lastError() });
             return e;
         };
@@ -1138,7 +1213,7 @@ test "performance protocol: Access through the readers, saved SQLite, exports, r
             var p: Progress = .{};
             var out: TempPath = .{};
             const t0 = now();
-            _ = try open(&db, t.io, path, .{ .forced = reader, .tools_dir = tools, .temp_dir = ".zig-cache/tmp" }, &p, &out);
+            _ = try open(&db, t.io, path, .{ .forced = reader, .tools_dir = tools, .temp_dirs = &.{".zig-cache/tmp"} }, &p, &out);
             conv[run] = t0.durationTo(now()).toMilliseconds();
             st[run] = stats;
             const counts = try t.allocator.alloc(u64, db.table_names.len);

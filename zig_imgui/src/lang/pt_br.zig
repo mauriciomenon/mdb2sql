@@ -123,6 +123,8 @@ pub const converted_remember = "Lembrar nesta sessão";
 pub const converted_reused = "{s}: aberto o SQLite salvo dele ({s})";
 pub const converted_saved = "SQLite salvo: {s}";
 pub const converted_deleted = "SQLite convertido apagado";
+pub const log_stale_removed = "{d} arquivos convertidos de uma sessão anterior removidos";
+pub const log_stale_removed_one = "{d} arquivo convertido de uma sessão anterior removido";
 
 // janela Log
 pub const log_title = "Log";
