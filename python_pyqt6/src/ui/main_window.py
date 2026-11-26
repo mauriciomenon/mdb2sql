@@ -1874,14 +1874,16 @@ class MainWindow(QMainWindow):
     def _place_mark_column(self) -> None:
         # a caixa de marcar e a ultima coluna do modelo, mostrada primeiro, estreita, e as colunas da tabela na ordem
         # dela
-        # !T: A model reset keeps the visual order of the sections that still exist: with another column count the
-        # !T: previous move would shuffle the table columns, so every section is put back in place
+        # !T: A model reset keeps the visual order and the resize mode of the sections that still exist: with another
+        # !T: column count the previous move would shuffle the table columns and leave a table column Fixed, so every
+        # !T: section is put back in place and made Interactive (user resizable) again
         column = self.table_model.mark_column()
         if column < 0:
             return
         header = self.data_table.horizontalHeader()
         for visual, logical in enumerate([column, *range(column)]):
             header.moveSection(header.visualIndex(logical), visual)
+            header.setSectionResizeMode(logical, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
         indicator = self.data_table.style().pixelMetric(QStyle.PixelMetric.PM_IndicatorWidth, None, self.data_table)
         self.data_table.setColumnWidth(column, indicator + 16)

@@ -862,6 +862,12 @@ def test_marked_rows_stay_on_top_during_other_searches(qtbot, tmp_path: Path, mo
     _select_table(qtbot, win, "u")
     assert win.marks["t"] and not win.marks.get("u") and win.only_marked_box.isHidden()
     _select_table(qtbot, win, "t")
+    # a coluna 1 era a caixa de marcar de "u" (estreita, fixa): em "t" volta a ser uma coluna comum, no lugar dela
+    from PyQt6.QtWidgets import QHeaderView
+
+    assert [header.logicalIndex(v) for v in range(3)] == [2, 0, 1]
+    assert [header.sectionResizeMode(c) for c in range(3)] == [QHeaderView.ResizeMode.Interactive] * 2 + [
+        QHeaderView.ResizeMode.Fixed]
     _reloaded(qtbot, win, win.unmark_all_action.trigger)
     assert _column(win, 0) == ["2", "6", "10"] and not win.only_marked_action.isChecked()
     assert win.only_marked_box.isHidden() and not win.export_marked_actions[0].isEnabled()
