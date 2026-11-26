@@ -62,6 +62,30 @@ def test_contains_finds_part_of_the_cell_in_every_table(points: DBManager) -> No
     assert [r["PNTNO"] for r in points.fetch_rows(*table_hits(result, "pts"))] == [242, 238, 7]
 
 
+def test_columns_named_like_our_own_do_not_clash_and_a_late_cancel_cancels(tmp_path: Path) -> None:
+    import threading
+
+    from backend.export import Cancelled
+
+    path = tmp_path / "odd.duckdb"
+    with duckdb.connect(str(path)) as conn:
+        conn.execute("CREATE TABLE t (IDX INTEGER, TERM VARCHAR, mdb2sql_q VARCHAR, q VARCHAR)")
+        conn.execute("INSERT INTO t VALUES (1, 'abc', 'x', 'same'), (2, 'zabcz', 'y', 'same')")
+        conn.execute("CREATE VIEW v AS SELECT * FROM t")
+    with DBManager(str(path)) as manager:
+        for contains, rows in ((False, 1), (True, 2)):
+            result = search_terms(manager, ["ABC"], contains, ["t"], _noop)
+            assert result["hits"] == [("t", {0: rows})]
+            assert [r["IDX"] for r in manager.fetch_rows(*table_hits(result, "t"))] == [1, 2][:rows]
+        # a view com uma coluna q: a identidade e a linha inteira, nao a coluna q
+        keys = [r[MARK_KEY] for r in manager.fetch_rows(*manager.select_table("v", keyed=True))]
+        assert keys[0] != keys[1]
+        # Cancelar durante a ultima (ou unica) tabela: nada de resultado
+        cancel = threading.Event()
+        with pytest.raises(Cancelled):
+            search_terms(manager, ["abc"], False, ["t"], lambda *_a: cancel.set(), cancel)
+
+
 def test_report_in_every_format(points: DBManager, tmp_path: Path) -> None:
     result = search_terms(points, ["U9A", "zzz", "turbina cgi"], False, points.list_tables(), _noop)
     sheets = report_sheets(result)

@@ -316,7 +316,9 @@ class DBManager:
         quando a tabela tem um (tabela DuckDB; tabela SQLite, tambem a do Access convertido); numa view ou tabela
         SQLite WITHOUT ROWID, o texto da linha inteira (linhas iguais tem a mesma identidade e marcam juntas)."""
         self._validate_table_name(table_name)
-        return self._keyed.get(table_name) or f"SELECT CAST(q AS VARCHAR) AS {MARK_KEY}, q.* FROM {quote(table_name)} q"
+        # !T: The alias is the row itself (a struct); a prefixed name so a column called q is not taken for it
+        return (self._keyed.get(table_name)
+                or f"SELECT CAST(mdb2sql_q AS VARCHAR) AS {MARK_KEY}, mdb2sql_q.* FROM {quote(table_name)} mdb2sql_q")
 
     def select_table(
         self, table_name: str, filters: Filters = (), search: str = "", keyed: bool = False

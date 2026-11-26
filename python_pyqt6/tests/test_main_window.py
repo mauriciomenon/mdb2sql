@@ -689,6 +689,13 @@ def test_save_and_export_actions_write_files_next_to_source(qtbot, window: MainW
     # o proprio arquivo aberto nunca sugerido
     types = ["SQLite database (*.sqlite)", "DuckDB database (*.duckdb)", "Excel workbook (*.xlsx)"]
     assert window.save_action.shortcut().toString() == "Ctrl+S" and window.save_as_action.shortcut().toString() == "Ctrl+Shift+S"
+    # o primeiro Salvar como... (nenhuma pasta usada ainda) abre na pasta do original, nao na pasta de trabalho
+    picked[:] = [types[1]]
+    window.save_as_action.trigger()
+    done()
+    assert asked == [("Save as SQLite, DuckDB or Excel (.mdb and .accdb files cannot be written)",
+                      people_db.parent / "people (copy).duckdb", ";;".join(types), types[1])]
+    asked.clear()
     for kind in types:
         picked[:] = [kind]
         window.save_action.trigger()
@@ -858,10 +865,14 @@ def test_marked_rows_stay_on_top_during_other_searches(qtbot, tmp_path: Path, mo
         assert list(csv.reader(handle)) == [["id", "word"], ["4", "kkk"], ["5", "jjj"], ["6", "hhh"]]
     assert asked == ["t_marcadas.csv"]
 
-    # marcas por tabela; Desmarcar todas as linhas: "So as marcadas" desliga e a grade volta para a pesquisa
+    # marcas por tabela; "So as marcadas" vale so na tabela em que foi ligado; a coluna oculta "word" (posicao 1)
+    # nao esconde a caixa de marcar de "u" (tambem na posicao 1)
+    win.set_hidden_columns({"word"})
     _select_table(qtbot, win, "u")
     assert win.marks["t"] and not win.marks.get("u") and win.only_marked_box.isHidden()
+    assert not win.only_marked_action.isChecked() and not win.data_table.isColumnHidden(win.table_model.mark_column())
     _select_table(qtbot, win, "t")
+    _reloaded(qtbot, win, win.only_marked_box.click)
     # a coluna 1 era a caixa de marcar de "u" (estreita, fixa): em "t" volta a ser uma coluna comum, no lugar dela
     from PyQt6.QtWidgets import QHeaderView
 

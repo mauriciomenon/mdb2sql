@@ -1227,6 +1227,7 @@ class MainWindow(QMainWindow):
         self._apply_search()
         self._count_terms()
         self._show_terms_summary()
+        self._show_term_table(self._term_table())  # coluna Termo e "mostrando X de Y" no idioma novo
         if self.manager is not None and not self.table_list.topLevelItemCount():
             self._set_message(self.info_label, tr("status.no_tables"), log=False)
         if self.data_stack.currentWidget() is self.found_list and self._found_summary is not None:
@@ -1645,8 +1646,9 @@ class MainWindow(QMainWindow):
             if exporting and self.ask_export_running(exporting) != EXIT:
                 event.ignore()
                 return
+            # !T: No wait here: release_database() below interrupts the query still running (a long table would
+            # !T: freeze the window until it ended) and the cancelled export removes its temporary file
             cancel.set()
-            self.thread_pool.waitForDone()
         # so com Access convertido e nao salvo: Salvar abre a caixa de salvar (cancelada, a pergunta volta) e o
         # programa fecha depois de gravar; Sair apaga o temporario
         while self.unsaved_conversion() and self.current_db_path is not None:
@@ -1886,6 +1888,7 @@ class MainWindow(QMainWindow):
             header.moveSection(header.visualIndex(logical), visual)
             header.setSectionResizeMode(logical, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+        self.data_table.setColumnHidden(column, False)  # nem a coluna oculta de outra tabela na mesma posicao
         indicator = self.data_table.style().pixelMetric(QStyle.PixelMetric.PM_IndicatorWidth, None, self.data_table)
         self.data_table.setColumnWidth(column, indicator + 16)
 
@@ -1917,20 +1920,20 @@ class MainWindow(QMainWindow):
 
     def set_only_marked(self, checked: bool) -> None:
         """Exibir > So as linhas marcadas e a caixa ao lado da linha da tabela: a grade so com as marcadas."""
+        self._check_only_marked(checked)
+        self.reload_table()
+
+    def _check_only_marked(self, checked: bool) -> None:
         for control in (self.only_marked_action, self.only_marked_box):
             control.blockSignals(True)
             control.setChecked(bool(checked))
             control.blockSignals(False)
-        self.reload_table()
 
     def _reset_marks(self) -> None:
         # fechar, abrir outro arquivo e reabrir limpam as marcas
         self.marks = {}
         self.table_model.marks = set()
-        for control in (self.only_marked_action, self.only_marked_box):
-            control.blockSignals(True)
-            control.setChecked(False)
-            control.blockSignals(False)
+        self._check_only_marked(False)
 
     def export_marked_as(self, suffix: str) -> None:
         # as marcadas da tabela atual, todas as colunas, na ordem da tabela: <tabela>_marcadas
@@ -1950,6 +1953,7 @@ class MainWindow(QMainWindow):
         self.view_table = table_name
         self.filters.clear()
         self.hidden_columns.clear()
+        self._check_only_marked(False)  # "So as marcadas" vale para a tabela em que foi ligado (marcas por tabela)
         self._refresh_filter_bar()
 
     def filter_by_current_cell(self) -> None:
@@ -2150,6 +2154,7 @@ class MainWindow(QMainWindow):
         else:
             tables = [self.loaded_table[0]] if self.loaded_table else []
         self._clear_terms()
+        self._update_export_actions()  # sem resultado (cancelada ou com erro): relatorio e copiar desabilitados
         if not tables:
             return
         manager, contains = self.manager, self.match_actions["contains"].isChecked()
@@ -2367,8 +2372,8 @@ class MainWindow(QMainWindow):
             return False
         access = source.suffix.lower() in ACCESS_EXT
         chosen = ".duckdb" if manager.reader == "DuckDB" and not access else ".sqlite"
-        last = Path(str(self.settings.value("save_dir", "")))
-        folder = last if save_as and last.is_dir() else default_save_dir(source, None)
+        last = str(self.settings.value("save_dir", "") or "")  # sem ela: "" (Path("") seria a pasta de trabalho)
+        folder = Path(last) if save_as and last and Path(last).is_dir() else default_save_dir(source, None)
         out = self._ask_save_path(tr("save.title"), source.stem, (".sqlite", ".duckdb", ".xlsx"), chosen, folder)
         if out is None:
             return False

@@ -13,9 +13,11 @@ from backend.export import Cancelled, Sheet
 from shared.i18n import tr
 
 Progress = Callable[[int, int, str], None]
-# termos na ordem colada: idx 1, 2, ... (generate_subscripts e unnest da mesma lista andam juntos)
-_TERMS = "terms AS (SELECT generate_subscripts(?::VARCHAR[], 1) AS idx, unnest(?::VARCHAR[]) AS term)"
-_ROW = "mdb2sql_row"  # posicao da linha na tabela (ordem da tabela)
+# termos na ordem colada: posicao 1, 2, ... (generate_subscripts e unnest da mesma lista andam juntos)
+# !T: Names of our own columns are prefixed and every table column is qualified with src., so a table with columns
+# !T: such as IDX or TERM is never ambiguous
+_IDX, _TERM, _ROW = "mdb2sql_idx", "mdb2sql_term", "mdb2sql_row"  # _ROW: posicao da linha na tabela
+_TERMS = f"terms AS (SELECT generate_subscripts(?::VARCHAR[], 1) AS {_IDX}, unnest(?::VARCHAR[]) AS {_TERM})"
 
 
 def parse_terms(text: str) -> tuple[list[str], int]:
@@ -37,25 +39,27 @@ def parse_terms(text: str) -> tuple[list[str], int]:
 
 
 def _hits_cte(table: str, columns: Sequence[str], contains: bool) -> str:
-    # hit(idx, linha): o termo idx achou a linha (uma vez, mesmo achado em varias colunas)
-    cells = [f"CAST({quote(column)} AS VARCHAR)" for column in columns]
+    # hit(termo, linha): o termo achou a linha (uma vez, mesmo achado em varias colunas)
+    cells = [f"CAST(src.{quote(column)} AS VARCHAR)" for column in columns]
     source = f"src AS (SELECT row_number() OVER () AS {_ROW}, * FROM {quote(table)})"
     if contains:
         # !T: A term is one line, so it can never match across the line breaks that join the cells
         text = "lower(concat_ws(chr(10), " + ", ".join(cells) + "))"
-        hit = f"hit AS (SELECT idx, {_ROW} FROM src, terms WHERE contains({text}, lower(term)))"
+        hit = (f"hit AS (SELECT terms.{_IDX}, src.{_ROW} FROM src, terms"
+               f" WHERE contains({text}, lower(terms.{_TERM})))")
     else:
         keys = ", ".join(f"lower(trim({cell}))" for cell in cells)
-        hit = (f"hit AS (SELECT DISTINCT idx, {_ROW} FROM (SELECT {_ROW}, unnest([{keys}]) AS cell FROM src)"
-               " JOIN terms ON cell = lower(term))")
+        hit = (f"hit AS (SELECT DISTINCT terms.{_IDX}, cells.{_ROW} FROM (SELECT src.{_ROW}, unnest([{keys}]) AS"
+               f" mdb2sql_cell FROM src) cells JOIN terms ON cells.mdb2sql_cell = lower(terms.{_TERM}))")
     return f"WITH {_TERMS}, {source}, {hit}"
 
 
 def hits_query(table: str, columns: Sequence[str], terms: Sequence[str], contains: bool) -> tuple[str, list[Any]]:
     """As linhas achadas: coluna Termo (o termo que achou) + todas as colunas da tabela; ordem dos termos, depois a da
     tabela. Uma linha achada por 2 termos vem 2 vezes."""
-    sql = (f"{_hits_cte(table, columns, contains)} SELECT terms.term AS {quote(tr('terms.column'))},"
-           f" src.* EXCLUDE ({_ROW}) FROM hit JOIN terms USING (idx) JOIN src USING ({_ROW}) ORDER BY idx, {_ROW}")
+    sql = (f"{_hits_cte(table, columns, contains)} SELECT terms.{_TERM} AS {quote(tr('terms.column'))},"
+           f" src.* EXCLUDE ({_ROW}) FROM hit JOIN terms ON terms.{_IDX} = hit.{_IDX}"
+           f" JOIN src ON src.{_ROW} = hit.{_ROW} ORDER BY hit.{_IDX}, hit.{_ROW}")
     return sql, [list(terms), list(terms)]
 
 
@@ -71,11 +75,13 @@ def search_terms(manager: DBManager, terms: Sequence[str], contains: bool, table
         progress(done, len(tables), table)
         if not columns.get(table):
             continue
-        sql = f"{_hits_cte(table, columns[table], contains)} SELECT idx, count(*) FROM hit GROUP BY idx"
+        sql = f"{_hits_cte(table, columns[table], contains)} SELECT {_IDX}, count(*) FROM hit GROUP BY {_IDX}"
         with manager.cursor() as cursor:
             counts = dict(cursor.execute(sql, [list(terms), list(terms)]).fetchall())
         if counts:
             hits.append((table, {idx - 1: count for idx, count in counts.items()}))
+    if cancel is not None and cancel.is_set():  # Cancelar durante a ultima tabela tambem e cancelar
+        raise Cancelled()
     progress(len(tables), len(tables), "")
     return {"terms": list(terms), "contains": contains, "columns": columns, "hits": hits}
 
