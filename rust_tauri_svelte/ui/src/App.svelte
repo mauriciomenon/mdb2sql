@@ -59,7 +59,7 @@
   const LANG_KEY = 'mdb2sql.lang';
   const LOG_KEY = 'mdb2sql.log'; // 'open' = painel de log aberto (padrao: recolhido)
   const NULL_KEY = 'mdb2sql.showNull'; // 'on' = celula NULL mostra "NULL" (padrao, sem valor gravado: vazia)
-  const SCOPE_KEY = 'mdb2sql.searchScope'; // 'all' = a pesquisa comeca em Todas as tabelas (padrao: Esta tabela)
+  const SCOPE_KEY = 'mdb2sql.searchScope'; // 'table' = a pesquisa comeca em Esta tabela (padrao: Todas as tabelas, secao 18 a)
   const MATCH_KEY = 'mdb2sql.termMatch'; // 'contains' = a pesquisa de termos comeca em Contem (padrao: Valor inteiro)
   // Access ja convertido e salvo (SQLite ou DuckDB): { [chave do Access]: { dest, destKey } } com as chaves de file_key
   // (caminho, tamanho, data). Fica entre execucoes; as 50 mais recentes
@@ -146,7 +146,7 @@
   let filters = $state.raw([]); // [{ column, value }] aplicados na consulta ao banco (AND)
   let search = $state(''); // pesquisa na tabela inteira, no banco
   let searchTimer;
-  let defaultScope = $state(loadSetting(SCOPE_KEY) === 'all' ? 'all' : 'table');
+  let defaultScope = $state(loadSetting(SCOPE_KEY) === 'table' ? 'table' : 'all');
   let scope = $state(defaultScope); // 'table' (tabela aberta) | 'all' (todas as tabelas)
   // { tables: [{ table, count }] } da pesquisa em todas as tabelas do termo, escopo, tabela e arquivo de agora; null =
   // pesquisando; tables null = falhou (erro na barra de status)
@@ -719,7 +719,7 @@
   function setDefaultScope(next) {
     openMenu = null;
     defaultScope = next;
-    saveSetting(SCOPE_KEY, next === 'all' ? 'all' : null);
+    saveSetting(SCOPE_KEY, next === 'table' ? 'table' : null);
     setScope(next);
   }
 

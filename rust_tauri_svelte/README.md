@@ -89,7 +89,8 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
   "<tabela>: rows 1 to 100 of Y found". A pesquisa roda 300 ms depois da ultima tecla (Enter: na hora).
 - Ao lado da pesquisa, **This table | All tables**: em **All tables** o termo e procurado em todas as tabelas (mesma
   regra, em todas as colunas: numeros e datas como texto, como nas outras 3 versoes) e aparece a lista das tabelas com
-  o numero de linhas achadas; escolher uma abre essa tabela com a mesma pesquisa. O escopo padrao fica em **Settings >
+  o numero de linhas achadas; escolher uma abre essa tabela com a mesma pesquisa. O escopo padrao (inicial: **All
+  tables**) fica em **Settings >
   Default search scope**.
 - **Linhas marcadas** (aba Data): a primeira coluna da grade tem uma caixa por linha (clique, `Espaco` na linha da
   celula escolhida, botao direito ou **Edit > Mark or unmark row**). As marcadas ficam sempre no topo, na ordem da

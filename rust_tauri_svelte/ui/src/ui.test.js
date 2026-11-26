@@ -315,8 +315,9 @@ test('Data search scope: two-option selector next to the field and its default i
   // Configuracoes > Escopo padrao da busca: os mesmos dois (menus.js), gravado
   assert.match(menus, /\['defaultScope', 'settings\.searchScope', SCOPES\.map\(\(\[id, key\]\) => \[`defaultScope\.\$\{id\}`, key\]\)\],/);
   assert.match(app, /radio\(`defaultScope\.\$\{id\}`, \(\) => setDefaultScope\(id\), defaultScope === id\);/);
-  assert.match(app, /let defaultScope = \$state\(loadSetting\(SCOPE_KEY\) === 'all' \? 'all' : 'table'\);/);
-  assert.match(app, /saveSetting\(SCOPE_KEY, next === 'all' \? 'all' : null\);/);
+  // secao 18 a: o padrao e Todas as tabelas (com Esta tabela o dono buscou na primeira tabela e nao achou nada)
+  assert.match(app, /let defaultScope = \$state\(loadSetting\(SCOPE_KEY\) === 'table' \? 'table' : 'all'\);/);
+  assert.match(app, /saveSetting\(SCOPE_KEY, next === 'table' \? 'table' : null\);/);
   assert.match(app, /invoke\('search_all_tables', \{ search: words \}\)/);
   assert.match(ui, /onclick=\{\(\) => openFound\(f\.table\)\}>\{t\('found\.item', \{ table: f\.table, count: fmt\(f\.count\) \}\)\}/);
   // decisao 1: a tabela achada abre sem os filtros por valor (a grade mostra o numero da lista)
