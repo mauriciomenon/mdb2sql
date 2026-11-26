@@ -66,6 +66,13 @@ fn native(owner: isize, title: &str, path: &Path, types: &[(String, String)], se
     unsafe extern "system" {
         fn GetSaveFileNameW(options: *mut OpenFileName) -> i32;
     }
+    #[link(name = "ole32")]
+    unsafe extern "system" {
+        fn CoInitializeEx(reserved: *mut std::ffi::c_void, flags: u32) -> i32;
+        fn CoUninitialize();
+    }
+    // a caixa roda na thread do comando (async): a parte de shell dela quer COM de apartamento nessa thread
+    const COINIT_APARTMENTTHREADED: u32 = 0x2;
     const OVERWRITE_PROMPT: u32 = 0x2;
     const HIDE_READ_ONLY: u32 = 0x4;
     const NO_CHANGE_DIR: u32 = 0x8;
@@ -115,7 +122,13 @@ fn native(owner: isize, title: &str, path: &Path, types: &[(String, String)], se
         reserved: 0,
         flags_ex: 0,
     };
-    if unsafe { GetSaveFileNameW(&mut options) } == 0 {
+    // S_OK ou S_FALSE (ja iniciado): cada um pede o seu CoUninitialize; RPC_E_CHANGED_MODE (outro modo) nao
+    let com = unsafe { CoInitializeEx(std::ptr::null_mut(), COINIT_APARTMENTTHREADED) } >= 0;
+    let picked = unsafe { GetSaveFileNameW(&mut options) };
+    if com {
+        unsafe { CoUninitialize() };
+    }
+    if picked == 0 {
         return None;
     }
     let end = file.iter().position(|&unit| unit == 0).unwrap_or(file.len());

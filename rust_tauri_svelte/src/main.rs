@@ -180,9 +180,9 @@ fn save_dialog(
 fn save_converted(path: String, state: State<'_, AppState>) -> Result<(), String> {
     let target = Path::new(&path);
     check_target(&state, target)?;
-    let slot = state.converted.lock().unwrap();
-    let lite = slot.as_ref().ok_or("[[err.noConverted]]")?;
-    export::via_partial(target, |partial| std::fs::copy(lite.path(), partial).map(|_| ()).map_err(|e| e.to_string()))
+    // o caminho sai do lock antes de copiar: o X da janela (on_window_event) le o mesmo lock na thread da interface
+    let source = state.converted.lock().unwrap().as_ref().ok_or("[[err.noConverted]]")?.path().to_path_buf();
+    export::via_partial(target, |partial| std::fs::copy(&source, partial).map(|_| ()).map_err(|e| e.to_string()))
 }
 
 // NIVEL BASICO: Apaga o SQLite convertido (banco salvo, ou fechado sem salvar)

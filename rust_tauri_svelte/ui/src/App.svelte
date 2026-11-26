@@ -506,8 +506,9 @@
     const access = isAccess(openedPath);
     const selected = !access && source === 'DuckDB' ? 1 : 0;
     const dir = (asLast && loadSetting(SAVE_DIR_KEY)) || dirOf(openedPath);
-    // o nome do original; se for o proprio arquivo aberto, "<nome> (copia)"
-    const name = suggestedName(stem(openedPath), SAVE_FORMATS[selected], readFile, (base) => t('save.copyName', { name: base }));
+    // o nome do original; se for o proprio arquivo aberto (mesma pasta e mesmo nome), "<nome> (copia)"
+    const sameDir = dir.toLowerCase() === dirOf(readFile).toLowerCase();
+    const name = suggestedName(stem(openedPath), SAVE_FORMATS[selected], sameDir ? readFile : '', (base) => t('save.copyName', { name: base }));
     try {
       const picked = await invoke('save_dialog', {
         title: t('save.title'),
