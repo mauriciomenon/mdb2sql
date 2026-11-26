@@ -1173,13 +1173,13 @@ def test_terms_tab_lists_hits_in_list_order_copies_and_reports(qtbot, tmp_path: 
     assert win.copy_hits_action in win.terms_table.actions()
     assert win.terms_table.actions()[-1].menu() is win.terms_report_menu
 
-    # relatorio: Excel (<banco>_termos) e CSV (pasta; os que ja existem: uma pergunta so)
+    # relatorio: Excel ("<banco> - Advanced Search", BRIEF 19 e) e CSV (pasta; os que ja existem: uma pergunta so)
     asked = []
     monkeypatch.setattr(QFileDialog, "getSaveFileName",
                         lambda *a: asked.append(Path(a[2]).name) or (str(tmp_path / "rep.xlsx"), ""))
     win.export_terms_actions[0].trigger()
     qtbot.waitUntil(lambda: win._job is None and (tmp_path / "rep.xlsx").exists(), timeout=30000)
-    assert asked == ["pts_termos.xlsx"]
+    assert asked == ["pts - Advanced Search.xlsx"]
     book = openpyxl.load_workbook(tmp_path / "rep.xlsx", read_only=True)
     assert book.sheetnames == ["other", "pts"]  # uma aba por tabela, sem "Resultado Filtro" (BRIEF 19 d)
     assert next(book["pts"].values) == ("RTUNO", "PNTNO", "SUBNAM", "PNTNAM")

@@ -2359,14 +2359,15 @@ class MainWindow(QMainWindow):
         QGuiApplication.clipboard().setText(rows_to_tsv([list(row.values()) for row in rows], columns))
 
     def export_terms_as(self, suffix: str) -> None:
-        # o relatorio: Resumo, uma aba por tabela com acerto e Nao encontrados; CSV = uma pasta, um arquivo por aba
+        # o relatorio: uma aba por tabela com acerto; CSV = uma pasta, um arquivo por tabela. Nome sugerido
+        # "<banco> - Pesquisa Avancada" (BRIEF 19 e)
         if self.manager is None or self.terms_result is None or self.current_db_path is None:
             return
         manager, sheets = self.manager, report_sheets(self.terms_result)
         if suffix == ".csv":
             self._export_csv_folder(tr("export.terms"), sheets)
             return
-        out = self._ask_save_path(tr("export.terms"), f"{self.current_db_path.stem}_termos", (suffix,))
+        out = self._ask_save_path(tr("export.terms"), f"{self.current_db_path.stem} - {tr('tab.terms')}", (suffix,))
         if out is not None:
             self._start_export(out, lambda report, cancel: export_sheets(manager, sheets, out, report, cancel), "tables")
 
