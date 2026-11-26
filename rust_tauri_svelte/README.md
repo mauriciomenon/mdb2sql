@@ -99,8 +99,9 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
   DuckDB (tabelas do .duckdb e as copiadas do SQLite e do Access); numa view, por todos os valores (linhas identicas
   marcam juntas).
 - Aba **Advanced Search** (`Ctrl+4`): cole uma lista (por exemplo uma coluna do Excel, um termo por linha), escolha **Whole
-  value** (a celula inteira, sem espacos nas pontas, igual ao termo; numero casa pelo valor, em formato EUA ou BR:
-  216 acha 216.0, "216,0" e "216"; 1234.5 acha "1.234,5"; 216 nao acha 2160) ou **Contains**, sem diferenciar maiusculas, e
+  value** (a celula inteira, sem espacos nas pontas, igual ao termo; o termo numerico, escrito em formato EUA ou BR,
+  casa pelo valor com as colunas numericas: 216 acha 216.0, 1.234,5 acha 1234.5, 216 nao acha 2160; coluna de texto
+  compara como texto) ou **Contains**, sem diferenciar maiusculas, e
   **All tables** (sempre ao abrir, qualquer que seja o escopo padrao da aba Data) ou **This table** (o resumo diz
   "(only in <tabela>)"); **Search terms** (ou `Ctrl+Enter`) procura no motor, em todas as colunas, com
   progresso e **Cancel**. Na mesma linha, depois do botao, uma caixa com "N input lines" e o resumo; os seletores ficam

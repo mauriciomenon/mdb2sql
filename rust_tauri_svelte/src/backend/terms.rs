@@ -21,7 +21,7 @@ fn hit_name(table: &str) -> String {
     format!("mdb2sql hit {table}")
 }
 
-// NIVEL BASICO: Leituras de numero de um texto (BRIEF secao 13 a, regra frouxa: ha dados em formato EUA e BR/Europa), as
+// NIVEL BASICO: Leituras de numero do TERMO (secoes 13 a e 20, regra frouxa: ha dados em formato EUA e BR/Europa), as
 // mesmas do Python: ponto decimal com virgula de milhar (mdb2sql_n1) e virgula decimal com ponto de milhar (mdb2sql_n2),
 // milhar so em grupos de exatamente 3 digitos. 1.234,5 e 1,234.5 = 1234.5; 1.234.567 = 1234567; 1,234 = 1234 ou 1.234;
 // 216,0 = 216 (nunca 2160); 0,1 = 0.1 (nunca 1); 12,34,567 nao e numero. A leitura que nao cabe e NULL. mdb2sql_key = a
@@ -39,17 +39,17 @@ fn term_keys() -> String {
     format!("SELECT ord, 't:' || lower(trim(term)) AS key FROM {TERMS} UNION ALL {} UNION ALL {}", reading("mdb2sql_n1"), reading("mdb2sql_n2"))
 }
 
-// NIVEL BASICO: Chaves de uma celula no valor inteiro: 't:' + o texto; com termo numerico, a coluna numerica tambem pelo
-// valor e a de texto tambem pelas leituras de numero dela ("216,0", "1.234,5")
+// NIVEL BASICO: Chaves de uma celula no valor inteiro: 't:' + o texto; com termo numerico, a coluna NUMERICA do schema
+// tambem pelo valor. Coluna de texto e texto: nada de ler numero dentro da celula (secao 20; a leitura frouxa de virgula e
+// ponto e so do termo)
 // shortcut: the value goes through DOUBLE, so integers above 2^53 that differ only past that precision match the same
 // term; compare them as text if such ids ever need it
 fn cell_keys(column: &str, kind: &str, numbers: bool) -> String {
-    let text = format!("CAST({column} AS VARCHAR)");
-    let key = format!("'t:' || lower(trim({text}))");
-    match (numbers, is_number(kind), kind.eq_ignore_ascii_case("VARCHAR")) {
-        (true, true, _) => format!("[{key}, 'n:' || CAST(CAST({column} AS DOUBLE) AS VARCHAR)]"),
-        (true, _, true) => format!("[{key}, mdb2sql_key(mdb2sql_n1(trim({text}))), mdb2sql_key(mdb2sql_n2(trim({text})))]"),
-        _ => format!("[{key}]"),
+    let key = format!("'t:' || lower(trim(CAST({column} AS VARCHAR)))");
+    if numbers && is_number(kind) {
+        format!("[{key}, 'n:' || CAST(CAST({column} AS DOUBLE) AS VARCHAR)]")
+    } else {
+        format!("[{key}]")
     }
 }
 
