@@ -78,8 +78,8 @@ export function GetShowNull() {
   return window['go']['main']['App']['GetShowNull']();
 }
 
-export function GetTableData(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['GetTableData'](arg1, arg2, arg3, arg4);
+export function GetTableData(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['GetTableData'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function GetTableSchema(arg1) {

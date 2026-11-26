@@ -41,7 +41,7 @@ export function GetSearchScope():Promise<string>;
 
 export function GetShowNull():Promise<boolean>;
 
-export function GetTableData(arg1:string,arg2:number,arg3:Array<backend.Filter>,arg4:string):Promise<Array<Record<string, any>>>;
+export function GetTableData(arg1:string,arg2:number,arg3:Array<backend.Filter>,arg4:string,arg5:number):Promise<Array<Record<string, any>>>;
 
 export function GetTableSchema(arg1:string):Promise<Array<backend.ColumnSchema>>;
 
