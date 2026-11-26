@@ -78,12 +78,13 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
   topo da lista, em ordem alfabetica, com "★ " antes do nome; vale pelo nome enquanto o programa estiver aberto.
 - Aba **Data**, de cima para baixo (igual nas 4 versoes): uma linha com a pesquisa, **This table | All tables**,
   **Rows** (100/500/1000) e **Columns...**; os filtros por valor, quando houver; a grade; embaixo dela
-  "<tabela>: showing X of Y rows". A **pesquisa** (**Search the whole
+  "<tabela>: rows 1 to 100 of Y" com as paginas **◀ ▶** (do tamanho de **Rows**; pesquisa e filtros valem em todas; outra
+  pesquisa, filtro ou tabela volta a pagina 1). A **pesquisa** (**Search the whole
   table**) roda no banco, na **tabela inteira** (todas as linhas e colunas, nao so as carregadas): a linha aparece
   quando uma mesma celula tem todas as palavras, em qualquer ordem, sem diferenciar maiusculas nem acentos
   (`tension de campo` acha `EXCITACION TENSION DE CAMPO`, RTUNO 50 / PNTNO 9 de RANGER_SOANLG no DB4, fora das 100
   primeiras linhas; `tensao` acha `TENSÃO` mas nao `TENSION`: nao ha busca aproximada). A contagem vira
-  "<tabela>: showing X of Y rows found". A pesquisa roda 300 ms depois da ultima tecla (Enter: na hora).
+  "<tabela>: rows 1 to 100 of Y found". A pesquisa roda 300 ms depois da ultima tecla (Enter: na hora).
 - Ao lado da pesquisa, **This table | All tables**: em **All tables** o termo e procurado em todas as tabelas (mesma
   regra, em todas as colunas: numeros e datas como texto, como nas outras 3 versoes) e aparece a lista das tabelas com
   o numero de linhas achadas; escolher uma abre essa tabela com a mesma pesquisa. O escopo padrao fica em **Settings >
@@ -94,13 +95,15 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
   tabela enquanto o arquivo estiver aberto (fechar, abrir outro e F5 limpam). A linha e reconhecida pelo `rowid` do
   DuckDB (tabelas do .duckdb e as copiadas do SQLite e do Access); numa view, por todos os valores (linhas identicas
   marcam juntas).
-- Aba **Terms** (`Ctrl+4`): cole uma lista (por exemplo uma coluna do Excel, um termo por linha), escolha **Whole
-  value** (a celula inteira, sem espacos nas pontas, igual ao termo) ou **Contains**, sem diferenciar maiusculas, e
+- Aba **Advanced Search** (`Ctrl+4`): cole uma lista (por exemplo uma coluna do Excel, um termo por linha), escolha **Whole
+  value** (a celula inteira, sem espacos nas pontas, igual ao termo; numero casa pelo valor, em formato EUA ou BR:
+  216 acha 216.0, "216,0" e "216"; 1234.5 acha "1.234,5"; 216 nao acha 2160) ou **Contains**, sem diferenciar maiusculas, e
   **This table** ou **All tables**; **Search terms** (ou `Ctrl+Enter`) procura no motor, em todas as colunas, com
   progresso e **Cancel**. Mostra o resumo, as tabelas com acerto e a grade da escolhida (coluna **Term** + as colunas
   da tabela, na ordem da lista colada) e os termos nao encontrados (texto copiavel). **Copy the rows found in this
   table** copia todas as linhas achadas com o cabecalho e sem a coluna Term; o relatorio (Export > Term search report)
-  sai em Excel, CSV (pasta), SQLite ou DuckDB com Summary, uma tabela por tabela com acerto e Not found.
+  sai em Excel, CSV (pasta), SQLite ou DuckDB com a aba **Filter Result** (cada termo, onde achou e quantas linhas,
+  tambem os nao encontrados) e uma aba por tabela com acerto.
 - **Columns...**: marque e desmarque colunas (busca por nome no topo, caixas em grade que acompanha a janela).
   **Show all** e **Hide all** agem nas colunas listadas (com busca, so nelas). A barra de status mostra "N hidden
   columns". A pesquisa olha todas as colunas e a exportacao sai com todas.
