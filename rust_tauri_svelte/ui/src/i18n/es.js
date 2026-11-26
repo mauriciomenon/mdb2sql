@@ -228,7 +228,7 @@ export default {
   'status.hiddenMany': '{count} columnas ocultas',
   'status.closed': '{name} cerrado',
   'status.sqliteSaved': 'Archivo convertido guardado en {path}',
-  'status.reused': '{name}: abierto el SQLite guardado de él ({path})',
+  'status.reused': '{name}: abierto el {format} guardado de él ({path})',
   'status.discarded': 'SQLite convertido de {name} descartado',
   'status.staleRemoved':
     '{count} {count|archivo convertido de una sesión anterior eliminado|archivos convertidos de una sesión anterior eliminados}',

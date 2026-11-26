@@ -227,7 +227,7 @@ export default {
   'status.hiddenMany': '{count} hidden columns',
   'status.closed': 'Closed {name}',
   'status.sqliteSaved': 'Saved the converted file to {path}',
-  'status.reused': '{name}: opened the SQLite saved from it ({path})',
+  'status.reused': '{name}: opened the {format} saved from it ({path})',
   'status.discarded': 'SQLite converted from {name} discarded',
   'status.staleRemoved': 'Removed {count} converted {count|file|files} left by a previous session',
   'status.logCopied': 'Copied the log',

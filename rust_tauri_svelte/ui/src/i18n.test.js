@@ -205,6 +205,8 @@ test('new texts of Save, exit, marked rows and Terms are the agreed ones', () =>
     ['terms.found', {}, 'Encontrado', 'Found', 'Encontrado'],
     ['terms.missing', {}, 'Não encontrado', 'Not found', 'No encontrado'],
     // item 34 (BRIEF secao 11)
+    // BRIEF secao 13 b: o Log diz o formato real do arquivo salvo
+    ['status.reused', { name: 'DB3.accdb', format: 'DuckDB', path: 'P' }, 'DB3.accdb: aberto o DuckDB salvo dele (P)', 'DB3.accdb: opened the DuckDB saved from it (P)', 'DB3.accdb: abierto el DuckDB guardado de él (P)'],
     // BRIEF secao 13 g: "Copiar todo el log" (a aba se chama Log nos 3 idiomas)
     ['edit.copyLog', {}, 'Copiar todo o Log', 'Copy the whole log', 'Copiar todo el log'],
     ['view.log', {}, 'Log', 'Log', 'Log'],

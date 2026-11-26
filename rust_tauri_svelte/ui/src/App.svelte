@@ -633,7 +633,8 @@
       lastSql = '';
       saveSetting(LAST_DIR_KEY, dirOf(opened.path));
       showStatus('status.opened', { name: baseName(opened.path), count: fmt(tables.length) });
-      if (saved) note('info', { key: 'status.reused', values: { name: baseName(opened.path), path: saved } });
+      // o formato vem do arquivo salvo como o backend o abriu (extensao e cabecalho): SQLite ou DuckDB, nunca fixo
+      if (saved) note('info', { key: 'status.reused', values: { name: baseName(opened.path), format: source, path: saved } });
       note('info', { key: 'status.via', values: { source } });
       resetTable();
       if (tables.length > 0) await openTable(tables[0]);

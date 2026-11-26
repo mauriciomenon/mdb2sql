@@ -29,6 +29,9 @@ test('a saved conversion is found by the Access key and replaced when the Access
   assert.match(app, /return \(await invoke\('file_key', \{ path: entry\.dest \}\)\) === entry\.destKey \? entry\.dest : null;/);
   assert.match(app, /if \(format !== 'xlsx'\) await rememberSaved\(accessKey, path\);\s*if \(converted\) await invoke\('discard_converted'\);\s*converted = false;/);
   assert.match(app, /converted = opened\.converted;\s*accessKey = key;/);
+  // BRIEF secao 13 b: a linha do Log diz o formato real do salvo (o que o backend leu do arquivo: SQLite ou DuckDB)
+  assert.match(app, /source = opened\.source;/);
+  assert.match(app, /note\('info', \{ key: 'status\.reused', values: \{ name: baseName\(opened\.path\), format: source, path: saved \} \}\)/);
 });
 
 // item 28: Salvar e Salvar como: SQLite, DuckDB e Excel nesta ordem, ja marcado o tipo do aberto; o tipo gravado e o da
