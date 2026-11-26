@@ -665,8 +665,8 @@ test('X11 warning is short, with a clickable Help link and a Copy command button
   }
 });
 
-// REGRA_VISUAL "Painel de Log": recolhido por padrao e lembrado, seta no log e na barra, View > Log, Ctrl+L,
-// ~10% da altura (3 linhas a 25%), fonte de codigo menor (11 px, o minimo do app), linhas sem "..."
+// REGRA_VISUAL "Painel de Log": recolhido ao abrir, seta no log e na barra, View > Log, Ctrl+L, ~10% da altura (3
+// linhas a 25%), a letra unica do app (secao 18 e), linhas sem "..."
 test('log panel collapses and expands in one click and always starts closed', () => {
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
   // secao 18 d: o Log sempre comeca FECHADO (nada gravado: o dono viu o Log aberto ao abrir)
@@ -678,7 +678,7 @@ test('log panel collapses and expands in one click and always starts closed', ()
   assert.match(appFunction('shortcut'), /\n\s*l: 'log',/);
   assert.match(app, /onclick=\{\(\) => setLog\(true\)\}>\{headline\.text\}/);
   const css = app.match(/<style>([\s\S]*)<\/style>/)[1];
-  assert.match(css, /\.log textarea \{[^}]*height: 10vh;[^}]*min-height: calc\(3 \* 1\.4em \+ 10px\);[^}]*max-height: 25vh;[^}]*font-size: 11px;/);
+  assert.match(css, /\.log textarea \{[^}]*height: 10vh;[^}]*min-height: calc\(3 \* 1\.4em \+ 10px\);[^}]*max-height: 25vh;[^}]*font-size: inherit;/);
   for (const [key, text] of Object.entries(en)) if (key.startsWith('status.')) assert.doesNotMatch(text, /\.\.\./, key);
 });
 
@@ -697,4 +697,17 @@ test('every dialog has a visible default button, Enter and Esc', () => {
   }
   assert.match(code, /onkeydown=\{\(e\) => e\.key === 'Enter' && columnsDialog\.close\(\)\}/);
   assert.match(code, /oncancel=\{\(e\) => \{\s*e\.preventDefault\(\);\s*invoke\('cancel_export'\);/);
+});
+
+// secao 18 e (o dono viu tamanhos diferentes na Pesquisa Avancada): uma letra so, Segoe UI 14 px, em todas as abas,
+// caixas, grades e rotulos: o tamanho e a familia so no body; o resto herda (nada de 11/12/15 px nem de monospace)
+test('one font: Segoe UI 14 px everywhere', () => {
+  for (const file of ['./App.svelte', './Grid.svelte']) {
+    const css = readFileSync(new URL(file, import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
+    assert.doesNotMatch(css, /font-size: (?!inherit)/, file);
+    assert.doesNotMatch(css, /monospace|Consolas|font-family: (?!inherit)/, file);
+  }
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  assert.match(app, /:global\(body\) \{[^}]*font: 14px\/1\.4 'Segoe UI'/);
+  assert.equal(count(app, 'font: 14px'), 1);
 });

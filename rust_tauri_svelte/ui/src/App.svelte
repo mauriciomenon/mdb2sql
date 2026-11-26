@@ -2017,7 +2017,7 @@
 
   label {
     color: var(--muted);
-    font-size: 11px;
+    font-size: inherit;
     font-weight: 600;
   }
 
@@ -2092,7 +2092,7 @@
   }
 
   dialog.about h2 {
-    font-size: 24px;
+    font-size: inherit;
     letter-spacing: 0.01em;
   }
 
@@ -2102,7 +2102,7 @@
     border-radius: 999px;
     background: var(--accent);
     color: var(--accent-text);
-    font-size: 14px;
+    font-size: inherit;
     vertical-align: middle;
   }
 
@@ -2122,7 +2122,7 @@
 
   dt {
     color: var(--muted);
-    font-size: 11px;
+    font-size: inherit;
     font-weight: 600;
     line-height: 20px;
   }
@@ -2218,7 +2218,7 @@
   .column-list small {
     margin-left: auto;
     color: var(--muted);
-    font-size: 11px;
+    font-size: inherit;
     letter-spacing: 0.04em;
   }
 
@@ -2282,7 +2282,7 @@
     background: var(--surface);
     border-bottom: 1px solid var(--border);
     color: var(--muted);
-    font-size: 11px;
+    font-size: inherit;
     font-weight: 600;
   }
 
@@ -2345,8 +2345,8 @@
     max-height: 25vh;
     padding: 4px 8px;
     resize: vertical;
-    font-family: Consolas, 'Cascadia Mono', monospace;
-    font-size: 11px;
+    font-family: inherit;
+    font-size: inherit;
     line-height: 1.4;
     white-space: pre;
   }
@@ -2355,7 +2355,7 @@
   .log-bar h2 {
     margin-right: auto;
     color: var(--muted);
-    font-size: 11px;
+    font-size: inherit;
   }
 
   /* seta de abrir/recolher o log: discreta, sem caixa */
@@ -2420,7 +2420,7 @@
     padding: 2px 6px;
     border: 1px solid var(--border);
     border-radius: 4px;
-    font-family: Consolas, 'Cascadia Mono', monospace;
+    font-family: inherit;
     user-select: all;
   }
 
@@ -2460,7 +2460,7 @@
     border-color: transparent;
     background: none;
     color: var(--muted);
-    font-size: 16px;
+    font-size: inherit;
     font-weight: 400;
     line-height: 1.4;
   }
@@ -2510,7 +2510,7 @@
     align-items: center;
     gap: 6px 12px;
     color: var(--muted);
-    font-size: 12px;
+    font-size: inherit;
   }
 
   /* nenhum botao maior que os outros numa linha (dono 26/11, abas Dados, SQL e Pesquisa Avancada): todos com o
@@ -2527,8 +2527,8 @@
     gap: 6px;
   }
 
-  /* o select do Chromium ignora line-height (texto de 18 px contra 16,8 dos botoes): 2,4 px em cima e embaixo da a
-     altura dos botoes e campos da linha (24,8 px) */
+  /* o select do Chromium ignora line-height (com 3 px ficava 1,4 px mais alto): 2,4 px em cima e embaixo da a altura
+     dos botoes e campos da linha (27,6 px com a letra de 14 px; medido no exe) */
   .limit select {
     padding: 2.4px 6px;
   }
@@ -2545,7 +2545,7 @@
     gap: 12px;
     margin: 0;
     color: var(--muted);
-    font-size: 12px;
+    font-size: inherit;
   }
 
   /* paginas ◀ ▶ logo depois da contagem, do tamanho dos botoes das linhas das abas */
@@ -2585,8 +2585,8 @@
   .terms textarea,
   .not-found textarea {
     resize: vertical;
-    font-family: Consolas, 'Cascadia Mono', monospace;
-    font-size: 12px;
+    font-family: inherit;
+    font-size: inherit;
   }
 
   /* linha dos controles da Pesquisa Avancada (secao 18 c): a caixa do resumo ocupa o meio, com margem, e quebra a linha
@@ -2634,7 +2634,7 @@
   h2 {
     margin: 0;
     color: var(--text);
-    font-size: 15px;
+    font-size: inherit;
     font-weight: 600;
   }
 
@@ -2742,7 +2742,7 @@
     align-items: center;
     gap: 8px;
     color: var(--muted);
-    font-size: 12px;
+    font-size: inherit;
   }
 
   .chip {
@@ -2754,7 +2754,7 @@
     border-radius: 999px;
     background: var(--row-hover);
     color: var(--text);
-    font-family: Consolas, 'Cascadia Mono', monospace;
+    font-family: inherit;
   }
 
   .chip button {
@@ -2785,8 +2785,8 @@
   .sql textarea {
     min-height: 90px;
     resize: vertical;
-    font-family: Consolas, 'Cascadia Mono', monospace;
-    font-size: 12px;
+    font-family: inherit;
+    font-size: inherit;
   }
 
   .empty {
@@ -2802,7 +2802,7 @@
     background: var(--surface);
     border: 1px solid var(--border);
     color: var(--muted);
-    font-size: 11px;
+    font-size: inherit;
   }
 
   .statusbar.error {
