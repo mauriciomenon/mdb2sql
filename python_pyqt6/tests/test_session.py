@@ -439,7 +439,9 @@ PROPER = {"SQLite", "DuckDB", "Excel", "CSV", "UTF-8", "Access", "ODBC", "SQL", 
           "WAYLAND_DISPLAY", "GPL", "Ctrl+O", "Ctrl+F", "Ctrl+L", "Ctrl+Enter", "Enter", "F5", "Windows", "Brasil",
           "MDB2SQL_ACCESS_READER", "Log", "X", "Microsoft",
           # nome da aba Pesquisa Avancada (13 d), como o dono escreveu
-          "Search", "Pesquisa", "Avançada", "Búsqueda", "Avanzada"}
+          "Search", "Pesquisa", "Avançada", "Búsqueda", "Avanzada",
+          # nome da aba do relatorio (13 i), como o dono escreveu
+          "Result", "Filtro"}
 
 
 def test_texts_have_no_title_case() -> None:

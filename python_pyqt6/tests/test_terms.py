@@ -125,27 +125,27 @@ def test_whole_value_numbers_match_with_the_loose_rule(tmp_path: Path, kind: str
 def test_report_in_every_format(points: DBManager, tmp_path: Path) -> None:
     result = search_terms(points, ["U9A", "zzz", "turbina cgi"], False, points.list_tables(), _noop)
     sheets = report_sheets(result)
-    assert [name for name, _query, _params in sheets] == ["Summary", "other", "pts", "Not found"]
+    # 13 i): UMA aba inicial "Resultado Filtro" com tudo (os nao encontrados nela), depois uma aba por tabela
+    assert [name for name, _query, _params in sheets] == ["Filter Result", "other", "pts"]
     summary = points.fetch_rows(sheets[0][1], sheets[0][2])
     assert [tuple(r.values()) for r in summary] == [
         ("U9A", "Found", "pts", 3), ("zzz", "Not found", None, 0),
         ("turbina cgi", "Found", "other", 1), ("turbina cgi", "Found", "pts", 1)]
     assert list(summary[0]) == ["Term", "Status", "Table", "Rows"]
 
-    assert export_sheets(points, sheets, tmp_path / "r.xlsx", _noop) == 4
+    assert export_sheets(points, sheets, tmp_path / "r.xlsx", _noop) == 3
     book = openpyxl.load_workbook(tmp_path / "r.xlsx", read_only=True)
-    assert book.sheetnames == ["Summary", "other", "pts", "Not found"]
-    assert list(book["Not found"].iter_rows(values_only=True)) == [("Term",), ("zzz",)]
+    assert book.sheetnames == ["Filter Result", "other", "pts"]
     book.close()
     for suffix in (".sqlite", ".duckdb"):
         export_sheets(points, sheets, tmp_path / f"r{suffix}", _noop)
         with DBManager(str(tmp_path / f"r{suffix}")) as saved:
-            assert saved.list_tables() == ["Not found", "Summary", "other", "pts"]
+            assert saved.list_tables() == ["Filter Result", "other", "pts"]
             assert saved.get_row_count("pts") == 4
     folder = tmp_path / "csv"
     folder.mkdir()
-    assert export_csv_folder(points, sheets, folder, _noop) == 4
-    assert sorted(p.name for p in folder.iterdir()) == ["Not found.csv", "Summary.csv", "other.csv", "pts.csv"]
+    assert export_csv_folder(points, sheets, folder, _noop) == 3
+    assert sorted(p.name for p in folder.iterdir()) == ["Filter Result.csv", "other.csv", "pts.csv"]
     assert (folder / "pts.csv").read_text(encoding="utf-8-sig").splitlines()[1] == "U9A,50,238,U9A, GENERADOR CGS "
 
 

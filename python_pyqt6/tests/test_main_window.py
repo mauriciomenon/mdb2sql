@@ -1087,7 +1087,7 @@ def test_terms_tab_lists_hits_in_list_order_copies_and_reports(qtbot, tmp_path: 
     qtbot.waitUntil(lambda: win._job is None and (tmp_path / "rep.xlsx").exists(), timeout=30000)
     assert asked == ["pts_termos.xlsx"]
     book = openpyxl.load_workbook(tmp_path / "rep.xlsx", read_only=True)
-    assert book.sheetnames == ["Summary", "other", "pts", "Not found"]
+    assert book.sheetnames == ["Filter Result", "other", "pts"]  # 13 i
     book.close()
     folder = tmp_path / "csv"
     folder.mkdir()
@@ -1098,7 +1098,7 @@ def test_terms_tab_lists_hits_in_list_order_copies_and_reports(qtbot, tmp_path: 
     win.export_terms_actions[1].trigger()
     assert sorted(p.name for p in folder.iterdir()) == ["pts.csv"]  # nao: nada gravado
     win.export_terms_actions[1].trigger()
-    qtbot.waitUntil(lambda: win._job is None and len(list(folder.iterdir())) == 4, timeout=30000)
+    qtbot.waitUntil(lambda: win._job is None and len(list(folder.iterdir())) == 3, timeout=30000)
     assert (folder / "pts.csv").read_text(encoding="utf-8-sig").startswith("Term,RTUNO")
 
     # Configuracoes > Comparacao dos termos: Contem (gravado, ja vale na aba); "cgs" acha 2 linhas em pts

@@ -146,8 +146,8 @@ def table_hits(result: dict[str, Any], table: str) -> tuple[str, list[Any]]:
 
 
 def report_sheets(result: dict[str, Any]) -> list[Sheet]:
-    """O relatorio: Resumo (Termo, Situacao, Tabela, Linhas: uma linha por termo x tabela; nao encontrado com Tabela
-    vazia e 0), uma aba por tabela com acerto (Termo + colunas) e Nao encontrados (Termo)."""
+    """O relatorio: uma aba "Resultado Filtro" com tudo (Termo, Situacao, Tabela, Linhas: uma linha por termo x tabela;
+    o nao encontrado com Tabela vazia e 0) e uma aba por tabela com acerto (Termo + colunas), com o nome da tabela."""
     summary: list[list[Any]] = [[], [], [], []]
     for position, term in enumerate(result["terms"]):
         rows = [(table, counts[position]) for table, counts in result["hits"] if position in counts]
@@ -163,5 +163,4 @@ def report_sheets(result: dict[str, Any]) -> list[Sheet]:
         summary,
     )]
     sheets += [(table, *table_hits(result, table)) for table, _counts in result["hits"]]
-    sheets.append((tr("terms.sheet_not_found"), f"SELECT unnest(?::VARCHAR[]) AS {names[0]}", [not_found(result)]))
     return sheets
