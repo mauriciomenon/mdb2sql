@@ -142,5 +142,13 @@ def test_row_identity_is_the_rowid_or_the_whole_row(tmp_path: Path) -> None:
     duck = tmp_path / "k.duckdb"
     with duckdb.connect(str(duck)) as conn:
         conn.execute("CREATE TABLE t AS SELECT * FROM (VALUES (1, 'x'), (2, 'y')) v(a, b)")
+        # revisao P1: tabela grande (varios grupos de linhas, varredura paralela) e uma view sobre ela
+        conn.execute("CREATE TABLE big AS SELECT i AS id FROM range(1000000) r(i)")
+        conn.execute("CREATE VIEW big_v AS SELECT id, id % 7 AS m FROM big")
     with DBManager(str(duck)) as manager:
         assert [r[MARK_KEY] for r in manager.fetch_rows(*manager.select_table("t", keyed=True))] == [0, 1]
+        marked = [999_000, 500_123, 10, 250_000, 750_000, 130_000]
+        assert [r["id"] for r in manager.fetch_rows(*manager.marked_query("big", marked))] == sorted(marked)
+        keys = [r[MARK_KEY] for r in manager.fetch_rows(f"SELECT * FROM ({manager.keyed_table('big_v')}) t"
+                                                         " WHERE id IN (999000, 10, 600000)")]
+        assert [r["id"] for r in manager.fetch_rows(*manager.marked_query("big_v", keys))] == [10, 600_000, 999_000]

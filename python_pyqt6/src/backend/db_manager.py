@@ -378,8 +378,11 @@ class DBManager:
 
     def marked_query(self, table_name: str, keys: Sequence[Any], keyed: bool = False) -> tuple[str, list[Any]]:
         """SELECT das linhas marcadas (identidades `keys`), na ordem da tabela; sem keyed, so as colunas da tabela."""
-        columns = "*" if keyed else f"* EXCLUDE ({MARK_KEY})"
-        return (f"SELECT {columns} FROM ({self.keyed_table(table_name)}) t WHERE {MARK_KEY} IN (SELECT unnest(?))",
+        # !T: The IN filter over a parallel scan of a big table (several row groups) returns rows out of order: the
+        # !T: position in the table is numbered before the filter and the result is ordered by it
+        columns = "* EXCLUDE (mdb2sql_pos)" if keyed else f"* EXCLUDE (mdb2sql_pos, {MARK_KEY})"
+        numbered = f"SELECT row_number() OVER () AS mdb2sql_pos, * FROM ({self.keyed_table(table_name)}) t"
+        return (f"SELECT {columns} FROM ({numbered}) m WHERE {MARK_KEY} IN (SELECT unnest(?)) ORDER BY mdb2sql_pos",
                 [list(keys)])
 
     def fetch_rows(self, query: str, params: Sequence[Any] = (), limit: Optional[int] = None) -> List[Dict[str, Any]]:
