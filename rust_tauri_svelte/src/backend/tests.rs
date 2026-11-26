@@ -39,7 +39,7 @@ mod tests {
                 row.split("<c ")
                     .skip(1)
                     .map(|cell| {
-                        let tag = cell.split('>').next().unwrap();
+                        let tag = &format!(" {}", cell.split('>').next().unwrap()); // r= vem logo depois de "<c "
                         let kind = attr(tag, "t").unwrap_or_else(|| "n".into());
                         let value = match kind.as_str() {
                             "s" => shared[text_of(cell, "<v", "</v>").parse::<usize>().unwrap()].clone(),
@@ -51,7 +51,16 @@ mod tests {
                     .collect()
             })
             .collect();
-        let widths = xml.split("<col ").skip(1).map(|col| attr(col, "width").unwrap().parse().unwrap()).collect();
+        // <col min max width>: colunas vizinhas com a mesma largura vem num elemento so
+        let widths = xml
+            .split("<col ")
+            .skip(1)
+            .flat_map(|col| {
+                let col = format!(" {col}");
+                let n = |name: &str| attr(&col, name).unwrap().parse::<usize>().unwrap();
+                std::iter::repeat_n(attr(&col, "width").unwrap().parse::<f64>().unwrap(), n("max") - n("min") + 1)
+            })
+            .collect();
         (rows, widths)
     }
 
