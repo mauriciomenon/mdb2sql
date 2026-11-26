@@ -183,3 +183,17 @@ func TestConvertedFolderFallsBackAndIsCleaned(t *testing.T) {
 		t.Errorf("empty folder %s left: %v", second, err)
 	}
 }
+
+// standard 19a (owner 26/11): Access Numeric(p,0) (RTUNO, PNTNO...) goes to SQLite as INTEGER, which DuckDB reads back
+// as an integer; a declared DECIMAL came back as DOUBLE. Up to 18 digits; a fraction keeps its DECIMAL
+func TestSQLiteColumnKeepsWholeNumbersInteger(t *testing.T) {
+	for duck, want := range map[string]string{
+		"DECIMAL(10,0)": "INTEGER", "DECIMAL(18,0)": "INTEGER", "DECIMAL(28,0)": "DECIMAL(28,0)",
+		"DECIMAL(19,4)": "DECIMAL(19,4)", "DECIMAL(10,2)": "DECIMAL(10,2)", "INTEGER": "INTEGER", "DOUBLE": "DOUBLE",
+		"VARCHAR": "TEXT", "TIMESTAMP": "DATETIME",
+	} {
+		if got, _ := sqliteColumn("c", duck); got != want {
+			t.Errorf("sqliteColumn(%s) = %s, want %s", duck, got, want)
+		}
+	}
+}

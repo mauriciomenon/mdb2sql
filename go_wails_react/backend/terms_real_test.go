@@ -41,6 +41,30 @@ func TestRealDB_Terms(t *testing.T) {
 				RemoveConverted(conv)
 			}()
 			t.Logf("%s: opened with %s in %s", name, m.Source(), time.Since(start).Round(100*time.Millisecond))
+			if name == "DB3.accdb" { // standard 19a: the Access types (mdb-schema: 1681 whole, 5816 double, 2867 text)
+				types := map[string]int{}
+				rows, err := m.conn.Query("SELECT data_type, count(*) FROM duckdb_columns() WHERE database_name = 'src' GROUP BY 1")
+				if err != nil {
+					t.Fatal(err)
+				}
+				for rows.Next() {
+					var typ string
+					var n int
+					rows.Scan(&typ, &n)
+					types[typ] = n
+				}
+				rows.Close()
+				t.Logf("DB3.accdb converted, column types: %v", types)
+				if types["BIGINT"] != 1681 || types["DOUBLE"] != 5816 || types["VARCHAR"]+types["TIMESTAMP"] != 2867 {
+					t.Errorf("converted types %v, want BIGINT 1681, DOUBLE 5816, VARCHAR+TIMESTAMP 2867", types)
+				}
+				schema, _ := m.tableSchema(realBigTable)
+				for i, want := range []string{"RTUNO", "PNTNO"} {
+					if len(schema) <= i || schema[i].Name != want || schema[i].Type != "BIGINT" {
+						t.Errorf("%s column %d: %+v, want %s BIGINT", realBigTable, i, schema[min(i, len(schema)-1)], want)
+					}
+				}
+			}
 
 			// identity of a marked row (standard item 31): the engine's rowid, or all the values
 			rowID, err := m.hasRowID(realBigTable)

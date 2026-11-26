@@ -400,6 +400,12 @@ func sqliteColumn(name, duckType string) (decl, expr string) {
 		return "DATETIME", col
 	}
 	if strings.HasPrefix(t, "DECIMAL(") {
+		// a whole DECIMAL (Access Numeric(p,0): RTUNO, PNTNO...) is an integer: DuckDB reads a declared DECIMAL back as
+		// DOUBLE and an INTEGER as BIGINT (standard 19a); up to 18 digits it fits SQLite's 64-bit integer
+		var p, s int
+		if _, err := fmt.Sscanf(t, "DECIMAL(%d,%d)", &p, &s); err == nil && s == 0 && p <= 18 {
+			return "INTEGER", col
+		}
 		return t, col
 	}
 	// VARCHAR, UUID, TIME, HUGEINT, UBIGINT, lists...: text keeps every digit and character
