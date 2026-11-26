@@ -9,6 +9,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"mdb2sql/i18n"
@@ -49,37 +50,101 @@ func CleanTerms(lines []string) (terms []string, repeated int) {
 	return terms, repeated
 }
 
-// termsFrom is the FROM of a term search in one table: c = the rows of the table (c.rid = the rowid, when the table has
-// one) joined to t = the terms that find each row (t.ord = position in the pasted list, t.term).
-// Whole value: the cells of a row as trimmed lowercase text, one line per different text (so a row with the term in two
-// cells is found once), joined to the terms by equality. Contains: the cells of a row as one lowercase text, apart by a
-// control character no term has, and the terms that text contains.
-func termsFrom(table string, schema []ColumnSchema, rowID bool, terms []string, contains bool) string {
-	cells := make([]string, len(schema))
-	for i, c := range schema {
-		cells[i] = "CAST(" + quoteIdent(c.Name) + " AS VARCHAR)"
-		if !contains {
-			cells[i] = "lower(trim(" + cells[i] + "))"
-		}
-	}
-	key, on := "unnest(list_distinct(["+strings.Join(cells, ", ")+"]))", "c.mdb2sql_key = t.key"
-	if contains {
-		key, on = "lower(concat_ws(chr(31), "+strings.Join(cells, ", ")+"))", "contains(c.mdb2sql_key, t.key)"
-	}
-	rid := ""
+// numericTypes are the column types whose cells are numbers: "Whole value" compares their value (standard 13a)
+var numericTypes = map[string]bool{
+	"TINYINT": true, "SMALLINT": true, "INTEGER": true, "BIGINT": true, "HUGEINT": true, "UTINYINT": true,
+	"USMALLINT": true, "UINTEGER": true, "UBIGINT": true, "UHUGEINT": true, "FLOAT": true, "REAL": true,
+	"DOUBLE": true, "DECIMAL": true, "NUMERIC": true,
+}
+
+func numericType(t string) bool {
+	base, _, _ := strings.Cut(strings.ToUpper(t), "(")
+	return numericTypes[strings.TrimSpace(base)]
+}
+
+// numKey is the key of one reading of a number (v, a DOUBLE expression): a mark no text has, then the number as text,
+// so 216, 216.0 and "216,0" give one key; NULL when v is NULL
+// shortcut: through DOUBLE, integers above 2^53 may meet a neighbor; exact keys if such values ever matter
+func numKey(v string) string { return "chr(30) || CAST(" + v + " AS VARCHAR)" }
+
+// numberLike: the texts that may read as a number (digits with "." or "," between them)
+const numberLike = "'[+-]?[0-9]+([.,][0-9]+)*'"
+
+// readings is the SQL list of the keys of the readings of the number-like text x (a column), by the owner's loose rule
+// (standard 13a): with "." and "," the last of the two is the decimal mark (1.234,5 = 1,234.5 = 1234.5); one kind of
+// mark repeated is the thousands mark (1.234.567); one mark alone reads both ways, decimal and, with 3 digits after it,
+// thousands (1,234 = 1.234 or 1234; 216,0 = 216)
+func readings(x string) string {
+	both := "CASE WHEN strpos(reverse(" + x + "), '.') < strpos(reverse(" + x + "), ',') THEN replace(" + x + ", ',', '') " +
+		"ELSE replace(replace(" + x + ", '.', ''), ',', '.') END"
+	plain := "replace(replace(" + x + ", '.', ''), ',', '')"
+	return "CASE WHEN contains(" + x + ", '.') AND contains(" + x + ", ',') THEN [" + numKey("TRY_CAST("+both+" AS DOUBLE)") + "] " +
+		"WHEN length(" + x + ") - length(" + plain + ") > 1 THEN [" + numKey("TRY_CAST("+plain+" AS DOUBLE)") + "] " +
+		"ELSE [" + numKey("TRY_CAST(replace("+x+", ',', '.') AS DOUBLE)") + ", CASE WHEN regexp_full_match(" + x +
+		", '[+-]?[0-9]+[.,][0-9]{3}') THEN " + numKey("TRY_CAST("+plain+" AS DOUBLE)") + " END] END"
+}
+
+// numberTerm tells whether a term reads as a number (then the numeric keys are worth computing)
+var numberTerm = regexp.MustCompile(`^[+-]?[0-9]+([.,][0-9]+)*$`)
+
+// termsWith is the WITH of a term search in one table, ending in hits(rn, ord, term): each row (rn = its rowid, or its
+// position for a table without one, as base.mdb2sql_rn) and each term (ord = position in the pasted list) that finds
+// it, once. Whole value: the trimmed lowercase text of every cell equal to the term; and, when a term reads as a
+// number, the value of the numeric cells and the readings of the number-like texts equal to a reading of the term.
+// Contains: the cells of a row as one lowercase text, apart by a control character no term has, containing the term.
+func termsWith(table string, schema []ColumnSchema, rowID bool, terms []string, contains bool) string {
+	// base is read more than once: a position (no rowid) is numbered once, so every read sees the same numbers
+	base, rn := "MATERIALIZED (", "row_number() OVER ()"
 	if rowID {
-		rid = "rowid AS mdb2sql_rid, "
+		base, rn = "(", "rowid"
 	}
+	numeric := false
 	values := make([]string, len(terms))
 	for i, term := range terms {
 		values[i] = fmt.Sprintf("(%d, %s)", i, quoteLiteral(term))
+		numeric = numeric || numberTerm.MatchString(term)
 	}
-	return fmt.Sprintf("FROM (SELECT %s*, %s AS mdb2sql_key FROM %s) c JOIN (SELECT ord, term, lower(term) AS key FROM (VALUES %s) v(ord, term)) t ON %s",
-		rid, key, quoteIdent(table), strings.Join(values, ", "), on)
+	var texts, numbers []string
+	for _, c := range schema {
+		if !contains && numericType(c.Type) {
+			numbers = append(numbers, numKey("CAST("+quoteIdent(c.Name)+" AS DOUBLE)"))
+		} else {
+			texts = append(texts, "CAST("+quoteIdent(c.Name)+" AS VARCHAR)")
+		}
+	}
+	with := "WITH base AS " + base + "SELECT " + rn + " AS mdb2sql_rn, * FROM " + quoteIdent(table) + "), v(ord, term) AS (VALUES " +
+		strings.Join(values, ", ") + "), "
+	if contains {
+		return with + "keys AS (SELECT mdb2sql_rn AS rn, lower(concat_ws(chr(31), " + strings.Join(texts, ", ") + ")) AS key FROM base), " +
+			"hits AS (SELECT DISTINCT k.rn, t.ord, t.term FROM keys k JOIN v t ON contains(k.key, lower(t.term)))"
+	}
+	for i := range texts {
+		texts[i] = "trim(" + texts[i] + ")"
+	}
+	keys := []string{}
+	if len(texts) > 0 {
+		with += "cells AS (SELECT mdb2sql_rn AS rn, unnest(list_distinct([" + strings.Join(texts, ", ") + "])) AS x FROM base), "
+		keys = append(keys, "SELECT rn, lower(x) AS key FROM cells")
+	}
+	termKeys := "SELECT ord, term, lower(term) AS key FROM v"
+	if numeric {
+		if len(numbers) > 0 {
+			keys = append(keys, "SELECT mdb2sql_rn AS rn, unnest(["+strings.Join(numbers, ", ")+"]) AS key FROM base")
+		}
+		if len(texts) > 0 {
+			keys = append(keys, "SELECT rn, unnest("+readings("x")+") AS key FROM cells WHERE regexp_full_match(x, "+numberLike+")")
+		}
+		termKeys += " UNION ALL SELECT ord, term, unnest(" + readings("term") + ") FROM v WHERE regexp_full_match(term, " + numberLike + ")"
+	}
+	if len(keys) == 0 { // no column the terms can meet
+		keys = append(keys, "SELECT NULL::BIGINT AS rn, NULL::VARCHAR AS key WHERE false")
+	}
+	return with + "keys AS (" + strings.Join(keys, " UNION ALL ") + "), t AS (" + termKeys + "), " +
+		"hits AS (SELECT DISTINCT k.rn, t.ord, t.term FROM keys k JOIN t ON k.key = t.key)"
 }
 
 // termsSelect is the SELECT of the rows the terms find in table: the term first (column named by the catalog), then
-// every column of the table; in the order of the terms and, inside a term, of the table
+// every column of the table; in the order of the terms and, inside a term, of the table; one line per row and term
 func (m *DBManager) termsSelect(table string, terms []string, contains bool) (string, error) {
 	rowID, err := m.hasRowID(table) // also validates the table name
 	if err != nil {
@@ -93,7 +158,7 @@ func (m *DBManager) termsSelect(table string, terms []string, contains bool) (st
 		return "", err
 	}
 	label := i18n.T("terms.col")
-	cols := []string{"t.term AS " + quoteIdent(label)}
+	cols := []string{"h.term AS " + quoteIdent(label)}
 	for _, c := range schema {
 		col := "c." + quoteIdent(c.Name)
 		if strings.EqualFold(c.Name, label) { // a column with the name of the term column keeps its values under another
@@ -101,11 +166,8 @@ func (m *DBManager) termsSelect(table string, terms []string, contains bool) (st
 		}
 		cols = append(cols, col)
 	}
-	order := " ORDER BY t.ord"
-	if rowID {
-		order += ", c.mdb2sql_rid"
-	}
-	return "SELECT " + strings.Join(cols, ", ") + " " + termsFrom(table, schema, rowID, terms, contains) + order, nil
+	return termsWith(table, schema, rowID, terms, contains) + " SELECT " + strings.Join(cols, ", ") +
+		" FROM hits h JOIN base c ON c.mdb2sql_rn = h.rn ORDER BY h.ord, h.rn", nil
 }
 
 // SearchTerms looks for the terms of lines (see CleanTerms) in every column of table, or with table "" of every
@@ -136,7 +198,11 @@ func (m *DBManager) SearchTerms(ctx context.Context, lines []string, contains bo
 		if err != nil {
 			return TermsResult{}, err
 		}
-		rows, err := m.conn.QueryContext(ctx, "SELECT t.ord, count(*) "+termsFrom(tb, schema, false, terms, contains)+" GROUP BY t.ord")
+		rowID, err := m.hasRowID(tb)
+		if err != nil {
+			return TermsResult{}, err
+		}
+		rows, err := m.conn.QueryContext(ctx, termsWith(tb, schema, rowID, terms, contains)+" SELECT ord, count(*) FROM hits GROUP BY ord")
 		if err != nil {
 			return TermsResult{}, fmt.Errorf("%s: %w", tb, err)
 		}

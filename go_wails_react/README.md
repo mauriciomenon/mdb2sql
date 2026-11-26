@@ -159,14 +159,23 @@ without a question (the Log says it was discarded); exiting with it not saved as
 during an export asks Back or Exit (Exit cancels the export). The SQL tab only reads: a command that would write
 is refused before it runs.
 
-Marked rows (Data tab): a box at the start of each row (also Space and the menus); the marked rows of a table stay
-on top of the grid, in table order, whatever the search or filter; "Only marked" under the grid shows only them.
-A row is told apart by the engine's rowid (DuckDB and SQLite tables, Access converted to SQLite); a view has
-none: there all the values of the row count, so equal rows are marked together.
+Pages (Data tab): the line under the grid says "RANGER_SOSTAT: rows 1 to 100 of 36,804" ("... found" with a
+search or filter) and ◀ ▶ go to the previous and next page; a page has the rows of the Rows list; another table,
+search, filter or Rows goes back to the first page.
 
-Advanced Search tab: paste a list (one term per line, for example an Excel column); each term is searched in every column
-of this table or of all tables, the whole cell (Whole value) or inside it (Contains), ignoring case and the spaces
-at the ends. The tables found, their rows with the term first, and the terms not found (copiable).
+Marked rows (Data tab): a box at the start of each row (also Space and the menus); the marked rows of a table stay
+on top of the grid, in table order, on every page, whatever the search or filter; "Only marked" under the grid shows
+only them. A row is told apart by the engine's rowid (DuckDB and SQLite tables, Access converted to SQLite); a view
+has none: there all the values of the row count, so equal rows are marked together.
+
+Advanced Search tab: paste a list (one term per line, for example an Excel column); each term is searched in every
+column of this table or of all tables, the whole cell (Whole value) or inside it (Contains), ignoring case and the
+spaces at the ends. In Whole value a term and a cell that read as numbers meet when any reading of one equals any
+reading of the other: with "." and "," the last of the two is the decimal mark, one mark repeated is the thousands
+mark, one mark alone reads both ways (thousands only with 3 digits after it), so "216" finds 216.0, "216,0" and 216,
+"0,1" finds 0.1 and "1234.5" finds "1.234,5". The tables found, their rows with the term first, and the terms not
+found (copiable). Its report: a first sheet "Filter Result" with every term, where it was found and how many rows,
+then one sheet per table.
 
 Opening Access: the progress window counts the tables; Cancel (or Esc) stops it. The 287-table NMR5 test file
 (115 MB) takes about 10 s with the ODBC driver and about 33 s with mdbtools on Windows (Intel Core Ultra 7 258V, 8
