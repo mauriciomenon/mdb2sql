@@ -73,7 +73,7 @@ test('exporting a searched table asks: whole table or only the rows found', () =
   const code = appFunction('startExport');
   // a pesquisa que ainda esperava os 300 ms vale antes da pergunta (o numero mostrado e o exportado)
   assert.match(code, /if \(kind === 'table' && !everywhere && \(search\.trim\(\) \|\| filters\.length\)\) \{\s*(?:\/\/[^\n]*\n\s*)?clearTimeout\(searchTimer\);\s*await openTable\(selectedTable\);\s*const choice = await ask\(\{/);
-  assert.match(code, /\{ id: 'all', label: t\('export\.wholeTable'\), primary: true \},\s*\{ id: 'found', label: t\('export\.foundRows', \{ count: fmt\(matchCount\) \}\) \},\s*\{ id: 'cancel', label: t\('common\.cancel'\), right: true \},/);
+  assert.match(code, /\{ id: 'all', key: 'export\.wholeTable', primary: true \},\s*\{ id: 'found', key: 'export\.foundRows', values: \{ count: fmt\(matchCount\) \} \},\s*\{ id: 'cancel', key: 'common\.cancel', right: true \},/);
   assert.match(code, /if \(choice !== 'all' && choice !== 'found'\) return;[^\n]*\n\s*if \(choice === 'found'\) Object\.assign\(request, \{ filters, search: search\.trim\(\) \}\);/);
   assert.match(appFunction('runExport'), /const done = await invoke\('export', \{ request \}\);/);
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
@@ -143,7 +143,15 @@ test('About: title About mdb2sql and the rows of this stack', () => {
 test('the converted database question is asked only on exit', () => {
   const quit = appFunction('quit');
   assert.match(quit, /while \(converted\) \{\s*const choice = await ask\(\{\s*title: t\('convert\.title'\),\s*text: t\('exit\.text', \{ name: baseName\(openedPath\) \}\),\s*x: true,/);
-  assert.match(quit, /\{ id: 'save', label: t\('file\.save'\), primary: true \},\s*\{ id: 'back', label: t\('common\.back'\), right: true \},\s*\{ id: 'exit', label: t\('file\.exit'\), right: true \},/);
+  assert.match(quit, /\{ id: 'save', key: 'file\.save', primary: true \},\s*\{ id: 'back', key: 'common\.back', right: true \},\s*\{ id: 'exit', key: 'file\.exit', right: true \},/);
+  // dono 26/11: Salvar, Voltar e Sair (e os botoes de toda caixa com mais de um) com a mesma largura e altura, a do maior
+  // texto nos 3 idiomas; medida numa copia escondida de cada botao, com o texto de cada idioma
+  assert.match(appFunction('ask'), /await tick\(\);\s*sameSize\(askDialog\.querySelector\('\.actions'\), question\.buttons\.map\(\(\{ key, values \}\) => \[key, values\]\)\);/);
+  const same = appFunction('sameSize');
+  assert.match(same, /for \(const \[code\] of LANGS\) \{\s*probe\.textContent = translator\(code\)\(\.\.\.labels\[i\]\);\s*width = Math\.max\(width, probe\.getBoundingClientRect\(\)\.width\);/);
+  assert.match(same, /for \(const button of buttons\) button\.style\.width = `\$\{Math\.ceil\(width\)\}px`;/);
+  assert.match(appFunction('openColumns'), /sameSize\(columnsDialog\.querySelector\('\.actions'\), \[\['columns\.showAll'\], \['columns\.hideAll'\], \['common\.close'\]\]\);/);
+  assert.match(markup('./App.svelte'), /onclick=\{\(\) => reply\(button\.id\)\}>\{t\(button\.key, button\.values\)\}/);
   // Salvar vale mesmo com pesquisa ou consulta rodando (save ignora busy so quando vem daqui)
   assert.match(quit, /if \(choice === 'exit'\) break;[^\n]*\n\s*if \(choice !== 'save'\) return;[^\n]*\n\s*await save\(false, true\);\s*\}\s*await invoke\('exit_app'\);/);
   assert.match(readFileSync(new URL('./App.svelte', import.meta.url), 'utf8'), /if \(\(busy && !exiting\) \|\| !openedPath\) return false;/);

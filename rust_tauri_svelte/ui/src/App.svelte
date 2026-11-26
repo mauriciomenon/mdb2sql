@@ -334,7 +334,7 @@
       'tab.sql': { run: focusSql },
       'tab.terms': { run: focusTerms },
       limit: {},
-      columns: { run: () => columnsDialog.showModal(), off: !selectedTable },
+      columns: { run: openColumns, off: !selectedTable },
       scope: {},
       onlyMarked: { run: () => (onlyMarked = !showOnly), on: showOnly, off: !markedRows.length },
       goTables: { run: focusTables, off: !tables.length },
@@ -383,14 +383,41 @@
     openMenu = openMenu === name ? null : name;
   }
 
+  // NIVEL BASICO: Caixa com mais de um botao: todos com a mesma largura e altura, a do maior texto nos 3 idiomas (a caixa
+  // fica igual em qualquer idioma). labels = [chave, valores] de cada botao, na ordem da tela
+  // NIVEL TECNICO: each text is measured in a hidden copy of its own button (same class and font), never in the buttons
+  // Svelte renders; the height is the same because every button is one line (nowrap) with the same padding
+  function sameSize(actions, labels) {
+    const buttons = [...actions.querySelectorAll(':scope > button')];
+    let width = 0;
+    buttons.forEach((button, i) => {
+      const probe = button.cloneNode(false);
+      probe.style.cssText = 'position: absolute; visibility: hidden; width: auto';
+      actions.append(probe);
+      for (const [code] of LANGS) {
+        probe.textContent = translator(code)(...labels[i]);
+        width = Math.max(width, probe.getBoundingClientRect().width);
+      }
+      probe.remove();
+    });
+    for (const button of buttons) button.style.width = `${Math.ceil(width)}px`;
+  }
+
   // NIVEL BASICO: Pergunta com botoes (sair com banco nao salvo, exportacao em andamento, tabela inteira ou so as linhas
   // encontradas). Devolve o id do botao escolhido; Esc e o X da caixa devolvem null
   async function ask(asked) {
     const answer = new Promise((resolve) => (question = { ...asked, resolve }));
     askDialog.showModal();
     await tick();
+    sameSize(askDialog.querySelector('.actions'), question.buttons.map(({ key, values }) => [key, values]));
     askDialog.querySelector('button.default')?.focus();
     return answer;
+  }
+
+  // dialogo Colunas...: os 3 botoes com a mesma largura (sameSize)
+  function openColumns() {
+    columnsDialog.showModal();
+    sameSize(columnsDialog.querySelector('.actions'), [['columns.showAll'], ['columns.hideAll'], ['common.close']]);
   }
 
   function reply(id) {
@@ -411,8 +438,8 @@
         title: t('exportRun.title'),
         text: t('exportRun.text', { name: baseName(progress.path) }),
         buttons: [
-          { id: 'back', label: t('common.back'), right: true, primary: true },
-          { id: 'exit', label: t('file.exit'), right: true },
+          { id: 'back', key: 'common.back', right: true, primary: true },
+          { id: 'exit', key: 'file.exit', right: true },
         ],
       });
       if (choice !== 'exit') return;
@@ -428,9 +455,9 @@
           text: t('exit.text', { name: baseName(openedPath) }),
           x: true,
           buttons: [
-            { id: 'save', label: t('file.save'), primary: true },
-            { id: 'back', label: t('common.back'), right: true },
-            { id: 'exit', label: t('file.exit'), right: true },
+            { id: 'save', key: 'file.save', primary: true },
+            { id: 'back', key: 'common.back', right: true },
+            { id: 'exit', key: 'file.exit', right: true },
           ],
         });
         if (choice === 'exit') break; // o backend apaga o temporario ao sair
@@ -873,7 +900,7 @@
   // acoes do menu de clique direito da grade da aba Data (cabecalho e celula); o menu nao oculta a ultima visivel
   const gridActions = {
     hide: (name) => (hidden = toggleShown(hidden, name, columns.length)),
-    columns: () => columnsDialog.showModal(),
+    columns: openColumns,
     showAll: () => (hidden = new Set()),
     filter: (column, value) => setFilters(withFilter(filters, column, value)),
     clearFilters: () => setFilters([]),
@@ -1026,9 +1053,9 @@
       const choice = await ask({
         title,
         buttons: [
-          { id: 'all', label: t('export.wholeTable'), primary: true },
-          { id: 'found', label: t('export.foundRows', { count: fmt(matchCount) }) },
-          { id: 'cancel', label: t('common.cancel'), right: true },
+          { id: 'all', key: 'export.wholeTable', primary: true },
+          { id: 'found', key: 'export.foundRows', values: { count: fmt(matchCount) } },
+          { id: 'cancel', key: 'common.cancel', right: true },
         ],
       });
       if (choice !== 'all' && choice !== 'found') return; // Cancelar ou Esc
@@ -1354,7 +1381,7 @@
             type="button"
             class={button.primary ? 'default' : 'secondary'}
             class:close={button.right && !question.buttons[i - 1]?.right}
-            onclick={() => reply(button.id)}>{button.label}</button
+            onclick={() => reply(button.id)}>{t(button.key, button.values)}</button
           >
         {/each}
       </div>
@@ -1610,7 +1637,7 @@
           <!-- escopo da pesquisa: controle segmentado de duas opcoes (o padrao vem de Settings) -->
           {@render choice(SCOPES, scope, setScope, t('scope.label'))}
           <span class="limit">{@render rowLimit()}</span>
-          <button type="button" class="secondary columns-button" title={t('columns.tip')} onclick={() => columnsDialog.showModal()}>{t('columns.button')}</button>
+          <button type="button" class="secondary columns-button" title={t('columns.tip')} onclick={openColumns}>{t('columns.button')}</button>
         </div>
         {#if everywhere && !showOnly}
           <!-- Todas as tabelas: as tabelas com linhas achadas; escolher uma abre ela com a mesma pesquisa -->
