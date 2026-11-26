@@ -1349,7 +1349,7 @@
   <dialog bind:this={aboutDialog} class="about" aria-labelledby="about-title">
     {#if aboutInfo}
       <!-- secao 18 b: igual nas 4, "MDB2SQL (Rust)" e as linhas de aboutLines, nada mais; os links por ultimo -->
-      <h2 id="about-title">MDB2SQL (Rust)</h2>
+      <h2 id="about-title">{t('about.title')}</h2>
       {#each aboutLines as line}
         <p>{line}</p>
       {/each}

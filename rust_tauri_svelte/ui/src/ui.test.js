@@ -127,8 +127,9 @@ test('table list shows the row count of each table', () => {
 test('About: the same lines in the 4 versions', () => {
   const ui = markup('./App.svelte');
   const about = ui.match(/<dialog bind:this=\{aboutDialog\}[\s\S]*?<\/dialog>/)[0];
-  assert.match(about, /<h2 id="about-title">MDB2SQL \(Rust\)<\/h2>\s*\{#each aboutLines as line\}\s*<p>\{line\}<\/p>\s*\{\/each\}\s*<p class="links">/);
-  assert.match(about, /\{#if i\}\/\{\/if\}\s*<a href=\{url\}[^>]*>\{label\}<\/a>/);
+  assert.match(about, /<h2 id="about-title">\{t\('about\.title'\)\}<\/h2>\s*\{#each aboutLines as line\}\s*<p>\{line\}<\/p>\s*\{\/each\}\s*<p class="links">/);
+  assert.deepEqual([CATALOG_PT, en, CATALOG_ES].map((c) => c['about.title']), ['MDB2SQL (Rust)', 'MDB2SQL (Rust)', 'MDB2SQL (Rust)']);
+  assert.match(about, /\{#if i\}\/\{\/if\}\s*<a href=\{url\}[\s\S]*?>\{label\}<\/a>/);
   assert.doesNotMatch(about, /<dl|tagline|class="version"/);
   const code = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
   assert.match(code, /\n {6}about: \{ run: showAbout \},/); // Ajuda > Sobre o mdb2sql (menus.js)

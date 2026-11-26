@@ -71,6 +71,7 @@ export default {
   'header.placeholder': 'Database file (.accdb, .mdb, .sqlite, .sqlite3, .db, .duckdb)',
   'header.export': 'Export...',
 
+  'about.title': 'MDB2SQL (Rust)',
   'about.version': 'Version {version} - {build}',
   'about.tools': 'Tools: {tools}',
   'about.odbc': 'ODBC driver support, if installed.',
