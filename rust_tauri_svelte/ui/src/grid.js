@@ -19,6 +19,85 @@ export function rowToTsv(columnNames, row, withHeader = false) {
   return withHeader ? `${columnNames.map(tsvField).join('\t')}\r\n${line}` : line;
 }
 
+// Varias linhas com o cabecalho, sem nenhuma linha a mais: colar no Excel da exatamente o cabecalho e as linhas
+export function rowsToTsv(columnNames, rows) {
+  return [columnNames.map(tsvField).join('\t'), ...rows.map((row) => rowToTsv(columnNames, row))].join('\r\n');
+}
+
+// NIVEL BASICO: Linhas marcadas (aba Dados). Cada linha leva a identidade que o backend deu (rowid do DuckDB ou, sem
+// ele, o resumo de todos os valores) numa chave que nao e coluna; as marcas de uma tabela sao um Set de identidades
+export const ROW_ID = Symbol('row id');
+
+// linhas do backend com a identidade de cada uma (`ids` na mesma ordem)
+export function withIds(rows, ids) {
+  rows.forEach((row, i) => (row[ROW_ID] = ids[i]));
+  return rows;
+}
+
+// o que a grade mostra: as marcadas no topo (ordem da tabela) e, abaixo, as linhas da pesquisa sem repetir as marcadas;
+// only = so as marcadas
+export function gridRows(marked, page, only = false) {
+  if (only) return marked;
+  const ids = new Set(marked.map((row) => row[ROW_ID]));
+  return [...marked, ...page.filter((row) => !ids.has(row[ROW_ID]))];
+}
+
+// marca ou desmarca a linha: devolve a lista nova de marcadas (a antiga nao muda). rowid e numero e cresce na ordem
+// da tabela, entao a lista fica nessa ordem; identidade de texto (tabela sem rowid) entra no fim
+export function toggleMarked(marked, row) {
+  const id = row[ROW_ID];
+  if (marked.some((other) => other[ROW_ID] === id)) return marked.filter((other) => other[ROW_ID] !== id);
+  const next = [...marked, row];
+  return typeof id === 'number' ? next.sort((a, b) => a[ROW_ID] - b[ROW_ID]) : next;
+}
+
+// NIVEL BASICO: Pesquisa de termos. Termos = cada linha nao vazia do texto colado, sem espacos nas pontas; repetido
+// (sem diferenciar maiusculas, como a comparacao) e pesquisado uma vez e contado em `repeated`. A primeira linha
+// colada do Excel (o titulo da coluna) e um termo como os outros
+export function parseTerms(text) {
+  const seen = new Set();
+  const terms = [];
+  let repeated = 0;
+  for (const line of text.split(/\r?\n|\r/)) {
+    const term = line.trim();
+    if (!term) continue;
+    const key = term.toLowerCase();
+    if (seen.has(key)) repeated++;
+    else terms.push(term);
+    seen.add(key);
+  }
+  return { terms, repeated };
+}
+
+// resultado da pesquisa (hits = [{ ord, table, count }] do backend, na ordem das tabelas): tabelas com acerto e as
+// linhas de cada uma, termos nao encontrados na ordem colada, quantos termos foram achados e o total de linhas
+export function termsOutcome(terms, hits) {
+  const tables = [];
+  const found = new Set();
+  for (const { ord, table, count } of hits) {
+    found.add(ord);
+    const last = tables.at(-1);
+    if (last?.table === table) last.count += count;
+    else tables.push({ table, count });
+  }
+  return {
+    tables,
+    notFound: terms.filter((_, ord) => !found.has(ord)),
+    found: found.size,
+    rows: tables.reduce((sum, t) => sum + t.count, 0),
+  };
+}
+
+// NIVEL BASICO: Tabelas favoritas (so na memoria, pelo nome): a lista mostra as favoritas primeiro, em ordem alfabetica,
+// e depois as outras na ordem de sempre. `names` ja vem filtrada; favorita que nao esta nela nao aparece
+export function favoritesFirst(names, favorites) {
+  const favorite = names.filter((name) => favorites.has(name)).sort((a, b) => a.localeCompare(b));
+  return [...favorite, ...names.filter((name) => !favorites.has(name))];
+}
+
+// favoritar ou desfavoritar: Set novo com o nome trocado de lado (a mesma troca das colunas ocultas)
+export const toggleFavorite = (favorites, name) => toggleHidden(favorites, name);
+
 // NIVEL BASICO: Colunas ocultas: `hidden` e um Set com os nomes; a grade recebe so as visiveis
 // (pesquisa e exportacao continuam com todas)
 export function visibleColumns(columns, hidden) {

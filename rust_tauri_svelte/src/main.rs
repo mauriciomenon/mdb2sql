@@ -11,27 +11,53 @@
 mod backend;
 
 use backend::converted::{self, Converted};
-use backend::db_manager::{ColumnSchema, DBManager, Filter, Found, SqlResult, Step};
+use backend::db_manager::{self, ColumnSchema, DBManager, Filter, Found, SqlResult, Step, TablePage};
 use backend::display::DisplayWarning;
 use backend::export::{self, Source, Summary};
-use serde::Serialize;
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use backend::terms::{self, TermHit};
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
+
+// NIVEL BASICO: Resultado da ultima pesquisa de termos: a conexao com as tabelas temporarias dos acertos e as tabelas
+// com acerto, na ordem da lista
+struct TermsRun {
+    conn: duckdb::Connection,
+    tables: Vec<String>,
+}
 
 // NIVEL BASICO: Estado global: banco aberto, pedido de cancelar a exportacao e o SQLite convertido do Access
 // NIVEL TECNICO: `converted` has its own lock so the close button never waits for a long import holding
-// db_manager; `exiting` lets the final close through after the user answered the save/delete question
+// db_manager; `exiting` lets the final close through after the user answered the question asked on exit
 struct AppState {
     db_manager: Mutex<DBManager>,
     cancel_export: AtomicBool,
+    exporting: AtomicBool, // exportacao em andamento: fechar a janela pergunta antes
     converted: Mutex<Option<Converted>>,
     exiting: AtomicBool,
     // numero da pesquisa em todas as tabelas mais nova: a anterior ve o numero mudar e para entre uma tabela e outra
     search_run: AtomicU64,
+    // numero da pesquisa de termos que vale: outra pesquisa, Cancelar, fechar ou abrir um banco mudam o numero; a que
+    // estava rodando para e o resultado dela nao e guardado
+    terms_run: AtomicU64,
+    terms: Mutex<Option<TermsRun>>,
+    // para a consulta da pesquisa de termos em andamento (Cancelar no meio de uma tabela grande): (numero, alca)
+    terms_interrupt: Mutex<Option<(u64, Arc<duckdb::InterruptHandle>)>>,
     // Linux sem X11: aviso de que a janela esta no Wayland (reserva); None no resto
     display_warning: Option<DisplayWarning>,
+}
+
+impl AppState {
+    // outro banco (ou nenhum): a pesquisa de termos em andamento para e o resultado guardado some
+    fn drop_terms(&self) {
+        self.terms_run.fetch_add(1, Ordering::SeqCst);
+        if let Some((_, handle)) = self.terms_interrupt.lock().unwrap().take() {
+            handle.interrupt();
+        }
+        self.terms.lock().unwrap().take();
+    }
 }
 
 // NIVEL BASICO: Banco aberto: caminho absoluto, tabelas e as linhas de cada uma (mesma ordem), por qual caminho foi
@@ -39,13 +65,15 @@ struct AppState {
 #[derive(Serialize)]
 struct Opened {
     path: String,
-    // arquivo lido de fato: o mesmo `path`, ou o SQLite salvo quando o Access foi reaberto por ele (a exportacao nao sugere
+    // arquivo lido de fato: o mesmo `path`, ou o arquivo salvo quando o Access foi reaberto por ele (Salvar nao sugere
     // gravar por cima dele)
     file: String,
     tables: Vec<String>,
     rows: Vec<Option<i64>>, // None: a tabela nao deu para contar (a celula fica vazia)
     source: String,
     converted: bool,
+    // pasta do temporario quando ele ficou ao lado do original: a interface guarda para a limpeza da proxima abertura
+    beside: Option<String>,
 }
 
 // evento de progresso da exportacao
@@ -65,36 +93,33 @@ struct OpenProgress<'a> {
     item: &'a str,
 }
 
-// NIVEL BASICO: Caminho passado na linha de comando (ou "Abrir com" do Windows), senao MDB2SQL_DB_PATH
+// NIVEL BASICO: Caminho passado na linha de comando (ou "Abrir com" do Windows), senao MDB2SQL_DB_PATH; relativo vale
+// contra a pasta de onde o programa foi chamado (o campo do caminho so abre caminho completo)
 #[tauri::command]
 fn startup_path() -> String {
-    std::env::args()
-        .nth(1)
-        .or_else(|| std::env::var("MDB2SQL_DB_PATH").ok())
-        .unwrap_or_default()
+    let path = std::env::args().nth(1).or_else(|| std::env::var("MDB2SQL_DB_PATH").ok()).unwrap_or_default();
+    if path.is_empty() {
+        return path;
+    }
+    std::path::absolute(&path).map(|p| p.to_string_lossy().into_owned()).unwrap_or(path)
 }
 
-// NIVEL BASICO: LoadDatabase abre o banco (.accdb/.mdb, .sqlite/.sqlite3/.db, .duckdb)
-// Caminho vazio: MDB2SQL_DB_PATH ou data/sample.duckdb. A interface resolve antes o SQLite convertido do
-// banco anterior (salvar/apagar); se sobrou algum, ele e apagado quando o novo banco abre.
-// saved: o SQLite salvo deste mesmo Access, sem mudanca nos dois (a interface conferiu as chaves de file_key): e ele que
-// abre, sem converter de novo nem perguntar ao fechar; titulo e caminho na tela continuam os do Access
+// NIVEL BASICO: LoadDatabase abre o banco (.accdb/.mdb, .sqlite/.sqlite3/.db, .duckdb). O SQLite convertido e nao
+// salvo do banco anterior e apagado quando o novo banco abre (a interface poe a linha no Log).
+// saved: o arquivo salvo deste mesmo Access (SQLite ou DuckDB), sem mudanca nos dois (a interface conferiu as chaves de
+// file_key): e ele que abre, sem converter de novo nem perguntar ao sair; titulo e caminho na tela continuam os do Access
 // NIVEL TECNICO: async so a long Access import runs off the main thread; progress goes as events
 #[tauri::command(async)]
 fn load_database(app: AppHandle, db_path: String, saved: Option<String>, state: State<'_, AppState>) -> Result<Opened, String> {
     let manager = state.db_manager.lock().unwrap();
-    let path = if db_path.is_empty() {
-        match std::env::var("MDB2SQL_DB_PATH") {
-            Ok(env_path) if !env_path.is_empty() => env_path,
-            _ => PathBuf::from("data").join("sample.duckdb").to_string_lossy().to_string(),
-        }
-    } else {
-        db_path
-    };
+    let path = db_path; // vazio ou relativo: "Arquivo nao encontrado" (a interface manda o vazio para a caixa de escolher)
     let connected = manager.connect(saved.as_deref().unwrap_or(&path), &mut |step, done, total, item| {
         let _ = app.emit("open-progress", OpenProgress { step, done, total, item });
     })?;
+    // abriu: a pesquisa de termos do banco anterior para e some (se falhar, o anterior e o resultado dele continuam)
+    state.drop_terms();
     let has_converted = connected.converted.is_some();
+    let beside = connected.converted.as_ref().and_then(Converted::beside).map(|dir| dir.to_string_lossy().into_owned());
     *state.converted.lock().unwrap() = connected.converted;
     let opened = match saved {
         Some(_) => manager.validate_database_path(&path).unwrap_or(path),
@@ -110,38 +135,41 @@ fn load_database(app: AppHandle, db_path: String, saved: Option<String>, state: 
         tables,
         source: connected.source,
         converted: has_converted,
+        beside,
     })
 }
 
-// NIVEL BASICO: Fecha o banco (File > Close); o SQLite convertido que ainda existir e apagado
+// NIVEL BASICO: Fecha o banco (Arquivo > Fechar); o SQLite convertido que ainda existir e apagado
 #[tauri::command(async)]
 fn close_database(app: AppHandle, state: State<'_, AppState>) {
+    state.drop_terms();
     state.converted.lock().unwrap().take();
     state.db_manager.lock().unwrap().close();
     show_title(&app, None);
 }
 
-// NIVEL BASICO: Salva o SQLite convertido em `path`. overwrite = false recusa arquivo existente ([[err.exists]])
-// (a escolha lembrada na sessao grava sem dialogo; com arquivo no caminho a interface abre o dialogo)
+// NIVEL BASICO: Na abertura do app: apaga os SQLite convertidos que uma execucao anterior deixou (o app caiu), nas
+// pastas temporarias e nas pastas de originais que a interface guardou; devolve quantos (linha do Log)
 #[tauri::command(async)]
-fn save_converted(path: String, overwrite: bool, state: State<'_, AppState>) -> Result<(), String> {
-    let target = Path::new(&path);
-    let source = state.db_manager.lock().unwrap().current_path();
-    if source.is_some_and(|s| same_file(&s, target)) {
-        return Err("[[err.sameFile]]".to_string());
-    }
-    if !overwrite && target.exists() {
-        return Err(format!("[[err.exists]] {path}"));
-    }
-    let mut slot = state.converted.lock().unwrap();
-    let lite = slot.take().ok_or("[[err.noConverted]]")?;
-    lite.save(target).map_err(|(lite, e)| {
-        *slot = Some(lite); // nao salvou: o temporario continua valendo
-        e
-    })
+fn clean_stale(beside: Vec<String>) -> usize {
+    converted::clean_all(&beside)
 }
 
-// NIVEL BASICO: Apaga o SQLite convertido
+// NIVEL BASICO: Caixa de salvar de Arquivo > Salvar e Salvar como: types = [nome do tipo, extensao] na ordem do app,
+// selected = o tipo ja marcado. Devolve [caminho, tipo marcado] ou null (cancelada)
+#[tauri::command(async)]
+fn save_dialog(
+    window: tauri::WebviewWindow,
+    title: String,
+    path: String,
+    types: Vec<(String, String)>,
+    selected: usize,
+) -> Option<(String, usize)> {
+    backend::save_dialog::pick(&window, &title, Path::new(&path), &types, selected)
+        .map(|(path, index)| (path.to_string_lossy().into_owned(), index))
+}
+
+// NIVEL BASICO: Apaga o SQLite convertido (banco salvo, ou fechado sem salvar)
 #[tauri::command(async)]
 fn discard_converted(state: State<'_, AppState>) {
     state.converted.lock().unwrap().take();
@@ -154,10 +182,12 @@ fn file_key(path: String) -> Option<String> {
     converted::file_key(Path::new(&path))
 }
 
-// NIVEL BASICO: Sai do app depois que a interface resolveu o SQLite convertido
+// NIVEL BASICO: Sai do app depois que a interface resolveu a exportacao em andamento e o SQLite convertido
 #[tauri::command]
 fn exit_app(app: AppHandle, state: State<'_, AppState>) {
     state.exiting.store(true, Ordering::SeqCst);
+    state.drop_terms(); // pesquisa em andamento: cancela sem perguntar
+    state.search_run.fetch_add(1, Ordering::SeqCst);
     state.converted.lock().unwrap().take();
     app.exit(0);
 }
@@ -168,18 +198,21 @@ fn display_warning(state: State<'_, AppState>) -> Option<DisplayWarning> {
     state.display_warning.clone()
 }
 
-// NIVEL BASICO: GetTableData retorna ate `limit` linhas (default 100) que passam pelos filtros e pela pesquisa
+// NIVEL BASICO: GetTableData retorna ate `limit` linhas (default 100) a partir da `offset` (paginas) que passam pelos filtros e pela pesquisa e, a
+// parte, as linhas marcadas (`marked` = identidades que a tela guarda), com a identidade de cada linha
 #[tauri::command(async)]
 fn get_table_data(
     table_name: String,
     limit: i32,
+    offset: i64,
     filters: Vec<Filter>,
     search: String,
+    marked: Vec<serde_json::Value>,
     state: State<'_, AppState>,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Result<TablePage, String> {
     let manager = state.db_manager.lock().unwrap();
     let limit = if limit <= 0 { 100 } else { limit };
-    manager.query_table(&table_name, limit, &filters, &search)
+    manager.table_page(&table_name, limit, offset.max(0), &filters, &search, &marked)
 }
 
 // NIVEL BASICO: GetRowCount retorna quantas linhas passam pelos filtros e pela pesquisa (sem nada: o total)
@@ -203,7 +236,7 @@ fn get_table_schema(table_name: String, state: State<'_, AppState>) -> Result<Ve
     state.db_manager.lock().unwrap().get_table_schema(&table_name)
 }
 
-// NIVEL BASICO: SQL livre (aba SQL), ate `limit` linhas
+// NIVEL BASICO: SQL da aba SQL (so comandos de leitura), ate `limit` linhas
 #[tauri::command(async)]
 fn run_sql(sql: String, limit: usize, state: State<'_, AppState>) -> Result<SqlResult, String> {
     state.db_manager.lock().unwrap().run_sql(&sql, limit.max(1))
@@ -217,63 +250,215 @@ fn same_file(a: &str, b: &Path) -> bool {
     }
 }
 
-// NIVEL BASICO: Exporta. scope = "database" (format sqlite, duckdb ou xlsx), "table" ou "sql" (csv ou xlsx).
-// Tabela com filtros ou pesquisa: so as linhas que a grade achou (o usuario escolheu "so as N linhas encontradas")
-// NIVEL TECNICO: runs on its own DuckDB connection, so the grid keeps working; progress goes as
-// "export-progress" events and cancel_export stops it at the next table or every 10.000 rows
-#[allow(clippy::too_many_arguments)] // cada campo do pedido da interface e um argumento do comando Tauri
-#[tauri::command(async)]
-fn export(
-    app: AppHandle,
-    state: State<'_, AppState>,
+// NIVEL BASICO: Recusa gravar por cima do arquivo aberto ou do temporario da conversao ([[err.sameFile]])
+fn check_target(state: &AppState, target: &Path) -> Result<(), String> {
+    let open = state.db_manager.lock().unwrap().current_path();
+    let temp = state.converted.lock().unwrap().as_ref().map(|lite| lite.path().to_string_lossy().into_owned());
+    if open.into_iter().chain(temp).any(|source| same_file(&source, target)) {
+        return Err("[[err.sameFile]]".to_string());
+    }
+    Ok(())
+}
+
+// NIVEL BASICO: Pedido de exportacao da interface. scope: "database" (Arquivo > Salvar: sqlite, duckdb ou xlsx), "converted"
+// (Arquivo > Salvar do Access convertido em SQLite: a copia do temporario),
+// "table" (tabela atual; com filtros ou pesquisa, so as linhas que a grade achou), "marked" (linhas marcadas: ids),
+// "schema" (da tabela, ou do banco sem tabela; labels = titulos), "sql" (resultado do SQL), "found" (resultado da
+// busca em todas as tabelas, xlsx), "tables" (todas as tabelas em CSV; path = pasta) e "terms" (relatorio da
+// pesquisa de termos: xlsx, sqlite, duckdb ou csv numa pasta; labels = titulos e nomes das abas)
+#[derive(Deserialize)]
+struct ExportRequest {
     scope: String,
     format: String,
     path: String,
     table: Option<String>,
     sql: Option<String>,
-    filters: Option<Vec<Filter>>,
-    search: Option<String>,
-) -> Result<Summary, String> {
-    let (conn, source_path) = {
-        let manager = state.db_manager.lock().unwrap();
-        (manager.export_connection()?, manager.current_path())
-    };
-    let target = Path::new(&path);
-    if source_path.is_some_and(|s| same_file(&s, target)) {
-        return Err("[[err.sameFile]]".to_string());
+    #[serde(default)]
+    filters: Vec<Filter>,
+    #[serde(default)]
+    search: String,
+    #[serde(default)]
+    ids: Vec<serde_json::Value>,
+    #[serde(default)]
+    labels: Vec<String>,
+}
+
+// marca "exportando" enquanto vive (fechar a janela pergunta antes de sair)
+struct Exporting<'a>(&'a AtomicBool);
+
+impl Drop for Exporting<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
     }
+}
+
+// NIVEL BASICO: Exporta (ou salva o banco) conforme o pedido
+// NIVEL TECNICO: runs on its own DuckDB connection, so the grid keeps working; progress goes as
+// "export-progress" events and cancel_export stops it at the next table or every 10.000 rows
+#[tauri::command(async)]
+fn export(app: AppHandle, state: State<'_, AppState>, request: ExportRequest) -> Result<Summary, String> {
+    let conn = state.db_manager.lock().unwrap().export_connection()?;
+    let target = Path::new(&request.path);
+    check_target(&state, target)?;
     state.cancel_export.store(false, Ordering::SeqCst);
+    state.exporting.store(true, Ordering::SeqCst);
+    let _exporting = Exporting(&state.exporting);
+    let cancelled = || state.cancel_export.load(Ordering::SeqCst);
     let mut progress = |done: usize, total: usize, item: &str| -> Result<(), String> {
-        if state.cancel_export.load(Ordering::SeqCst) {
+        if cancelled() {
             return Err("[[err.exportCancelled]]".to_string());
         }
         let _ = app.emit("export-progress", Progress { done, total, item });
         Ok(())
     };
-    match scope.as_str() {
-        "database" => export::export_database(&conn, &format, target, &mut progress),
+    let table = || request.table.clone().ok_or("No table selected");
+    let format = request.format.as_str();
+    match request.scope.as_str() {
+        "database" => export::export_database(&conn, format, target, &mut progress),
+        // Arquivo > Salvar do Access convertido em SQLite: copia o temporario (a caixa de salvar ja perguntou se
+        // substitui); ele continua ate a interface dizer que o banco esta salvo (discard_converted)
+        "converted" => {
+            // o caminho sai do lock antes de copiar: o X da janela (on_window_event) le o mesmo lock na thread da interface
+            let source = state.converted.lock().unwrap().as_ref().ok_or("[[err.noConverted]]")?.path().to_path_buf();
+            progress(0, 1, &request.path)?;
+            export::via_partial(target, |partial| std::fs::copy(&source, partial).map(|_| ()).map_err(|e| e.to_string()))
+                .map(|_| Summary { count: 1, sheets: None })
+        }
         "table" => {
-            let table = table.ok_or("No table selected")?;
-            let (filters, search) = (filters.unwrap_or_default(), search.unwrap_or_default());
-            let source = if filters.is_empty() && search.trim().is_empty() {
+            let table = table()?;
+            let source = if request.filters.is_empty() && request.search.trim().is_empty() {
                 Source::Table(table)
             } else {
-                let (filter, params) = state.db_manager.lock().unwrap().rows_where(&table, &filters, &search)?;
+                let (filter, params) = state.db_manager.lock().unwrap().rows_where(&table, &request.filters, &request.search)?;
                 Source::Rows(table, filter, params)
             };
-            export::export_source(&conn, &source, &format, target, &mut progress)
+            export::export_source(&conn, &source, format, target, &mut progress)
+        }
+        "marked" => {
+            let table = table()?;
+            let (filter, params) = state.db_manager.lock().unwrap().marked_where(&table, &request.ids)?;
+            export::export_source(&conn, &Source::Rows(table, filter, params), format, target, &mut progress)
+        }
+        "schema" => {
+            let name = target.file_stem().map_or("schema".into(), |stem| stem.to_string_lossy().into_owned());
+            let select = db_manager::schema_select(request.table.as_deref(), &request.labels)?;
+            export::export_source(&conn, &Source::Query(name, select), format, target, &mut progress)
         }
         "sql" => {
-            let source = Source::Sql(sql.ok_or("No SQL to export")?);
-            export::export_source(&conn, &source, &format, target, &mut progress)
+            let sql = request.sql.clone().ok_or("No SQL to export")?;
+            state.db_manager.lock().unwrap().check_read_only(&sql)?;
+            let source = Source::Sql(sql);
+            // como na aba SQL: o que o resultado rodar e desfeito no fim
+            db_manager::rolled_back(&conn, |conn| export::export_source(conn, &source, format, target, &mut progress))
+        }
+        "found" => {
+            // as tabelas que a busca acha e, de cada uma, as linhas achadas (a mesma regra da grade)
+            let sources = {
+                let manager = state.db_manager.lock().unwrap();
+                let found = manager.search_tables(&request.search, &cancelled);
+                let found = found.map_err(|e| if cancelled() { "[[err.exportCancelled]]".to_string() } else { e })?;
+                let rows = |f: Found| manager.rows_where(&f.table, &[], &request.search).map(|(filter, params)| Source::Rows(f.table, filter, params));
+                found.into_iter().map(rows).collect::<Result<Vec<_>, _>>()?
+            };
+            export::export_workbook(&conn, &sources, target, &mut progress)
+        }
+        "tables" => export::export_folder(&conn, &db_manager::list_tables(&conn)?, target, &mut progress),
+        "terms" => {
+            let slot = state.terms.lock().unwrap();
+            let run = slot.as_ref().ok_or("[[err.searchCancelled]]")?;
+            let names = terms::report(&run.conn, &run.tables, &request.labels)?;
+            match format {
+                "csv" => export::export_folder(&run.conn, &names, target, &mut progress),
+                _ => export::write_tables(&run.conn, &names, format, target, &mut progress),
+            }
         }
         other => Err(format!("Unknown export scope: {other}")),
     }
 }
 
+// NIVEL BASICO: Exportacao para pasta ("tables" e o relatorio de termos em CSV): quantos dos arquivos que ela grava ja
+// existem ali (a interface pergunta uma vez so se substitui)
+#[tauri::command(async)]
+fn export_existing(state: State<'_, AppState>, request: ExportRequest) -> Result<usize, String> {
+    let names = match request.scope.as_str() {
+        "terms" => {
+            let [.., result] = request.labels.as_slice() else {
+                return Err("Term report needs 7 labels".to_string());
+            };
+            let slot = state.terms.lock().unwrap();
+            terms::report_names(&slot.as_ref().ok_or("[[err.searchCancelled]]")?.tables, result)
+        }
+        _ => state.db_manager.lock().unwrap().list_tables()?,
+    };
+    Ok(export::csv_files(Path::new(&request.path), &names).iter().filter(|file| file.exists()).count())
+}
+
 #[tauri::command]
 fn cancel_export(state: State<'_, AppState>) {
     state.cancel_export.store(true, Ordering::SeqCst);
+}
+
+// NIVEL BASICO: Pesquisa de termos (aba Termos): cada termo x tabela com acerto e quantas linhas. table = so esta
+// tabela; sem ela, todas. O progresso vai como eventos "terms-progress"; cancel_terms (ou outra pesquisa) para
+// NIVEL TECNICO: runs on a connection of its own, which stays in the state with the hit tables for the grid, the
+// copy and the report; an older result is dropped before the new search starts
+#[tauri::command(async)]
+fn search_terms(
+    app: AppHandle,
+    terms: Vec<String>,
+    whole: bool,
+    table: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<TermHit>, String> {
+    state.drop_terms();
+    let run = state.terms_run.load(Ordering::SeqCst);
+    let stopped = || state.terms_run.load(Ordering::SeqCst) != run;
+    let cancelled = || "[[err.searchCancelled]]".to_string();
+    let (conn, tables) = {
+        let manager = state.db_manager.lock().unwrap();
+        let tables = match table {
+            Some(table) => vec![table],
+            None => manager.list_tables()?,
+        };
+        (manager.export_connection()?, tables)
+    };
+    *state.terms_interrupt.lock().unwrap() = Some((run, conn.interrupt_handle()));
+    let found = terms::search(&conn, &terms, whole, &tables, &mut |done, total, item| {
+        if stopped() {
+            return Err(cancelled());
+        }
+        let _ = app.emit("terms-progress", Progress { done, total, item });
+        Ok(())
+    });
+    state.terms_interrupt.lock().unwrap().take_if(|(owner, _)| *owner == run);
+    // consulta interrompida no meio: o erro do motor vira "Pesquisa cancelada"
+    let hits = found.map_err(|e| if stopped() { cancelled() } else { e })?;
+    let mut slot = state.terms.lock().unwrap();
+    if stopped() {
+        return Err(cancelled());
+    }
+    let mut with_hits: Vec<String> = Vec::new();
+    for hit in &hits {
+        if with_hits.last() != Some(&hit.table) {
+            with_hits.push(hit.table.clone());
+        }
+    }
+    *slot = Some(TermsRun { conn, tables: with_hits });
+    Ok(hits)
+}
+
+#[tauri::command]
+fn cancel_terms(state: State<'_, AppState>) {
+    state.drop_terms();
+}
+
+// NIVEL BASICO: Linhas achadas de uma tabela na ultima pesquisa de termos: o termo (titulo `label`) e as colunas da
+// tabela; ate `limit` linhas (0 = todas, para copiar)
+#[tauri::command(async)]
+fn terms_rows(table: String, limit: usize, label: String, state: State<'_, AppState>) -> Result<SqlResult, String> {
+    let slot = state.terms.lock().unwrap();
+    let run = slot.as_ref().ok_or("[[err.searchCancelled]]")?;
+    terms::rows(&run.conn, &table, &label, if limit == 0 { usize::MAX } else { limit })
 }
 
 // Barra de titulo da janela; a versao vem do Cargo.toml (fonte unica). tauri.conf.json repete o texto para a janela
@@ -352,8 +537,7 @@ fn main() {
     // Linux: X11 primeiro, Wayland de reserva (antes do GTK iniciar); sem nenhum dos dois o processo sai aqui
     let x11_warning = backend::display::apply();
 
-    // o app caiu antes? apaga os SQLite convertidos que ficaram para tras
-    converted::clean_stale(&converted::temp_dir());
+    // os SQLite convertidos que uma execucao anterior deixou (o app caiu) somem quando a interface abre: clean_stale
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -361,16 +545,21 @@ fn main() {
         .manage(AppState {
             db_manager: Mutex::new(DBManager::new()),
             cancel_export: AtomicBool::new(false),
+            exporting: AtomicBool::new(false),
             converted: Mutex::new(None),
             exiting: AtomicBool::new(false),
             search_run: AtomicU64::new(0),
+            terms_run: AtomicU64::new(0),
+            terms: Mutex::new(None),
+            terms_interrupt: Mutex::new(None),
             display_warning: x11_warning,
         })
         .invoke_handler(tauri::generate_handler![
             startup_path,
             load_database,
             close_database,
-            save_converted,
+            clean_stale,
+            save_dialog,
             discard_converted,
             file_key,
             exit_app,
@@ -381,14 +570,20 @@ fn main() {
             get_table_schema,
             run_sql,
             export,
+            export_existing,
             cancel_export,
+            search_terms,
+            cancel_terms,
+            terms_rows,
             about
         ])
-        // fechar a janela com SQLite convertido pendente: a interface pergunta salvar/apagar/cancelar e chama exit_app
+        // fechar a janela (X, Alt+F4) com exportacao em andamento ou SQLite convertido nao salvo: a interface pergunta
+        // (Voltar / Sair; Salvar / Voltar / Sair) e chama exit_app
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let state = window.state::<AppState>();
-                if !state.exiting.load(Ordering::SeqCst) && state.converted.lock().unwrap().is_some() {
+                let pending = state.exporting.load(Ordering::SeqCst) || state.converted.lock().unwrap().is_some();
+                if !state.exiting.load(Ordering::SeqCst) && pending {
                     api.prevent_close();
                     let _ = window.emit("close-requested", ());
                 }
@@ -408,7 +603,9 @@ fn main() {
             // saida por qualquer caminho: nada de temporario orfao deste processo
             if let tauri::RunEvent::Exit = event {
                 app.state::<AppState>().converted.lock().unwrap().take();
-                converted::remove_own(&converted::temp_dir());
+                for dir in converted::temp_dirs(None) {
+                    converted::remove_own(&dir);
+                }
             }
         });
 }

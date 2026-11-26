@@ -1,6 +1,6 @@
 <script>
   // NIVEL BASICO: Visualizador e conversor de bancos (Access, SQLite, DuckDB)
-  // Menus: File (exportar, fechar), View (log), Settings (tema, idioma), Help (sobre). Abas: Data, Schema, SQL.
+  // Menus: Arquivo, Editar, Exibir, Configuracoes, Ajuda (a arvore esta em menus.js). Abas: Dados, Esquema, SQL, Termos.
   // Todo texto da tela vem dos catalogos de idioma (i18n.js); i18n.test.js confere que nada fica fora.
   // NIVEL TECNICO: Svelte 5 runes; every backend call goes through Tauri invoke()
 
@@ -11,40 +11,33 @@
   import { onMount, tick } from 'svelte';
   import Grid from './Grid.svelte';
   import {
+    ROW_ID,
     columnCellWidth,
+    favoritesFirst,
     importantEntry,
     filterLabel,
     fold,
+    gridRows,
     hasAllWords,
+    parseTerms,
     resolveContext,
+    rowsToTsv,
     searchWords,
     setListed,
     statusLine,
+    termsOutcome,
+    toggleFavorite,
+    toggleMarked,
     toggleShown,
     unreadEntries,
     visibleColumns,
     withFilter,
+    withIds,
   } from './grid.js';
   import { LANGS, describe, translator } from './i18n.js';
-  import { baseName, defaultSaveDir, dirOf, joinPath, savedEntry, stem, suggestedName, withSaved } from './paths.js';
+  import { EXPORT_MENU, LIMITS, MATCHES, MENUS, SCOPES, THEMES } from './menus.js';
+  import { SAVE_FORMATS, baseName, defaultSaveDir, dirOf, joinPath, savedEntry, savedFormat, stem, suggestedName, withSaved } from './paths.js';
 
-  const LIMITS = [100, 500, 1000];
-  // null devolve a janela (barra de titulo e webview) ao tema do sistema
-  const THEMES = [
-    ['theme.system', null],
-    ['theme.light', 'light'],
-    ['theme.dark', 'dark'],
-  ];
-  // File > Export: [chave do texto, scope, format]; ordem do app: SQLite, DuckDB, Excel
-  const EXPORTS = [
-    ['export.dbSqlite', 'database', 'sqlite'],
-    ['export.dbDuckdb', 'database', 'duckdb'],
-    ['export.dbXlsx', 'database', 'xlsx'],
-    ['export.tableCsv', 'table', 'csv'],
-    ['export.tableXlsx', 'table', 'xlsx'],
-    ['export.sqlCsv', 'sql', 'csv'],
-    ['export.sqlXlsx', 'sql', 'xlsx'],
-  ];
   // dialogo Abrir, sempre nesta ordem: Access, SQLite, DuckDB
   const OPEN_FILTERS = [
     ['open.all', ['accdb', 'mdb', 'sqlite', 'sqlite3', 'db', 'duckdb']],
@@ -57,25 +50,27 @@
     ['data', 'tabs.data'],
     ['schema', 'tabs.schema'],
     ['sql', 'tabs.sql'],
+    ['terms', 'tabs.terms'],
   ];
   // preferencias gravadas no webview (ficam entre execucoes)
   const THEME_KEY = 'mdb2sql.theme';
   const LAST_DIR_KEY = 'mdb2sql.lastDir';
+  const SAVE_DIR_KEY = 'mdb2sql.lastSaveDir'; // ultima pasta em que o usuario salvou ou exportou (Salvar como...)
   const LANG_KEY = 'mdb2sql.lang';
   const LOG_KEY = 'mdb2sql.log'; // 'open' = painel de log aberto (padrao: recolhido)
   const NULL_KEY = 'mdb2sql.showNull'; // 'on' = celula NULL mostra "NULL" (padrao, sem valor gravado: vazia)
   const SCOPE_KEY = 'mdb2sql.searchScope'; // 'all' = a pesquisa comeca em Todas as tabelas (padrao: Esta tabela)
-  // Access ja convertido e salvo: { [chave do Access]: { dest, destKey } } com as chaves de file_key (caminho, tamanho,
-  // data). Fica entre execucoes; as 50 mais recentes
+  const MATCH_KEY = 'mdb2sql.termMatch'; // 'contains' = a pesquisa de termos comeca em Contem (padrao: Valor inteiro)
+  // Access ja convertido e salvo (SQLite ou DuckDB): { [chave do Access]: { dest, destKey } } com as chaves de file_key
+  // (caminho, tamanho, data). Fica entre execucoes; as 50 mais recentes
   const SAVED_KEY = 'mdb2sql.savedSqlite';
   const SAVED_MAX = 50;
-  // escopo da pesquisa da aba Data: seletor junto ao campo e Settings > Escopo padrao da busca
-  const SCOPES = [
-    ['table', 'scope.table'],
-    ['all', 'scope.all'],
-  ];
+  // pastas de arquivos originais que receberam o SQLite convertido (as pastas temporarias falharam): a limpeza das
+  // sobras, ao abrir o app, passa por elas tambem
+  const TEMP_KEY = 'mdb2sql.tempDirs';
   // a pesquisa vai ao banco quando a digitacao para por este tempo
   const SEARCH_DELAY_MS = 300;
+  const isAccess = (path) => /\.(mdb|accdb)$/i.test(path);
 
   function loadSetting(key) {
     try {
@@ -94,6 +89,16 @@
     }
   }
 
+  // lista gravada como JSON ([] ou {} se nao ha ou esta estragada)
+  function loadJson(key, empty) {
+    try {
+      const value = JSON.parse(loadSetting(key) || 'null');
+      return value && typeof value === 'object' && Array.isArray(value) === Array.isArray(empty) ? value : empty;
+    } catch {
+      return empty;
+    }
+  }
+
   // idioma: ingles por padrao; a troca vale na hora (todo texto passa por t)
   const storedLang = loadSetting(LANG_KEY);
   let lang = $state(LANGS.some(([code]) => code === storedLang) ? storedLang : LANGS[0][0]);
@@ -104,18 +109,19 @@
   let showNull = $state(loadSetting(NULL_KEY) === 'on');
   let nullText = $derived(showNull ? t('grid.null') : '');
 
-  let openMenu = $state(null); // 'file' | 'view' | 'settings' | 'help' | 'export' (botao Exportar... do topo)
-  let exportSub = $state(false); // submenu Arquivo > Exportar aberto
+  let openMenu = $state(null); // menu aberto: id de MENUS ou 'export' (botao Exportar... do topo)
+  let subPath = $state.raw([]); // submenus abertos dentro dele, um id por nivel
   let tab = $state('data');
   let themeIndex = $state(0);
   let aboutDialog;
   let aboutInfo = $state.raw(null); // dados do comando about (versoes, build, leitor do Access, links)
   let columnsDialog;
   let progressDialog;
-  let progress = $state.raw(null); // { label, done, total, item } da exportacao em andamento
-  let convertDialog;
-  let rowsDialog;
-  let rowsAsk = $state.raw(null); // { label, resolve } da pergunta tabela inteira / so as linhas encontradas
+  let progress = $state.raw(null); // { label, path, done, total, item } da exportacao em andamento
+  let exportEnd = Promise.resolve(); // termina quando a exportacao em andamento para (sair espera por ela)
+  let askDialog;
+  let question = $state.raw(null); // pergunta aberta: { title, text, x, buttons: [{ id, label, primary, right }], resolve }
+  let quitting = false; // a pergunta de sair (ou o Salvar dela) esta em andamento
   let x11Dialog;
   let x11 = $state.raw(null); // Linux sem X11: { missing, display, distro, command, link } (backend display.rs)
 
@@ -123,7 +129,7 @@
   let pathFocused = $state(false); // campo do caminho em edicao: mostra o texto inteiro, sem cortar o comeco
   let openedPath = $state('');
   let source = $state('');
-  let converted = $state(false); // ha SQLite convertido do Access ainda nao salvo nem apagado
+  let converted = $state(false); // ha SQLite convertido do Access ainda nao salvo (so entao sair pergunta)
   let tables = $state([]);
   let tableRows = $state.raw(new Map()); // linhas de cada tabela (coluna Linhas da lista), lidas ao abrir o arquivo
   let tableText = $state(''); // texto do filtro de tabelas; tableFilter e o que esta valendo na lista
@@ -148,7 +154,33 @@
   let searchRun = 0; // numero da pesquisa em todas as tabelas que vale; a resposta de uma anterior e descartada
   let everywhere = $derived(scope === 'all' && search.trim() !== '');
   let limit = $state(LIMITS[0]);
+  let offset = $state(0); // primeira linha da pagina da aba Dados (paginas ◀ ▶ do tamanho de Linhas)
+  // "linhas 1 a 100": a primeira e a ultima linha da pagina na tela
+  let range = $derived({ table: selectedTable, from: fmt(offset + 1), to: fmt(offset + rows.length) });
   let busy = $state(false);
+
+  // linhas marcadas de cada tabela (Map tabela -> linhas, cada uma com a identidade em ROW_ID), enquanto o arquivo
+  // estiver aberto; ficam sempre no topo da grade, qualquer que seja a pesquisa
+  let marks = $state.raw(new Map());
+  let markedRows = $derived(marks.get(selectedTable) ?? []);
+  let onlyMarked = $state(false); // "So as marcadas": a grade mostra so elas
+  let showOnly = $derived(onlyMarked && markedRows.length > 0);
+  let shownRows = $derived(gridRows(markedRows, rows, showOnly));
+  let grid = $state(); // a grade na tela (uma por vez) e a celula escolhida nela: menu Editar
+  let cell = $state.raw(null);
+
+  // aba Termos
+  let termsText = $state('');
+  let termList = $derived(parseTerms(termsText)); // { terms, repeated }
+  let defaultMatch = $state(loadSetting(MATCH_KEY) === 'contains' ? 'contains' : 'whole');
+  let match = $state(defaultMatch); // 'whole' (valor inteiro) | 'contains'
+  let termsScope = $state(defaultScope);
+  let termsRun = 0; // numero da pesquisa de termos que vale; a resposta de uma anterior e descartada
+  let termsWork = $state.raw(null); // { done, total, item } da pesquisa em andamento
+  let termsResult = $state.raw(null); // { terms, tables: [{ table, count }], notFound, found, rows }
+  let termsTable = $state(''); // tabela escolhida na lista das que tem acerto
+  let termsPage = $state.raw(null); // { columns, rows } dela (ate o limite de linhas)
+  let canRunTerms = $derived(!busy && !!openedPath && termList.terms.length > 0 && (termsScope === 'all' || !!selectedTable));
 
   // status = [chave, valores] da ultima acao; error = { err, context } do ultimo erro (null depois de uma acao ok).
   // Tudo guardado como chave: troca de idioma traduz de novo a barra de status e o log
@@ -158,7 +190,8 @@
   // barra de status: erro do motor em uma linha (statusLine); o texto inteiro fica no log
   let statusText = $derived(t(...status));
   let errorText = $derived(error ? errorLine(error.err, error.context) : '');
-  let statusMenu = $state.raw(null); // { x, y } do menu Copiar da barra de status
+  // menu de clique direito: { x, y } da barra de status (Copiar) ou { x, y, table } da lista de tabelas (favoritar)
+  let contextMenu = $state.raw(null);
   // log da sessao: { time, level: 'error' | 'warning' | 'info', key, values } | { ..., err, context } | { ..., render }
   let log = $state.raw([]);
   let logOpen = $state(loadSetting(LOG_KEY) === 'open');
@@ -180,18 +213,18 @@
   let sqlError = $state(''); // erro do ultimo SQL, na linha do botao Executar; some quando um SQL roda sem erro
   let lastSql = ''; // SQL que gerou sqlResult (o que a exportacao repete)
   const SQL_HINT = 'SELECT * FROM ...'; // dica do editor vazio (a mesma nas 4 versoes, SQL nao se traduz)
+  // comando recusado pela aba SQL (so leitura): a frase do catalogo, sem o prefixo de erro de consulta
+  const sqlContext = (err) => (String(err).includes('[[err.sqlReadOnly]]') ? undefined : 'err.sql');
 
-  // pergunta do SQLite convertido: escolha lembrada so nesta sessao ('save' | 'delete')
-  let remembered = null;
-  let rememberChoice = $state(false);
-  let answer = null; // resolve da pergunta aberta
-  let lastSqliteDir = '';
-  let convertedKey = null; // chave do Access convertido agora (file_key ao abrir): o SQLite salvo dele fica lembrado
-  let readFile = ''; // arquivo lido de fato (o SQLite salvo, quando o Access abriu por ele): a exportacao nao o sugere
+  let accessKey = null; // chave do Access aberto (file_key ao abrir): o arquivo salvo dele fica lembrado
+  let readFile = ''; // arquivo lido de fato (o arquivo salvo, quando o Access abriu por ele): Salvar nao o sugere
 
+  // tabelas favoritas, pelo nome, so enquanto o programa estiver aberto (fechar, abrir outro e F5 mantem)
+  let favorites = $state.raw(new Set());
+  // lista de tabelas: o filtro, e as favoritas no topo em ordem alfabetica
   let visibleTables = $derived.by(() => {
     const words = searchWords(tableFilter);
-    return tables.filter((name) => hasAllWords(fold(name), words));
+    return favoritesFirst(tables.filter((name) => hasAllWords(fold(name), words)), favorites);
   });
   let shownColumns = $derived(visibleColumns(columns, hidden));
   let columnSearch = $state(''); // busca do dialogo Colunas...
@@ -229,6 +262,7 @@
       [t('about.window'), aboutInfo.webview],
       [t('about.engines'), aboutInfo.engines],
       [t('about.access'), t(access, { version: aboutInfo.mdbtools })],
+      [t('about.write'), t('about.writeValue')],
       [t('about.author'), aboutInfo.author],
       [t('about.license'), t('about.licenseValue')],
     ];
@@ -259,7 +293,7 @@
     note('error', error);
   };
 
-  // abre/recolhe o painel de log (seta no log e na barra de status, View > Log, Ctrl+L); a escolha fica gravada
+  // abre/recolhe o painel de log (seta no log e na barra de status, Exibir > Log, Ctrl+L); a escolha fica gravada
   function setLog(open) {
     openMenu = null;
     logOpen = open;
@@ -267,24 +301,183 @@
     saveSetting(LOG_KEY, open ? 'open' : 'closed');
   }
 
-  function canExport(scope) {
+  // NIVEL BASICO: O que cada exportacao precisa para estar habilitada (a lista e fixa; o que nao se aplica fica
+  // desabilitado)
+  function canExport(kind) {
     if (busy || !openedPath) return false;
-    if (scope === 'table') return !!selectedTable;
-    if (scope === 'sql') return !!sqlResult?.columns.length;
-    return true;
+    if (kind === 'table' || kind === 'tableSchema') return !!selectedTable;
+    if (kind === 'marked') return markedRows.length > 0;
+    if (kind === 'tables') return tables.length > 0;
+    if (kind === 'sql') return !!sqlResult?.columns.length;
+    if (kind === 'found') return everywhere && !!found?.tables?.length;
+    if (kind === 'terms') return !!termsResult;
+    return true; // esquema do banco
+  }
+
+  // NIVEL BASICO: O que cada item dos menus faz (run), quando fica desabilitado (off) e marcado (on; radio = um de um
+  // grupo). Os atalhos passam por aqui: valem quando o item do menu vale
+  let commands = $derived.by(() => {
+    const open = !!openedPath;
+    const onCell = !!grid && !!cell;
+    const onData = tab === 'data' && onCell && !!selectedTable;
+    const list = {
+      open: { run: browse, off: busy },
+      openPath: { run: () => openDatabase(), off: busy || !dbPath.trim() },
+      reopen: { run: reload, off: busy },
+      save: { run: () => save(false), off: busy || !open },
+      saveAs: { run: () => save(true), off: busy || !open },
+      export: { off: busy || !open },
+      close: { run: closeDatabase, off: busy || !open },
+      exit: { run: quit },
+      copyValue: { run: () => grid.copy('value'), off: !onCell },
+      copyRow: { run: () => grid.copy('row'), off: !onCell },
+      copyRowHeader: { run: () => grid.copy('row-header'), off: !onCell },
+      copyLog: { run: copyLog, off: !log.length },
+      find: { run: focusSearch, off: !selectedTable },
+      filterValue: { run: () => gridActions.filter(cell.col, cell.row[cell.col]), off: !onData },
+      clearFilters: { run: () => setFilters([]), off: !filters.length },
+      mark: { run: () => toggleMark(cell.row), off: !onData },
+      unmarkAll: { run: unmarkAll, off: !markedRows.length },
+      'tab.data': { run: () => (tab = 'data') },
+      'tab.schema': { run: () => (tab = 'schema') },
+      'tab.sql': { run: focusSql },
+      'tab.terms': { run: focusTerms },
+      limit: {},
+      columns: { run: openColumns, off: !selectedTable },
+      scope: {},
+      onlyMarked: { run: () => (onlyMarked = !showOnly), on: showOnly, off: !markedRows.length },
+      goTables: { run: focusTables, off: !tables.length },
+      favorite: { run: () => setFavorite(selectedTable), off: !selectedTable },
+      runSql: { run: () => ((tab = 'sql'), runSql()), off: busy || !open || !sql.trim() },
+      runTerms: { run: () => ((tab = 'terms'), runTerms()), off: !canRunTerms },
+      log: { run: () => setLog(!logOpen), on: logOpen },
+      theme: {},
+      lang: {},
+      defaultScope: {},
+      match: {},
+      showNull: { run: () => setShowNull(!showNull), on: showNull },
+      about: { run: showAbout },
+    };
+    const radio = (id, run, on) => (list[id] = { run, on, radio: true });
+    for (const n of LIMITS) radio(`limit.${n}`, () => setLimit(n), limit === n);
+    // Exibir > Pesquisar em: o escopo da aba na tela (Termos tem o seu)
+    for (const [id] of SCOPES) {
+      radio(`scope.${id}`, () => (tab === 'terms' ? (termsScope = id) : setScope(id)), (tab === 'terms' ? termsScope : scope) === id);
+      radio(`defaultScope.${id}`, () => setDefaultScope(id), defaultScope === id);
+    }
+    THEMES.forEach((_, i) => radio(`theme.${i}`, () => setTheme(i), themeIndex === i));
+    for (const [code] of LANGS) radio(`lang.${code}`, () => setLang(code), lang === code);
+    for (const [id] of MATCHES) radio(`match.${id}`, () => setDefaultMatch(id), defaultMatch === id);
+    // Exportar: "export.<o que>" (com submenu de formatos) ou "export.<o que>.<formato>"
+    for (const [id, , formats] of EXPORT_MENU) {
+      const [, kind, format] = id.split('.');
+      list[id] = { off: !canExport(kind) };
+      for (const [leaf] of Array.isArray(formats) ? formats : [[id]]) {
+        list[leaf] = { run: () => startExport(kind, format ?? leaf.split('.')[2]), off: !canExport(kind) };
+      }
+    }
+    return list;
+  });
+
+  // roda o comando de um item de menu ou de um atalho, se estiver habilitado
+  function run(id) {
+    openMenu = null;
+    const command = commands[id];
+    if (command?.run && !command.off) command.run();
   }
 
   function toggleMenu(event, name) {
     event.stopPropagation();
-    statusMenu = null;
-    exportSub = false;
+    contextMenu = null;
+    subPath = [];
     openMenu = openMenu === name ? null : name;
   }
 
-  // NIVEL BASICO: Arquivo > Sair e Ctrl+Q: resolve antes o SQLite convertido (pergunta) e fecha o app
+  // NIVEL BASICO: Caixa com mais de um botao: todos com a mesma largura e altura, a do maior texto nos 3 idiomas (a caixa
+  // fica igual em qualquer idioma). labels = [chave, valores] de cada botao, na ordem da tela
+  // NIVEL TECNICO: each text is measured in a hidden copy of its own button (same class and font), never in the buttons
+  // Svelte renders; the height is the same because every button is one line (nowrap) with the same padding
+  function sameSize(actions, labels) {
+    const buttons = [...actions.querySelectorAll(':scope > button')];
+    let width = 0;
+    buttons.forEach((button, i) => {
+      const probe = button.cloneNode(false);
+      probe.style.cssText = 'position: absolute; visibility: hidden; width: auto';
+      actions.append(probe);
+      for (const [code] of LANGS) {
+        probe.textContent = translator(code)(...labels[i]);
+        width = Math.max(width, probe.getBoundingClientRect().width);
+      }
+      probe.remove();
+    });
+    for (const button of buttons) button.style.width = `${Math.ceil(width)}px`;
+  }
+
+  // NIVEL BASICO: Pergunta com botoes (sair com banco nao salvo, exportacao em andamento, tabela inteira ou so as linhas
+  // encontradas). Devolve o id do botao escolhido; Esc e o X da caixa devolvem null
+  async function ask(asked) {
+    const answer = new Promise((resolve) => (question = { ...asked, resolve }));
+    askDialog.showModal();
+    await tick();
+    sameSize(askDialog.querySelector('.actions'), question.buttons.map(({ key, values }) => [key, values]));
+    askDialog.querySelector('button.default')?.focus();
+    return answer;
+  }
+
+  // dialogo Colunas...: os 3 botoes com a mesma largura (sameSize)
+  function openColumns() {
+    columnsDialog.showModal();
+    sameSize(columnsDialog.querySelector('.actions'), [['columns.showAll'], ['columns.hideAll'], ['common.close']]);
+  }
+
+  function reply(id) {
+    askDialog.close();
+    question?.resolve(id);
+    question = null;
+  }
+
+  // NIVEL BASICO: Sair do programa (Arquivo > Sair, Ctrl+Q, X da janela, Alt+F4). Exportacao em andamento: pergunta
+  // antes de tudo, e Sair cancela a exportacao (sem arquivo pela metade). Access convertido e nao salvo: Salvar /
+  // Voltar / Sair (Salvar abre a caixa de salvar; cancelada, a pergunta volta). So aqui se pergunta: fechar o arquivo,
+  // abrir outro e reabrir apagam o convertido nao salvo sem perguntar. Pesquisa em andamento: cancelada sem perguntar
   async function quit() {
     openMenu = null;
-    if (await settleConverted()) await invoke('exit_app');
+    if (question) return; // uma pergunta ja esta aberta
+    if (progress) {
+      const choice = await ask({
+        title: t('exportRun.title'),
+        text: t('exportRun.text', { name: baseName(progress.path) }),
+        buttons: [
+          { id: 'back', key: 'common.back', right: true, primary: true },
+          { id: 'exit', key: 'file.exit', right: true },
+        ],
+      });
+      if (choice !== 'exit') return;
+      await invoke('cancel_export');
+      await exportEnd;
+    }
+    if (quitting) return; // era o Salvar desta pergunta: cancelado, ela volta no quit que a abriu
+    quitting = true;
+    try {
+      while (converted) {
+        const choice = await ask({
+          title: t('convert.title'),
+          text: t('exit.text', { name: baseName(openedPath) }),
+          x: true,
+          buttons: [
+            { id: 'save', key: 'file.save', primary: true },
+            { id: 'back', key: 'common.back', right: true },
+            { id: 'exit', key: 'file.exit', right: true },
+          ],
+        });
+        if (choice === 'exit') break; // o backend apaga o temporario ao sair
+        if (choice !== 'save') return; // Voltar, Esc ou X da caixa
+        await save(false, true);
+      }
+      await invoke('exit_app');
+    } finally {
+      quitting = false;
+    }
   }
 
   onMount(() => {
@@ -298,10 +491,11 @@
       listen('export-progress', ({ payload }) => {
         if (progress) progress = { ...progress, ...payload };
       }),
-      // fechar a janela com SQLite convertido pendente: o backend segura e pergunta aqui
-      listen('close-requested', async () => {
-        if (await settleConverted()) await invoke('exit_app');
+      listen('terms-progress', ({ payload }) => {
+        if (termsWork) termsWork = payload;
       }),
+      // fechar a janela com exportacao em andamento ou SQLite convertido nao salvo: o backend segura e pergunta aqui
+      listen('close-requested', quit),
       // arquivo arrastado para a janela: abre (o primeiro, se vierem varios); nada com dialogo aberto ou trabalho em curso
       getCurrentWebview().onDragDropEvent(({ payload }) => {
         if (payload.type !== 'drop' || !payload.paths?.length || busy || document.querySelector('dialog[open]')) return;
@@ -316,6 +510,12 @@
       x11Dialog.showModal();
       x11Dialog.querySelector('button.default').focus();
     });
+    // o app caiu antes? os SQLite convertidos que ficaram para tras somem (pastas temporarias e as de originais que
+    // receberam um); quantos, no Log
+    invoke('clean_stale', { beside: loadJson(TEMP_KEY, []) }).then((count) => {
+      saveSetting(TEMP_KEY, null);
+      if (count) note('info', { key: 'status.staleRemoved', values: { count: fmt(count) } });
+    });
     // caminho da linha de comando ou de MDB2SQL_DB_PATH
     invoke('startup_path').then((path) => {
       if (path) {
@@ -326,108 +526,65 @@
     return () => stops.forEach((stop) => stop.then((unlisten) => unlisten()));
   });
 
-  // NIVEL BASICO: Pergunta "Salvar o SQLite convertido?" e espera a resposta: 'save', 'delete' ou 'cancel'
-  function ask() {
-    rememberChoice = false;
-    convertDialog.showModal();
-    convertDialog.querySelector('button.save').focus(); // o showModal poe o foco na caixa de lembrar
-    return new Promise((resolve) => (answer = resolve));
-  }
-
-  function reply(choice) {
-    convertDialog.close();
-    answer?.(choice);
-    answer = null;
-  }
-
-  // NIVEL BASICO: Antes de fechar o banco, abrir outro ou sair: salva ou apaga o SQLite convertido do Access
-  // (pergunta uma vez; a escolha pode valer para o resto da sessao). false = o usuario cancelou
-  async function settleConverted() {
-    if (!converted) return true;
-    if (answer) return false; // a pergunta ja esta aberta
-    // dialogo de arquivo cancelado: volta para a pergunta (Esc e o X dela fecham e cancelam tudo)
-    let choice = remembered; // a escolha lembrada vale so na primeira volta
-    for (let auto = remembered === 'save'; ; auto = false) {
-      if (!choice) choice = await ask();
-      if (choice === 'cancel') return false;
-      try {
-        if (choice === 'save') {
-          const saved = await saveConverted(auto);
-          if (!saved) {
-            choice = null;
-            continue;
-          }
-          await rememberSaved(convertedKey, saved);
-          showStatus('status.sqliteSaved', { path: saved });
-        } else {
-          await invoke('discard_converted');
-          showStatus('status.sqliteDeleted', { name: `${stem(openedPath)}.sqlite` });
-        }
-        break;
-      } catch (err) {
-        showError(err);
-        return false;
-      }
-    }
-    if (rememberChoice) remembered = choice;
-    converted = false;
-    convertedKey = null;
-    return true;
-  }
-
-  // NIVEL BASICO: SQLite salvo de cada Access (entre execucoes, como o Go): chave do Access -> { dest, destKey }
-  function savedList() {
-    try {
-      const list = JSON.parse(loadSetting(SAVED_KEY) || '{}');
-      return list && typeof list === 'object' ? list : {};
-    } catch {
-      return {}; // gravado estragado: como se nada tivesse sido salvo
-    }
-  }
-
-  // o SQLite salvo deste Access, se nenhum dos dois mudou (caminho, tamanho e data); senao null e o Access e convertido
-  async function savedSqlite(accessKey) {
-    const entry = savedEntry(savedList(), accessKey);
+  // NIVEL BASICO: Arquivo salvo de cada Access (entre execucoes, como o Go): chave do Access -> { dest, destKey }
+  // o arquivo salvo deste Access, se nenhum dos dois mudou (caminho, tamanho e data); senao null e o Access e convertido
+  async function savedSqlite(key) {
+    const entry = savedEntry(loadJson(SAVED_KEY, {}), key);
     if (!entry) return null;
     return (await invoke('file_key', { path: entry.dest })) === entry.destKey ? entry.dest : null;
   }
 
-  // lembra o SQLite salvo do Access convertido; uma versao antiga do mesmo Access sai da lista
-  async function rememberSaved(accessKey, dest) {
-    const destKey = accessKey && (await invoke('file_key', { path: dest }));
-    if (destKey) saveSetting(SAVED_KEY, JSON.stringify(withSaved(savedList(), accessKey, dest, destKey, SAVED_MAX)));
+  // lembra o arquivo salvo do Access aberto; uma versao antiga do mesmo Access sai da lista
+  async function rememberSaved(key, dest) {
+    const destKey = key && (await invoke('file_key', { path: dest }));
+    if (destKey) saveSetting(SAVED_KEY, JSON.stringify(withSaved(loadJson(SAVED_KEY, {}), key, dest, destKey, SAVED_MAX)));
   }
 
-  // NIVEL BASICO: Grava o SQLite convertido: dialogo de salvar na pasta do arquivo de origem, <nome>.sqlite.
-  // auto (escolha lembrada): grava direto na ultima pasta usada; se o arquivo ja existe, abre o dialogo
-  async function saveConverted(auto) {
-    const name = `${stem(openedPath)}.sqlite`;
-    const dir = lastSqliteDir || dirOf(openedPath);
-    let path = joinPath(dir, name);
-    let overwrite = false;
-    if (auto) {
-      try {
-        await invoke('save_converted', { path, overwrite });
-        return path;
-      } catch (err) {
-        if (!String(err).includes('[[err.exists]]')) throw err;
+  // NIVEL BASICO: Arquivo > Salvar (Ctrl+S) e Salvar como... (Ctrl+Shift+S), com qualquer banco aberto: a caixa de
+  // salvar nativa com SQLite, DuckDB e Excel, ja marcado o tipo do arquivo aberto (Access e SQLite: SQLite; DuckDB:
+  // DuckDB). Salvar comeca na pasta do arquivo original; Salvar como, na ultima pasta em que o usuario salvou ou
+  // exportou (sem ela, a do original). Devolve true se salvou. exiting: pedido pela pergunta de sair, que vale mesmo
+  // com uma pesquisa ou consulta rodando (sair cancela a pesquisa)
+  async function save(asLast, exiting = false) {
+    openMenu = null;
+    if ((busy && !exiting) || !openedPath) return false;
+    const access = isAccess(openedPath);
+    const selected = !access && source === 'DuckDB' ? 1 : 0;
+    const dir = (asLast && loadSetting(SAVE_DIR_KEY)) || dirOf(openedPath);
+    // o nome do original; se for o proprio arquivo aberto (mesma pasta e mesmo nome), "<nome> (copia)"
+    const sameDir = dir.toLowerCase() === dirOf(readFile).toLowerCase();
+    const name = suggestedName(stem(openedPath), SAVE_FORMATS[selected], sameDir ? readFile : '', (base) => t('save.copyName', { name: base }));
+    try {
+      const picked = await invoke('save_dialog', {
+        title: t('save.title'),
+        path: joinPath(dir, name),
+        types: SAVE_FORMATS.map((format) => [t(`save.${format}`), format]),
+        selected,
+      });
+      if (!picked) return false; // cancelada
+      const { path, format } = savedFormat(...picked);
+      saveSetting(SAVE_DIR_KEY, dirOf(path));
+      // Access convertido para SQLite: copia o temporario; os outros, o banco inteiro. Os dois com a barra de progresso
+      // (sair durante a copia pergunta antes, como numa exportacao)
+      const copy = converted && format === 'sqlite';
+      if (!(await runExport(t('file.save'), { scope: copy ? 'converted' : 'database', format, path }, copy ? null : 'Tables'))) {
+        return false;
       }
+      if (access) {
+        // SQLite ou DuckDB: abrir de novo o mesmo Access, sem mudanca, abre o arquivo salvo. Salvo (tambem em Excel),
+        // sair nao pergunta mais
+        if (format !== 'xlsx') await rememberSaved(accessKey, path);
+        if (converted) await invoke('discard_converted');
+        converted = false;
+      }
+      return true;
+    } catch (err) {
+      showError(err);
+      return false;
     }
-    path = await invoke('plugin:dialog|save', {
-      options: {
-        title: t('convert.saveTitle'),
-        defaultPath: path,
-        filters: [{ name: t('save.sqlite'), extensions: ['sqlite'] }],
-      },
-    });
-    if (!path) return null; // cancelado
-    overwrite = true; // o dialogo de salvar ja perguntou se substitui
-    await invoke('save_converted', { path, overwrite });
-    lastSqliteDir = dirOf(path);
-    return path;
   }
 
-  // outro arquivo (ou nenhum): tabela, pesquisa e filtros zerados, escopo de volta ao padrao de Settings
+  // outro arquivo (ou nenhum): tabela, pesquisa, filtros, marcas e pesquisa de termos zerados, escopo de volta ao padrao
   function resetTable() {
     selectedTable = '';
     hidden = new Set();
@@ -439,31 +596,39 @@
     rows = [];
     rowCount = 0;
     matchCount = 0;
+    offset = 0;
+    marks = new Map();
+    onlyMarked = false;
+    dropTerms();
   }
 
-  // NIVEL BASICO: Abre o banco; caminho vazio usa MDB2SQL_DB_PATH ou data/sample.duckdb
-  // chosen: arquivo do dialogo Abrir ou arrastado para a janela; o campo so passa a mostra-lo depois da pergunta do SQLite
-  // convertido (Cancelar deixa o campo com o arquivo que continua aberto)
+  // NIVEL BASICO: Abre o banco; caminho vazio (Enter no campo vazio): a caixa de escolher arquivo
+  // chosen: arquivo do dialogo Abrir ou arrastado para a janela. O Access convertido e nao salvo que estava aberto e
+  // apagado sem pergunta quando o outro abre (linha no Log)
   async function openDatabase(event, chosen) {
     event?.preventDefault();
+    openMenu = null;
     // "Copiar como caminho" do Windows cola o caminho entre aspas
     const path = (chosen ?? dbPath).trim().replace(/^"(.*)"$/, '$1');
-    if (!(await settleConverted())) return;
+    if (!path) return browse();
     dbPath = path;
     busy = true;
+    const discarded = converted ? baseName(openedPath) : '';
     showStatus('status.opening');
     try {
-      // Access ja convertido e salvo, sem mudanca: abre o SQLite salvo (nada de converter nem perguntar de novo)
-      const accessKey = /\.(mdb|accdb)$/i.test(path) ? await invoke('file_key', { path }) : null;
-      const saved = await savedSqlite(accessKey);
+      // Access ja convertido e salvo, sem mudanca: abre o arquivo salvo (nada de converter de novo)
+      const key = isAccess(path) ? await invoke('file_key', { path }) : null;
+      const saved = await savedSqlite(key);
       const opened = await invoke('load_database', { dbPath: path, saved });
+      if (discarded) note('info', { key: 'status.discarded', values: { name: discarded } });
       tables = opened.tables;
       tableRows = new Map(opened.tables.map((name, i) => [name, opened.rows[i]]));
       openedPath = opened.path;
       readFile = opened.file;
       source = opened.source;
       converted = opened.converted;
-      convertedKey = opened.converted ? accessKey : null;
+      accessKey = key;
+      if (opened.beside) saveSetting(TEMP_KEY, JSON.stringify([...new Set([...loadJson(TEMP_KEY, []), opened.beside])]));
       dbPath = opened.path;
       clearTimeout(tableTimer);
       tableText = tableFilter = '';
@@ -473,21 +638,23 @@
       lastSql = '';
       saveSetting(LAST_DIR_KEY, dirOf(opened.path));
       showStatus('status.opened', { name: baseName(opened.path), count: fmt(tables.length) });
-      if (saved) note('info', { key: 'status.reused', values: { name: baseName(opened.path), path: saved } });
+      // o formato vem do arquivo salvo como o backend o abriu (extensao e cabecalho): SQLite ou DuckDB, nunca fixo
+      if (saved) note('info', { key: 'status.reused', values: { name: baseName(opened.path), format: source, path: saved } });
       note('info', { key: 'status.via', values: { source } });
       resetTable();
       if (tables.length > 0) await openTable(tables[0]);
     } catch (err) {
-      showError(err, 'status.openFailed');
+      // arquivo que nao existe: so 'Arquivo nao encontrado: {caminho}' (secao 14), sem o 'Nao foi possivel abrir'
+      showError(err, String(err).startsWith('[[err.badPath]]') ? undefined : 'status.openFailed');
     } finally {
       busy = false;
     }
   }
 
-  // NIVEL BASICO: Arquivo > Fechar
+  // NIVEL BASICO: Arquivo > Fechar (Ctrl+W); o Access convertido e nao salvo e apagado sem pergunta (linha no Log)
   async function closeDatabase() {
     openMenu = null;
-    if (!openedPath || !(await settleConverted())) return;
+    if (!openedPath) return;
     try {
       await invoke('close_database');
     } catch (err) {
@@ -495,12 +662,14 @@
       return;
     }
     const name = baseName(openedPath);
+    if (converted) note('info', { key: 'status.discarded', values: { name } });
     tables = [];
     tableRows = new Map();
     openedPath = '';
     readFile = '';
     source = '';
     converted = false;
+    accessKey = null;
     sqlResult = null;
     sqlError = '';
     log = resolveContext(log, 'err.sql');
@@ -543,20 +712,37 @@
     openMenu = null;
     lang = code;
     saveSetting(LANG_KEY, code);
+    if (termsTable) openTermsTable(termsTable); // o titulo da coluna Termo vem com as linhas
   }
 
-  // Settings > Escopo padrao da busca: gravado, e passa a valer tambem na pesquisa aberta
+  // Settings > Escopo padrao da busca: gravado, e passa a valer tambem na pesquisa aberta e na aba Termos
   function setDefaultScope(next) {
     openMenu = null;
     defaultScope = next;
     saveSetting(SCOPE_KEY, next === 'all' ? 'all' : null);
+    termsScope = next;
     setScope(next);
+  }
+
+  // Settings > Comparacao dos termos: gravada, e passa a valer tambem no seletor da aba Termos
+  function setDefaultMatch(next) {
+    openMenu = null;
+    defaultMatch = match = next;
+    saveSetting(MATCH_KEY, next === 'contains' ? 'contains' : null);
   }
 
   function setShowNull(show) {
     openMenu = null;
     showNull = show;
     saveSetting(NULL_KEY, show ? 'on' : 'off');
+  }
+
+  // Linhas (100, 500, 1000): vale para a aba Dados, o resultado do SQL e a grade da aba Termos
+  function setLimit(next) {
+    limit = next;
+    offset = 0;
+    openTable(selectedTable);
+    if (termsTable) openTermsTable(termsTable);
   }
 
   // NIVEL TECNICO: __SVELTE_VERSION__ is the bundled Svelte version, injected by vite.config.js
@@ -579,7 +765,8 @@
     invoke('plugin:opener|open_url', { url }).catch((err) => showError(err));
   }
 
-  // NIVEL BASICO: Busca schema, linhas e contagens da tabela em paralelo; filtros e pesquisa vao na consulta.
+  // NIVEL BASICO: Busca schema, linhas e contagens da tabela em paralelo; filtros e pesquisa vao na consulta. As
+  // linhas marcadas da tabela vem a parte (todas, qualquer que seja a pesquisa).
   // Outra tabela comeca sem filtros e com a pesquisa `keep` (a de Todas as tabelas, ao escolher uma achada)
   async function openTable(tableName, keep = '') {
     if (!tableName) return;
@@ -587,6 +774,8 @@
       search = keep;
       hidden = new Set();
       filters = [];
+      onlyMarked = false;
+      offset = 0;
       dropFound();
     }
     selectedTable = tableName;
@@ -594,18 +783,22 @@
     error = null;
     try {
       const asked = filters;
+      const at = offset;
       const words = search.trim();
       const narrowed = asked.length > 0 || words !== '';
-      const [schema, data, total, matching] = await Promise.all([
+      const marked = marks.get(tableName);
+      const [schema, page, total, matching] = await Promise.all([
         invoke('get_table_schema', { tableName }),
-        invoke('get_table_data', { tableName, limit, filters: asked, search: words }),
+        invoke('get_table_data', { tableName, limit, offset: at, filters: asked, search: words, marked: (marked ?? []).map((row) => row[ROW_ID]) }),
         invoke('get_row_count', { tableName, filters: [], search: '' }),
         narrowed ? invoke('get_row_count', { tableName, filters: asked, search: words }) : null,
       ]);
       // Ignora resposta atrasada se o usuario ja trocou de tabela, filtro ou pesquisa
-      if (tableName !== selectedTable || asked !== filters || words !== search.trim()) return;
+      if (tableName !== selectedTable || asked !== filters || words !== search.trim() || at !== offset) return;
       columns = schema;
-      rows = data;
+      rows = withIds(page.rows, page.ids);
+      // as marcadas, relidas na ordem da tabela (se o usuario nao marcou outra enquanto a consulta rodava)
+      if (marked && marks.get(tableName) === marked) setMarks(tableName, withIds(page.marked, page.marked_ids));
       rowCount = total;
       matchCount = matching ?? total;
     } catch (err) {
@@ -614,6 +807,23 @@
       busy = false;
     }
   }
+
+  // linhas marcadas de uma tabela (lista vazia tira a tabela do Map e desliga "So as marcadas")
+  function setMarks(table, list) {
+    const next = new Map(marks);
+    if (list.length) next.set(table, list);
+    else next.delete(table);
+    marks = next;
+    if (!list.length && table === selectedTable) onlyMarked = false;
+  }
+
+  // caixa da linha, Espaco na linha da celula escolhida, menu da celula e Editar > Marcar ou desmarcar linha. Sem
+  // rowid (view) a identidade e texto e a marcada entra no fim: a tabela e relida para elas voltarem na ordem dela
+  function toggleMark(row) {
+    setMarks(selectedTable, toggleMarked(markedRows, row));
+    if (typeof row[ROW_ID] !== 'number') openTable(selectedTable);
+  }
+  const unmarkAll = () => setMarks(selectedTable, []);
 
   // lista de tabelas: setas, Home e End trocam a tabela aberta
   async function tableKey(event) {
@@ -638,6 +848,7 @@
 
   function onSearch(event) {
     search = event.currentTarget.value;
+    offset = 0; // outra pesquisa: volta a pagina 1
     dropFound();
     clearTimeout(searchTimer);
     searchTimer = setTimeout(runSearch, delayOf(event));
@@ -656,8 +867,8 @@
     found = null;
   }
 
-  // NIVEL BASICO: Todas as tabelas: lista as tabelas com linhas que tem o termo e quantas (backend: mesma regra da
-  // pesquisa da tabela, nas colunas de texto). Resposta velha nunca aparece; a pesquisa nova para a antiga no backend.
+  // NIVEL BASICO: Todas as tabelas: lista as tabelas com linhas que tem o termo e quantas (backend: a mesma regra da
+  // pesquisa da tabela, em todas as colunas). Resposta velha nunca aparece; a pesquisa nova para a antiga no backend.
   // Falha: sai o "Pesquisando" e o erro vai para a barra de status
   async function searchAll() {
     dropFound();
@@ -679,6 +890,7 @@
 
   function setScope(next) {
     scope = next;
+    offset = 0;
     dropFound();
     // campo vazio: o recarregamento que a digitacao agendou continua (senao a grade ficava filtrada sob o campo vazio)
     if (!search.trim()) return;
@@ -700,21 +912,43 @@
   async function setFilters(next) {
     const before = filters;
     filters = next;
+    offset = 0;
     await openTable(selectedTable);
     if (error && filters === next) filters = before;
+  }
+
+  // paginas da aba Dados (◀ ▶): a pagina anterior ou a seguinte, do tamanho de Linhas, com a mesma pesquisa e filtros
+  function goPage(step) {
+    offset = Math.max(0, offset + step * limit);
+    openTable(selectedTable);
   }
 
   // acoes do menu de clique direito da grade da aba Data (cabecalho e celula); o menu nao oculta a ultima visivel
   const gridActions = {
     hide: (name) => (hidden = toggleShown(hidden, name, columns.length)),
-    columns: () => columnsDialog.showModal(),
+    columns: openColumns,
     showAll: () => (hidden = new Set()),
     filter: (column, value) => setFilters(withFilter(filters, column, value)),
     clearFilters: () => setFilters([]),
   };
 
-  // NIVEL BASICO: SQL livre; mostra ate o Row limit. Sem erro: sai o erro anterior da linha do botao e da barra de baixo.
-  // Com erro: sai a grade do SQL anterior (pareceria o resultado deste) e o erro fica nos dois lugares
+  // itens "<formato>..." de um submenu de exportacao, para os menus de clique direito das grades
+  const exportItems = (kind, formats) => formats.map((format) => ({ label: t(`format.${format}`), run: () => startExport(kind, format) }));
+  // menu da celula da aba Dados, depois de copiar: marcar a linha, exportar as marcadas, desmarcar todas
+  let dataExtra = $derived([
+    { label: t('edit.mark'), run: toggleMark },
+    { label: t('marks.export'), off: !canExport('marked'), items: exportItems('marked', ['csv', 'xlsx']) },
+    { label: t('edit.unmarkAll'), off: !markedRows.length, run: unmarkAll },
+  ]);
+  // menu da celula da aba Termos, depois de copiar: todas as linhas achadas da tabela e o relatorio
+  let termsExtra = $derived([
+    { label: t('terms.copyHits'), run: copyTermHits },
+    { label: t('export.terms'), off: !canExport('terms'), items: exportItems('terms', ['xlsx', 'csv', 'sqlite', 'duckdb']) },
+  ]);
+
+  // NIVEL BASICO: SQL da aba SQL (so comandos de leitura); mostra ate o limite de linhas. Sem erro: sai o erro anterior da
+  // linha do botao e da barra de baixo. Com erro: sai a grade do SQL anterior (pareceria o resultado deste) e o erro fica
+  // nos dois lugares
   async function runSql() {
     if (!sql.trim()) return;
     busy = true;
@@ -733,70 +967,174 @@
       sqlResult = null;
       lastSql = '';
       sqlError = String(err);
-      showError(err, 'err.sql'); // erro do motor com o prefixo traduzido
+      showError(err, sqlContext(err)); // erro do motor com o prefixo traduzido
     } finally {
       busy = false;
     }
   }
 
-  // NIVEL BASICO: Exportar a tabela com pesquisa ou filtro ativo: 'all' (tabela inteira), 'found' (so as linhas
-  // encontradas) ou null (Cancelar, Esc)
-  function askRows(label) {
-    return new Promise((resolve) => {
-      rowsAsk = { label, resolve };
-      rowsDialog.showModal();
-      rowsDialog.querySelector('button.default').focus();
-    });
+  // esquece a pesquisa de termos (outra pesquisa, outro arquivo): a resposta da que estiver em andamento e descartada
+  function dropTerms() {
+    termsRun++;
+    termsWork = null;
+    termsResult = null;
+    termsTable = '';
+    termsPage = null;
   }
 
-  function rowsReply(choice) {
-    rowsDialog.close();
-    rowsAsk?.resolve(choice);
-    rowsAsk = null;
+  // NIVEL BASICO: Pesquisar termos (botao e Ctrl+Enter na aba Termos): o backend pesquisa no motor, em todas as colunas
+  // das tabelas do escopo, com progresso e Cancelar. Mostra o resumo, as tabelas com acerto (a primeira ja escolhida) e
+  // os termos nao encontrados
+  async function runTerms() {
+    if (!canRunTerms) return;
+    dropTerms();
+    const run = termsRun;
+    const { terms } = termList;
+    busy = true;
+    termsWork = { done: 0, total: 0, item: '' };
+    try {
+      const table = termsScope === 'table' ? selectedTable : null;
+      const hits = await invoke('search_terms', { terms, whole: match === 'whole', table });
+      if (run !== termsRun) return;
+      termsResult = { terms, ...termsOutcome(terms, hits) };
+      showStatus('terms.summary', termsValues(termsResult));
+      if (termsResult.tables.length) await openTermsTable(termsResult.tables[0].table);
+    } catch (err) {
+      if (run === termsRun) showError(err);
+    } finally {
+      if (run === termsRun) termsWork = null;
+      busy = false;
+    }
   }
 
-  // NIVEL BASICO: Pergunta onde salvar (pasta do arquivo aberto, senao a ultima usada) e exporta
-  // fora da thread da interface, com barra de progresso e Cancelar
-  async function startExport(scope, format, labelKey) {
+  const termsValues = (r) => ({ found: fmt(r.found), total: fmt(r.terms.length), rows: fmt(r.rows), tables: fmt(r.tables.length) });
+
+  // linhas achadas da tabela escolhida: a coluna Termo e as colunas da tabela, ate o limite de linhas
+  async function openTermsTable(table) {
+    termsTable = table;
+    const run = termsRun;
+    try {
+      const page = await invoke('terms_rows', { table, limit, label: t('terms.col') });
+      if (run === termsRun && table === termsTable) termsPage = page;
+    } catch (err) {
+      if (run === termsRun) showError(err);
+    }
+  }
+
+  // NIVEL BASICO: Copiar as linhas encontradas desta tabela: todas (nao so as da tela), com o cabecalho, separadas por TAB
+  // e sem a coluna Termo; colar no Excel da exatamente as linhas achadas
+  async function copyTermHits() {
+    try {
+      const all = await invoke('terms_rows', { table: termsTable, limit: 0, label: t('terms.col') });
+      const names = all.columns.slice(1).map((col) => col.name);
+      if (await copyText(rowsToTsv(names, all.rows))) showStatus('terms.copied', { count: fmt(all.rows.length) });
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  async function copyNotFound() {
+    const list = termsResult.notFound;
+    if (await copyText(list.join('\r\n'))) showStatus('terms.copied', { count: fmt(list.length) });
+  }
+
+  // nome sugerido, o que vai ao backend e a unidade da frase final de cada exportacao
+  const EXPORTS = {
+    table: () => ({ name: selectedTable, unit: 'Rows', request: { scope: 'table', table: selectedTable } }),
+    marked: () => ({
+      name: `${selectedTable}_marcadas`,
+      unit: 'Rows',
+      request: { scope: 'marked', table: selectedTable, ids: markedRows.map((row) => row[ROW_ID]) },
+    }),
+    tableSchema: () => ({ name: `${selectedTable}_schema`, unit: 'Rows', request: { scope: 'schema', table: selectedTable, labels: schemaLabels() } }),
+    dbSchema: () => ({ name: `${stem(openedPath)}_schema`, unit: 'Rows', request: { scope: 'schema', labels: schemaLabels() } }),
+    tables: () => ({ folder: true, unit: 'Tables', request: { scope: 'tables' } }),
+    sql: () => ({ name: 'query', unit: 'Rows', request: { scope: 'sql', sql: lastSql } }),
+    found: () => ({ name: `${stem(openedPath)}_busca`, unit: 'Tables', request: { scope: 'found', search: search.trim() } }),
+    terms: (format) => ({
+      name: `${stem(openedPath)}_termos`,
+      folder: format === 'csv',
+      unit: 'Tables',
+      request: { scope: 'terms', labels: ['terms.col', 'terms.status', 'tables.name', 'tables.rows', 'terms.found', 'terms.missing', 'terms.sheetResult'].map((key) => t(key)) },
+    }),
+  };
+  // titulos Tabela, Coluna, Tipo, Aceita nulo e os valores Sim e Nao do esquema exportado, no idioma da tela
+  const schemaLabels = () => ['tables.name', 'schema.column', 'schema.type', 'schema.nullable', 'schema.yes', 'schema.no'].map((key) => t(key));
+
+  // NIVEL BASICO: Um item de Exportar: pergunta onde salvar (pasta do arquivo aberto, senao a ultima usada) e exporta
+  // fora da thread da interface, com barra de progresso e Cancelar. Exportacao para pasta (um CSV por tabela): seletor
+  // de pasta e, se algum arquivo ja existe ali, uma pergunta so
+  async function startExport(kind, format) {
     openMenu = null;
-    if (!canExport(scope)) return;
-    const label = t(labelKey).replace(/\.\.\.$/, '');
+    if (!canExport(kind)) return;
+    const item = EXPORT_MENU.find(([id]) => id.split('.')[1] === kind);
+    const label = Array.isArray(item[2]) ? `${t(item[1])} - ${t(`format.${format}`)}` : t(item[1]);
+    const title = label.replace(/\.\.\.$/, '');
+    const { name, folder, unit, request } = EXPORTS[kind](format);
     // tabela com pesquisa ou filtro na grade (as 4 versoes): a tabela inteira ou so as linhas encontradas
-    let rows = { filters: [], search: '' };
-    if (scope === 'table' && !everywhere && (search.trim() || filters.length)) {
+    if (kind === 'table' && !everywhere && (search.trim() || filters.length)) {
       // a pesquisa digitada que ainda espera os 300 ms vale agora: o numero da pergunta e o das linhas exportadas
       clearTimeout(searchTimer);
       await openTable(selectedTable);
-      const choice = await askRows(label);
-      if (!choice) return; // Cancelar ou Esc
-      if (choice === 'found') rows = { filters, search: search.trim() };
+      const choice = await ask({
+        title,
+        buttons: [
+          { id: 'all', key: 'export.wholeTable', primary: true },
+          { id: 'found', key: 'export.foundRows', values: { count: fmt(matchCount) } },
+          { id: 'cancel', key: 'common.cancel', right: true },
+        ],
+      });
+      if (choice !== 'all' && choice !== 'found') return; // Cancelar ou Esc
+      if (choice === 'found') Object.assign(request, { filters, search: search.trim() });
     }
-    const base = scope === 'database' ? stem(openedPath) : scope === 'table' ? selectedTable : 'query';
     const dir = defaultSaveDir(openedPath, loadSetting(LAST_DIR_KEY));
     try {
-      const path = await invoke('plugin:dialog|save', {
-        options: {
-          title: label,
-          defaultPath: joinPath(dir, suggestedName(base, format, readFile)),
-          filters: [{ name: t(`save.${format}`), extensions: [format] }],
-        },
-      });
+      const path = folder
+        ? await invoke('plugin:dialog|open', { options: { title, directory: true, defaultPath: dir || undefined } })
+        : await invoke('plugin:dialog|save', {
+            options: {
+              title,
+              defaultPath: joinPath(dir, suggestedName(name, format, readFile)),
+              filters: [{ name: t(`save.${format}`), extensions: [format] }],
+            },
+          });
       if (!path) return; // cancelado
-      saveSetting(LAST_DIR_KEY, dirOf(path));
-      progress = { label, done: 0, total: 0, item: '' };
-      progressDialog.showModal();
-      await tick();
-      progressDialog.querySelector('button.default')?.focus();
-      const done = await invoke('export', { scope, format, path, table: selectedTable || null, sql: lastSql || null, ...rows });
-      // tabelas (banco inteiro) ou linhas (tabela, SQL), com o numero de abas se foi Excel; plural pelo numero
-      const unit = scope === 'database' ? 'Tables' : 'Rows';
-      const values = { count: fmt(done.count), sheets: fmt(done.sheets ?? 0), path };
-      showStatus(`status.exported${unit}${done.sheets == null ? '' : 'Sheets'}`, values);
+      Object.assign(request, { format, path: String(path) });
+      saveSetting(LAST_DIR_KEY, folder ? request.path : dirOf(request.path));
+      saveSetting(SAVE_DIR_KEY, folder ? request.path : dirOf(request.path));
+      if (folder) {
+        const existing = await invoke('export_existing', { request });
+        const message = t('ask.overwriteMany', { count: fmt(existing) });
+        if (existing && (await invoke('plugin:dialog|message', { title, message, kind: 'warning', buttons: 'YesNo' })) !== 'Yes') return;
+      }
+      await runExport(title, request, unit);
     } catch (err) {
       showError(err);
+    }
+  }
+
+  // NIVEL BASICO: Roda a exportacao (ou o Salvar do banco inteiro) com a barra de progresso e Cancelar; no fim, a frase
+  // com as tabelas ou linhas gravadas (e as abas, se foi Excel); unit null: a copia do SQLite convertido (frase de salvo).
+  // Devolve true se gravou
+  async function runExport(label, request, unit) {
+    let finish;
+    exportEnd = new Promise((resolve) => (finish = resolve));
+    progress = { label, path: request.path, done: 0, total: 0, item: '' };
+    progressDialog.showModal();
+    await tick();
+    progressDialog.querySelector('button.default')?.focus();
+    try {
+      const done = await invoke('export', { request });
+      const values = { count: fmt(done.count), sheets: fmt(done.sheets ?? 0), path: request.path };
+      showStatus(unit ? `status.exported${unit}${done.sheets == null ? '' : 'Sheets'}` : 'status.sqliteSaved', values);
+      return true;
+    } catch (err) {
+      showError(err);
+      return false;
     } finally {
       progress = null;
       progressDialog.close();
+      finish();
     }
   }
 
@@ -810,16 +1148,23 @@
     }
   }
 
-  // barra de status: clique direito > Copiar (o texto tambem pode ser selecionado com o mouse)
-  function openStatusMenu(event) {
+  // barra de status: clique direito > Copiar (o texto tambem pode ser selecionado com o mouse); lista de tabelas: clique
+  // direito numa tabela > Favoritar / Desfavoritar (table)
+  function openStatusMenu(event, table) {
     event.preventDefault();
     event.stopPropagation();
     openMenu = null;
-    statusMenu = { x: event.clientX, y: event.clientY };
+    contextMenu = { x: event.clientX, y: event.clientY, table };
+  }
+
+  // Exibir > Favoritar ou desfavoritar tabela (Ctrl+D, tabela atual) e o clique direito na lista
+  function setFavorite(table) {
+    contextMenu = null;
+    favorites = toggleFavorite(favorites, table);
   }
 
   async function copyStatus() {
-    statusMenu = null;
+    contextMenu = null;
     await copyText(headline.text);
   }
 
@@ -827,36 +1172,49 @@
     if (await copyText(logText)) showStatus('status.logCopied');
   }
 
-  // NIVEL BASICO: Atalhos, os mesmos nas 4 versoes: Ctrl+O abrir, Ctrl+F pesquisar, F5 recarregar o banco, Ctrl+Q sair,
-  // Ctrl+1/2/3 abas, Ctrl+L log, Ctrl+Enter rodar o SQL (aba SQL); Ctrl+C na grade copia a celula (Grid.svelte).
+  // NIVEL BASICO: Atalhos, os mesmos nas 4 versoes e os dos itens de menu (valem quando o item vale): Ctrl+O abrir, F5
+  // reabrir, Ctrl+S salvar, Ctrl+Shift+S salvar como, Ctrl+W fechar, Ctrl+Q sair, Ctrl+F pesquisar, Ctrl+T lista de
+  // tabelas, Ctrl+1/2/3/4 abas, Ctrl+L log, Ctrl+Enter executar o SQL ou pesquisar os termos (na aba de cada um); na
+  // grade, Ctrl+C copia a celula, Ctrl+Shift+C a linha e Espaco marca a linha (Grid.svelte).
   // Com um dialogo aberto so valem as teclas dele; F5 nunca recarrega a pagina do webview (a tela voltaria do zero)
   function shortcut(e) {
-    if (e.key === 'Escape') (openMenu = null), (statusMenu = null);
+    if (e.key === 'Escape') (openMenu = null), (contextMenu = null);
     if (e.key === 'F5') e.preventDefault();
-    if (document.querySelector('dialog[open]') || e.altKey) return;
-    if (e.key === 'F5' && !e.ctrlKey) return reload();
+    const key = e.key.toLowerCase();
+    if (document.querySelector('dialog[open]') || e.altKey) {
+      // exportacao em andamento (a barra de progresso e um dialogo): Ctrl+Q pergunta antes de sair
+      if (e.ctrlKey && key === 'q' && progress) quit();
+      return;
+    }
+    if (e.key === 'F5' && !e.ctrlKey) return run('reopen');
     if (!e.ctrlKey) return;
-    const actions = {
-      o: () => !busy && browse(),
-      f: focusSearch,
-      q: quit,
-      l: () => setLog(!logOpen),
-      1: () => (tab = 'data'),
-      2: () => (tab = 'schema'),
-      3: focusSql,
-      enter: () => tab === 'sql' && !busy && openedPath && runSql(), // como o botao Executar
+    const ids = {
+      o: 'open',
+      s: e.shiftKey ? 'saveAs' : 'save',
+      w: 'close',
+      q: 'exit',
+      f: 'find',
+      t: 'goTables',
+      d: 'favorite',
+      l: 'log',
+      1: 'tab.data',
+      2: 'tab.schema',
+      3: 'tab.sql',
+      4: 'tab.terms',
+      enter: tab === 'terms' ? 'runTerms' : tab === 'sql' ? 'runSql' : '',
     };
-    const act = actions[e.key.toLowerCase()];
-    if (!act) return;
+    if (!ids[key]) return;
     e.preventDefault();
-    act();
+    run(ids[key]);
   }
 
-  // F5: abre de novo o banco aberto (rele a lista de tabelas); sem banco aberto, o caminho do campo
+  // F5 e Arquivo > Reabrir: abre de novo o banco aberto (rele a lista de tabelas); sem banco aberto, a caixa de escolher
+  // arquivo (secao 14: nunca um banco padrao relativo)
   function reload() {
     if (busy) return;
-    if (openedPath) dbPath = openedPath;
-    if (dbPath.trim()) openDatabase();
+    if (!openedPath) return browse();
+    dbPath = openedPath;
+    openDatabase();
   }
 
   // Ctrl+F: aba Data com o campo de pesquisa em foco e o texto selecionado (sem tabela aberta nao ha campo)
@@ -868,120 +1226,95 @@
     field?.select();
   }
 
-  // Ctrl+3: aba SQL com o editor em foco
+  // Ctrl+3: aba SQL com o editor em foco; Ctrl+4: aba Termos com a caixa dos termos em foco
   async function focusSql() {
     tab = 'sql';
     await tick();
     document.querySelector('.sql textarea')?.focus();
   }
 
-  // menu perto da borda: puxa para dentro da janela
-  const keepInside = (node) => {
+  async function focusTerms() {
+    tab = 'terms';
+    await tick();
+    document.querySelector('.terms textarea')?.focus();
+  }
+
+  // Ctrl+T: a lista de tabelas em foco (setas, Home e End trocam a tabela)
+  const focusTables = () => document.querySelector('.table-list')?.focus();
+
+  // menu perto da borda: puxa para dentro da janela. above: abre acima do ponto (barra de status, embaixo); senao abaixo
+  // dele (lista de tabelas: o menu nao cobre a tabela clicada)
+  const keepInside = (node, above = true) => {
     const box = node.getBoundingClientRect();
     node.style.left = `${Math.max(4, Math.min(box.left, innerWidth - box.width - 4))}px`;
-    node.style.top = `${Math.max(4, Math.min(box.top - box.height, innerHeight - box.height - 4))}px`;
+    node.style.top = `${Math.max(4, Math.min(above ? box.top - box.height : box.top + 4, innerHeight - box.height - 4))}px`;
+  };
+  // submenu ao lado do item; sem lugar a direita, abre para a esquerda
+  const beside = (node) => {
+    if (node.getBoundingClientRect().right > innerWidth - 4) node.classList.add('left');
   };
   const focusNow = (node) => node.focus();
 </script>
 
-<!-- lista de exportacao, uma so: botao Exportar... do topo e menu Arquivo; um separador entre banco, tabela e SQL -->
-{#snippet exportItems()}
-  {#each EXPORTS as [key, scope, format], i}
-    {#if i > 0 && scope !== EXPORTS[i - 1][1]}<div class="separator" role="separator"></div>{/if}
-    <button type="button" role="menuitem" disabled={!canExport(scope)} onclick={() => startExport(scope, format, key)}>{t(key)}</button>
+<!-- itens de um menu (e, dentro deles, os submenus): a arvore vem de menus.js e o que cada id faz, de `commands`. A
+     lista de exportacao e uma so, mostrada pelo menu Arquivo e pelo botao Exportar... do topo -->
+{#snippet menuItems(items, depth)}
+  {@const checks = items.some((item) => item !== '-' && commands[item[0]]?.on !== undefined)}
+  {#each items as item}
+    {#if item === '-'}
+      <div class="separator" role="separator"></div>
+    {:else}
+      {@const [id, text, extra] = item}
+      {@const command = commands[id] ?? {}}
+      {#if Array.isArray(extra)}
+        <div class="submenu-root" role="none" onmouseenter={() => (subPath = [...subPath.slice(0, depth), id])}>
+          <button
+            type="button"
+            role="menuitem"
+            aria-haspopup="menu"
+            aria-expanded={subPath[depth] === id}
+            disabled={command.off}
+            onclick={(e) => {
+              e.stopPropagation(); // o clique abre o submenu, nao fecha o menu
+              subPath = [...subPath.slice(0, depth), id];
+            }}
+          >
+            {#if checks}<span class="check"></span>{/if}{t(text)} <span class="arrow">▸</span>
+          </button>
+          {#if subPath[depth] === id && !command.off}
+            <div class="dropdown sub" role="menu" aria-label={t(text)} use:beside>{@render menuItems(extra, depth + 1)}</div>
+          {/if}
+        </div>
+      {:else}
+        <button
+          type="button"
+          role={command.on === undefined ? 'menuitem' : command.radio ? 'menuitemradio' : 'menuitemcheckbox'}
+          aria-checked={command.on}
+          disabled={command.off}
+          onmouseenter={() => (subPath = subPath.slice(0, depth))}
+          onclick={() => run(id)}
+        >
+          {#if checks}<span class="check">{command.on ? (command.radio ? '●' : '✓') : ''}</span>{/if}{t(text)}{#if extra}<kbd>{t(extra)}</kbd>{/if}
+        </button>
+      {/if}
+    {/if}
   {/each}
 {/snippet}
 
 <div class="app">
   <div class="menubar" role="menubar" aria-label={t('menu.main')}>
-    <div class="menu-root">
-      <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openMenu === 'file'} onclick={(e) => toggleMenu(e, 'file')}>{t('menu.file')}</button>
-      {#if openMenu === 'file'}
-        <!-- como o menu Arquivo do Zig: Abrir..., Exportar > (submenu), Fechar, Sair -->
-        <div class="dropdown" role="menu" aria-label={t('menu.file')}>
-          <button type="button" role="menuitem" disabled={busy} onclick={browse} onmouseenter={() => (exportSub = false)}>
-            {t('file.open')} <kbd>{t('file.openKey')}</kbd>
-          </button>
-          <div class="submenu-root" role="none" onmouseenter={() => (exportSub = true)} onmouseleave={() => (exportSub = false)}>
-            <button
-              type="button"
-              role="menuitem"
-              aria-haspopup="menu"
-              aria-expanded={exportSub}
-              disabled={busy || !openedPath}
-              onclick={(e) => {
-                e.stopPropagation(); // o clique abre o submenu, nao fecha o menu
-                exportSub = !exportSub;
-              }}
-            >
-              {t('file.export')} <span class="arrow">▸</span>
-            </button>
-            {#if exportSub && !busy && openedPath}
-              <div class="dropdown sub" role="menu" aria-label={t('file.export')}>{@render exportItems()}</div>
-            {/if}
-          </div>
-          <button type="button" role="menuitem" disabled={busy || !openedPath} onclick={closeDatabase} onmouseenter={() => (exportSub = false)}>
-            {t('file.close')}
-          </button>
-          <div class="separator" role="separator"></div>
-          <button type="button" role="menuitem" onclick={quit}>{t('file.exit')} <kbd>{t('file.exitKey')}</kbd></button>
-        </div>
-      {/if}
-    </div>
-    <div class="menu-root">
-      <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openMenu === 'view'} onclick={(e) => toggleMenu(e, 'view')}>{t('menu.view')}</button>
-      {#if openMenu === 'view'}
-        <div class="dropdown" role="menu" aria-label={t('menu.view')}>
-          <button type="button" role="menuitemcheckbox" aria-checked={logOpen} onclick={() => setLog(!logOpen)}>
-            <span class="check">{logOpen ? '✓' : ''}</span>{t('view.log')} <kbd>{t('view.logKey')}</kbd>
-          </button>
-        </div>
-      {/if}
-    </div>
-    <div class="menu-root">
-      <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openMenu === 'settings'} onclick={(e) => toggleMenu(e, 'settings')}>{t('menu.settings')}</button>
-      {#if openMenu === 'settings'}
-        <!-- ordem das 4 versoes: Tema, Idioma, Escopo padrao da busca, Exibir NULL; cada escolha vale na hora e fica gravada -->
-        <div class="dropdown" role="menu" aria-label={t('menu.settings')}>
-          <span class="group">{t('settings.theme')}</span>
-          {#each THEMES as [key], i}
-            <button type="button" role="menuitemradio" aria-checked={themeIndex === i} onclick={() => setTheme(i)}>
-              <span class="check">{themeIndex === i ? '●' : ''}</span>{t(key)}
-            </button>
-          {/each}
-          <div class="separator" role="separator"></div>
-          <span class="group">{t('settings.language')}</span>
-          {#each LANGS as [code, name]}
-            <button type="button" role="menuitemradio" aria-checked={lang === code} onclick={() => setLang(code)}>
-              <span class="check">{lang === code ? '●' : ''}</span>{name}
-            </button>
-          {/each}
-          <div class="separator" role="separator"></div>
-          <span class="group">{t('settings.searchScope')}</span>
-          {#each SCOPES as [id, key]}
-            <button type="button" role="menuitemradio" aria-checked={defaultScope === id} onclick={() => setDefaultScope(id)}>
-              <span class="check">{defaultScope === id ? '●' : ''}</span>{t(key)}
-            </button>
-          {/each}
-          <div class="separator" role="separator"></div>
-          <button type="button" role="menuitemcheckbox" aria-checked={showNull} onclick={() => setShowNull(!showNull)}>
-            <span class="check">{showNull ? '✓' : ''}</span>{t('settings.showNull')}
-          </button>
-        </div>
-      {/if}
-    </div>
-    <div class="menu-root">
-      <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openMenu === 'help'} onclick={(e) => toggleMenu(e, 'help')}>{t('menu.help')}</button>
-      {#if openMenu === 'help'}
-        <div class="dropdown" role="menu" aria-label={t('menu.help')}>
-          <button type="button" role="menuitem" onclick={showAbout}>{t('help.about')}</button>
-        </div>
-      {/if}
-    </div>
+    {#each MENUS as [id, text, items]}
+      <div class="menu-root">
+        <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openMenu === id} onclick={(e) => toggleMenu(e, id)}>{t(text)}</button>
+        {#if openMenu === id}
+          <div class="dropdown" role="menu" aria-label={t(text)}>{@render menuItems(items, 0)}</div>
+        {/if}
+      </div>
+    {/each}
   </div>
 
-  <!-- topo como o do Zig: o caminho ocupa a linha, Procurar... Abrir Exportar... a direita; arrastar um arquivo para a
-       janela tambem abre -->
+  <!-- topo (BRIEF secao 14): o caminho ocupa a linha, Abrir... (a caixa de escolher arquivo, = Arquivo > Abrir...) e
+       Exportar... a direita; Enter no campo abre o caminho digitado (vazio: a caixa); arrastar um arquivo tambem abre -->
   <header>
     <form onsubmit={openDatabase}>
       <div class="path">
@@ -1002,8 +1335,7 @@
           <span class="path-view" aria-hidden="true"><bdi dir="ltr">{dbPath}</bdi></span>
         {/if}
       </div>
-      <button type="button" class="secondary" onclick={browse} disabled={busy}>{t('header.browse')}</button>
-      <button type="submit" disabled={busy}>{t('header.open')}</button>
+      <button type="button" onclick={browse} disabled={busy}>{t('file.open')}</button>
       <div class="menu-root">
         <button
           type="button"
@@ -1014,7 +1346,7 @@
           onclick={(e) => toggleMenu(e, 'export')}>{t('header.export')}</button
         >
         {#if openMenu === 'export'}
-          <div class="dropdown end" role="menu" aria-label={t('file.export')}>{@render exportItems()}</div>
+          <div class="dropdown end" role="menu" aria-label={t('file.export')}>{@render menuItems(EXPORT_MENU, 0)}</div>
         {/if}
       </div>
     </form>
@@ -1061,51 +1393,35 @@
     </div>
   </dialog>
 
-  <!-- SQLite convertido do Access: salvar, apagar ou cancelar (Esc = cancelar) -->
+  <!-- pergunta com botoes: sair com o banco convertido nao salvo (Salvar a esquerda; Voltar e Sair a direita, lado a
+       lado), exportacao em andamento ao sair, tabela inteira ou so as linhas encontradas. Esc e o X da caixa nao
+       escolhem nada (Voltar, Cancelar) -->
   <dialog
-    bind:this={convertDialog}
-    class="convert"
-    aria-labelledby="convert-title"
-    oncancel={(e) => {
-      e.preventDefault();
-      reply('cancel');
-    }}
-    onkeydown={(e) => {
-      // Enter em qualquer ponto (fora dos botoes, que ja respondem ao Enter) = acao padrao, Salvar...
-      if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') {
-        e.preventDefault();
-        reply('save');
-      }
-    }}
-  >
-    <button type="button" class="dialog-x" aria-label={t('common.cancel')} title={t('common.cancel')} onclick={() => reply('cancel')}>×</button>
-    <!-- como o dialogo do Go: titulo "SQLite convertido" e a pergunta com o nome do arquivo -->
-    <h2 id="convert-title">{t('convert.title')}</h2>
-    <p class="file">{t('convert.text', { name: `${stem(openedPath)}.sqlite` })}</p>
-    <label class="remember"><input type="checkbox" bind:checked={rememberChoice} /> {t('convert.remember')}</label>
-    <div class="actions">
-      <button type="button" class="save" onclick={() => reply('save')}>{t('convert.save')}</button>
-      <button type="button" class="secondary" onclick={() => reply('delete')}>{t('convert.delete')}</button>
-      <button type="button" class="secondary close" onclick={() => reply('cancel')}>{t('common.cancel')}</button>
-    </div>
-  </dialog>
-
-  <!-- exportar a tabela com pesquisa ou filtro ativo: a tabela inteira ou so as linhas encontradas (Esc = Cancelar) -->
-  <dialog
-    bind:this={rowsDialog}
+    bind:this={askDialog}
     class="ask"
-    aria-labelledby="rows-title"
+    aria-labelledby="ask-title"
     oncancel={(e) => {
       e.preventDefault();
-      rowsReply(null);
+      reply(null);
     }}
   >
-    <h2 id="rows-title">{rowsAsk?.label}</h2>
-    <div class="actions">
-      <button type="button" class="default" onclick={() => rowsReply('all')}>{t('export.wholeTable')}</button>
-      <button type="button" class="secondary" onclick={() => rowsReply('found')}>{t('export.foundRows', { count: fmt(matchCount) })}</button>
-      <button type="button" class="secondary close" onclick={() => rowsReply(null)}>{t('common.cancel')}</button>
-    </div>
+    {#if question}
+      {#if question.x}
+        <button type="button" class="dialog-x" aria-label={t('common.back')} title={t('common.back')} onclick={() => reply(null)}>×</button>
+      {/if}
+      <h2 id="ask-title">{question.title}</h2>
+      {#if question.text}<p>{question.text}</p>{/if}
+      <div class="actions">
+        {#each question.buttons as button, i}
+          <button
+            type="button"
+            class={button.primary ? 'default' : 'secondary'}
+            class:close={button.right && !question.buttons[i - 1]?.right}
+            onclick={() => reply(button.id)}>{t(button.key, button.values)}</button
+          >
+        {/each}
+      </div>
+    {/if}
   </dialog>
 
   <!-- marcar/desmarcar vale na hora; da para trocar varias colunas e fechar. A grade de caixas tem quantas
@@ -1199,8 +1515,17 @@
           <div class="table-head" aria-hidden="true"><span>{t('tables.name')}</span><span>{t('tables.rows')}</span></div>
         {/if}
         {#each visibleTables as name, i (name)}
-          <div id="table-{i}" role="option" tabindex="-1" aria-selected={name === selectedTable} class:selected={name === selectedTable} onclick={() => openTable(name)}>
-            <span class="name">{name}</span><span class="rows">{tableRows.get(name) == null ? '' : fmt(tableRows.get(name))}</span>
+          <div
+            id="table-{i}"
+            role="option"
+            tabindex="-1"
+            aria-selected={name === selectedTable}
+            class:selected={name === selectedTable}
+            onclick={() => openTable(name)}
+            oncontextmenu={(e) => openStatusMenu(e, name)}
+          >
+            <!-- favorita: "★ " antes do nome, na cor do texto -->
+            <span class="name">{favorites.has(name) ? '★ ' : ''}{name}</span><span class="rows">{tableRows.get(name) == null ? '' : fmt(tableRows.get(name))}</span>
           </div>
         {/each}
       </div>
@@ -1216,11 +1541,20 @@
       <!-- Linhas [100]: na linha da busca da aba Dados e na linha do Executar da aba SQL (uma por vez na tela) -->
       {#snippet rowLimit()}
         <label for="row-limit">{t('limit.label')}</label>
-        <select id="row-limit" bind:value={limit} onchange={() => openTable(selectedTable)}>
+        <select id="row-limit" value={limit} onchange={(e) => setLimit(Number(e.currentTarget.value))}>
           {#each LIMITS as option}
             <option value={option}>{option}</option>
           {/each}
         </select>
+      {/snippet}
+
+      <!-- seletor de duas opcoes colado numa caixa so (escopo da pesquisa, comparacao dos termos) -->
+      {#snippet choice(options, value, pick, label, tip)}
+        <div class="scope" role="radiogroup" aria-label={label} title={tip}>
+          {#each options as [id, key]}
+            <button type="button" role="radio" aria-checked={value === id} class:active={value === id} onclick={() => pick(id)}>{t(key)}</button>
+          {/each}
+        </div>
       {/snippet}
 
       {#if tab === 'sql'}
@@ -1234,7 +1568,7 @@
           <div class="table-bar">
             <button type="button" title={t('sql.runTip')} onclick={runSql} disabled={busy || !openedPath || !sql.trim()}>{t('sql.run')}</button>
             {#if sqlError}
-              <span class="sql-error">{statusLine(errorLine(sqlError, 'err.sql'))}</span>
+              <span class="sql-error">{statusLine(errorLine(sqlError, sqlContext(sqlError)))}</span>
             {:else if sqlResult}
               <span>{t('sql.summary', { rows: fmt(sqlResult.rows.length) + (sqlResult.truncated ? '+' : ''), columns: sqlResult.columns.length })}</span>
             {/if}
@@ -1243,8 +1577,73 @@
         </div>
         {#if sqlResult?.columns.length}
           {#key sqlResult}
-            <Grid columns={sqlResult.columns} rows={sqlResult.rows} label={t('sql.result')} emptyText={t('sql.noRows')} {t} {nullText} onstatus={showStatus} onerror={showError} />
+            <Grid bind:this={grid} bind:selected={cell} columns={sqlResult.columns} rows={sqlResult.rows} label={t('sql.result')} emptyText={t('sql.noRows')} {t} {nullText} onstatus={showStatus} onerror={showError} />
           {/key}
+        {/if}
+      {:else if tab === 'terms'}
+        <!-- aba Termos, de cima para baixo: (a) a caixa dos termos; (b) Valor inteiro | Contem, Esta tabela | Todas as
+             tabelas, Pesquisar termos e a contagem; (c) o resumo (ou o progresso, com Cancelar no lugar do botao); (d) as
+             tabelas com acerto e a grade da escolhida; (e) os termos nao encontrados, copiaveis -->
+        <div class="terms">
+          <textarea bind:value={termsText} rows="8" aria-label={t('tabs.terms')} placeholder={t('terms.hint')} spellcheck="false"></textarea>
+          <div class="table-bar terms-bar">
+            {@render choice(MATCHES, match, (id) => (match = id), t('settings.match'), t('match.help'))}
+            {@render choice(SCOPES, termsScope, (id) => (termsScope = id), t('scope.label'))}
+            {#if termsWork}
+              <button type="button" class="secondary" onclick={() => invoke('cancel_terms')}>{t('common.cancel')}</button>
+            {:else}
+              <button type="button" title={t('sql.runTip')} onclick={runTerms} disabled={!canRunTerms}>{t('terms.run')}</button>
+            {/if}
+            <span>{t('terms.count', { count: fmt(termList.terms.length) })}{termList.repeated ? t('terms.repeated', { count: fmt(termList.repeated) }) : ''}</span>
+          </div>
+          <p class="table-info">
+            {#if termsWork}
+              {t('terms.progress', { done: termsWork.total ? termsWork.done + 1 : 0, total: termsWork.total, item: termsWork.item })}
+            {:else if termsResult}
+              {t('terms.summary', termsValues(termsResult))}
+            {/if}
+          </p>
+        </div>
+        {#if termsResult}
+          <div class="terms-found">
+            <div class="found" role="group" aria-label={t('found.list')}>
+              {#each termsResult.tables as f (f.table)}
+                <button type="button" class:selected={f.table === termsTable} onclick={() => openTermsTable(f.table)}>{t('found.item', { table: f.table, count: fmt(f.count) })}</button>
+              {:else}
+                <p>{t('data.noMatch')}</p>
+              {/each}
+            </div>
+            {#if termsPage}
+              {#key termsPage}
+                <Grid
+                  bind:this={grid}
+                  bind:selected={cell}
+                  columns={termsPage.columns}
+                  rows={termsPage.rows}
+                  label={t('data.rows', { table: termsTable })}
+                  emptyText={t('data.noMatch')}
+                  {t}
+                  {nullText}
+                  onstatus={showStatus}
+                  onerror={showError}
+                  extra={termsExtra}
+                  copySkip={1}
+                />
+              {/key}
+            {/if}
+          </div>
+          {#if termsPage}
+            <p class="table-info">
+              {t('data.showingMatches', { table: termsTable, shown: fmt(termsPage.rows.length), matching: fmt(termsResult.tables.find((f) => f.table === termsTable)?.count ?? 0) })}
+            </p>
+          {/if}
+          <section class="not-found" aria-labelledby="not-found-title">
+            <div class="log-bar">
+              <h2 id="not-found-title">{t('terms.notFound', { count: fmt(termsResult.notFound.length) })}</h2>
+              <button type="button" class="secondary" onclick={copyNotFound} disabled={!termsResult.notFound.length}>{t('status.copy')}</button>
+            </div>
+            <textarea readonly rows="3" value={termsResult.notFound.join('\n')} aria-labelledby="not-found-title" spellcheck="false"></textarea>
+          </section>
         {/if}
       {:else if !selectedTable}
         <p class="empty">{t('data.noTable')}</p>
@@ -1253,6 +1652,8 @@
         <!-- Schema: 6 px a mais de cada lado da celula (as colunas ficavam apertadas) -->
         {#key selectedTable}
         <Grid
+          bind:this={grid}
+          bind:selected={cell}
           --cell-x="16px"
           columns={schemaColumns}
           rows={schemaRows}
@@ -1267,7 +1668,7 @@
       {:else}
         <!-- aba Dados igual nas 4 versoes (padrao item 24): (a) busca | Esta tabela | Todas as tabelas | Linhas | Colunas...
              numa linha (estreita, quebra como o Go); (b) filtros por valor, so quando houver; (c) a grade (ou as tabelas
-             achadas); (d) a contagem embaixo. Nada mais nesta area -->
+             achadas), com as linhas marcadas sempre no topo; (d) a contagem embaixo e, com marcas, "So as marcadas" -->
         <div class="table-bar data-bar">
           <input
             class="search"
@@ -1279,15 +1680,11 @@
             placeholder={t('search.placeholder')}
           />
           <!-- escopo da pesquisa: controle segmentado de duas opcoes (o padrao vem de Settings) -->
-          <div class="scope" role="radiogroup" aria-label={t('scope.label')}>
-            {#each SCOPES as [id, key]}
-              <button type="button" role="radio" aria-checked={scope === id} class:active={scope === id} onclick={() => setScope(id)}>{t(key)}</button>
-            {/each}
-          </div>
+          {@render choice(SCOPES, scope, setScope, t('scope.label'))}
           <span class="limit">{@render rowLimit()}</span>
-          <button type="button" class="secondary columns-button" title={t('columns.tip')} onclick={() => columnsDialog.showModal()}>{t('columns.button')}</button>
+          <button type="button" class="secondary columns-button" title={t('columns.tip')} onclick={openColumns}>{t('columns.button')}</button>
         </div>
-        {#if everywhere}
+        {#if everywhere && !showOnly}
           <!-- Todas as tabelas: as tabelas com linhas achadas; escolher uma abre ela com a mesma pesquisa -->
           <div class="found" role="group" aria-label={t('found.list')}>
             {#if found?.tables}
@@ -1319,8 +1716,10 @@
         <!-- key: larguras arrastadas a mao valem ate trocar de tabela (de resultado, na aba SQL) -->
         {#key selectedTable}
         <Grid
+          bind:this={grid}
+          bind:selected={cell}
           columns={shownColumns}
-          rows={shownColumns.length ? rows : []}
+          rows={shownColumns.length ? shownRows : []}
           label={t('data.rows', { table: selectedTable })}
           emptyText={t(!shownColumns.length ? 'data.allHidden' : filters.length || search.trim() ? 'data.noMatch' : 'data.empty')}
           {t}
@@ -1328,17 +1727,37 @@
           onstatus={showStatus}
           onerror={showError}
           actions={{ ...gridActions, all: columns, hidden, filtered: filters.length > 0 }}
+          marks={{ has: (row) => markedRows.includes(row), toggle: toggleMark }}
+          extra={dataExtra}
         />
         {/key}
         {/if}
-        <!-- (d) "{tabela}: mostrando X de Y linhas" (com busca ou filtro, das encontradas); em Todas as tabelas, o resumo -->
+        <!-- (d) "{tabela}: linhas 1 a 100 de 36.804" (com busca ou filtro, "de N encontradas"; pagina vazia: "mostrando 0
+             de Y") e ", N marcadas", com as paginas ◀ ▶; em Todas as tabelas, o resumo. A direita, so com marcas, a caixa
+             "So as marcadas" (= Exibir > So as linhas marcadas) -->
         <p class="table-info">
-          {#if everywhere}
-            {!found ? t('found.searching') : found.tables ? t('found.summary', { count: fmt(found.tables.length) }) : ''}
-          {:else if search.trim() || filters.length}
-            {t('data.showingMatches', { table: selectedTable, shown: fmt(rows.length), matching: fmt(matchCount) })}
-          {:else}
-            {t('data.showing', { table: selectedTable, shown: fmt(rows.length), total: fmt(rowCount) })}
+          <span>
+            {#if showOnly}
+              {t('data.showing', { table: selectedTable, shown: fmt(markedRows.length), total: fmt(rowCount) })}
+            {:else if everywhere}
+              {!found ? t('found.searching') : found.tables ? t('found.summary', { count: fmt(found.tables.length) }) : ''}
+            {:else if search.trim() || filters.length}
+              {rows.length
+                ? t('data.rangeMatches', { ...range, matching: fmt(matchCount) })
+                : t('data.showingMatches', { table: selectedTable, shown: fmt(rows.length), matching: fmt(matchCount) })}
+            {:else}
+              {rows.length ? t('data.range', { ...range, total: fmt(rowCount) }) : t('data.showing', { table: selectedTable, shown: fmt(rows.length), total: fmt(rowCount) })}
+            {/if}{markedRows.length ? t('marks.count', { count: fmt(markedRows.length) }) : ''}
+            {#if !showOnly && !everywhere}
+              <!-- paginas do tamanho de Linhas; desabilitadas na ponta -->
+              <span class="pages">
+                <button type="button" class="secondary" title={t('page.previous')} aria-label={t('page.previous')} disabled={busy || offset === 0} onclick={() => goPage(-1)}>◀</button>
+                <button type="button" class="secondary" title={t('page.next')} aria-label={t('page.next')} disabled={busy || offset + rows.length >= matchCount} onclick={() => goPage(1)}>▶</button>
+              </span>
+            {/if}
+          </span>
+          {#if markedRows.length}
+            <label class="only-marked"><input type="checkbox" checked={showOnly} onchange={(e) => (onlyMarked = e.currentTarget.checked)} />{t('marks.only')}</label>
           {/if}
         </p>
       {/if}
@@ -1380,14 +1799,19 @@
     {#if source}<span class="source" title={t('status.viaTip')}>{t('status.via', { source })}</span>{/if}
   </footer>
 
-  {#if statusMenu}
-    <div class="context" role="menu" aria-label={t('status.copy')} style="left: {statusMenu.x}px; top: {statusMenu.y}px" use:keepInside>
+  {#if contextMenu?.table}
+    {@const text = t(favorites.has(contextMenu.table) ? 'fav.remove' : 'fav.add')}
+    <div class="context" role="menu" aria-label={text} style="left: {contextMenu.x}px; top: {contextMenu.y}px" use:keepInside={false}>
+      <button type="button" role="menuitem" use:focusNow onclick={() => setFavorite(contextMenu.table)}>{text}</button>
+    </div>
+  {:else if contextMenu}
+    <div class="context" role="menu" aria-label={t('status.copy')} style="left: {contextMenu.x}px; top: {contextMenu.y}px" use:keepInside>
       <button type="button" role="menuitem" use:focusNow onclick={copyStatus}>{t('status.copy')}</button>
     </div>
   {/if}
 </div>
 
-<svelte:window onclick={() => ((openMenu = null), (statusMenu = null))} onkeydown={shortcut} />
+<svelte:window onclick={() => ((openMenu = null), (contextMenu = null))} onkeydown={shortcut} />
 
 <style>
   /* NIVEL BASICO: Cores em variaveis; o tema (Settings > Theme) troca o esquema da janela */
@@ -1509,7 +1933,8 @@
     font: inherit;
   }
 
-  /* Arquivo > Exportar: o submenu abre ao lado do item */
+  /* submenu (Arquivo > Exportar, os formatos de cada exportacao, Tema, Idioma...): abre ao lado do item, do tamanho
+     dos textos; sem lugar a direita, abre para a esquerda */
   .submenu-root {
     position: relative;
     display: flex;
@@ -1519,6 +1944,12 @@
   .dropdown.sub {
     top: -5px;
     left: 100%;
+    min-width: 120px;
+  }
+
+  .dropdown.sub:global(.left) {
+    right: 100%;
+    left: auto;
   }
 
   .dropdown button:hover:not(:disabled),
@@ -1529,13 +1960,6 @@
   .dropdown .separator {
     margin: 4px 0;
     border-top: 1px solid var(--border);
-  }
-
-  .dropdown .group {
-    padding: 4px 10px 2px;
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 600;
   }
 
   .check {
@@ -1743,7 +2167,9 @@
     color: var(--muted);
   }
 
+  /* os botoes nao encolhem: com a mesma largura (sameSize) a caixa cresce para caber, nunca aperta um deles */
   dialog .actions button {
+    flex-shrink: 0;
     margin: 0;
     padding: 4px 12px;
   }
@@ -2011,43 +2437,20 @@
     color: var(--accent);
   }
 
-  /* exportar a tabela inteira ou so as linhas encontradas: o nome da exportacao e as escolhas numa linha */
+  /* pergunta com botoes (sair, exportacao em andamento, tabela inteira ou linhas encontradas): titulo, frase e os
+     botoes numa linha, os da direita lado a lado */
   dialog.ask {
-    width: 460px;
+    position: relative;
+    width: min-content; /* 460 px ou a linha dos botoes, se for maior (3 botoes de "So as N linhas encontradas") */
+    min-width: 460px;
   }
 
   dialog.ask .actions {
     margin-top: 16px;
   }
 
-  /* pergunta do SQLite convertido: titulo, nome do arquivo, lembrar, botoes alinhados */
-  dialog.convert {
-    width: 420px;
-  }
-
-  dialog.convert .file {
-    margin: 6px 0 12px;
-  }
-
-  dialog.convert .remember {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--text);
-    font-size: inherit;
-    font-weight: 400;
-  }
-
-  dialog.convert .actions {
-    margin-top: 16px;
-  }
-
-  dialog.convert {
-    position: relative;
-  }
-
-  /* X do dialogo: fecha e cancela, como o Esc */
-  dialog.convert .dialog-x {
+  /* X do dialogo: fecha sem escolher, como o Esc */
+  dialog.ask .dialog-x {
     position: absolute;
     top: 8px;
     right: 10px;
@@ -2061,16 +2464,15 @@
     line-height: 1.4;
   }
 
-  dialog.convert .dialog-x:hover {
+  dialog.ask .dialog-x:hover {
     color: var(--text);
   }
 
   /* foco inicial sempre visivel no botao padrao (o showModal veio de clique, nao de teclado) */
-  dialog.convert button.save:focus {
+  dialog.ask button.default:focus {
     outline: 2px solid var(--text);
     outline-offset: 2px;
   }
-
 
   main {
     display: flex;
@@ -2104,15 +2506,16 @@
   .table-bar {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
+    align-items: center;
     gap: 6px 12px;
     color: var(--muted);
     font-size: 12px;
   }
 
-  /* linha da busca da aba Dados: campos e botoes alinhados pelo meio */
-  .table-bar.data-bar {
-    align-items: center;
+  /* nenhum botao maior que os outros numa linha (dono 26/11, abas Dados, SQL e Pesquisa Avancada): todos com o
+     preenchimento dos seletores e dos campos da linha; a largura vem do texto, a cor diz qual e a acao */
+  .table-bar button {
+    padding: 3px 10px;
   }
 
   /* Linhas [100]: rotulo e lista juntos; na aba SQL, no fim da linha do Executar */
@@ -2123,19 +2526,85 @@
     gap: 6px;
   }
 
+  /* o select do Chromium ignora line-height (texto de 18 px contra 16,8 dos botoes): 2,4 px em cima e embaixo da a
+     altura dos botoes e campos da linha (24,8 px) */
   .limit select {
-    padding: 3px 6px;
+    padding: 2.4px 6px;
   }
 
   .sql .limit {
     margin-left: auto;
   }
 
-  /* contagem embaixo da grade: uma linha, no texto apagado das outras contagens */
+  /* contagem embaixo da grade: uma linha, no texto apagado das outras contagens; a direita, "So as marcadas" */
   .table-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
     margin: 0;
     color: var(--muted);
     font-size: 12px;
+  }
+
+  /* paginas ◀ ▶ logo depois da contagem, do tamanho dos botoes das linhas das abas */
+  .pages {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: 10px;
+    vertical-align: middle;
+  }
+
+  .pages button {
+    padding: 3px 10px;
+  }
+
+  /* caixa discreta: no tamanho e na cor da contagem */
+  .only-marked {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 6px;
+    color: inherit;
+    font-size: inherit;
+    font-weight: 400;
+  }
+
+  .only-marked input {
+    margin: 0;
+  }
+
+  /* aba Termos: a caixa dos termos, a linha dos seletores e o resumo */
+  .terms {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .terms textarea,
+  .not-found textarea {
+    resize: vertical;
+    font-family: Consolas, 'Cascadia Mono', monospace;
+    font-size: 12px;
+  }
+
+  /* tabelas com acerto ao lado da grade da tabela escolhida */
+  .terms-found {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    gap: 8px;
+  }
+
+  .terms-found .found {
+    flex: 0 0 220px;
+  }
+
+  /* termos nao encontrados: titulo com o botao Copiar e a caixa so de leitura */
+  .not-found {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
 
   h2 {
@@ -2205,6 +2674,12 @@
 
   .found button:hover {
     background: var(--row-hover);
+  }
+
+  /* aba Termos: a tabela escolhida, como a tabela escolhida na lista de tabelas */
+  .found button.selected {
+    background: var(--accent);
+    color: var(--accent-text);
   }
 
   .found p {

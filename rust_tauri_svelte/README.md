@@ -38,30 +38,36 @@ O exe do Windows nao e assinado digitalmente: na primeira execucao o SmartScreen
 ## Como usar
 
 **Abrir um banco** (qualquer um dos jeitos):
-- botao **Browse...**: dialogo do sistema, com os filtros Access, SQLite e DuckDB (abre na pasta do ultimo banco);
-- digitar ou colar o caminho no campo do topo e **Open** (aspas do "Copiar como caminho" sao aceitas); caminho maior
-  que o campo mostra o fim (o nome do arquivo) e o comeco sai com "...";
+- botao **Open...** (= File > Open..., `Ctrl+O`): dialogo do sistema, com os filtros Access, SQLite e DuckDB (abre na
+  pasta do ultimo banco);
+- digitar ou colar o caminho completo no campo do topo e **Enter** (ou File > Open the typed path; campo vazio: o
+  dialogo; aspas do "Copiar como caminho" sao aceitas); caminho maior que o campo mostra o fim (o nome do arquivo) e o
+  comeco sai com "...". Arquivo que nao existe (ou caminho relativo): so "File not found: <caminho>";
 - arrastar o arquivo para a janela;
 - linha de comando: `mdb2sql.exe "D:\dados\banco.accdb"`; ou a variavel `MDB2SQL_DB_PATH` com o caminho.
 
-O botao **Export...** ao lado de **Open** abre a mesma lista de exportacao do menu File.
+O botao **Export...** ao lado de **Open...** abre a mesma lista de exportacao do menu File.
 
 **Access**: o arquivo e lido uma vez (num DuckDB em memoria, que e o motor da tela) e gravado uma vez num **SQLite
 temporario** com os mesmos dados e tipos (inteiro, decimal exato, texto, data, booleano e binario, e os NULL); nada e
 convertido duas vezes. A barra de status mostra a etapa (lendo o Access, gravando o SQLite) e depois "Opened via mdbtools → SQLite" (ou "Access ODBC → SQLite").
-Ao **fechar o banco** (File > Close), **abrir outro** ou **sair**, o app pergunta (**Converted SQLite file**:
-"Save the SQLite file converted from Access (`<nome>.sqlite`)?"):
-- **Save...**: dialogo de salvar na pasta do Access, nome `<nome do Access>.sqlite`; o SQLite fica onde voce escolher
-  e pode ser aberto depois direto (bem mais rapido que reler o Access);
-- **Delete**: apaga o temporario;
-- **Cancel**: nao fecha, nao abre o outro, nao sai.
+O app so pergunta ao **sair** (X, File > Exit, `Ctrl+Q`, `Alt+F4`) com o Access convertido e nao salvo
+(**Converted SQLite file**: "The database converted from `<nome>` was not saved. Save before exiting?"): **Save** abre
+a caixa de salvar (cancelada, a pergunta volta); **Back** volta ao app (Esc e o X da caixa tambem); **Exit** apaga o
+temporario e sai. **Fechar** (File > Close), **abrir outro** e **Reopen** (F5) nao perguntam: o convertido nao salvo e
+apagado e o Log diz isso. Com uma exportacao em andamento, sair pergunta antes (**Back** / **Exit**; Exit cancela a
+exportacao, sem arquivo pela metade). Se o app cair, o temporario e apagado na proxima abertura (linha no Log).
 
-"Remember for this session" repete a escolha sem perguntar ate fechar o app (Save grava na ultima pasta usada; se
-ja existir um arquivo com o nome, abre o dialogo). Se o app cair, o temporario e apagado na proxima abertura.
+**File > Save** (`Ctrl+S`), com qualquer banco aberto: a caixa de salvar do sistema na pasta do original, com o nome
+dele, os tipos SQLite, DuckDB e Excel (uma aba por tabela) e ja marcado o tipo do aberto (Access e SQLite: SQLite;
+DuckDB: DuckDB). Se o nome sugerido for o proprio arquivo aberto, vira `<nome> (copy)`; gravar por cima do arquivo
+aberto ou do temporario e recusado. **Save as...** (`Ctrl+Shift+S`): o mesmo, comecando na ultima pasta em que voce
+salvou ou exportou. O Access convertido salvo em SQLite e a copia do temporario; os outros casos gravam o banco com
+progresso e **Cancel**. Arquivos .mdb/.accdb nao podem ser gravados (formato proprietario da Microsoft).
 
-**Access ja salvo**: abrir de novo o mesmo .accdb/.mdb (mesmo caminho, tamanho e data) abre o SQLite salvo dele, sem
-converter nem perguntar ao fechar, tambem depois de fechar e abrir o app (a lista fica nas preferencias); se o Access
-ou o SQLite salvo mudou, o Access e convertido de novo.
+**Access ja salvo**: abrir de novo o mesmo .accdb/.mdb (mesmo caminho, tamanho e data) abre o SQLite ou DuckDB salvo
+dele, sem converter nem perguntar ao sair, tambem depois de fechar e abrir o app (a lista fica nas preferencias); se o
+Access ou o arquivo salvo mudou, o Access e convertido de novo.
 
 SQLite e Access ficam num DuckDB em memoria enquanto o banco esta aberto (motor das consultas, filtros e
 exportacao); arquivos DuckDB sao abertos direto, so leitura.
@@ -69,19 +75,37 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
 **Tela**:
 - **Tables** (esquerda): lista de tabelas com o nome inteiro (nome longo quebra a linha) e as linhas de cada uma
   (colunas **Table** e **Rows**); **Filter N tables** filtra por nome (300 ms depois da ultima tecla, como a pesquisa
-  da aba Data; Enter filtra na hora). Clique ou setas (Home/End) abrem a tabela.
+  da aba Data; Enter filtra na hora). Clique ou setas (Home/End) abrem a tabela. **Favoritas**: botao direito numa
+  tabela > **Add to favorites** (ou **View > Favorite or unfavorite table**, `Ctrl+D`, na tabela aberta): ela vai para o
+  topo da lista, em ordem alfabetica, com "★ " antes do nome; vale pelo nome enquanto o programa estiver aberto.
 - Aba **Data**, de cima para baixo (igual nas 4 versoes): uma linha com a pesquisa, **This table | All tables**,
   **Rows** (100/500/1000) e **Columns...**; os filtros por valor, quando houver; a grade; embaixo dela
-  "<tabela>: showing X of Y rows". A **pesquisa** (**Search the whole
+  "<tabela>: rows 1 to 100 of Y" com as paginas **◀ ▶** (do tamanho de **Rows**; pesquisa e filtros valem em todas; outra
+  pesquisa, filtro ou tabela volta a pagina 1). A **pesquisa** (**Search the whole
   table**) roda no banco, na **tabela inteira** (todas as linhas e colunas, nao so as carregadas): a linha aparece
   quando uma mesma celula tem todas as palavras, em qualquer ordem, sem diferenciar maiusculas nem acentos
   (`tension de campo` acha `EXCITACION TENSION DE CAMPO`, RTUNO 50 / PNTNO 9 de RANGER_SOANLG no DB4, fora das 100
   primeiras linhas; `tensao` acha `TENSÃO` mas nao `TENSION`: nao ha busca aproximada). A contagem vira
-  "<tabela>: showing X of Y rows found". A pesquisa roda 300 ms depois da ultima tecla (Enter: na hora).
+  "<tabela>: rows 1 to 100 of Y found". A pesquisa roda 300 ms depois da ultima tecla (Enter: na hora).
 - Ao lado da pesquisa, **This table | All tables**: em **All tables** o termo e procurado em todas as tabelas (mesma
-  regra, nas colunas de texto) e aparece a lista das tabelas com o numero de linhas achadas; escolher uma abre essa
-  tabela com a mesma pesquisa. O escopo padrao fica em **Settings > Default search scope** (DB4, 287 tabelas: ~1 s
-  por palavra).
+  regra, em todas as colunas: numeros e datas como texto, como nas outras 3 versoes) e aparece a lista das tabelas com
+  o numero de linhas achadas; escolher uma abre essa tabela com a mesma pesquisa. O escopo padrao fica em **Settings >
+  Default search scope**.
+- **Linhas marcadas** (aba Data): a primeira coluna da grade tem uma caixa por linha (clique, `Espaco` na linha da
+  celula escolhida, botao direito ou **Edit > Mark or unmark row**). As marcadas ficam sempre no topo, na ordem da
+  tabela, qualquer que seja a pesquisa ou o filtro; embaixo da grade ", N marked" e a caixa **Only marked**. Valem por
+  tabela enquanto o arquivo estiver aberto (fechar, abrir outro e F5 limpam). A linha e reconhecida pelo `rowid` do
+  DuckDB (tabelas do .duckdb e as copiadas do SQLite e do Access); numa view, por todos os valores (linhas identicas
+  marcam juntas).
+- Aba **Advanced Search** (`Ctrl+4`): cole uma lista (por exemplo uma coluna do Excel, um termo por linha), escolha **Whole
+  value** (a celula inteira, sem espacos nas pontas, igual ao termo; numero casa pelo valor, em formato EUA ou BR:
+  216 acha 216.0, "216,0" e "216"; 1234.5 acha "1.234,5"; 216 nao acha 2160) ou **Contains**, sem diferenciar maiusculas, e
+  **This table** ou **All tables**; **Search terms** (ou `Ctrl+Enter`) procura no motor, em todas as colunas, com
+  progresso e **Cancel**. Mostra o resumo, as tabelas com acerto e a grade da escolhida (coluna **Term** + as colunas
+  da tabela, na ordem da lista colada) e os termos nao encontrados (texto copiavel). **Copy the rows found in this
+  table** copia todas as linhas achadas com o cabecalho e sem a coluna Term; o relatorio (Export > Term search report)
+  sai em Excel, CSV (pasta), SQLite ou DuckDB com a aba **Filter Result** (cada termo, onde achou e quantas linhas,
+  tambem os nao encontrados) e uma aba por tabela com acerto.
 - **Columns...**: marque e desmarque colunas (busca por nome no topo, caixas em grade que acompanha a janela).
   **Show all** e **Hide all** agem nas colunas listadas (com busca, so nelas). A barra de status mostra "N hidden
   columns". A pesquisa olha todas as colunas e a exportacao sai com todas.
@@ -94,24 +118,32 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
   (`WHERE "coluna" = ?`; celula vazia de NULL vira `IS NULL`). Varios filtros somam (E); os ativos aparecem acima
   da grade (`Filter: SIGLA = 'U9A' x`) com **Clear filters**. Filtros e pesquisa valem juntos.
 - Aba **Schema**: colunas da tabela, tipo e se aceita nulo (Yes/No no idioma da tela).
-- Aba **SQL**: SQL livre do DuckDB sobre as tabelas abertas (ex.: `SELECT * FROM "RANGER_SOSTAT" WHERE RTUNO = 2`);
-  **Run** ou `Ctrl+Enter`. A grade mostra ate o numero de **Rows**; a exportacao do resultado leva todas as linhas. Erro: a
+- Aba **SQL**: SQL do DuckDB sobre as tabelas abertas (ex.: `SELECT * FROM "RANGER_SOSTAT" WHERE RTUNO = 2`), so
+  leitura: consultas (SELECT, WITH, SHOW, DESCRIBE, SUMMARIZE, PRAGMA de leitura) e EXPLAIN de consulta; o tipo do
+  comando vem do DuckDB e qualquer outro (INSERT, CREATE, ATTACH, COPY, SET...) e recusado antes de rodar. O banco, a
+  copia em memoria e os arquivos nunca mudam. **Run** ou `Ctrl+Enter`. A grade mostra ate o numero de **Rows**; a exportacao do resultado leva todas as linhas. Erro: a
   grade anterior sai e o erro aparece ao lado do botao e na barra de status; o proximo SQL sem erro limpa os dois.
 - **Grade**: clique seleciona a celula; `Ctrl+C` copia o valor; botao direito (ou a tecla de menu) abre **Copy
   value**, **Copy row**, **Copy row with header** (TAB, pronto para colar no Excel). NULL aparece como celula vazia
   (ou `NULL` com **Settings > Show NULL** ligado; so a tela: copiar, pesquisar e exportar nao mudam) e numero inteiro
   sem ".0", como nas outras stacks. As colunas se ajustam ao conteudo; nada e cortado.
 
-**Menu File**: **Open...** (`Ctrl+O`), **Export** (submenu, abaixo; a mesma lista do botao **Export...**), **Close**
-e **Exit** (`Ctrl+Q`).
-  - **Database to SQLite (.sqlite)** / **Database to DuckDB (.duckdb)**: todas as tabelas, com os tipos. No SQLite
+**Menu File**: **Open...** (`Ctrl+O`), **Open the typed path**, **Reopen** (`F5`), **Save** (`Ctrl+S`), **Save
+as...** (`Ctrl+Shift+S`), **Export** (submenu, abaixo; a mesma lista do botao **Export...**), **Close** (`Ctrl+W`) e
+**Exit** (`Ctrl+Q`). Os outros menus: **Edit** (copiar, Log, pesquisar, filtros, marcar), **View** (abas `Ctrl+1` a
+`4`, Rows, Columns..., escopo, Only marked rows, lista de tabelas `Ctrl+T`, favorita `Ctrl+D`, Run SQL, Search terms, Log), **Settings**
+e **Help**: todo botao da tela tem o seu item.
+  - Export (lista fixa; o que nao se aplica fica desabilitado): **Current table**, **Marked rows**, **Current table
+    schema**, **Database schema** (CSV ou Excel), **All tables to CSV (one file per table)** (pasta; uma pergunta so
+    se algum arquivo ja existe), **SQL result**, **All-tables search result (Excel)** e **Term search report**.
+  - Save em SQLite / DuckDB: todas as tabelas, com os tipos. No SQLite
     datas vao como texto ISO e o tipo fica declarado na coluna (o arquivo reabre com os mesmos tipos); decimais
     com mais de 15 digitos (a Moeda do Access e `DECIMAL(19,4)`) vao como numero REAL (tipo declarado
     `REAL_DECIMAL(p,s)`) quando todo valor da coluna cabe exato num DOUBLE, de modo que no sqlite3 `WHERE preco > 20`,
     `ORDER BY` e `SUM` comparam como numero; se algum valor so cabe exato como texto, a coluna fica texto exato
     (`TEXT_DECIMAL(p,s)`, que no sqlite3 compara como texto). Inteiros de 128 bits/UBIGINT ficam como texto exato.
     O mesmo vale para o SQLite convertido do Access.
-  - **Database to Excel (.xlsx, one sheet per table)**: uma aba por tabela (nome sem `[ ] : * ? / \`, ate 31
+  - Save em Excel (.xlsx): uma aba por tabela (nome sem `[ ] : * ? / \`, ate 31
     caracteres, repetidos ganham `~2`); tabela com mais de 1.048.575 linhas continua em `<nome> (2)`...
   - **Current table to CSV / Excel** (tabela inteira; com pesquisa ou filtro na aba Data o app pergunta **Whole
     table** ou **Only the N rows found**) e **SQL result to CSV / Excel** (roda de novo o ultimo SQL; arquivo
@@ -127,15 +159,18 @@ e **Exit** (`Ctrl+Q`).
 O texto da barra de status tambem pode ser copiado: botao direito > **Copy**.
 
 **Menu Settings**: **Theme** (System, Light, Dark), **Language** (English, Português (Brasil), Español), **Default
-search scope** (This table, All tables) e **Show NULL** (desligado por padrao: a celula NULL fica vazia; ligado, mostra
+search scope** (This table, All tables), **Term matching** (Whole value, Contains: o padrao da aba Terms) e **Show
+NULL** (desligado por padrao: a celula NULL fica vazia; ligado, mostra
 `NULL`); as escolhas ficam gravadas e valem na hora.
 
 **Menu Help > About mdb2sql** (o titulo do dialogo): versao, build, stack (Rust + Tauri + Svelte), janela (WebView2/WebKitGTK), SQLite e
-DuckDB, leitor do Access, autor, licenca e os links do codigo no GitHub e no GitLab (o app so pode abrir esses dois
+DuckDB, leitor do Access, gravacao (SQLite, DuckDB, Excel e CSV; .mdb/.accdb nao), autor, licenca e os links do codigo no GitHub e no GitLab (o app so pode abrir esses dois
 enderecos).
 
-**Atalhos**: `Ctrl+O` abrir, `Ctrl+F` pesquisar na aba Data, `F5` abrir de novo o banco, `Ctrl+Q` sair, `Ctrl+1`/`2`/`3`
-abas Data/Schema/SQL, `Ctrl+L` log, `Ctrl+Enter` rodar o SQL, `Ctrl+C` copiar a celula escolhida.
+**Atalhos** (os dos itens de menu; valem quando o item vale): `Ctrl+O` abrir, `F5` abrir de novo o banco (sem banco aberto: o dialogo), `Ctrl+S`
+salvar, `Ctrl+Shift+S` salvar como, `Ctrl+W` fechar, `Ctrl+Q` sair, `Ctrl+F` pesquisar na aba Data, `Ctrl+T` lista de
+tabelas, `Ctrl+D` favoritar a tabela aberta, `Ctrl+1`/`2`/`3`/`4` abas Data/Schema/SQL/Terms, `Ctrl+L` log, `Ctrl+Enter` rodar o SQL ou pesquisar os termos
+(na aba de cada um), `Ctrl+C` copiar a celula escolhida, `Ctrl+Shift+C` a linha, `Espaco` marcar a linha.
 
 **Variaveis de ambiente** (opcionais): `MDB2SQL_DB_PATH` = banco aberto ao iniciar;
 `MDB2SQL_ACCESS_READER=mdbtools` (ou `odbc`) forca o leitor de .mdb/.accdb.
@@ -163,8 +198,9 @@ faltar e so o servidor X (XWayland):
   `~/.local/share/mdb2sql/rust-tauri-svelte-1.3.0/mdbtools/`: o mdbtools embutido, extraido na primeira vez que um
   Access e aberto (3 programas + licencas GPL e LGPL, menos de 1 MB). Versoes antigas sao apagadas sozinhas.
 - Windows `%TEMP%\mdb2sql-rust-tauri-svelte\`, Linux `~/.cache/mdb2sql-rust-tauri-svelte/`: o SQLite convertido
-  do Access enquanto ele esta aberto (apagado ou movido quando voce responde a pergunta; sobra de queda e apagada na
-  abertura seguinte) e o CSV de trabalho do mdbtools durante a leitura.
+  do Access enquanto ele esta aberto (apagado ao fechar, abrir outro ou sair; sobra de queda e apagada na abertura
+  seguinte) e o CSV de trabalho do mdbtools durante a leitura. Sem permissao ali, a pasta temporaria do sistema
+  (`%SystemRoot%\Temp`, `/tmp`) e, por ultimo, a pasta do Access, sempre na subpasta `mdb2sql-rust-tauri-svelte`.
 - Dados do webview e preferencias (tema, idioma, ultima pasta, os SQLite salvos de cada Access: caminho, tamanho e
   data): Windows `%LOCALAPPDATA%\com.mdb2sql.app\`, Linux
   `~/.local/share/com.mdb2sql.app/`.
@@ -216,8 +252,8 @@ fechar; salvar o SQLite e reabri-lo ja da o mesmo ganho: ~3 s).
 - A pesquisa compara o texto de cada valor como o DuckDB o escreve (ex.: `2.0` para um DOUBLE que a grade mostra `2`).
 - Excel: texto com mais de 32.767 caracteres e cortado (limite do Excel); numeros com mais de 15 digitos e datas
   antes de 1900 vao como texto; BLOB vai como texto.
-- O SQL livre roda no DuckDB com todo o poder dele: o arquivo aberto e so leitura, mas um `COPY ... TO` ou `ATTACH`
-  grava onde o usuario mandar.
+- EXPLAIN so com uma consulta, sozinho no texto e sem comentario (`EXPLAIN SELECT 1; SELECT 2` e recusado): o DuckDB nao diz qual
+  comando um EXPLAIN explica, e EXPLAIN ANALYZE roda esse comando.
 - Mensagens tecnicas vindas dos motores (erro de SQL do DuckDB, do sistema de arquivos) aparecem como o motor
   escreve, em ingles.
 - macOS, Arch e BSD: sem script nem pacote nesta versao.
@@ -232,9 +268,12 @@ pwsh -NoProfile -File build_debian_amd64_wsl.ps1 # Debian pelo WSL -> dist\debia
 Comandos, produtos, pastas de trabalho e limpeza: [README-BUILD.txt](README-BUILD.txt).
 
 Testes: `cargo test` (abrir os tres formatos, Access pelo mdbtools com o `.mdb` versionado, SQLite convertido,
-salvar/apagar/limpar o temporario, pesquisa na tabela inteira, exportar e reabrir, Excel, CSV, filtros, Sobre,
-links liberados, versoes) e `pnpm --filter mdb2sql-ui test` (`node --test`: catalogos de idioma, nenhum texto fora
-do catalogo, nada duplicado, ordem Access/SQLite/DuckDB, colunas, filtros, caminhos). Com `MDB2SQL_TEST_ACCDB`,
+salvar/apagar/limpar o temporario e as pastas de reserva, pesquisa na tabela inteira e em todas as tabelas, aba SQL
+so leitura, linhas marcadas, pesquisa de termos e relatorio, exportar e reabrir, Excel, CSV, filtros, Sobre, links
+liberados, versoes) e `pnpm --filter mdb2sql-ui test` (`node --test`: catalogos de idioma, nenhum texto fora do
+catalogo, nada duplicado, arvore dos menus, ordem Access/SQLite/DuckDB, colunas, filtros, caminhos, marcas, termos).
+Com `MDB2SQL_TEST_DB3_DIR` (pasta com copias do DB3 e a lista de termos) o `cargo test` confere a aceitacao da pesquisa
+de termos e mede a busca em todas as tabelas. Com `MDB2SQL_TEST_ACCDB`,
 `MDB2SQL_TEST_DUCKDB` e `MDB2SQL_TEST_SQLITE` (copias) o `cargo test` tambem confere um Access real contra as
 conversoes de referencia.
 
