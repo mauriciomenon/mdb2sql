@@ -424,8 +424,10 @@ function App() {
   const [termsText, setTermsText] = useState('');
   const [match, setMatch] = useState<Match>('whole');
   const [defaultMatch, setDefaultMatch] = useState<Match>('whole');
-  const [termsScope, setTermsScope] = useState<Scope>('table');
-  const [termsRes, setTermsRes] = useState<{ res: TermsResult; contains: boolean } | null>(null);
+  // the Advanced Search always starts in All tables, whatever the default scope of the Data tab (standard 17)
+  const [termsScope, setTermsScope] = useState<Scope>('all');
+  // only: the table searched with This table ('' = all of them), told in the summary
+  const [termsRes, setTermsRes] = useState<{ res: TermsResult; contains: boolean; only: string } | null>(null);
   const [termsTable, setTermsTable] = useState('');
   const [termGrid, setTermGrid] = useState<QueryResult | null>(null);
   const termsReq = useRef(0);
@@ -590,7 +592,6 @@ function App() {
           defaultScopeRef.current = s;
           setDefaultScope(s);
           setScope(s);
-          setTermsScope(s);
         }
       })
       .catch(() => {});
@@ -709,7 +710,6 @@ function App() {
     defaultScopeRef.current = s;
     setDefaultScope(s);
     setScope(s);
-    setTermsScope(s);
     window.go?.main?.App?.SetSearchScope?.(s)?.catch(fail);
   }
 
@@ -881,7 +881,7 @@ function App() {
       setSearch('');
       setTableSearch('');
       setScope(defaultScopeRef.current);
-      setTermsScope(defaultScopeRef.current);
+      setTermsScope('all');
       setStatus(tn('status.loaded', tableList.length, name, tableList.length));
       if (tableList.length > 0) await loadTable(tableList[0], limit, undefined, '');
     } catch (err) {
@@ -1059,9 +1059,10 @@ function App() {
     setJob({ kind: 'terms', text: t('job.searching') });
     setProgress(null);
     try {
-      const res = await b.SearchTerms(termsText.split(/\r?\n/), contains, termsScope === 'table' ? selectedTable : '');
+      const only = termsScope === 'table' ? selectedTable : '';
+      const res = await b.SearchTerms(termsText.split(/\r?\n/), contains, only);
       if (req !== termsReq.current) return;
-      setTermsRes({ res, contains });
+      setTermsRes({ res, contains, only });
       setTermsTable(res.tables?.[0]?.table ?? '');
     } catch (err) {
       if (req === termsReq.current) fail(err);
@@ -1606,7 +1607,7 @@ function App() {
                         tn('terms.found', termsRes.res.terms.length, termsRes.res.terms.length - termsRes.res.notFound.length, termsRes.res.terms.length),
                         tn('terms.rows', sumRows(termsRes.res.tables), sumRows(termsRes.res.tables)),
                         tn('terms.tables', termsRes.res.tables.length, termsRes.res.tables.length),
-                      )}
+                      ) + (termsRes.only ? ` ${t('terms.onlyIn', termsRes.only)}` : '')}
                     </p>
                     <div className="terms-hits">
                       <ul className="hits">

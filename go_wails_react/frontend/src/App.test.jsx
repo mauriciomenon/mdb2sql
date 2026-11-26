@@ -171,6 +171,44 @@ describe('App IPC flow', () => {
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('C:\\data\\menu.duckdb'));
   });
 
+  // standard 17 (defect found by the owner 26/11): the Advanced Search starts in All tables whatever the default scope
+  // of the Data tab (here This table): the owner's 8 terms pasted from Excel (CRLF) are found in RANGER_SOEQID and
+  // RANGER_SOSTAT without touching anything; with This table the summary says where it looked
+  it('searches the pasted terms in all tables even when the Data tab defaults to This table', async () => {
+    const terms = [
+      'GENERADOR CGS VIBRACION ANORMAL 1 CANAL 1', 'GENERADOR CGS VIBRACION ANORMAL 2 CANAL 1', 'TURBINA CGI VIBRACION ANORMAL 1 CANAL 1',
+      'GENERADOR COJ EMP VIBRACION ANORMAL 1 CANAL 1', 'GENERADOR COJ EMP VIBRACION ANORMAL 2 CANAL 1', 'GENERADOR GGB ALIMENTACION CONTROL 24VCC',
+      'GENERADOR GGB INTERRUPTORES CONTROL CIRCUITO 2', 'TURBINA CGI VIBRACION ANORMAL 2 CANAL 1',
+    ];
+    const all = {
+      terms, repeated: 0, notFound: [],
+      hits: terms.flatMap((term) => [{ term, table: 'RANGER_SOEQID', rows: 1 }, { term, table: 'RANGER_SOSTAT', rows: 1 }]),
+      tables: [{ table: 'RANGER_SOEQID', rows: 8 }, { table: 'RANGER_SOSTAT', rows: 8 }],
+    };
+    const SearchTerms = vi.fn(async (_lines, _contains, table) => (table ? { terms, repeated: 0, hits: [], tables: [], notFound: terms } : all));
+    const TermRows = vi.fn(async () => ({ columns: ['Term'], rows: [], more: false }));
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchTerms, TermRows, GetSearchScope: vi.fn(async () => 'table') } } } });
+    render(<App />);
+    openDefault();
+    await screen.findByText('Alpha');
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'This table' })).toHaveAttribute('aria-checked', 'true')); // the Data tab
+    fireEvent.click(screen.getByRole('tab', { name: 'Advanced Search' }));
+    expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.change(screen.getByLabelText('Advanced Search'), { target: { value: terms.join('\r\n') + '\r\n' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search terms' }));
+    await waitFor(() => expect(SearchTerms).toHaveBeenCalledTimes(1));
+    const [lines, contains, table] = SearchTerms.mock.calls[0];
+    expect([lines.map((l) => l.trim()).filter(Boolean), contains, table]).toEqual([terms, false, '']);
+    expect(await screen.findByText('8 of 8 terms found: 16 rows in 2 tables')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'This table' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Search terms' }));
+    await waitFor(() => expect(SearchTerms).toHaveBeenLastCalledWith(expect.any(Array), false, 'RANGER_SOACCU'));
+    expect(await screen.findByText('0 of 8 terms found: 0 rows in 0 tables (only in RANGER_SOACCU)')).toBeInTheDocument();
+    expect(translate('pt-BR', 'terms.onlyIn', 'X')).toBe('(só em X)');
+    expect(translate('es', 'terms.onlyIn', 'X')).toBe('(solo en X)');
+  });
+
   // standard items 20 and 28: the shortcuts of the menus
   it('has the shortcuts Ctrl+O, Ctrl+S, Ctrl+Shift+S, Ctrl+W, Ctrl+F, Ctrl+T, F5, Ctrl+Q and Ctrl+1/2/3/4', async () => {
     const SelectDatabase = vi.fn(async () => '');

@@ -251,6 +251,7 @@
   "terms.matchTip": "Valor inteiro: a célula inteira é igual ao termo. Contém: a célula contém o termo. Maiúsculas e espaços nas pontas não contam.",
   "terms.notFound": "Não encontrados ({0})",
   "terms.progress": "Pesquisando termos: tabela {0} de {1} ({2})",
+  "terms.onlyIn": "(só em {0})",
   "terms.repeated": ", {0} repetidos",
   "terms.repeated.one": ", 1 repetido",
   "terms.rows": "{0} linhas",
