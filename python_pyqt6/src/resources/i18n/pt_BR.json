@@ -189,7 +189,7 @@
   "log.discarded": "SQLite convertido de {name} descartado",
   "log.reused": "{name}: aberto o {format} salvo dele ({path})",
   "terms.column": "Termo",
-  "terms.hint": "Cole os termos, um por linha (por exemplo, uma coluna do Excel)",
+  "terms.hint": "Cole os termos, um por linha (por exemplo, uma coluna do Excel). Exemplo:\ntexto1\ntexto2\ntexto3\npesquisa os 3 termos em todas as tabelas ou só na tabela selecionada.",
   "terms.whole": "Valor inteiro",
   "terms.contains": "Contém",
   "terms.match_tip": "Valor inteiro: a célula inteira é igual ao termo. Contém: a célula contém o termo. Maiúsculas e espaços nas pontas não contam.",

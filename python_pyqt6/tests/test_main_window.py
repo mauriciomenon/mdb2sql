@@ -418,6 +418,18 @@ def test_terms_tab_is_called_advanced_search_in_every_language(window: MainWindo
         assert report in {a.text() for a in window.export_menu.actions()} and window.terms_run_button.text() == button
 
 
+def test_terms_box_background_text_has_the_example_in_separate_lines(window: MainWindow) -> None:
+    # 13 e): o texto de fundo da caixa de termos, com texto1 / texto2 / texto3 em linhas separadas
+    window.set_language("pt_BR")
+    assert window.terms_edit.placeholderText().split("\n") == [
+        "Cole os termos, um por linha (por exemplo, uma coluna do Excel). Exemplo:", "texto1", "texto2", "texto3",
+        "pesquisa os 3 termos em todas as tabelas ou só na tabela selecionada."]
+    window.set_language("en")
+    assert window.terms_edit.placeholderText().split("\n")[1:4] == ["text1", "text2", "text3"]
+    # cabem as 5 linhas: a caixa tem ~8 linhas de altura
+    assert window.terms_edit.height() >= 5 * window.terms_edit.fontMetrics().lineSpacing()
+
+
 def test_menu_items_are_disabled_like_their_buttons(qtbot, window: MainWindow) -> None:
     # Linhas do menu = lista Linhas da aba Dados; Pesquisar em = Esta tabela | Todas as tabelas
     window.rows_actions[2].trigger()
