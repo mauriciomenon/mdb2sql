@@ -405,7 +405,7 @@ def test_language_applies_at_once_and_is_saved(qtbot, people_db: Path) -> None:
         assert win.tabs.tabText(0) == "Dados" and win.tables_dock.windowTitle() == "Tabelas"
         assert win.table_list.headerItem().text(1) == "Linhas" and win.limit_label.text() == "&Linhas"
         assert win.search_edit.placeholderText() == "Pesquisar na tabela inteira"
-        assert win.info_label.text() == "empty_table: mostrando 0 de 0 linhas"  # a barra da tabela tambem
+        assert win.info_label.text() == "empty_table: 0 linhas"  # a barra da tabela tambem
         assert win.reader_label.text() == "Aberto via DuckDB"
         assert [win.schema_model.headerData(c, Qt.Orientation.Horizontal) for c in range(3)] == [
             "Coluna", "Tipo", "Aceita nulo"]
@@ -489,7 +489,7 @@ def test_catalogs_have_the_same_keys_and_placeholders() -> None:
 # (Sobre: versoes, autor, links; botoes internos do Qt, traduzidos pelo qtbase_<idioma>.qm)
 NOT_TEXT = re.compile(r"(SQL|SELECT \* FROM \.\.\.|[\d,.]+|mdb2sql [\d.]+( - Python)?|GitHub|GitLab|"
                       r"Python .*|Qt [\d.]+|SQLite [\d.]+, DuckDB .*|dev|Mauricio Menon|(GitHub |GitLab )?https://\S+|"
-                      r"<a href=.*|Scroll Left|Scroll Right|Float|Close)")
+                      r"<a href=.*|Scroll Left|Scroll Right|Float|Close|◀|▶)")  # setas das paginas (13 h): sinais, nao texto
 
 
 def test_no_ui_text_outside_the_catalogs(qtbot, people_db: Path, monkeypatch) -> None:

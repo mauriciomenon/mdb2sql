@@ -385,26 +385,31 @@ class DBManager:
         return (f"SELECT {columns} FROM ({numbered}) m WHERE {MARK_KEY} IN (SELECT unnest(?)) ORDER BY mdb2sql_pos",
                 [list(keys)])
 
-    def fetch_rows(self, query: str, params: Sequence[Any] = (), limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Linhas (dicts por coluna) de uma consulta do proprio app, ate limit."""
+    def fetch_rows(self, query: str, params: Sequence[Any] = (), limit: Optional[int] = None,
+                   offset: int = 0) -> List[Dict[str, Any]]:
+        """Linhas (dicts por coluna) de uma consulta do proprio app, ate limit, pulando as `offset` primeiras."""
         # !T: Plain Python values, not pandas: DECIMAL(10,0) stays 1 (pandas would show 1.0) and NULL stays None
+        # !T: No ORDER BY: DuckDB keeps the insertion order (preserve_insertion_order), so the pages follow the table
         with self.cursor() as cursor:
-            cursor.execute(query if limit is None else f"{query} LIMIT {int(limit)}", list(params))
+            page = "" if limit is None else f" LIMIT {int(limit)} OFFSET {int(offset)}"
+            cursor.execute(f"{query}{page}", list(params))
             columns = unique_names(column[0] for column in cursor.description)
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     def query_table(
-        self, table_name: str, limit: int = 100, filters: Filters = (), search: str = "", keyed: bool = False
+        self, table_name: str, limit: int = 100, filters: Filters = (), search: str = "", keyed: bool = False,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """
-        Executa SELECT na tabela e retorna ate limit linhas (so as que passam nos filtros e na pesquisa).
+        Executa SELECT na tabela e retorna ate limit linhas a partir de offset (so as que passam nos filtros e na
+        pesquisa): uma pagina da aba Dados.
         """
         if not self.conn:
             return []
 
         # SELECT com LIMIT para nao carregar tabela inteira
         select, params = self.select_table(table_name, filters, search, keyed)
-        return self.fetch_rows(select, params, limit)
+        return self.fetch_rows(select, params, limit, offset)
 
     def column_types(self) -> Dict[str, Dict[str, str]]:
         """Tipo de cada coluna de cada tabela (o do DuckDB: INTEGER, DOUBLE, DECIMAL(10,2), VARCHAR...)."""

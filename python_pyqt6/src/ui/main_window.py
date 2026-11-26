@@ -268,6 +268,9 @@ class MainWindow(QMainWindow):
         self.marks: dict[str, set[Any]] = {}
         self.loaded_shown = 0  # linhas da consulta na grade (sem as marcadas que vieram so por estarem marcadas)
         self.loaded_only_marked = False  # a grade carregada mostra so as marcadas
+        # paginas da aba Dados: o comeco da pagina pedida e o da pagina carregada (tamanho = a lista Linhas)
+        self.page_offset = 0
+        self.loaded_offset = 0
         self.matched_rows = 0  # linhas da tabela que passam nos filtros e na pesquisa
         self.loaded_search = ""  # pesquisa usada na consulta da tabela carregada
         self.loaded_filters: list[tuple[str, Any]] = []  # filtros usados na consulta da tabela carregada
@@ -667,8 +670,20 @@ class MainWindow(QMainWindow):
         self.only_marked_box.setContentsMargins(0, 0, 6, 2)
         self.only_marked_box.toggled.connect(self.set_only_marked)
         self.only_marked_box.hide()
+        # paginas: ◀ ▶ (Anterior / Proxima), desabilitados na ponta, botoes como os outros da aba
+        self.page_buttons: list[QToolButton] = []
+        for text, key, step in (("◀", "page.prev", -1), ("▶", "page.next", 1)):
+            button = QToolButton()
+            button.setText(text)
+            self._t(button.setToolTip, key)
+            self._t(button.setAccessibleName, key)
+            button.clicked.connect(lambda _checked=False, s=step: self.go_page(s))
+            button.setEnabled(False)
+            self.page_buttons.append(button)
         self.info_row = QHBoxLayout()
         self.info_row.addWidget(self.info_label, 1)
+        for button in self.page_buttons:
+            self.info_row.addWidget(button)
         self.info_row.addWidget(self.only_marked_box)
 
         layout.setSpacing(4)
@@ -1579,6 +1594,7 @@ class MainWindow(QMainWindow):
         # descartado (Log) e substituido pelo novo, sem pergunta
         self._drop_manager()
         self._reset_marks()
+        self.page_offset = 0  # reabrir (F5) tambem volta para a pagina 1
         self._clear_terms()  # a lista colada fica; o resultado era do banco anterior
         self.manager = manager
         self.current_db_path = db_path
@@ -1734,11 +1750,21 @@ class MainWindow(QMainWindow):
 
     def reload_table(self) -> None:
         # limite, filtro e pesquisa: consulta na hora (a pesquisa ja esperou os 300 ms); os 150 ms de
-        # table_load_timer sao so da navegacao pela lista com as setas
+        # table_load_timer sao so da navegacao pela lista com as setas. Volta para a pagina 1
+        self.page_offset = 0
         item = self.table_list.currentItem()
         if item is not None:
             self.on_table_selected(self._table_of(item))
             self._start_table_worker()
+
+    def go_page(self, step: int) -> None:
+        """◀ / ▶: a pagina anterior ou a proxima da tabela aberta (mesma pesquisa, filtros e marcadas no topo)."""
+        item = self.table_list.currentItem()
+        if item is None or self.loaded_table is None:
+            return
+        self.page_offset = max(0, self.loaded_offset + step * int(self.limit_combo.currentData()))
+        self.on_table_selected(self._table_of(item))
+        self._start_table_worker()
 
     def _search_edited(self) -> None:
         # o termo mudou: a busca em todas as tabelas ainda rodando para na proxima tabela e o resultado dela nao
@@ -1756,6 +1782,9 @@ class MainWindow(QMainWindow):
         everywhere =self.scope_actions["all"].isChecked() and bool(self.search_edit.text().split())
         self.data_stack.setCurrentWidget(self.found_list if everywhere else self.data_table)
         self._update_export_actions()  # Exportar > Resultado da busca em todas as tabelas: so com a lista
+        if everywhere:  # a lista de tabelas nao tem paginas
+            for button in self.page_buttons:
+                button.setEnabled(False)
         if everywhere:
             self._search_all_tables()
         else:
@@ -1826,12 +1855,13 @@ class MainWindow(QMainWindow):
         search = self.search_edit.text()
         marked = list(self.marks.get(table_name, ()))
         only_marked = self.only_marked_action.isChecked() and bool(marked)
+        offset = self.page_offset
         self.pending_table_name = None
         self._table_request += 1
         self._run(
             self._table_request,
             lambda _report: (only_marked, load_table_payload(manager, table_name, limit, filters, search, marked,
-                                                             only_marked)),
+                                                             only_marked, offset)),
             self._on_table_loaded,
             self._on_table_error,
         )
@@ -1889,6 +1919,7 @@ class MainWindow(QMainWindow):
         self._show_schema()
         self.loaded_table = (payload["table_name"], payload["total_rows"])
         self.loaded_shown = payload["shown"]
+        self.loaded_offset = payload["offset"]
         self.matched_rows = payload["matched_rows"]
         self.loaded_filters = list(payload["filters"])  # os da consulta que deu esta contagem
         self.loaded_search = payload["search"]
@@ -1924,20 +1955,27 @@ class MainWindow(QMainWindow):
         if self.loaded_table is None:
             self.info_label.clear()
             self.only_marked_box.hide()
+            for button in self.page_buttons:
+                button.setEnabled(False)
             return
 
+        # "{tabela}: linhas 1 a 100 de 36.804" (com busca ou filtro: "... de N encontradas"); so as marcadas: elas
         table, total_rows = self.loaded_table
-        loaded = num(self.loaded_shown)
         narrowed = (self.loaded_filters or self.loaded_search.split()) and not self.loaded_only_marked
-        if narrowed:  # contagem no banco, alem das linhas carregadas
-            message = counted("status.showing_matched", self.matched_rows, table=table, loaded=loaded)
-        else:
-            message = counted("status.showing", total_rows, table=table, loaded=loaded)
+        count = self.loaded_shown if self.loaded_only_marked else self.matched_rows if narrowed else total_rows
+        first, last = self.loaded_offset + 1, self.loaded_offset + self.loaded_shown
+        values = {"table": table, "first": num(first), "last": num(last), "count": num(count)}
+        message = tr("page.none" if not self.loaded_shown else "page.row" if first == last else "page.rows", **values)
+        if narrowed:
+            message += counted("page.found", count)
         marked = len(self.marks.get(table, ()))
         if marked:
             message += counted("mark.count", marked)
         self._set_message(self.info_label, message, log=False)
         self.only_marked_box.setVisible(bool(marked))
+        # ◀ desabilitado na primeira pagina; ▶ na ultima (e as duas com "So as marcadas", que nao tem paginas)
+        self.page_buttons[0].setEnabled(self.loaded_offset > 0 and not self.loaded_only_marked)
+        self.page_buttons[1].setEnabled(last < count and not self.loaded_only_marked)
 
     # ----------------------------------------------------- linhas marcadas
 
@@ -2021,6 +2059,7 @@ class MainWindow(QMainWindow):
         self.filters.clear()
         self.hidden_columns.clear()
         self._check_only_marked(False)  # "So as marcadas" vale para a tabela em que foi ligado (marcas por tabela)
+        self.page_offset = 0  # outra tabela (ou outro arquivo): pagina 1
         self._refresh_filter_bar()
 
     def filter_by_current_cell(self) -> None:
