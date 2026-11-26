@@ -577,6 +577,11 @@ func (m *DBManager) hasRowID(table string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	return m.rowIDIn(table, schema)
+}
+
+// rowIDIn is hasRowID for a schema the caller already read: a term search reads each table's schema once, not twice
+func (m *DBManager) rowIDIn(table string, schema []ColumnSchema) (bool, error) {
 	for _, c := range schema {
 		if strings.EqualFold(c.Name, "rowid") {
 			return false, nil

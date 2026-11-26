@@ -197,7 +197,7 @@ func (m *DBManager) SearchTerms(ctx context.Context, lines []string, contains bo
 		if err != nil {
 			return TermsResult{}, err
 		}
-		rowID, err := m.hasRowID(tb)
+		rowID, err := m.rowIDIn(tb, schema)
 		if err != nil {
 			return TermsResult{}, err
 		}
