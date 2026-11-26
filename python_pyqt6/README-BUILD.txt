@@ -12,8 +12,8 @@ onde fica cada coisa. Versao: "version" em pyproject.toml (fonte unica).
   Se algo falhar, os produtos anteriores ficam intactos em dist\.
 - Ele imprime "Source: <tag>-<n>-g<commit>[-dirty]": esse e o commit que esta dentro do produto.
   Para release, commite antes (sem "-dirty").
-- O Sobre mostra "build <N> (<AAAA-MM-DD>)": N = git rev-list --count HEAD e a data do build, gravados
-  pelo mdb2sql.spec em build\BUILD. Rodando do codigo aparece "build dev".
+- O Sobre mostra "Versao <versao> - commit <git rev-parse HEAD, 40 digitos> - <AAAA-MM-DD do build>",
+  gravados pelo mdb2sql.spec em build\BUILD. Rodando do codigo aparece "Versao <versao> - dev".
 - Sem build cruzado: cada pacote e gerado no proprio sistema/arquitetura.
 - Codigos de saida: 0 ok, 1 falha de build/teste, 2 maquina errada (nao e Windows amd64).
 

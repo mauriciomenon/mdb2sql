@@ -169,10 +169,10 @@ Menus:
   the Data tab only), Term matching (Whole value or Contains) and Show NULL
   (off by default: a NULL cell is empty). All are saved (Windows registry `HKCU\Software\MDB2SQL`,
   Linux `~/.config/MDB2SQL/MDB2SQL.conf`; with the environment variable `MDB2SQL_SETTINGS=<file.ini>`, in that file).
-- **Help > About mdb2sql**: name, version, Build (number and date), Stack (Python and PyQt6 versions), Window (Qt
-  version), Databases (SQLite and DuckDB versions), Access reading ("Embedded mdbtools 1.0.1", or "Access ODBC
-  driver (installed); fallback: embedded mdbtools 1.0.1"), Writing (SQLite, DuckDB, Excel and CSV; `.mdb` and
-  `.accdb` cannot be written), Author, License, links.
+- **Help > About mdb2sql**: the same lines in the four versions: `MDB2SQL (Python)`, `Version 1.3.0 - commit
+  <full hash> - <build date>` (`dev` when run from the source), `Python x, PyQt6 x (Qt x)`, `Tools: SQLite x,
+  DuckDB x, mdbtools x`, `ODBC driver support, if installed.`, `Author: Mauricio Menon`, `License: GPLv2`, and
+  the GitHub / GitLab links.
 
 The window title is short, `mdb2sql 1.3.0 - Python` (with a file open, `<file> - mdb2sql 1.3.0 - Python`).
 Changes of each version: [CHANGELOG.md](CHANGELOG.md).
