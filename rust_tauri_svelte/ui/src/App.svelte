@@ -2473,15 +2473,16 @@
   .table-bar {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
+    align-items: center;
     gap: 6px 12px;
     color: var(--muted);
     font-size: 12px;
   }
 
-  /* linha da busca da aba Dados: campos e botoes alinhados pelo meio */
-  .table-bar.data-bar {
-    align-items: center;
+  /* nenhum botao maior que os outros numa linha (dono 26/11, abas Dados, SQL e Pesquisa Avancada): todos com o
+     preenchimento dos seletores e dos campos da linha; a largura vem do texto, a cor diz qual e a acao */
+  .table-bar button {
+    padding: 3px 10px;
   }
 
   /* Linhas [100]: rotulo e lista juntos; na aba SQL, no fim da linha do Executar */

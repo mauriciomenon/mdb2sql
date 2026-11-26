@@ -427,6 +427,22 @@ test('Data tab layout: search line, filters, grid, count line', () => {
 
 // padrao item 8 (= Go): a 720 px a barra da aba Data quebra a linha (nada cortado, sem rolagem horizontal); a busca estica
 // sem largura maxima (base 160 px, como o Go)
+// BRIEF secao 13 f (dono 26/11): nenhum botao maior que os outros numa linha das abas (Dados, SQL, Pesquisa Avancada):
+// o mesmo preenchimento dos seletores e campos, centrados na linha (nada encosta na caixa de cima ou de baixo)
+test('buttons in a tab row all have the same height', () => {
+  const css = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
+  assert.match(css, /\n {2}\.table-bar \{[^}]*align-items: center;/);
+  assert.match(css, /\n {2}\.table-bar button \{\s*padding: 3px 10px;\s*\}/);
+  for (const sel of ['.scope button', '.table-bar .columns-button']) {
+    assert.match(css.match(new RegExp(`\\n {2}${sel.replace(/\./g, '\\.')} \\{[^}]*\\}`))[0], /padding: 3px 10px;/, sel);
+  }
+  // as linhas com botao: Dados (seletor, Colunas...), SQL (Executar), Pesquisa Avancada (seletores, Pesquisar termos)
+  const ui = markup('./App.svelte');
+  for (const bar of ['<div class="table-bar data-bar">', '<div class="table-bar">\n            <button type="button" title={t(\'sql.runTip\')} onclick={runSql}', '<div class="table-bar terms-bar">']) {
+    assert.ok(ui.includes(bar), bar);
+  }
+});
+
 test('narrow window: the Data bar wraps and the search stretches', () => {
   const css = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
   assert.match(css, /\n {2}\.table-bar \{[^}]*flex-wrap: wrap;/);
