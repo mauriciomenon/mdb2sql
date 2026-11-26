@@ -1047,7 +1047,8 @@ fn reportOfOwnerTerms(db: *Db) !void {
     const items = try terms.reportItems(arena.allocator(), db.table_names, &res);
     const out = ".zig-cache/tmp/DB3 - Pesquisa Avançada.xlsx";
     defer deleteQuiet(t.io, out);
-    try t.expectEqual(2, try exporter.bundle(db, t.io, .xlsx, items, out, &p, 0));
+    try t.expectEqual(2, items.len);
+    try t.expectEqual(16, try exporter.bundle(db, t.io, .xlsx, items, out, &p, 0)); // linhas gravadas: 8 + 8
     for ([_][]const u8{ "xl/worksheets/sheet1.xml", "xl/worksheets/sheet2.xml" }) |part| {
         const sheet = try xlsx.readPart(t.allocator, t.io, out, part);
         defer t.allocator.free(sheet);
