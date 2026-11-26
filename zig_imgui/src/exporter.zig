@@ -154,6 +154,88 @@ pub fn selection(db: *Db, io: Io, format: FileFormat, sel: Select, dest: []const
     return progress.done.load(.monotonic) - before;
 }
 
+// Varias consultas num destino so
+pub const BundleFormat = enum { xlsx, csv_dir, sqlite, duckdb };
+
+// !T: Several queries into one destination: the sheets of one Excel workbook, one CSV file per query in the folder
+// `dest` (<name>.csv; each file is written as .part and renamed, so a cancel leaves no half file), or the tables of
+// a new SQLite/DuckDB file. Returns the rows written (workbook, CSV) or the tables created (database).
+pub fn bundle(db: *Db, io: Io, format: BundleFormat, items: []const Select, dest: []const u8, progress: *Progress, total_hint: u64) !u64 {
+    var part_buf: [4096]u8 = undefined;
+    switch (format) {
+        .xlsx => {
+            progress.begin(total_hint);
+            const part = try partPath(&part_buf, dest);
+            errdefer deleteQuiet(io, part);
+            {
+                var wb = try xlsx.Workbook.create(db.gpa, io, part);
+                defer wb.deinit();
+                for (items) |item| try writeSheets(&wb, db, item, progress, xlsx.max_data_rows);
+                try wb.finish();
+            }
+            try commit(io, part, dest);
+            return progress.done.load(.monotonic);
+        },
+        .csv_dir => {
+            progress.begin(total_hint);
+            for (items) |item| {
+                try progress.check();
+                var file_buf: [4096]u8 = undefined;
+                const file = try csvPath(&file_buf, dest, item.sheet);
+                const part = try partPath(&part_buf, file);
+                errdefer deleteQuiet(io, part);
+                try writeCsv(db, io, item, part, progress);
+                try commit(io, part, file);
+            }
+            return progress.done.load(.monotonic);
+        },
+        .sqlite, .duckdb => {
+            const gpa = db.gpa;
+            if (format == .sqlite) try db.loadSqlite();
+            const part = try partPath(&part_buf, dest);
+            var wal_buf: [4100]u8 = undefined;
+            const wal = std.fmt.bufPrint(&wal_buf, "{s}.wal", .{part}) catch unreachable;
+            deleteQuiet(io, part);
+            deleteQuiet(io, wal);
+            var sql: std.ArrayList(u8) = .empty;
+            defer sql.deinit(gpa);
+            try sql.appendSlice(gpa, "ATTACH ");
+            try query.writeLiteral(&sql, gpa, part);
+            try sql.appendSlice(gpa, if (format == .sqlite) " AS mdb2sql_out (TYPE sqlite)" else " AS mdb2sql_out");
+            try db.exec(try zsql(&sql, gpa));
+            errdefer {
+                db.exec("ROLLBACK") catch {};
+                db.exec("DETACH DATABASE IF EXISTS mdb2sql_out") catch {};
+                deleteQuiet(io, part);
+                deleteQuiet(io, wal);
+            }
+            try db.exec("BEGIN TRANSACTION");
+            progress.begin(items.len);
+            for (items) |item| {
+                try progress.check();
+                sql.clearRetainingCapacity();
+                try sql.appendSlice(gpa, "CREATE TABLE mdb2sql_out.main.");
+                try query.writeIdent(&sql, gpa, item.sheet);
+                try sql.print(gpa, " AS {s}", .{item.sql});
+                try db.exec(try zsql(&sql, gpa));
+                progress.add(1);
+            }
+            try db.exec("COMMIT");
+            try db.exec("DETACH DATABASE mdb2sql_out");
+            try commit(io, part, dest);
+            return items.len;
+        },
+    }
+}
+
+// <pasta>/<nome>.csv, com o nome sem os caracteres que um arquivo nao aceita
+// shortcut: two tables whose names differ only in those characters share one file (the last one written wins)
+pub fn csvPath(buf: []u8, dir: []const u8, name: []const u8) error{NameTooLong}![]const u8 {
+    var name_buf: [600]u8 = undefined;
+    const file = @import("settings.zig").fileName(&name_buf, name, ".csv");
+    return std.fmt.bufPrint(buf, "{s}{s}{s}", .{ dir, std.fs.path.sep_str, file }) catch error.NameTooLong;
+}
+
 fn writeCsv(db: *Db, io: Io, sel: Select, path: []const u8, progress: *Progress) !void {
     var rows = try db.stream(sel.sql, sel.params, .{});
     defer rows.deinit();

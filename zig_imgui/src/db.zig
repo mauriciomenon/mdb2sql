@@ -15,6 +15,7 @@ pub const capture = @import("capture.zig");
 pub const gridtools = @import("gridtools.zig");
 pub const xlsx = @import("xlsx.zig");
 pub const exporter = @import("exporter.zig");
+pub const terms = @import("terms.zig");
 pub const access = @import("access.zig");
 pub const settings = @import("settings.zig");
 pub const i18n = @import("i18n.zig");
@@ -281,6 +282,7 @@ pub const Db = struct {
         self.forgetTables();
         self.source = null;
         if (self.conn == null) return;
+        terms.dropTables(self);
         self.exec("USE memory") catch {};
         self.exec("DETACH DATABASE IF EXISTS src") catch {};
     }
@@ -571,6 +573,7 @@ test {
     _ = gridtools;
     _ = xlsx;
     _ = exporter;
+    _ = terms;
     _ = access;
     _ = settings;
     _ = i18n;

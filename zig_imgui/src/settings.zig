@@ -12,6 +12,9 @@ pub const Theme = enum { system, light, dark };
 // Busca da aba Data: so na tabela aberta ou em todas as tabelas
 pub const SearchScope = enum { table, all };
 
+// Aba Termos: a celula inteira igual ao termo, ou a celula contem o termo
+pub const TermMatch = enum { whole, contains };
+
 // Painel de Log (REGRA_VISUAL): ~10% da altura, ate 25% (o minimo de 3 linhas e conferido pela UI)
 pub const default_log_frac: f32 = 0.10;
 pub const max_log_frac: f32 = 0.25;
@@ -69,6 +72,7 @@ pub const Settings = struct {
     log_open: bool = false, // painel de Log aberto (padrao: recolhido)
     log_frac: f32 = default_log_frac, // altura do painel de Log, fracao da janela
     search_scope: SearchScope = .table, // escopo padrao da busca
+    term_match: TermMatch = .whole, // comparacao padrao da pesquisa de termos
     show_null: bool = false, // ligado, NULL aparece como "NULL"; desligado (padrao), celula vazia
     last_dir_buf: [2048]u8 = undefined,
     last_dir_len: usize = 0,
@@ -132,6 +136,7 @@ pub const Settings = struct {
             if (std.mem.eql(u8, key, "log_open")) s.log_open = std.mem.eql(u8, value, "1");
             if (std.mem.eql(u8, key, "log_frac")) s.log_frac = clampLogFrac(std.fmt.parseFloat(f32, value) catch default_log_frac);
             if (std.mem.eql(u8, key, "search_scope")) s.search_scope = std.meta.stringToEnum(SearchScope, value) orelse .table;
+            if (std.mem.eql(u8, key, "term_match")) s.term_match = std.meta.stringToEnum(TermMatch, value) orelse .whole;
             if (std.mem.eql(u8, key, "show_null")) s.show_null = std.mem.eql(u8, value, "1");
             // saved=<tamanho>|<data>|<tamanho do sqlite>|<data do sqlite>|<access>TAB<sqlite> (na ordem: mais recente primeiro)
             if (std.mem.eql(u8, key, "saved") and s.saved_len < max_saved) if (parseSaved(value)) |e| {
@@ -153,9 +158,9 @@ pub const Settings = struct {
     }
 
     pub fn write(s: *const Settings, w: *Io.Writer) Io.Writer.Error!void {
-        try w.print("theme={t}\r\nlang={t}\r\nlog_open={d}\r\nlog_frac={d:.3}\r\nsearch_scope={t}\r\nshow_null={d}\r\nlast_dir={s}\r\n", .{
-            s.theme,        s.lang,                    @intFromBool(s.log_open), s.log_frac,
-            s.search_scope, @intFromBool(s.show_null), s.lastDir(),
+        try w.print("theme={t}\r\nlang={t}\r\nlog_open={d}\r\nlog_frac={d:.3}\r\nsearch_scope={t}\r\nterm_match={t}\r\nshow_null={d}\r\nlast_dir={s}\r\n", .{
+            s.theme,        s.lang,       @intFromBool(s.log_open),  s.log_frac,
+            s.search_scope, s.term_match, @intFromBool(s.show_null), s.lastDir(),
         });
         for (s.saved[0..s.saved_len]) |*e|
             try w.print("saved={d}|{d}|{d}|{d}|{s}\t{s}\r\n", .{ e.src_key.size, e.src_key.mtime, e.dest_key.size, e.dest_key.mtime, e.src(), e.dest() });
@@ -286,7 +291,7 @@ test "default folder of the save dialog" {
 }
 
 test "settings round trip through the file" {
-    var s: Settings = .{ .theme = .dark, .lang = .pt_br, .log_open = true, .log_frac = 0.22, .search_scope = .all, .show_null = true };
+    var s: Settings = .{ .theme = .dark, .lang = .pt_br, .log_open = true, .log_frac = 0.22, .search_scope = .all, .term_match = .contains, .show_null = true };
     s.setLastDir("C:\\pasta com espaço");
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
@@ -299,6 +304,8 @@ test "settings round trip through the file" {
     try t.expect(back.log_open);
     try t.expectApproxEqAbs(@as(f32, 0.22), back.log_frac, 0.001);
     try t.expectEqual(.all, back.search_scope);
+    try t.expectEqual(.contains, back.term_match);
+    try t.expectEqual(.whole, Settings.parse("term_match=x\n").term_match); // padrao: valor inteiro
     try t.expect(back.show_null);
     // padrao: busca na tabela aberta, NULL como celula vazia (arquivo de versao anterior tambem)
     try t.expectEqual(.table, Settings.parse("theme=dark\n").search_scope);
