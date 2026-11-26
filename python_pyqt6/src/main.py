@@ -70,13 +70,14 @@ def main():
         # o Qt caiu no Wayland (reserva): aviso a cada abertura enquanto o X11 nao servir; texto copiavel e no Log
         show_display_warning(window, display_warning or Notice([tr("display.using_wayland")], "", None))
 
-    # Abre o banco passado na linha de comando; sem argumento usa MDB2SQL_DB_PATH ou o default
+    # Abre o banco passado na linha de comando; sem argumento usa MDB2SQL_DB_PATH ou o default (so ao iniciar; F5 sem
+    # banco aberto mostra a caixa de escolher arquivo)
     # !T: app.arguments() has the Qt-specific options already removed
     arguments = app.arguments()[1:]
     if arguments:
         window.open_database(Path(arguments[0]))
-    elif database_path_from_env().exists():
-        window.load_database()
+    elif database_path_from_env().is_file():
+        window.open_database(database_path_from_env())
 
     # Inicia event loop - app fica rodando ate fechar janela
     # !T: sys.exit() ensures proper cleanup on shutdown

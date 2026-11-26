@@ -33,10 +33,12 @@ More info > Run anyway.
 ## Use
 
 The top line holds the path of the open file (a path longer than the field shows its end, the file name) and the
-buttons Browse..., Open and Export.... Open a file with Browse... or File > Open... (Ctrl+O), by typing or pasting
-its path in the field and pressing Enter or Open, by dragging it onto the window, by passing the path on the
-command line (`mdb2sql.exe "C:\data\base.accdb"`), or with the environment variable `MDB2SQL_DB_PATH` and F5
-(F5, File > Reopen, opens the open file again).
+buttons Open... and Export.... Open a file with Open... or File > Open... (Ctrl+O), which show the file chooser,
+by typing or pasting its full path in the field and pressing Enter (or File > Open the typed path; an empty field
+shows the file chooser), by dragging it onto the window, by passing the path on the command line
+(`mdb2sql.exe "C:\data\base.accdb"`), or with the environment variable `MDB2SQL_DB_PATH` (opened at start). F5
+(File > Reopen) opens the open file again; with no file open it shows the file chooser. A path that is not a
+file, or not a full path, gives only "File not found: <path>" in the bottom bar and the Log.
 
 **Access files** are converted once, when opened, into a SQLite file in a temporary folder, and the program reads
 from there (status bar: "Converting ... table N of M", then `Loaded: <file> (N tables)`; the right end says
@@ -131,7 +133,7 @@ Tabs:
 
 Menus:
 
-- **File**: Open... (Ctrl+O, = Browse...), Open the typed path (= Open), Reopen (F5), Save (Ctrl+S), Save as...
+- **File**: Open... (Ctrl+O, = the Open... button), Open the typed path (= Enter in the path), Reopen (F5), Save (Ctrl+S), Save as...
   (Ctrl+Shift+S), Export (submenu, also the Export... button at the top), Close (Ctrl+W), Exit (Ctrl+Q).
 - **Export** (a fixed list; what does not apply is disabled): Current table, Marked rows, Current table schema
   (Column, Type, Nullable; `<table>_schema`), Database schema (Table, Column, Type, Nullable; `<database>_schema`),

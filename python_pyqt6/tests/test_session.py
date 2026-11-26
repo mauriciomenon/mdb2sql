@@ -401,7 +401,7 @@ def test_language_applies_at_once_and_is_saved(qtbot, people_db: Path) -> None:
         assert QSettings().value("language") == "pt_BR"
         assert [a.text() for a in win.menuBar().actions()] == ["&Arquivo", "&Editar", "E&xibir", "&Configurações",
                                                                "Aj&uda"]
-        assert win.open_action.text() == "&Abrir..." and win.browse_button.text() == "Procurar..."
+        assert win.open_action.text() == "&Abrir..." and win.open_button.text() == "Abrir..."
         assert win.tabs.tabText(0) == "Dados" and win.tables_dock.windowTitle() == "Tabelas"
         assert win.table_list.headerItem().text(1) == "Linhas" and win.limit_label.text() == "&Linhas"
         assert win.search_edit.placeholderText() == "Pesquisar na tabela inteira"
