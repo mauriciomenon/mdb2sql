@@ -83,39 +83,44 @@ pub fn search(db: *Db, gpa: Allocator, text: []const u8, match: Match, only: ?us
     defer cols.deinit();
     var pairs: std.ArrayList(Pair) = .empty;
     var tables: std.ArrayList(Table) = .empty;
-    var of_table: std.ArrayList([]const u8) = .empty;
-    defer of_table.deinit(gpa);
+    var parts: std.ArrayList(Part) = .empty;
+    defer parts.deinit(gpa);
     const found = try a.alloc(bool, res.terms.len);
     @memset(found, false);
-    for (first..last) |i| {
+    var i = first;
+    while (i < last) {
         try progress.check();
-        of_table.clearRetainingCapacity();
-        for (cols.rows) |r| if (std.mem.eql(u8, r[0] orelse "", names[i])) try of_table.append(gpa, r[1] orelse "");
-        // view: o catalogo so tem as colunas dela depois de usada; o DESCRIBE da aba Esquema sempre tem
-        var described: ?dbm.Grid = if (of_table.items.len == 0 and res.terms.len > 0) try db.schema(names[i]) else null;
-        defer if (described) |*g| g.deinit();
-        if (described) |g| for (g.rows) |r| try of_table.append(gpa, r[0] orelse "");
-        if (of_table.items.len > 0 and res.terms.len > 0) {
-            var key: query.RowKey = undefined;
-            var g = try tableCounts(db, gpa, names[i], of_table.items, match, &key, progress);
-            defer g.deinit();
-            var total: u64 = 0;
-            for (g.rows) |r| {
-                const ord = std.fmt.parseInt(usize, r[0] orelse continue, 10) catch continue;
-                const n = std.fmt.parseInt(u64, r[1] orelse "0", 10) catch 0;
-                if (ord >= res.terms.len or n == 0) continue;
-                try pairs.append(a, .{ .term = ord, .table = i, .rows = n });
-                found[ord] = true;
-                total += n;
-            }
-            if (total > 0) {
-                const columns = try a.alloc([]const u8, of_table.items.len);
-                for (columns, of_table.items) |*c, name| c.* = try a.dupe(u8, name);
-                try tables.append(a, .{ .table = i, .rows = total, .key = key, .columns = columns });
-                res.rows += total;
-            }
+        const end = @min(i + batch, last);
+        parts.clearRetainingCapacity();
+        for (i..end) |ti| {
+            const columns = try tableColumns(db, a, &cols, names[ti]);
+            if (columns.len == 0 or res.terms.len == 0) continue;
+            try parts.append(gpa, .{ .table = ti, .columns = columns, .key = if (query.hasRowidColumn(columns)) .hash else .rowid });
         }
-        progress.add(1);
+        if (parts.items.len > 0) {
+            // as tabelas do lote numa consulta so; se ela falhar (view sem rowid), uma por uma
+            if (batchCounts(db, gpa, names, parts.items, match)) |grid| {
+                var g = grid;
+                defer g.deinit();
+                for (g.rows) |r| {
+                    const p = std.fmt.parseInt(usize, r[0] orelse continue, 10) catch continue;
+                    if (p < parts.items.len) try addCount(a, &pairs, found, &parts.items[p], r[1], r[2]);
+                }
+            } else |e| {
+                if (e != error.DuckDb or progress.cancel.load(.monotonic)) return e;
+                for (parts.items) |*part| {
+                    var g = try tableCounts(db, gpa, names[part.table], part.columns, match, &part.key, progress);
+                    defer g.deinit();
+                    for (g.rows) |r| try addCount(a, &pairs, found, part, r[0], r[1]);
+                }
+            }
+            for (parts.items) |part| if (part.rows > 0) {
+                try tables.append(a, .{ .table = part.table, .rows = part.rows, .key = part.key, .columns = part.columns });
+                res.rows += part.rows;
+            };
+        }
+        progress.add(end - i);
+        i = end;
     }
     try storePairs(db, gpa, pairs.items, names);
     res.pairs = pairs.items;
@@ -137,6 +142,51 @@ pub fn search(db: *Db, gpa: Allocator, text: []const u8, match: Match, only: ?us
 const columns_sql = "SELECT table_name, column_name FROM duckdb_columns() WHERE database_name = current_database() " ++
     "AND schema_name = current_schema() ORDER BY table_name, column_index";
 
+// Tabelas por consulta (UNION ALL), como a busca em todas as tabelas: uma consulta por tabela custava mais que a
+// leitura dela (DB3 pelo leitor do SQLite: 287 consultas so de COUNT(*) levaram 8 s)
+const batch = 32;
+
+// Tabela de um lote: colunas (da arena do resultado), identidade de linha e as linhas achadas
+const Part = struct { table: usize, columns: []const []const u8, key: query.RowKey, rows: u64 = 0 };
+
+// Colunas da tabela, copiadas para `a`: as do catalogo; view: o catalogo so as tem depois de usada, o DESCRIBE da aba
+// Esquema sempre tem
+fn tableColumns(db: *Db, a: Allocator, cols: *const dbm.Grid, table: []const u8) ![]const []const u8 {
+    var list: std.ArrayList([]const u8) = .empty;
+    for (cols.rows) |r| if (std.mem.eql(u8, r[0] orelse "", table)) try list.append(a, try a.dupe(u8, r[1] orelse ""));
+    if (list.items.len == 0) {
+        var g = try db.schema(table);
+        defer g.deinit();
+        for (g.rows) |r| try list.append(a, try a.dupe(u8, r[0] orelse ""));
+    }
+    return list.items;
+}
+
+// Uma linha (termo, n) da contagem: o par entra no resultado e o termo conta como achado
+fn addCount(a: Allocator, pairs: *std.ArrayList(Pair), found: []bool, part: *Part, ord_text: ?[]const u8, n_text: ?[]const u8) Allocator.Error!void {
+    const ord = std.fmt.parseInt(usize, ord_text orelse return, 10) catch return;
+    const n = std.fmt.parseInt(u64, n_text orelse "0", 10) catch 0;
+    if (ord >= found.len or n == 0) return;
+    try pairs.append(a, .{ .term = ord, .table = part.table, .rows = n });
+    found[ord] = true;
+    part.rows += n;
+}
+
+// Linhas por termo de varias tabelas numa consulta: (parte, ord, n), na ordem das tabelas e dos termos
+fn batchCounts(db: *Db, gpa: Allocator, names: []const []const u8, parts: []const Part, match: Match) !dbm.Grid {
+    var sql: std.ArrayList(u8) = .empty;
+    defer sql.deinit(gpa);
+    for (parts, 0..) |part, p| {
+        if (p > 0) try sql.appendSlice(gpa, " UNION ALL ");
+        try sql.print(gpa, "SELECT {d} AS p, m.ord, COUNT(*) AS n FROM ", .{p});
+        try writeMatches(&sql, gpa, names[part.table], part.columns, match, query.keyExpr(part.key), false);
+        try sql.appendSlice(gpa, " m GROUP BY m.ord");
+    }
+    try sql.appendSlice(gpa, " ORDER BY 1, 2");
+    try sql.append(gpa, 0);
+    return db.runMax(sql.items[0 .. sql.items.len - 1 :0], &.{}, std.math.maxInt(usize));
+}
+
 // Linhas por termo de uma tabela: (ord, n). A identidade de linha e o rowid do motor; a tabela sem rowid (view, ou
 // com uma coluna chamada rowid) usa o texto da linha inteira.
 fn tableCounts(db: *Db, gpa: Allocator, table: []const u8, columns: []const []const u8, match: Match, key: *query.RowKey, progress: *Progress) !dbm.Grid {
@@ -146,7 +196,7 @@ fn tableCounts(db: *Db, gpa: Allocator, table: []const u8, columns: []const []co
         defer sql.deinit(gpa);
         // os pares (linha, termo) sem repetir ja contam: a tabela e lida uma vez
         try sql.appendSlice(gpa, "SELECT m.ord, COUNT(*) FROM ");
-        try writeMatches(&sql, gpa, table, columns, match, key.*, false);
+        try writeMatches(&sql, gpa, table, columns, match, query.keyExpr(key.*), false);
         try sql.appendSlice(gpa, " m GROUP BY m.ord ORDER BY m.ord");
         try sql.append(gpa, 0);
         return db.runMax(sql.items[0 .. sql.items.len - 1 :0], &.{}, std.math.maxInt(usize)) catch |e| {
@@ -161,9 +211,9 @@ fn tableCounts(db: *Db, gpa: Allocator, table: []const u8, columns: []const []co
 // terms table in a join; DISTINCT ON: a term in two columns of the same row counts once. With `whole_row` the row
 // itself goes along as the struct mdb2sql_r, so the grid, the copy and the report come from this one scan: joining
 // the table again by rowid gave no rows at random on SQLite files (DB3/DB5 through the sqlite extension).
-fn writeMatches(out: *std.ArrayList(u8), a: Allocator, table: []const u8, columns: []const []const u8, match: Match, key: query.RowKey, whole_row: bool) Allocator.Error!void {
+fn writeMatches(out: *std.ArrayList(u8), a: Allocator, table: []const u8, columns: []const []const u8, match: Match, key_sql: []const u8, whole_row: bool) Allocator.Error!void {
     try out.print(a, "(SELECT DISTINCT ON (c.k, t.ord) c.k, t.ord, t.term{s} FROM (SELECT {s} AS k, {s}unnest([", .{
-        if (whole_row) ", c.mdb2sql_r" else "", query.keyExpr(key), if (whole_row) row ++ " AS mdb2sql_r, " else "",
+        if (whole_row) ", c.mdb2sql_r" else "", key_sql, if (whole_row) row ++ " AS mdb2sql_r, " else "",
     });
     for (columns, 0..) |col, i| {
         if (i > 0) try out.appendSlice(a, ", ");
@@ -189,7 +239,7 @@ pub fn buildRows(a: Allocator, table: []const u8, hit: Table, match: Match, titl
     }
     // as colunas da tabela, na ordem dela (o struct da linha aberto)
     try out.appendSlice(a, "mdb2sql_r.* FROM ");
-    try writeMatches(&out, a, table, hit.columns, match, hit.key, true);
+    try writeMatches(&out, a, table, hit.columns, match, query.keyExpr(hit.key), true);
     try out.appendSlice(a, if (hit.key == .rowid) " m ORDER BY m.ord, m.k" else " m ORDER BY m.ord");
     if (limit > 0) try out.print(a, " LIMIT {d}", .{limit});
     return out.toOwnedSliceSentinel(a, 0);
@@ -460,6 +510,43 @@ test "term search on a real database: every table's grid has the rows counted (o
     var db = dbm.testDb();
     defer db.close();
     try db.openReadOnly(path);
+    // tempo: a pesquisa inteira, a contagem uma consulta por tabela (rowid ou row_number()) e so ler cada tabela
+    {
+        var p: Progress = .{};
+        const t0 = std.Io.Timestamp.now(t.io, .awake);
+        var res = try search(&db, t.allocator, text, .whole, null, &p);
+        res.deinit();
+        std.debug.print("search: {d} ms\n", .{t0.durationTo(std.Io.Timestamp.now(t.io, .awake)).toMilliseconds()});
+        var cols = try db.runMax(columns_sql, &.{}, std.math.maxInt(usize));
+        defer cols.deinit();
+        for ([_][]const u8{ "rowid", "number", "scan" }) |variant| {
+            const t1 = std.Io.Timestamp.now(t.io, .awake);
+            var of: std.ArrayList([]const u8) = .empty;
+            defer of.deinit(t.allocator);
+            for (db.table_names) |name| {
+                of.clearRetainingCapacity();
+                for (cols.rows) |r| if (std.mem.eql(u8, r[0] orelse "", name)) try of.append(t.allocator, r[1] orelse "");
+                if (of.items.len == 0) continue;
+                var sql: std.ArrayList(u8) = .empty;
+                defer sql.deinit(t.allocator);
+                if (std.mem.eql(u8, variant, "scan")) {
+                    try sql.appendSlice(t.allocator, "SELECT COUNT(*) FROM ");
+                    try query.writeIdent(&sql, t.allocator, name);
+                } else {
+                    try sql.appendSlice(t.allocator, "SELECT m.ord, COUNT(*) FROM ");
+                    try writeMatches(&sql, t.allocator, name, of.items, .whole, if (std.mem.eql(u8, variant, "rowid")) query.keyExpr(.rowid) else "row_number() OVER ()", false);
+                    try sql.appendSlice(t.allocator, " m GROUP BY m.ord");
+                }
+                try sql.append(t.allocator, 0);
+                var g = db.runMax(sql.items[0 .. sql.items.len - 1 :0], &.{}, std.math.maxInt(usize)) catch |e| {
+                    std.debug.print("{s} {s}: {t} {s}\n", .{ variant, name, e, db.lastError() });
+                    break;
+                };
+                g.deinit();
+            }
+            std.debug.print("{s}: {d} ms\n", .{ variant, t1.durationTo(std.Io.Timestamp.now(t.io, .awake)).toMilliseconds() });
+        }
+    }
     // varias vezes: com o leitor do SQLite em paralelo, a grade ja veio vazia numa rodada e cheia na outra
     for (0..2) |_| for ([_]Match{ .whole, .contains }) |match| {
         var p: Progress = .{};
