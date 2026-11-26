@@ -1362,6 +1362,53 @@ mod tests {
         assert_eq!(manager.get_table_schema("a_pts").unwrap().len(), 3);
     }
 
+    // revisao do Python (B1): funcao de tabela que anexa ou grava nao passa pela aba SQL so leitura. Aqui as extensoes
+    // nao carregam sozinhas (sqlite_attach nem existe) e o resto roda numa transacao so de leitura: nada e criado
+    #[test]
+    fn sql_tab_table_functions_never_attach_or_write() {
+        let dir = tempdir().unwrap();
+        let manager = DBManager::new();
+        manager.connect(sample_duckdb(dir.path()).to_str().unwrap(), &mut no_progress()).unwrap();
+        let other = dir.path().join("outro.sqlite");
+        let file = other.to_string_lossy().replace('\'', "''");
+        for sql in [
+            format!("SELECT * FROM sqlite_attach('{file}', overwrite=true)"),
+            format!("SELECT * FROM sqlite_attach('{file}')"),
+            format!("SELECT * FROM query('COPY points TO ''{file}''')"),
+            format!("SELECT * FROM query('ATTACH ''{file}'' AS x')"),
+        ] {
+            assert!(manager.run_sql(&sql, 10).is_err(), "{sql}");
+            assert!(!other.exists(), "{sql}");
+        }
+        assert_eq!(manager.list_tables().unwrap(), ["Other table", "points"]);
+        // e o motor segue sem nenhum banco anexado alem do aberto
+        let attached = manager.run_sql("SELECT database_name FROM duckdb_databases() WHERE NOT internal ORDER BY 1", 10).unwrap();
+        assert_eq!(attached.rows, [json!({ "database_name": "memory" }), json!({ "database_name": "src" })]);
+    }
+
+    // revisao do Python (B2): tabela com uma coluna chamada como a coluna do termo (Termo, term, TÉRMINO) nao quebra a
+    // grade nem a copia: a coluna do termo ganha "_" e as da tabela ficam inteiras
+    #[test]
+    fn term_column_never_collides_with_a_table_column() {
+        use crate::backend::terms;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("cols.duckdb");
+        duckdb::Connection::open(&path)
+            .unwrap()
+            .execute_batch("CREATE TABLE t (\"Termo\" VARCHAR, \"Termo_\" VARCHAR, v INTEGER); INSERT INTO t VALUES ('a', 'b', 1);")
+            .unwrap();
+        let manager = DBManager::new();
+        manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+        let conn = manager.export_connection().unwrap();
+        terms::search(&conn, &["A".to_string()], true, &["t".to_string()], &mut ok_progress()).unwrap();
+        for label in ["Termo", "termo"] {
+            let rows = terms::rows(&conn, "t", label, usize::MAX).unwrap();
+            let names: Vec<&str> = rows.columns.iter().map(|c| c.name.as_str()).collect();
+            let term = format!("{label}__");
+            assert_eq!(names, [term.as_str(), "Termo", "Termo_", "v"], "{label}");
+            assert_eq!(rows.rows, [json!({ term: "A", "Termo": "a", "Termo_": "b", "v": 1 })]);
+        }
+    }
 
     // revisao do Python (P1): as marcadas voltam na ordem da tabela (ORDER BY rowid) tambem numa tabela grande, lida em
     // paralelo
