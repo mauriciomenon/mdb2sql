@@ -137,29 +137,22 @@ pub fn rows(conn: &Connection, table: &str, label: &str, limit: usize) -> Result
     Ok(SqlResult { columns, rows, truncated })
 }
 
-// NIVEL BASICO: Nomes das abas do relatorio (e das tabelas no SQLite/DuckDB e dos arquivos CSV): o resumo, as tabelas
-// com acerto e os nao encontrados. Resumo e nao encontrados ganham "_" se uma tabela achada ja tem o nome
-pub fn report_names(tables: &[String], summary: &str, not_found: &str) -> Vec<String> {
-    let unique = |name: &str| {
-        let mut name = name.to_string();
-        while tables.iter().any(|table| table.eq_ignore_ascii_case(&name)) {
-            name.push('_');
-        }
-        name
-    };
-    std::iter::once(unique(summary)).chain(tables.iter().cloned()).chain([unique(not_found)]).collect()
+// NIVEL BASICO: Nomes das abas do relatorio (e das tabelas no SQLite/DuckDB e dos arquivos CSV), sem numero nem
+// sufixo: a aba do resultado ("Resultado Filtro") e uma por tabela com acerto, com o nome dela (o Excel corta e limpa)
+pub fn report_names(tables: &[String], result: &str) -> Vec<String> {
+    std::iter::once(result.to_string()).chain(tables.iter().cloned()).collect()
 }
 
 // NIVEL BASICO: Prepara o relatorio da ultima pesquisa: views temporarias com os nomes de report_names e os titulos
-// no idioma da tela. Resumo: uma linha por termo x tabela (termo nao encontrado: tabela vazia e 0 linhas); uma view por
-// tabela com acerto (termo + colunas); nao encontrados (so o termo). labels = Termo, Situacao, Tabela, Linhas,
-// Encontrado, Nao encontrado, nome do resumo, nome dos nao encontrados. Devolve os nomes, na ordem das abas
+// no idioma da tela. Resultado: uma linha por termo x tabela, na ordem colada (termo nao encontrado na mesma aba, com a
+// tabela vazia e 0 linhas); uma view por tabela com acerto (termo + colunas). labels = Termo, Situacao, Tabela, Linhas,
+// Encontrado, Nao encontrado, nome da aba do resultado. Devolve os nomes, na ordem das abas
 // NIVEL TECNICO: temporary views come first in name lookup, so the writers of export.rs read them by plain name
 pub fn report(conn: &Connection, tables: &[String], labels: &[String]) -> Result<Vec<String>, String> {
-    let [term, status, table, rows, found, missing, summary, not_found] = labels else {
-        return Err("Term report needs 8 labels".to_string());
+    let [term, status, table, rows, found, missing, result] = labels else {
+        return Err("Term report needs 7 labels".to_string());
     };
-    let names = report_names(tables, summary, not_found);
+    let names = report_names(tables, result);
     let view = |name: &str, select: &str| format!("CREATE OR REPLACE TEMP VIEW {} AS {select};", ident(name));
     let mut sql = view(
         &names[0],
@@ -177,10 +170,6 @@ pub fn report(conn: &Connection, tables: &[String], labels: &[String]) -> Result
     for table in tables {
         sql += &view(table, &hit_select(conn, table, term)?.1);
     }
-    sql += &view(
-        &names[names.len() - 1],
-        &format!("SELECT term AS {} FROM {TERMS} WHERE ord NOT IN (SELECT ord FROM {COUNTS}) ORDER BY ord", ident(term)),
-    );
     conn.execute_batch(&sql).map_err(|e| e.to_string())?;
     Ok(names)
 }

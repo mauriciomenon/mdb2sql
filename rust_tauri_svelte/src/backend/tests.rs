@@ -1313,15 +1313,16 @@ mod tests {
         // relatorio da pesquisa por inteiro
         let conn = manager.export_connection().unwrap();
         terms::search(&conn, &terms, true, &tables, &mut ok_progress()).unwrap();
-        let labels: Vec<String> = ["Termo", "Situação", "Tabela", "Linhas", "Encontrado", "Não encontrado", "Resumo", "Não encontrados"].map(String::from).to_vec();
+        // BRIEF secao 13 i: uma aba "Resultado Filtro" com tudo (encontrados e nao encontrados) e uma por tabela, sem sufixo
+        let labels: Vec<String> = ["Termo", "Situação", "Tabela", "Linhas", "Encontrado", "Não encontrado", "Resultado Filtro"].map(String::from).to_vec();
         let with_hits = ["a_pts".to_string(), "b_other".to_string()];
         let names = terms::report(&conn, &with_hits, &labels).unwrap();
-        assert_eq!(names, ["Resumo", "a_pts", "b_other", "Não encontrados"]);
+        assert_eq!(names, ["Resultado Filtro", "a_pts", "b_other"]);
         let out = dir.path().join("rel.sqlite");
         export::write_tables(&conn, &names, "sqlite", &out, &mut ok_progress()).unwrap();
         let rel = rusqlite::Connection::open(&out).unwrap();
         let summary: Vec<(String, String, String, i64)> = rel
-            .prepare("SELECT \"Termo\", \"Situação\", \"Tabela\", \"Linhas\" FROM \"Resumo\"")
+            .prepare("SELECT \"Termo\", \"Situação\", \"Tabela\", \"Linhas\" FROM \"Resultado Filtro\"")
             .unwrap()
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
             .unwrap()
@@ -1340,8 +1341,6 @@ mod tests {
                 line("Y", "Não encontrado", "", 0),
             ]
         );
-        let missing: Vec<String> = rel.prepare("SELECT \"Termo\" FROM \"Não encontrados\"").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
-        assert_eq!(missing, ["PNTNAM", "Y"]);
         let cols: Vec<String> = rel.prepare("SELECT name FROM pragma_table_info('a_pts')").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
         assert_eq!(cols, ["Termo", "rtu", "pnt", "name"]);
         assert_eq!(rel.query_row("SELECT count(*) FROM a_pts", [], |r| r.get::<_, i64>(0)).unwrap(), 4);
@@ -1349,14 +1348,15 @@ mod tests {
         for format in ["duckdb", "xlsx"] {
             let file = dir.path().join(format!("rel.{format}"));
             let done = export::write_tables(&conn, &names, format, &file, &mut ok_progress()).unwrap();
-            assert_eq!(done.count, 4);
+            assert_eq!(done.count, 3);
             assert!(file.is_file());
         }
         let folder = dir.path().join("csv");
         std::fs::create_dir(&folder).unwrap();
         export::export_folder(&conn, &names, &folder, &mut ok_progress()).unwrap();
-        assert_eq!(std::fs::read_to_string(folder.join("Não encontrados.csv")).unwrap(), "\u{FEFF}Termo\r\nPNTNAM\r\nY\r\n");
-        assert_eq!(export::csv_files(&folder, &terms::report_names(&with_hits, "Resumo", "Não encontrados")).iter().filter(|f| f.exists()).count(), 4);
+        let result = std::fs::read_to_string(folder.join("Resultado Filtro.csv")).unwrap();
+        assert!(result.starts_with("\u{FEFF}Termo,Situação,Tabela,Linhas\r\nPNTNAM,Não encontrado,,0\r\n"), "{result}");
+        assert_eq!(export::csv_files(&folder, &terms::report_names(&with_hits, "Resultado Filtro")).iter().filter(|f| f.exists()).count(), 3);
         // a tabela de verdade nao mudou (as views do relatorio sao temporarias da conexao da pesquisa)
         assert_eq!(manager.get_row_count("a_pts", &[], "").unwrap(), 4);
         assert_eq!(manager.get_table_schema("a_pts").unwrap().len(), 3);

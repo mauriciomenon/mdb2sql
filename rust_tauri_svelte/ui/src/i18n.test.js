@@ -199,8 +199,8 @@ test('new texts of Save, exit, marked rows and Terms are the agreed ones', () =>
     ['terms.col', {}, 'Termo', 'Term', 'Término'],
     ['terms.notFound', { count: 1 }, 'Não encontrados (1)', 'Not found (1)', 'No encontrados (1)'],
     ['terms.copyHits', {}, 'Copiar as linhas encontradas desta tabela', 'Copy the rows found in this table', 'Copiar las filas encontradas en esta tabla'],
-    ['terms.sheetSummary', {}, 'Resumo', 'Summary', 'Resumen'],
-    ['terms.sheetNotFound', {}, 'Não encontrados', 'Not found', 'No encontrados'],
+    // BRIEF secao 13 i: uma aba so com o resultado (encontrados e nao encontrados) e uma por tabela
+    ['terms.sheetResult', {}, 'Resultado Filtro', 'Filter Result', 'Resultado Filtro'],
     ['terms.status', {}, 'Situação', 'Status', 'Situación'],
     ['terms.found', {}, 'Encontrado', 'Found', 'Encontrado'],
     ['terms.missing', {}, 'Não encontrado', 'Not found', 'No encontrado'],

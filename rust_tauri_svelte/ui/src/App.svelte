@@ -1037,7 +1037,7 @@
       name: `${stem(openedPath)}_termos`,
       folder: format === 'csv',
       unit: 'Tables',
-      request: { scope: 'terms', labels: ['terms.col', 'terms.status', 'tables.name', 'tables.rows', 'terms.found', 'terms.missing', 'terms.sheetSummary', 'terms.sheetNotFound'].map((key) => t(key)) },
+      request: { scope: 'terms', labels: ['terms.col', 'terms.status', 'tables.name', 'tables.rows', 'terms.found', 'terms.missing', 'terms.sheetResult'].map((key) => t(key)) },
     }),
   };
   // titulos Tabela, Coluna, Tipo, Aceita nulo e os valores Sim e Nao do esquema exportado, no idioma da tela

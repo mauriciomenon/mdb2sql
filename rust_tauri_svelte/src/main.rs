@@ -387,11 +387,11 @@ fn export(app: AppHandle, state: State<'_, AppState>, request: ExportRequest) ->
 fn export_existing(state: State<'_, AppState>, request: ExportRequest) -> Result<usize, String> {
     let names = match request.scope.as_str() {
         "terms" => {
-            let [.., summary, not_found] = request.labels.as_slice() else {
-                return Err("Term report needs 8 labels".to_string());
+            let [.., result] = request.labels.as_slice() else {
+                return Err("Term report needs 7 labels".to_string());
             };
             let slot = state.terms.lock().unwrap();
-            terms::report_names(&slot.as_ref().ok_or("[[err.searchCancelled]]")?.tables, summary, not_found)
+            terms::report_names(&slot.as_ref().ok_or("[[err.searchCancelled]]")?.tables, result)
         }
         _ => state.db_manager.lock().unwrap().list_tables()?,
     };

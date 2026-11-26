@@ -91,7 +91,7 @@ test('each export sends its request and suggests its name', () => {
   assert.match(exports, /tables: \(\) => \(\{ folder: true, unit: 'Tables', request: \{ scope: 'tables' \} \}\),/);
   assert.match(exports, /name: `\$\{stem\(openedPath\)\}_termos`,\s*folder: format === 'csv',/);
   assert.match(app, /const schemaLabels = \(\) => \['tables\.name', 'schema\.column', 'schema\.type', 'schema\.nullable', 'schema\.yes', 'schema\.no'\]\.map\(\(key\) => t\(key\)\);/);
-  assert.match(exports, /\['terms\.col', 'terms\.status', 'tables\.name', 'tables\.rows', 'terms\.found', 'terms\.missing', 'terms\.sheetSummary', 'terms\.sheetNotFound'\]\.map\(\(key\) => t\(key\)\)/);
+  assert.match(exports, /\['terms\.col', 'terms\.status', 'tables\.name', 'tables\.rows', 'terms\.found', 'terms\.missing', 'terms\.sheetResult'\]\.map\(\(key\) => t\(key\)\)/);
   const start = appFunction('startExport');
   assert.match(start, /\? await invoke\('plugin:dialog\|open', \{ options: \{ title, directory: true, defaultPath: dir \|\| undefined \} \}\)/);
   assert.match(start, /const existing = await invoke\('export_existing', \{ request \}\);\s*const message = t\('ask\.overwriteMany', \{ count: fmt\(existing\) \}\);\s*if \(existing && \(await invoke\('plugin:dialog\|message', \{ title, message, kind: 'warning', buttons: 'YesNo' \}\)\) !== 'Yes'\) return;/);
