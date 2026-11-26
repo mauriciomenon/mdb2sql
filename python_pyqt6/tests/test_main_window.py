@@ -460,6 +460,13 @@ def test_buttons_of_a_row_have_one_height_and_do_not_touch_the_boxes(qtbot, wind
     assert run.mapTo(window.sql_page, run.rect().topLeft()).y() > edit_bottom
 
 
+def test_copy_the_whole_log_in_spanish_says_log(window: MainWindow) -> None:
+    # 13 g): "Copiar todo el log" (a aba se chama Log nos 3 idiomas)
+    window.set_language("es")
+    assert window.copy_log_action.text().replace("&", "") == "Copiar todo el log"
+    assert window.log_action.text().replace("&", "") == "Log"
+
+
 def test_menu_items_are_disabled_like_their_buttons(qtbot, window: MainWindow) -> None:
     # Linhas do menu = lista Linhas da aba Dados; Pesquisar em = Esta tabela | Todas as tabelas
     window.rows_actions[2].trigger()
