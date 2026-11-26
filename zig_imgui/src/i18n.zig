@@ -145,7 +145,6 @@ test "texts as in the Go catalog (the reference wording), in the three languages
         .{ "log_discarded", "SQLite converted from {s} discarded", "SQLite convertido de {s} descartado", "SQLite convertido de {s} descartado" },
         .{ "export_run_text", "Exiting cancels the export of {s}.", "Sair cancela a exportação de {s}.", "Salir cancela la exportación de {s}." },
         .{ "copy_name", "{s} (copy)", "{s} (cópia)", "{s} (copia)" },
-        .{ "about_write", "Writing", "Gravação", "Escritura" },
         .{ "menu_open_typed", "Open the typed path", "Abrir o caminho digitado", "Abrir la ruta escrita" },
         // item 14: o botao Abrir... escolhe o arquivo; arquivo que nao existe, so a mensagem curta com o caminho
         .{ "open", "Open...", "Abrir...", "Abrir..." },
@@ -312,8 +311,9 @@ test "Terms tab counts and summary with the right plural (item 32)" {
     defer lang = .en;
     var b: [4][96]u8 = undefined;
     lang = .pt_br;
-    try t.expectEqualStrings("8 termos", fmtCount(&b[0], "terms_count", 8, .{8}));
-    try t.expectEqualStrings(", 1 repetido", fmtCount(&b[0], "terms_repeated", 1, .{1}));
+    // item 18 c: as linhas coladas (os repetidos contam), na caixa da linha dos controles
+    try t.expectEqualStrings("8 linhas de entrada", fmtCount(&b[0], "terms_lines", 8, .{8}));
+    try t.expectEqualStrings("1 linha de entrada", fmtCount(&b[0], "terms_lines", 1, .{1}));
     try t.expectEqualStrings("1 de 1 termo encontrado: 1 linha em 1 tabela", fmt(&b[3], "terms_summary", .{
         fmtCount(&b[0], "terms_found", 1, .{ 1, 1 }), fmtCount(&b[1], "terms_rows", 1, .{1}), fmtCount(&b[2], "terms_tables", 1, .{1}),
     }));

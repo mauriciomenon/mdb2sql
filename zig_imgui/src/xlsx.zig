@@ -117,7 +117,68 @@ pub const Cell = union(enum) {
     text: []const u8,
     number: []const u8, // texto ja no formato numerico (ex.: "-1.5", "3e+20")
     boolean: bool,
+    date: Date, // celula de data do Excel (item 19 c): o numero de serie com o formato de data
 };
+
+// Data do Excel: dias desde 1899-12-30 (fracao = hora); time = com hora (formato aaaa-mm-dd hh:mm:ss)
+pub const Date = struct { serial: f64, time: bool };
+
+// !T: "2026-07-14" or "2026-07-14 10:20:30[.fff]" (the text DuckDB gives for DATE and TIMESTAMP) -> Excel date serial;
+// null = not that form or before 1900-03-01 (Excel's 1900 calendar is wrong before it): the cell stays text
+pub fn dateSerial(s: []const u8) ?Date {
+    if (s.len < 10 or s[4] != '-' or s[7] != '-') return null;
+    const y = std.fmt.parseInt(i64, s[0..4], 10) catch return null;
+    const m = std.fmt.parseInt(i64, s[5..7], 10) catch return null;
+    const d = std.fmt.parseInt(i64, s[8..10], 10) catch return null;
+    if (m < 1 or m > 12 or d < 1 or d > 31 or y < 1900 or (y == 1900 and m < 3)) return null;
+    // dias desde 1970-01-01 (algoritmo civil de Howard Hinnant); 1899-12-30 e o dia -25569
+    const yy = if (m <= 2) y - 1 else y;
+    const era = @divFloor(yy, 400);
+    const yoe = yy - era * 400;
+    const doy = @divFloor(153 * (if (m > 2) m - 3 else m + 9) + 2, 5) + d - 1;
+    const doe = yoe * 365 + @divFloor(yoe, 4) - @divFloor(yoe, 100) + doy;
+    const days = era * 146097 + doe - 719468 + 25569;
+    var serial: f64 = @floatFromInt(days);
+    if (s.len == 10) return .{ .serial = serial, .time = false };
+    if (s.len < 19 or s[10] != ' ' or s[13] != ':' or s[16] != ':') return null;
+    const hh = std.fmt.parseInt(u32, s[11..13], 10) catch return null;
+    const mi = std.fmt.parseInt(u32, s[14..16], 10) catch return null;
+    const sec = std.fmt.parseFloat(f64, s[17..]) catch return null;
+    if (hh > 23 or mi > 59 or sec >= 61) return null;
+    serial += (@as(f64, @floatFromInt(hh * 3600 + mi * 60)) + sec) / 86400.0;
+    return .{ .serial = serial, .time = true };
+}
+
+// Testes: o XML de uma parte do .xlsx (ex.: "xl/worksheets/sheet1.xml"), lido de volta do arquivo (gpa libera)
+pub fn readPart(gpa: Allocator, io: Io, path: []const u8, part: []const u8) ![]u8 {
+    const file = try Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+    var rbuf: [4096]u8 = undefined;
+    var reader = file.reader(io, &rbuf);
+    var it = try std.zip.Iterator.init(&reader);
+    while (try it.next()) |e| {
+        var name_buf: [128]u8 = undefined;
+        if (e.filename_len > name_buf.len) continue;
+        try reader.seekTo(e.header_zip_offset + @sizeOf(std.zip.CentralDirectoryFileHeader));
+        const name = name_buf[0..e.filename_len];
+        try reader.interface.readSliceAll(name);
+        if (!std.mem.eql(u8, name, part)) continue;
+        var data: Io.Writer.Allocating = .init(gpa);
+        errdefer data.deinit();
+        try e.extractTo(&reader, &data.writer);
+        return data.toOwnedSlice();
+    }
+    return error.FileNotFound;
+}
+
+test "Excel date serials: DATE and TIMESTAMP text, before 1900-03-01 and other text stay text" {
+    try std.testing.expectEqual(Date{ .serial = 45000, .time = false }, dateSerial("2023-03-15").?);
+    try std.testing.expectEqual(Date{ .serial = 61, .time = false }, dateSerial("1900-03-01").?);
+    try std.testing.expectEqual(Date{ .serial = 45000.5, .time = true }, dateSerial("2023-03-15 12:00:00").?);
+    try std.testing.expectApproxEqAbs(45000.75 + 1.5 / 86400.0, dateSerial("2023-03-15 18:00:01.5").?.serial, 1e-9);
+    for ([_][]const u8{ "1899-12-31", "1900-02-28", "2023-13-01", "abc", "2023-03-15T12:00:00", "2023-03-15 12:00" }) |bad|
+        try std.testing.expect(dateSerial(bad) == null);
+}
 
 // Numero que o Excel aceita em <v> (sem inf/nan/hex)
 pub fn isExcelNumber(s: []const u8) bool {
@@ -257,8 +318,9 @@ pub const Workbook = struct {
         try wb.endEntry();
     }
 
-    // Nova aba: `table` vira um nome valido e unico; `part` > 1 para as continuacoes de uma tabela grande
-    pub fn beginSheet(wb: *Workbook, table: []const u8, part: usize) Error![]const u8 {
+    // Nova aba: `table` vira um nome valido e unico; `part` > 1 para as continuacoes de uma tabela grande.
+    // `widths`: largura de cada coluna em caracteres (item 19 g, ajustada ao conteudo); vazio = a padrao do Excel
+    pub fn beginSheet(wb: *Workbook, table: []const u8, part: usize, widths: []const u16) Error![]const u8 {
         if (wb.sheets.items.len >= 60_000) return error.TooManySheets;
         const name = try wb.names.make(table, part);
         try wb.sheets.append(wb.gpa, @constCast(name));
@@ -266,8 +328,16 @@ pub const Workbook = struct {
         try wb.beginEntry(std.fmt.bufPrint(&path_buf, "xl/worksheets/sheet{d}.xml", .{wb.sheets.items.len}) catch unreachable);
         try wb.put("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n" ++
             "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">" ++
-            "<sheetViews><sheetView workbookViewId=\"0\"><pane ySplit=\"1\" topLeftCell=\"A2\" activePane=\"bottomLeft\" state=\"frozen\"/></sheetView></sheetViews>" ++
-            "<sheetData>");
+            "<sheetViews><sheetView workbookViewId=\"0\"><pane ySplit=\"1\" topLeftCell=\"A2\" activePane=\"bottomLeft\" state=\"frozen\"/></sheetView></sheetViews>");
+        if (widths.len > 0) {
+            try wb.put("<cols>");
+            for (widths[0..@min(widths.len, max_cols)], 1..) |w, i| {
+                try wb.room(96);
+                try wb.xml.print("<col min=\"{d}\" max=\"{d}\" width=\"{d}\" customWidth=\"1\"/>", .{ i, i, w });
+            }
+            try wb.put("</cols>");
+        }
+        try wb.put("<sheetData>");
         wb.row = 0;
         return name;
     }
@@ -292,6 +362,8 @@ pub const Workbook = struct {
                     try wb.put("</v></c>");
                 },
                 .boolean => |b| try wb.xml.writeAll(if (b) " t=\"b\"><v>1</v></c>" else " t=\"b\"><v>0</v></c>"),
+                // estilo 2 = data e hora, 3 = so data (styles.xml)
+                .date => |d| try wb.xml.print(" s=\"{d}\"><v>{d}</v></c>", .{ @as(u8, if (d.time) 2 else 3), d.serial }),
                 .text => |s| {
                     try wb.xml.writeAll(" t=\"inlineStr\"><is><t xml:space=\"preserve\">");
                     const cut = cutUtf8(s, max_cell_chars);
@@ -321,7 +393,7 @@ pub const Workbook = struct {
     // Partes fixas do pacote + diretorio central. Uma pasta sem abas ganha uma aba vazia.
     pub fn finish(wb: *Workbook) Error!void {
         if (wb.sheets.items.len == 0) {
-            _ = try wb.beginSheet("Sheet1", 1);
+            _ = try wb.beginSheet("Sheet1", 1, &.{});
             try wb.endSheet();
         }
         var x: Io.Writer.Allocating = .init(wb.gpa);
@@ -365,12 +437,15 @@ pub const Workbook = struct {
 
         try wb.whole("xl/styles.xml", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n" ++
             "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">" ++
+            "<numFmts count=\"2\"><numFmt numFmtId=\"164\" formatCode=\"yyyy-mm-dd hh:mm:ss\"/><numFmt numFmtId=\"165\" formatCode=\"yyyy-mm-dd\"/></numFmts>" ++
             "<fonts count=\"2\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font><font><b/><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts>" ++
             "<fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills>" ++
             "<borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders>" ++
             "<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>" ++
-            "<cellXfs count=\"2\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>" ++
-            "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyFont=\"1\"/></cellXfs>" ++
+            "<cellXfs count=\"4\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>" ++
+            "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyFont=\"1\"/>" ++
+            "<xf numFmtId=\"164\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/>" ++
+            "<xf numFmtId=\"165\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/></cellXfs>" ++
             "<cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles>" ++
             "</styleSheet>");
 
@@ -498,7 +573,7 @@ test "random cell sizes never overflow the XML buffer" {
     {
         var wb = try Workbook.create(t.allocator, t.io, path);
         defer wb.deinit();
-        _ = try wb.beginSheet("stress", 1);
+        _ = try wb.beginSheet("stress", 1, &.{});
         var cells: [12]Cell = undefined;
         for (0..n_rows) |_| {
             for (&cells, 0..) |*cell, i| {
@@ -545,7 +620,7 @@ test "workbook round trip through std.zip" {
     var wb = try Workbook.create(t.allocator, t.io, path);
     {
         defer wb.deinit();
-        _ = try wb.beginSheet("people", 1);
+        _ = try wb.beginSheet("people", 1, &.{ 6, 30, 4 });
         try wb.writeRow(&.{ .{ .text = "id" }, .{ .text = "name" }, .{ .text = "ok" } });
         try wb.writeRow(&.{ .{ .number = "1" }, .{ .text = "Ação & <cia>" }, .{ .boolean = true } });
         try wb.writeRow(&.{ .{ .number = "2" }, .empty, .{ .boolean = false } });
@@ -554,7 +629,7 @@ test "workbook round trip through std.zip" {
             try wb.writeRow(&.{ .{ .number = std.fmt.bufPrint(&nb, "{d}", .{i}) catch unreachable }, .{ .text = &@as([50]u8, @splat('x')) } });
         }
         try wb.endSheet();
-        _ = try wb.beginSheet("people", 2);
+        _ = try wb.beginSheet("people", 2, &.{});
         try wb.writeRow(&.{.{ .text = "id" }});
         try wb.endSheet();
         try wb.finish();
@@ -595,5 +670,8 @@ test "workbook round trip through std.zip" {
     try t.expect(std.mem.indexOf(u8, sheet1, "<c r=\"A1\" s=\"1\" t=\"inlineStr\">") != null);
     try t.expect(std.mem.indexOf(u8, sheet1, "<row r=\"3\"><c r=\"A3\"><v>2</v></c><c r=\"C3\" t=\"b\"><v>0</v></c></row>") != null);
     try t.expect(std.mem.indexOf(u8, sheet1, "<row r=\"5003\">") != null);
+    // larguras das colunas antes dos dados (item 19 g)
+    try t.expect(std.mem.indexOf(u8, sheet1, "</sheetViews><cols><col min=\"1\" max=\"1\" width=\"6\" customWidth=\"1\"/><col min=\"2\" max=\"2\" width=\"30\" customWidth=\"1\"/>" ++
+        "<col min=\"3\" max=\"3\" width=\"4\" customWidth=\"1\"/></cols><sheetData>") != null);
     try t.expect(std.mem.indexOf(u8, workbook_xml, "<sheet name=\"people (2)\" sheetId=\"2\" r:id=\"rId2\"/>") != null);
 }

@@ -30,6 +30,7 @@ bash scripts/setup_tools_linux.sh
 zig=$(ls -d "$root"/.tools/zig-x86_64-linux-*/zig | head -n1)
 version=$(sed -n 's/^ *\.version = "\(.*\)",/\1/p' build.zig.zon | head -n1)
 number=$(git rev-list --count HEAD)
+commit=$(git rev-parse HEAD)
 date=$(date -u +%F)
 source_id=$(git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD)
 echo "Build $number ($date)  versao $version  Zig $("$zig" version)"
@@ -42,7 +43,7 @@ for try in 1 2 3; do
     sleep 5
 done
 "$zig" build test --summary all || fail 1 "testes falharam"
-"$zig" build install -Doptimize=ReleaseSafe -Dstrip=true "-Dbuild_number=$number" "-Dbuild_date=$date" || fail 1 "zig build falhou"
+"$zig" build install -Doptimize=ReleaseSafe -Dstrip=true "-Dbuild_number=$number" "-Dbuild_date=$date" "-Dcommit=$commit" || fail 1 "zig build falhou"
 bin=$root/zig-out/bin
 
 # Varredura de dado pessoal: nenhuma pasta do usuario nem /<usuario>/ nos binarios

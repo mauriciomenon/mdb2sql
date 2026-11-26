@@ -209,9 +209,9 @@ const Capture = struct {
         const g = app.terms_grid orelse return;
         if (app.terms_hit >= res.tables.len) return;
         rep.print(a, "{s}:\r\n", .{app.db.table_names[res.tables[app.terms_hit].table]}) catch return;
-        // Termo e as colunas que identificam o ponto
-        var picks: [4]?usize = .{ 0, null, null, null };
-        for (g.columns, 0..) |col, i| for ([_][]const u8{ "RTUNO", "PNTNO", "SUBNAM" }, 1..) |want, k| {
+        // as colunas que identificam o ponto (a grade so tem as colunas da tabela, item 19 d)
+        var picks: [4]?usize = .{ null, null, null, null };
+        for (g.columns, 0..) |col, i| for ([_][]const u8{ "PNTNAM", "RTUNO", "PNTNO", "SUBNAM" }, 0..) |want, k| {
             if (std.ascii.eqlIgnoreCase(col, want)) picks[k] = i;
         };
         for (g.rows) |row| {
@@ -798,7 +798,6 @@ fn setupSizes(scale: f32) void {
 
 var session_log: dbm.log.Log = .{};
 const log_pad_y: f32 = 4; // margem vertical do painel de Log
-var mono_font: ?*ig.ImFont = null; // fonte monoespacada do painel de Log (null = a fonte da interface)
 var log_gpa: std.mem.Allocator = std.heap.page_allocator; // trocado pelo gpa do programa em run()
 
 fn logLine(s: []const u8) void {
@@ -1120,7 +1119,7 @@ const App = struct {
     terms_scope: settings.SearchScope = .all,
     terms_res: ?dbm.terms.Result = null, // resultado mostrado
     terms_hit: usize = 0, // tabela escolhida na lista (indice em terms_res.tables)
-    terms_grid: ?dbm.Grid = null, // as linhas achadas da tabela escolhida (coluna Termo + as da tabela)
+    terms_grid: ?dbm.Grid = null, // as linhas achadas da tabela escolhida (so as colunas dela, item 19 d)
     terms_sel: GridSel = .{},
     terms_seconds: f64 = 0, // tempo da ultima pesquisa
     want_terms: bool = false, // Pesquisar termos (botao, Ctrl+Enter)
@@ -1473,12 +1472,10 @@ const App = struct {
                 r.terms_text = app.gpa.dupe(u8, std.mem.sliceTo(app.terms_text, 0)) catch return app.status.set(true, "err_generic", .{error.OutOfMemory});
                 r.term_match = app.terms_match;
                 r.terms_only = if (app.terms_scope == .table) app.selected else null;
-                r.terms_titles = termsTitles();
             },
             .terms_page, .terms_copy => {
                 r.terms_res = if (app.terms_res) |*res| res else return;
                 r.terms_hit = if (kind == .terms_page) (app.want_terms_page orelse return) else app.terms_hit;
-                r.terms_titles = termsTitles();
             },
         }
         app.busy_since = ig.igGetTime();
@@ -1978,7 +1975,8 @@ const App = struct {
             .dbschema_csv, .dbschema_xlsx => std.fmt.bufPrint(&name_buf, "{s}_schema", .{std.fs.path.stem(loaded)}) catch "schema",
             .result_csv, .result_xlsx => "query",
             .marked_csv, .marked_xlsx => std.fmt.bufPrint(&name_buf, "{s}_marcadas", .{app.db.table_names[app.selected orelse return]}) catch "marcadas",
-            .terms_xlsx, .terms_csv, .terms_sqlite, .terms_duckdb => std.fmt.bufPrint(&name_buf, "{s}_termos", .{std.fs.path.stem(loaded)}) catch "termos",
+            // item 19 e: "<banco> - Pesquisa Avançada.xlsx" (.sqlite/.duckdb conforme o tipo), o nome da aba no idioma da tela
+            .terms_xlsx, .terms_csv, .terms_sqlite, .terms_duckdb => std.fmt.bufPrint(&name_buf, "{s} - {s}", .{ std.fs.path.stem(loaded), tr("tab_terms") }) catch tr("tab_terms"),
             .global_xlsx => std.fmt.bufPrint(&name_buf, "{s}_busca", .{std.fs.path.stem(loaded)}) catch "busca",
         };
         var file_buf: [600]u8 = undefined;
@@ -2063,11 +2061,10 @@ const App = struct {
         } else if (kind == .db_xlsx) {
             for (app.counts) |n| r.total_hint += n;
         } else if (kind == .terms_xlsx or kind == .terms_csv or kind == .terms_sqlite or kind == .terms_duckdb) {
-            // relatorio da pesquisa mostrada: resumo, uma aba por tabela com acerto, nao encontrados
+            // relatorio da pesquisa mostrada: uma aba por tabela com acerto (item 19 d)
             const res = if (app.terms_res) |*x| x else return;
             r.terms_res = res;
-            r.terms_titles = termsTitles();
-            r.total_hint = res.rows + res.pairs.len + res.terms.len;
+            r.total_hint = res.rows;
         }
         r.export_kind = kind;
         app.start(.export_);
@@ -2101,7 +2098,7 @@ const App = struct {
         if (kind == .all_csv) return app.db.table_names;
         if (kind != .terms_csv) return &.{};
         const res = if (app.terms_res) |*x| x else return &.{};
-        const items = try dbm.terms.reportItems(a, app.db.table_names, res, termsTitles());
+        const items = try dbm.terms.reportItems(a, app.db.table_names, res);
         const names = try a.alloc([]const u8, items.len);
         for (names, items) |*n, item| n.* = item.sheet;
         return names;
@@ -2226,7 +2223,7 @@ const App = struct {
             .data => if (app.data) |*g| .{ .g = g, .sel = &app.data_sel, .skip = 0 } else null,
             .schema => if (app.schema) |*g| .{ .g = g, .sel = &app.schema_sel, .skip = 0 } else null,
             .sql => if (app.result) |*g| .{ .g = g, .sel = &app.result_sel, .skip = 0 } else null,
-            .terms => if (app.terms_grid) |*g| .{ .g = g, .sel = &app.terms_sel, .skip = 1 } else null,
+            .terms => if (app.terms_grid) |*g| .{ .g = g, .sel = &app.terms_sel, .skip = 0 } else null,
         };
     }
 
@@ -2464,49 +2461,27 @@ const App = struct {
         defer ig.igEndPopup();
         if (!app.about_open) ig.igCloseCurrentPopup(); // --capture fecha pelo estado
         const about = dbm.about;
-        // nome e versao em destaque (mesma fonte, maior)
-        ig.igPushFont(null, ig.igGetStyle().*.FontSizeBase * 1.4);
-        textSlice(about.name ++ " " ++ about.version);
-        ig.igPopFont();
-        textSlice(tr("about_tagline"));
-        ig.igSpacing();
-        ig.igSeparator();
-        ig.igSpacing();
-
+        // item 18 b: so estas linhas, nesta ordem, igual nas 4 (texto tecnico, a fonte de toda a tela)
         var glfw_ver: [3]c_int = undefined;
         glfwGetVersion(&glfw_ver[0], &glfw_ver[1], &glfw_ver[2]);
-        var bufs: [5][160]u8 = undefined;
-        const rows = [_]struct { [:0]const u8, []const u8 }{
-            .{ tr("about_build"), about.build(&bufs[0]) },
-            .{ tr("about_stack"), about.stackText(&bufs[1], std.mem.span(ig.igGetVersion())) },
-            .{ tr("about_window"), std.fmt.bufPrint(&bufs[2], "GLFW {d}.{d}.{d} + OpenGL 3.3", .{ glfw_ver[0], glfw_ver[1], glfw_ver[2] }) catch "" },
-            .{ tr("about_database"), std.fmt.bufPrint(&bufs[3], "DuckDB {s}", .{std.mem.trimStart(u8, dbm.libraryVersion(), "v")}) catch "" },
-            .{ tr("about_access"), if (platform.is_windows) i18n.fmt(&bufs[4], "about_access_win", .{about.mdbtools_version}) else i18n.fmt(&bufs[4], "about_access_unix", .{about.mdbtools_version}) },
-            .{ tr("about_write"), tr("about_write_value") },
-            .{ tr("about_author"), about.author },
-            .{ tr("about_license"), tr("about_license_text") },
-        };
-        if (ig.igBeginTable("##about_rows", 2, ig.ImGuiTableFlags_SizingFixedFit, .{ .x = 0, .y = 0 }, 0)) {
-            defer ig.igEndTable();
-            // a linha de Gravacao (mais longa) quebra na largura da de Leitura do Access: o dialogo fica do mesmo tamanho
-            const wrap_w = rawWidth(rows[4][1]) + 1;
-            for (rows) |row| {
-                ig.igTableNextRow(0, 0);
-                _ = ig.igTableNextColumn();
-                ig.igTextDisabled("%s", row[0].ptr);
-                _ = ig.igTableNextColumn();
-                ig.igPushTextWrapPos(ig.igGetCursorPosX() + wrap_w);
-                textSlice(row[1]);
-                ig.igPopTextWrapPos();
+        var bufs: [4][200]u8 = undefined;
+        textSlice(about.title_line);
+        textSlice(about.versionLine(&bufs[0]));
+        textSlice(about.runtimeText(&bufs[1], std.mem.span(ig.igGetVersion()), glfw_ver));
+        textSlice(about.toolsText(&bufs[2], dbm.libraryVersion()));
+        // o driver ODBC do Access so existe no Windows (no Linux o Access e lido so pelo mdbtools)
+        if (platform.is_windows) textSlice(tr("about_odbc"));
+        textSlice(i18n.fmt(&bufs[3], "about_author_line", .{about.author}));
+        textSlice(tr("about_license_line"));
+        // GitHub / GitLab: links (abrem no navegador)
+        for (about.links, 0..) |link, i| {
+            if (i > 0) {
+                ig.igSameLine(0, -1);
+                textSlice("/");
+                ig.igSameLine(0, -1);
             }
-            for (about.links) |link| {
-                ig.igTableNextRow(0, 0);
-                _ = ig.igTableNextColumn();
-                ig.igTextDisabled("%s", link.label.ptr);
-                _ = ig.igTableNextColumn();
-                if (ig.igTextLink(link.url)) openLink(link.url);
-                itemTooltip(tr("about_open_browser"));
-            }
+            if (ig.igTextLink(link.label)) openLink(link.url);
+            itemTooltip(tr("about_open_browser"));
         }
         ig.igSpacing();
         ig.igSeparator();
@@ -2721,9 +2696,8 @@ const App = struct {
         const len = if (session_log.text.items.len > 0) session_log.text.items.len else 1;
         if (len != app.log_seen) ig.igSetNextWindowScroll(.{ .x = 0, .y = 1e9 }); // linha nova: vai para o fim
         app.log_seen = len;
-        ig.igPushFont(mono_font, @max(13, ig.igGetFontSize() - 2));
+        // a mesma fonte e o mesmo tamanho de toda a tela (item 18 e)
         _ = ig.igInputTextMultiline("##logtext", @ptrCast(buf), len, .{ .x = -1, .y = -1 }, ig.ImGuiInputTextFlags_ReadOnly, null, null);
-        ig.igPopFont();
     }
 
     // Barra de baixo (a do Go): a esquerda a seta que abre/recolhe o Log e a mensagem (ou o trabalho em andamento,
@@ -2951,53 +2925,57 @@ const App = struct {
         }
     }
 
-    // Aba Termos (item 32), de cima para baixo: a caixa dos termos; Valor inteiro | Contem, Esta tabela | Todas as
-    // tabelas, Pesquisar termos e a contagem; o resumo; as tabelas com acerto e a grade da escolhida; os nao
-    // encontrados numa caixa copiavel
+    // Aba Pesquisa Avançada, de cima para baixo: a caixa dos termos; a linha dos controles; as tabelas com acerto e a
+    // grade da escolhida; os nao encontrados numa caixa copiavel
     fn drawTerms(app: *App) void {
         const st = ig.igGetStyle();
         const box_h = ig.igGetTextLineHeight() * 8 + 2 * st.*.FramePadding.y;
         // Ctrl+Enter na caixa pesquisa (Enter quebra a linha)
         if (ig.igInputTextEx("##terms", tr("terms_hint"), app.terms_text.ptr, @intCast(app.terms_text.len), .{ .x = -1, .y = box_h }, ig.ImGuiInputTextFlags_Multiline | ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) app.want_terms = true;
         if (ig.igIsItemEdited()) app.countTerms();
-        const match_l = [_][:0]const u8{ tr("match_whole"), tr("match_contains") };
-        var match_hover = false;
-        if (segmented(1, &match_l, @intFromBool(app.terms_match == .contains), &match_hover)) |i| app.terms_match = if (i == 0) .whole else .contains;
-        if (match_hover) tooltip(tr("match_tip"));
-        const scope_l = [_][:0]const u8{ tr("scope_table"), tr("scope_all") };
-        sameLineIfFits(segmentedWidth(&scope_l), -1);
-        if (segmented(2, &scope_l, @intFromBool(app.terms_scope == .all), null)) |i| app.terms_scope = if (i == 0) .table else .all;
+
+        // Linha dos controles (item 18 c), da esquerda para a direita: Pesquisar termos | caixa "N linhas de entrada"
+        // + o resumo | encostados a direita: Valor inteiro | Contem, separador, Esta tabela | Todas as tabelas
         const run_l = tr("terms_run");
-        sameLineIfFits(buttonWidth(run_l), -1);
         ig.igBeginDisabled(app.slot.busyWith(.terms) or app.terms_counted[0] == 0);
         if (button(run_l)) app.want_terms = true;
         ig.igEndDisabled();
-        // "8 termos, 1 repetido"
-        var cb: [64]u8 = undefined;
-        var rb: [64]u8 = undefined;
-        var lb: [140]u8 = undefined;
         const n, const rep = app.terms_counted;
-        const count_s = std.fmt.bufPrint(&lb, "{s}{s}", .{ i18n.fmtCount(&cb, "terms_count", n, .{n}), if (rep > 0) i18n.fmtCount(&rb, "terms_repeated", rep, .{rep}) else "" }) catch "";
-        sameLineIfFits(rawWidth(count_s), -1);
-        ig.igAlignTextToFramePadding();
-        textSlice(count_s);
-
-        const res = if (app.terms_res) |*x| x else return;
-        // "6 de 9 termos encontrados: 14 linhas em 3 tabelas"
+        var lb: [64]u8 = undefined;
         var sb: [3][96]u8 = undefined;
         var summary: [400]u8 = undefined;
-        const n_terms = res.terms.len;
-        textSlice(i18n.fmt(&summary, "terms_summary", .{
-            i18n.fmtCount(&sb[0], "terms_found", n_terms, .{ res.found, n_terms }),
-            i18n.fmtCount(&sb[1], "terms_rows", res.rows, .{res.rows}),
-            i18n.fmtCount(&sb[2], "terms_tables", res.tables.len, .{res.tables.len}),
-        }));
-        // "Esta tabela" (item 17): diz onde pesquisou, para nunca parecer que o termo nao existe no banco
-        if (res.only) |ti| if (ti < app.db.table_names.len) {
-            ig.igSameLine(0, 0);
-            var ob: [600]u8 = undefined;
-            textSlice(i18n.fmt(&ob, "terms_only_in", .{app.db.table_names[ti]}));
-        };
+        var ob: [600]u8 = undefined;
+        var ib: [1200]u8 = undefined;
+        const lines_s = i18n.fmtCount(&lb, "terms_lines", n + rep, .{n + rep});
+        const res_opt: ?*const dbm.terms.Result = if (app.terms_res) |*x| x else null;
+        const info = if (res_opt) |r| std.fmt.bufPrint(&ib, "{s}   {s}{s}", .{
+            lines_s,
+            i18n.fmt(&summary, "terms_summary", .{
+                i18n.fmtCount(&sb[0], "terms_found", r.terms.len, .{ r.found, r.terms.len }),
+                i18n.fmtCount(&sb[1], "terms_rows", r.rows, .{r.rows}),
+                i18n.fmtCount(&sb[2], "terms_tables", r.tables.len, .{r.tables.len}),
+            }),
+            // "Esta tabela" (item 17): diz onde pesquisou, para nunca parecer que o termo nao existe no banco
+            if (r.only) |ti| (if (ti < app.db.table_names.len) i18n.fmt(&ob, "terms_only_in", .{app.db.table_names[ti]}) else "") else "",
+        }) catch lines_s else lines_s;
+        const match_l = [_][:0]const u8{ tr("match_whole"), tr("match_contains") };
+        const scope_l = [_][:0]const u8{ tr("scope_table"), tr("scope_all") };
+        const gap = st.*.ItemSpacing.x;
+        const right_w = segmentedWidth(&match_l) + segmentedWidth(&scope_l) + 1 + 2 * gap;
+        const info_min = rawWidth(info) + 2 * st.*.FramePadding.x;
+        vline();
+        // a caixa ocupa o que sobra ate o grupo da direita, nunca menos que o texto; sem espaco, o grupo desce
+        const avail = ig.igGetContentRegionAvail().x;
+        const fits = avail - right_w - 2 * gap - 1 >= info_min;
+        frameText(info, if (fits) avail - right_w - 2 * gap - 1 else @max(info_min, avail));
+        if (fits) vline() else ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - right_w));
+        var match_hover = false;
+        if (segmented(1, &match_l, @intFromBool(app.terms_match == .contains), &match_hover)) |i| app.terms_match = if (i == 0) .whole else .contains;
+        if (match_hover) tooltip(tr("match_tip"));
+        vline();
+        if (segmented(2, &scope_l, @intFromBool(app.terms_scope == .all), null)) |i| app.terms_scope = if (i == 0) .table else .all;
+
+        const res = res_opt orelse return;
         // embaixo: o titulo dos nao encontrados com Copiar e a caixa deles (4 linhas)
         const nf_box_h = ig.igGetTextLineHeight() * 4 + 2 * st.*.FramePadding.y;
         const nf_h = ig.igGetFrameHeightWithSpacing() + nf_box_h + st.*.ItemSpacing.y;
@@ -3043,7 +3021,7 @@ const App = struct {
         } else ig.igDummy(.{ .x = 1, .y = mid_h });
         // "Nao encontrados (2)" + Copiar; um termo por linha, na ordem colada
         ig.igAlignTextToFramePadding();
-        textT("not_found_title", .{n_terms - res.found});
+        textT("not_found_title", .{res.terms.len - res.found});
         ig.igSameLine(0, -1);
         if (button(tr("copy"))) setClipboard(res.not_found);
         _ = ig.igInputTextMultiline("##notfound", @constCast(res.not_found.ptr), res.not_found.len + 1, .{ .x = -1, .y = nf_box_h }, ig.ImGuiInputTextFlags_ReadOnly, null, null);
@@ -3292,6 +3270,30 @@ fn segmented(id: c_int, labels: []const [:0]const u8, current: usize, hovered: ?
     return clicked;
 }
 
+// Separador vertical fino entre grupos de uma linha de botoes, na altura do quadro (item 18 c)
+fn vline() void {
+    ig.igSameLine(0, -1);
+    const p = ig.igGetCursorScreenPos();
+    const h = ig.igGetFrameHeight();
+    ig.igDummy(.{ .x = 1, .y = h });
+    ig.ImDrawList_AddLine(ig.igGetWindowDrawList(), .{ .x = p.x, .y = p.y + 3 }, .{ .x = p.x, .y = p.y + h - 3 }, ig.igGetColorU32_Col(ig.ImGuiCol_Separator, 1), 1, 0);
+    ig.igSameLine(0, -1);
+}
+
+// Texto so de leitura numa caixa da linha de botoes: o fundo e a moldura das caixas, a altura do quadro e a margem
+// dele (o texto nunca encosta nem e cortado: quem chama da a largura dele, no minimo)
+fn frameText(s: []const u8, w: f32) void {
+    const st = ig.igGetStyle();
+    const min = ig.igGetCursorScreenPos();
+    const h = ig.igGetFrameHeight();
+    ig.igDummy(.{ .x = w, .y = h });
+    const max: @TypeOf(min) = .{ .x = min.x + w, .y = min.y + h };
+    const dl = ig.igGetWindowDrawList();
+    ig.ImDrawList_AddRectFilled(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_FrameBg, 1), st.*.FrameRounding, 0);
+    ig.ImDrawList_AddRect(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_Border, 1), st.*.FrameRounding, @max(1, st.*.FrameBorderSize), 0);
+    ig.ImDrawList_AddText_Vec2(dl, .{ .x = min.x + st.*.FramePadding.x, .y = min.y + st.*.FramePadding.y }, ig.igGetColorU32_Col(ig.ImGuiCol_Text, 1), s.ptr, s.ptr + s.len);
+}
+
 fn segmentedWidth(labels: []const [:0]const u8) f32 {
     var w: f32 = 0;
     for (labels) |l| w += buttonWidth(l);
@@ -3318,19 +3320,6 @@ fn termsReportMenu(enabled: bool) ?ExportKind {
         if (ig.igMenuItem_Bool(tr("fmt_duckdb"), null, false, true)) pick = .terms_duckdb;
     }
     return pick;
-}
-
-// Titulos da coluna do termo e do relatorio, no idioma da tela (textos estaticos do catalogo)
-fn termsTitles() dbm.terms.Titles {
-    return .{
-        .term = tr("col_term"),
-        .status = tr("col_status"),
-        .table = tr("col_table"),
-        .rows = tr("col_rows"),
-        .found = tr("term_found"),
-        .not_found = tr("term_not_found"),
-        .sheet_result = tr("sheet_result"),
-    };
 }
 
 // Botao "Colunas..." da barra da grade: o dialogo e desenhado por drawGrid
@@ -3552,8 +3541,8 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         }
     }
 
-    // aba Termos: copiar linha e linha com cabecalho sem a coluna Termo
-    const skip: usize = @intFromBool(mode == .terms);
+    // a grade da Pesquisa Avançada so tem as colunas da tabela (item 19 d): nada a pular ao copiar
+    const skip: usize = 0;
     if (ig.igIsWindowFocused(0) and ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_C)) copySelection(g, sel, false, false, 0);
     if (open_menu) _ = ig.igOpenPopup_Str("##copy", 0);
     // menu da celula do Go: filtros por valor (aba Dados), depois copiar valor, linha e linha com o cabecalho
@@ -3822,6 +3811,8 @@ fn run(init: std.process.Init) !void {
         app.prefs = settings.Settings.load(init.io, app.prefs_path);
     };
     i18n.lang = app.prefs.lang;
+    // o Log abre sempre fechado (item 18 d), mesmo que tenha ficado aberto na execucao anterior
+    app.prefs.log_open = false;
     app.scope = app.prefs.search_scope;
     // aba Pesquisa Avançada: a comparacao padrao das configuracoes; o escopo comeca em Todas as tabelas; a caixa vazia
     app.terms_match = app.prefs.term_match;
@@ -3905,7 +3896,7 @@ fn run(init: std.process.Init) !void {
     // do ImGui. O ImGui mede a altura da linha (no Segoe UI, 1.33x a letra): 18.6 = letra de 14 px, a do Go/Wails
     // (com 16 ficava em 12 px, pequena); titulos seguem proporcionais (FontSizeBase)
     // Os glifos (acentos, setas U+2190-21FF) entram no atlas sob demanda (fontes dinamicas do Dear ImGui 1.92+)
-    const ui_font = for (platform.fonts) |font| {
+    _ = for (platform.fonts) |font| {
         if (std.Io.Dir.cwd().access(init.io, font, .{})) |_| {
             _ = shim_add_font(font, 18.6 * scale);
             // a estrela das favoritas (U+2605) e as setas das paginas (U+25B6, U+25C0) de outra fonte, juntada a esta
@@ -3918,13 +3909,6 @@ fn run(init: std.process.Init) !void {
     } else blk: {
         ig.igGetStyle().*.FontScaleDpi = scale;
         break :blk false;
-    };
-    // monoespacada para o painel de Log (Consolas, DejaVu Sans Mono), so depois da fonte da interface (a 1a e a padrao)
-    if (ui_font) for (platform.mono_fonts) |font| {
-        if (std.Io.Dir.cwd().access(init.io, font, .{})) |_| {
-            mono_font = shim_add_font(font, 14 * scale);
-            break;
-        } else |_| {}
     };
 
     // no --capture o GLFW nao entrega mouse nem teclado reais ao ImGui

@@ -313,6 +313,14 @@ pub fn isBoolType(ty: c.duckdb_type) bool {
     return ty == c.DUCKDB_TYPE_BOOLEAN;
 }
 
+// Tipos que viram data numa planilha (o texto do DuckDB: "aaaa-mm-dd" ou "aaaa-mm-dd hh:mm:ss")
+pub fn isDateType(ty: c.duckdb_type) bool {
+    return switch (ty) {
+        c.DUCKDB_TYPE_DATE, c.DUCKDB_TYPE_TIMESTAMP, c.DUCKDB_TYPE_TIMESTAMP_S, c.DUCKDB_TYPE_TIMESTAMP_MS, c.DUCKDB_TYPE_TIMESTAMP_NS => true,
+        else => false,
+    };
+}
+
 pub const Db = struct {
     gpa: Allocator,
     db: c.duckdb_database = null,
@@ -659,7 +667,44 @@ pub const Db = struct {
 
     // Linhas de varias tabelas numa consulta so (UNION ALL): bem mais rapido que uma por tabela,
     // principalmente no SQLite. Se falhar, conta uma por uma (tabela com erro fica 0).
+    // !T: A table of an attached SQLite file (`attached`) created by SQLite itself (sqlite_query runs its own DDL), each
+    // column with its SQLite declared type (query.sqliteType or the declared type of a SQLite source). The schema keeps
+    // the nature of every column (DECIMAL(p,s), TIMESTAMP, BOOLEAN); the DuckDB writer would declare them VARCHAR.
+    pub fn createSqliteTable(self: *Db, attached: []const u8, table: []const u8, names: []const []const u8, types: []const []const u8) Error!void {
+        var ddl: std.ArrayList(u8) = .empty;
+        defer ddl.deinit(self.gpa);
+        try ddl.appendSlice(self.gpa, "CREATE TABLE ");
+        try query.writeIdent(&ddl, self.gpa, table);
+        try ddl.appendSlice(self.gpa, " (");
+        for (names, types, 0..) |name, ty, i| {
+            if (i > 0) try ddl.appendSlice(self.gpa, ", ");
+            try query.writeIdent(&ddl, self.gpa, name);
+            if (ty.len > 0) try ddl.print(self.gpa, " {s}", .{ty});
+        }
+        if (names.len == 0) try ddl.appendSlice(self.gpa, "empty_table_without_columns TEXT");
+        try ddl.appendSlice(self.gpa, ")");
+        var sql: std.ArrayList(u8) = .empty;
+        defer sql.deinit(self.gpa);
+        try sql.appendSlice(self.gpa, "SELECT * FROM sqlite_query(");
+        try query.writeLiteral(&sql, self.gpa, attached);
+        try sql.appendSlice(self.gpa, ", ");
+        try query.writeLiteral(&sql, self.gpa, ddl.items);
+        try sql.appendSlice(self.gpa, ")");
+        try sql.append(self.gpa, 0);
+        try self.exec(sql.items[0 .. sql.items.len - 1 :0]);
+    }
+
     pub fn countMany(self: *Db, names: []const []const u8, out: []u64) Error!void {
+        // em blocos de 32 tabelas por consulta: as 287 sqlite_query do DB3 numa consulta so derrubaram a extensao
+        // sqlite (segfault no teste do DB3.accdb, 26/11); a abertura ja contava assim, o Excel de todas as tabelas nao
+        var first: usize = 0;
+        while (first < names.len) : (first += 32) {
+            const end = @min(first + 32, names.len);
+            try self.countBatch(names[first..end], out[first..end]);
+        }
+    }
+
+    fn countBatch(self: *Db, names: []const []const u8, out: []u64) Error!void {
         var sql: std.ArrayList(u8) = .empty;
         defer sql.deinit(self.gpa);
         // SQLite (e o Access convertido): o COUNT(*) roda no proprio SQLite (sqlite_query), que conta pela arvore
@@ -1093,4 +1138,24 @@ test "sqlite file through the embedded DuckDB sqlite extension" {
     try t.expectEqualStrings("Ação", g.rows[0][1].?);
     try t.expect(g.rows[1][1] == null);
     try t.expectError(error.DuckDb, db.exec("CREATE TABLE nope (x INTEGER)")); // somente leitura
+}
+
+test "counting many SQLite tables goes 32 per query, every count right (the 287 of DB3 at once crashed)" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [256]u8 = undefined;
+    const path = tmpPath(&buf, &tmp, "many.sqlite");
+    var db = testDb();
+    defer db.close();
+    try db.start();
+    try db.loadSqlite();
+    var sql_buf: [400]u8 = undefined;
+    try db.exec(try std.fmt.bufPrintSentinel(&sql_buf, "ATTACH '{s}' AS w (TYPE sqlite)", .{path}, 0));
+    for (0..70) |i| try db.exec(try std.fmt.bufPrintSentinel(&sql_buf, "CREATE TABLE w.t{d:0>2} AS SELECT range AS n FROM range({d})", .{ i, i }, 0));
+    try db.exec("DETACH w");
+    try db.openReadOnly(path);
+    try t.expectEqual(70, db.table_names.len);
+    var counts: [70]u64 = undefined;
+    try db.countMany(db.table_names, &counts);
+    for (counts, 0..) |n, i| try t.expectEqual(i, n);
 }

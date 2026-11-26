@@ -75,12 +75,14 @@ libdecor, which loads GTK; two early starts on WSLg crashed inside it (README-BU
 
 Opening an `.accdb`/`.mdb` converts every table once into a temporary SQLite file in the subfolder `mdb2sql-zig` of
 the user's temporary folder (Windows `%TEMP%`), else of the system one (`%SystemRoot%\Temp`, Linux `/tmp`), last next
-to the source file (the first where a file can be created), and the program reads that file (the status line says `read with mdbtools, converted to SQLite`). Types are kept as SQLite
-stores them: integers (`Byte`, `Integer`, `Long Integer`, `Numeric (p, 0)` up to 18 digits) as INTEGER (declared
-BIGINT), `Single`, `Double`, `Currency` and the other `Numeric` as REAL (declared DOUBLE; exact up to 15 significant
-digits), dates as ISO text (`2026-07-14 10:30:00`, declared VARCHAR: ISO text sorts and compares in date order),
-Yes/No as 0/1, OLE/binary as BLOB, text as TEXT; NULL stays NULL. Every number has numeric affinity, so a filter
+to the source file (the first where a file can be created), and the program reads that file (the status line says `read with mdbtools, converted to SQLite`). Each table
+is created by SQLite itself with the Access type of every column in its schema: `Byte`, `Integer`, `Long Integer` and
+`Numeric (p, 0)` up to 18 digits INTEGER, `Currency` DECIMAL(19,4), `Numeric (p, s)` DECIMAL(p,s), `Single` REAL,
+`Double` DOUBLE, `DateTime` TIMESTAMP (ISO text `2026-07-14 10:30:00`), Yes/No BOOLEAN (0/1), OLE/binary BLOB, text
+TEXT; NULL stays NULL. Every number column has numeric affinity and its values are stored as numbers, so a filter
 (`WHERE SCALE > 100`), `ORDER BY` and `SUM` compare numbers, in the program and in any tool that opens the saved file.
+**Save as** SQLite keeps the same declared types (DECIMAL stays DECIMAL), **Save as** DuckDB turns them back into
+DuckDB types (DECIMAL(p,s), BOOLEAN, FLOAT), and an Access file saved by an older converter is converted again.
 
 **File > Save** (Ctrl+S) writes the open database, whatever its kind, through the native save box: the folder and the
 name of the original file, the types SQLite (`.sqlite`), DuckDB (`.duckdb`) and Excel (`.xlsx`, one sheet per table),
@@ -136,7 +138,7 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   (same rule and same query as the table search) and the Data tab shows `<n> tables with rows matching "<text>"` and
   the list `<table> (<rows found>)`; clicking one opens that table with the same search and without value filters, showing that same number of rows.
   Changing the term, the scope, the table or the file stops the running search and its result is dropped. The default
-  is in **Settings > Default search scope**; opening a file clears the search and the table filter and goes back to
+  is in **Settings > Default search scope** (All tables unless changed there); opening a file clears the search and the table filter and goes back to
   it.
 - **Columns...** (Data tab and SQL result; dialog "Columns of <table>"): one check box per column, a box to find a
   column by name, **Show all** and **Hide all** (with text in the find box they act only on the columns listed).
@@ -161,28 +163,29 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   is not allowed` (the file, the converted copy and the memory database never change). The empty box shows
   `SELECT * FROM ...`; **Run** (Ctrl+Enter), first 10,000 rows shown; a run that works clears the previous error next
   to the button and in the status bar, an error clears the old grid.
-- **Advanced Search** tab (Ctrl+4): paste a list (one term per line, for example an Excel column) in the box; **Whole value** |
-  **Contains** (default in **Settings > Term matching**: whole value), **This table** | **All tables** (always starts
-  in All tables, whatever the Data tab's default scope; with This table the summary ends in `(only in <table>)`),
-  **Search terms** (Ctrl+Enter) and the count `<n> terms, <n> repeated` (empty lines and the
+- **Advanced Search** tab (Ctrl+4): paste a list (one term per line, for example an Excel column) in the box. Below
+  it, one line from left to right: **Search terms** (Ctrl+Enter) | a box with `<n> input lines` and, after a search,
+  the summary | at the right **Whole value** | **Contains** (default in **Settings > Term matching**: whole value),
+  then **This table** | **All tables** (always starts in All tables, whatever the Data tab's default scope; with This
+  table the summary ends in `(only in <table>)`), thin separators between the groups (empty lines and the
   spaces at the ends do not count; a repeated term is searched once). Whole value: the cell as text, without the spaces
-  at the ends, equals the term ignoring case; when a term reads as a number it also matches by value, with a loose
-  rule for US and BR/European formats: a text has up to two readings, "." decimal with "," thousands and "," decimal
-  with "." thousands, a thousands mark only before groups of 3 digits (1,234 = 1.234 or 1234; 216,0 = 216, never
-  2160; 0,1 = 0.1; 216 finds 216.0, 216,0 and "216"; 1234.5 finds "1.234,5"; 216 does not find 2160 or 216.5); a
-  numeric column matches by its value; contains: the cell holds the term ignoring
+  at the ends, equals the term ignoring case; when a term reads as a number it also matches the columns that are
+  numeric in the schema by value, with a loose reading of the term for US and BR/European formats: up to two
+  readings, "." decimal with "," thousands and "," decimal with "." thousands, a thousands mark only before groups of
+  3 digits (1,234 = 1.234 or 1234; 216,0 = 216, never 2160; 0,1 = 0.1; 216 finds 216.0 and 216 in numeric columns,
+  not 2160 or 216.5); a text column compares as text (no number is read inside a text cell); contains: the cell holds the term ignoring
   case; every column of every
   table in the scope, numbers and dates as text. The search runs in the database (a temporary table of terms joined to
-  each table), with progress `Searching terms: table i of n (name)` and **Cancel**. Then the summary
-  `<found> of <n> terms found: <rows> rows in <tables> tables`, the tables with rows found as `<table> (<rows>)` and
-  the grid of the chosen one: first the column **Term** (the term that found the row), then the table's columns, in
-  the order of the pasted list and then of the table (a row found by two terms shows twice), limited like the Data
-  tab with `showing X of Y rows`. Below, **Not found (<n>)**: a read-only box, one term per line in the pasted order,
-  with **Copy**. Grid menu: the three copies (rows without the Term column), **Copy the rows found in this table**
-  (every row found, with the header, TAB separated, no Term column) and **Advanced Search report** > Excel / CSV /
-  SQLite / DuckDB (`<database>_termos`): a **Filter Result** sheet (term, status, table, rows: one line per term and table; a term
-  not found has an empty table and 0), then one sheet per table with rows (Term + the table's columns), named after the table;
-  SQLite and DuckDB hold the same tables, CSV is a folder with one file per sheet.
+  each table), with progress `Searching terms: table i of n (name)` and **Cancel**. Then the summary in the box of the
+  controls line `<found> of <n> terms found: <rows> rows in <tables> tables`, the tables with rows found as `<table> (<rows>)` and
+  the grid of the chosen one: only the table's columns, with their names, order and types; each row found once, in
+  the order of the first pasted term that found it and then of the table; limited like the Data tab with `showing X
+  of Y rows` (the rows count each row once). Below, **Not found (<n>)**: a read-only box, one term per line in the
+  pasted order, with **Copy**. Grid menu: the three copies, **Copy the rows found in this table** (every row found,
+  with the header, TAB separated) and **Advanced Search report** > Excel / CSV / SQLite / DuckDB (suggested name
+  `<database> - Advanced Search.xlsx` in the screen language): one sheet (table, CSV file) per table with rows found,
+  named after the table, with only its columns and types; no summary sheet and no term column. SQLite and DuckDB hold
+  the same tables, CSV is a folder with one file per sheet.
 - **Search rule**: the text is split into words; a row matches when one cell holds every word, in any order,
   ignoring case and accents (`Tensión campo` finds `EXCITACION TENSION DE CAMPO`; `tensao` does not: there is no
   fuzzy matching).
@@ -212,7 +215,7 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   (Ctrl+T), **Favorite or unfavorite table** (Ctrl+D); **Run SQL** and **Search terms** (Ctrl+Enter); **Log**
   (Ctrl+L).
 - **Log** panel at the bottom (**View > Log**, Ctrl+L, or the arrow at the left of the status bar and in the panel
-  header): every message of the session with its time, in a monospace font one step smaller; select and Ctrl+C, or
+  header): every message of the session with its time, in the font and size of the whole window; select and Ctrl+C, or
   **Copy all**, **Clear**. About 10% of the window high (at least 3 lines, at most 25%), resized by dragging its top
   edge; open/closed state and height are saved; closed by default. While it is closed, the status bar shows the most
   important message not yet seen in the log (last error in red, else last warning, else the last action) and, on the
@@ -230,14 +233,17 @@ While a file opens, the status line shows the time, a progress bar (tables conve
 - **Settings > Theme**: System, Light, Dark. **Settings > Language**: English, Português (Brasil), Español.
   **Settings > Default search scope**: This table, All tables. **Settings > Term matching**: Whole value, Contains.
   **Settings > Show NULL** (off by default). All are saved and apply at once, without restarting.
-- **Help > About mdb2sql**: version, build, stack, Access reader, Writing (SQLite, DuckDB, Excel and CSV; `.mdb` and
-  `.accdb` cannot be written), license and the GitHub and GitLab links.
+- **Help > About mdb2sql** (the same lines in the 4 versions): `MDB2SQL (Zig)`, `Version 1.3.0 - commit <full hash> -
+  <date>` (`dev` outside the official build), the runtime (Zig, Dear ImGui, GLFW, OpenGL), `Tools: SQLite, DuckDB,
+  mdbtools` with their versions, `ODBC driver support, if installed.` (Windows), the author, `License: GPLv2` and the
+  GitHub / GitLab links.
 
 ### Saved settings
 
 Windows: `%APPDATA%\mdb2sql\zig-imgui.ini`; Linux: `~/.config/mdb2sql/zig-imgui.ini` (`$XDG_CONFIG_HOME` if set).
-Theme, language, Log panel, default search scope, term matching, Show NULL, the last folder used and the last 8
-Access files saved as SQLite or DuckDB (path, size and date of both files).
+Theme, language, Log panel height, default search scope, term matching, Show NULL, the last folder used and the last 8
+Access files saved as SQLite or DuckDB (converter version, path, size and date of both files: a file saved by an
+older converter is converted again). The Log panel always starts closed.
 
 ### Command line
 
@@ -299,6 +305,13 @@ the public mdbtools test data, and the small `testdata/mdb2sql_test.mdb` kept in
 - The SQL tab only reads (the statement type decides; writes are refused before running).
 - Favorite tables on top of the table list (right-click, View, Ctrl+D), kept by name for the session.
 - Dialog buttons of the same size in every language.
+- Pages ◀ ▶ in the Data tab; the Data search and the Advanced Search start in All tables; the top bar is
+  path | Open... | Export...; a missing file says only `File not found: <path>`; About with the full commit.
+- Faithful data: the converted SQLite keeps the Access type of every column in its schema (Currency and Numeric(p,s)
+  DECIMAL, Numeric(p,0) INTEGER, DateTime TIMESTAMP); Save as SQLite/DuckDB keeps DECIMAL; Excel exports keep numeric
+  cells and dates, with column widths fitted to the content; the Advanced Search grid, copy and report carry only the
+  table's columns (no Term column, no summary sheet), each row once; an Access file saved by an older converter is
+  converted again.
 
 ### Changes in 1.3.0
 
@@ -381,9 +394,10 @@ file's catalog again (about 0.3 s per table, 287 tables).
 - x86_64 only (Windows and Debian). Other systems are not built in this version.
 - mdbtools reads Access 97 `.mdb` text as Latin-1: characters 0x80-0x9F of Windows-1252 may come out wrong. Access
   2000 and later files are fine. mdbtools cannot tell an empty text from NULL: both come out as NULL.
-- In the converted SQLite file, `Currency` and `Numeric` values with decimals are REAL: exact up to 15 significant
-  digits (any value below 100 billion with 4 decimals); longer values are rounded to the nearest double. `Numeric`
-  integers longer than 18 digits are REAL too. (DB4 and DB3 1 have no Currency and no Numeric with decimals.)
+- In the converted SQLite file, `Currency` and `Numeric` columns with decimals are declared DECIMAL(p,s) and their
+  values are stored as SQLite numbers (REAL, or INTEGER when whole): exact up to 15 significant digits (any value
+  below 100 billion with 4 decimals); longer values are rounded to the nearest double. The program reads them as
+  DOUBLE. (DB4 and DB3 1 have no Currency and no Numeric with decimals.)
 - The ODBC driver may create a `.laccdb` lock file next to the `.accdb` while it reads it (normal Access behavior).
 - The single executable (Windows) needs `%LOCALAPPDATA%` to be writable.
 - The open and save dialogs block the window while open (running work continues). On Linux without `zenity` there
@@ -394,6 +408,8 @@ file's catalog again (about 0.3 s per table, 287 tables).
   search, done by the database, covers all of Unicode.
 - Excel keeps at most 32,767 characters per cell and 16,384 columns per sheet (the status line says how many were
   cut). Grids show at most 512 columns (Dear ImGui limit); exports write all of them.
+- Every Excel export keeps the column types (numbers are numeric cells, DATE and TIMESTAMP are Excel dates, NULL is
+  an empty cell) and sets each column's width to its content (the title and the first 2,048 rows are measured).
 - The GUI has no UI Automation tree (Dear ImGui); it is checked with the `--capture` screenshots.
 
 ## Build

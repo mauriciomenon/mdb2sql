@@ -1,4 +1,4 @@
-// Dados da janela Sobre e titulo da janela. Versao de build.zig.zon (unica fonte); numero e data do build
+// Dados da janela Sobre e titulo da janela. Versao de build.zig.zon (unica fonte); commit completo e data do build
 // vem do scripts\build_w11.ps1 pelas build options (fora dele: "dev").
 // !T: About data and window title; the version comes from build.zig.zon, build number and date from the build script
 
@@ -34,19 +34,29 @@ pub fn allowedLink(url: []const u8) ?[:0]const u8 {
     return null;
 }
 
-// "42 (2026-11-15)" ou "dev"
-pub fn buildText(buf: []u8, number: []const u8, date: []const u8) []const u8 {
-    if (number.len == 0) return "dev";
-    return std.fmt.bufPrint(buf, "{s} ({s})", .{ number, date }) catch "dev";
+pub const sqlite_version = options.sqlite_version;
+
+// Sobre igual nas 4 (item 18 b), uma linha cada: "MDB2SQL (Zig)", versao, runtime, ferramentas, ODBC, autor,
+// licenca, links. "Versão 1.3.0 - commit <40 digitos> - 2026-11-26"; fora do build oficial: "Versão 1.3.0 - dev"
+pub const title_line = "MDB2SQL (Zig)";
+
+pub fn versionText(buf: []u8, commit: []const u8, date: []const u8) []const u8 {
+    if (commit.len == 0) return i18n.fmt(buf, "about_version_dev", .{version});
+    return i18n.fmt(buf, "about_version", .{ version, commit, date });
 }
 
-pub fn build(buf: []u8) []const u8 {
-    return buildText(buf, options.build_number, options.build_date);
+pub fn versionLine(buf: []u8) []const u8 {
+    return versionText(buf, options.commit, options.build_date);
 }
 
-// "Zig 0.17.1 + Dear ImGui 1.93.0": a versao do Dear ImGui e lida pela UI em execucao
-pub fn stackText(buf: []u8, imgui: []const u8) []const u8 {
-    return std.fmt.bufPrint(buf, "Zig {s} + Dear ImGui {s}", .{ zig_version, imgui }) catch "Zig + Dear ImGui";
+// "Zig 0.17.1, Dear ImGui 1.93.0, GLFW 3.4.0, OpenGL 3.3": Dear ImGui e GLFW lidos pela UI em execucao
+pub fn runtimeText(buf: []u8, imgui: []const u8, glfw: [3]c_int) []const u8 {
+    return std.fmt.bufPrint(buf, "Zig {s}, Dear ImGui {s}, GLFW {d}.{d}.{d}, OpenGL 3.3", .{ zig_version, imgui, glfw[0], glfw[1], glfw[2] }) catch "Zig";
+}
+
+// "Ferramentas: SQLite 3.38.1, DuckDB 2.0.0, mdbtools 1.0.1" (a do DuckDB lida da biblioteca)
+pub fn toolsText(buf: []u8, duckdb: []const u8) []const u8 {
+    return i18n.fmt(buf, "about_tools", .{ sqlite_version, std.mem.trimStart(u8, duckdb, "v"), mdbtools_version });
 }
 
 test "window title is short and carries the zon version" {
@@ -73,13 +83,29 @@ test "only the two About links may be opened" {
     }) |bad| try std.testing.expect(allowedLink(bad) == null);
 }
 
-test "about texts: build, stack with versions" {
-    var bb: [64]u8 = undefined;
-    try std.testing.expectEqualStrings("dev", buildText(&bb, "", ""));
-    try std.testing.expectEqualStrings("57 (2026-11-15)", buildText(&bb, "57", "2026-11-15"));
-    var sb: [96]u8 = undefined;
+test "item 18 b: About lines: version with the full commit (or dev), runtime, tools with versions, ODBC, author, GPLv2" {
+    defer i18n.lang = .en;
+    i18n.lang = .pt_br;
+    var bb: [160]u8 = undefined;
+    try std.testing.expectEqualStrings("Versão " ++ version ++ " - dev", versionText(&bb, "", ""));
+    const c40 = "5faa7b68d93a7e8eef8215a694be2857e4b720c3"; // 40 digitos
+    try std.testing.expectEqualStrings("Versão " ++ version ++ " - commit " ++ c40 ++ " - 2026-11-26", versionText(&bb, c40, "2026-11-26"));
+    try std.testing.expectEqualStrings("Ferramentas: SQLite " ++ sqlite_version ++ ", DuckDB 2.0.0, mdbtools " ++ mdbtools_version, toolsText(&bb, "v2.0.0"));
+    try std.testing.expectEqualStrings("Suporte ao driver ODBC, caso instalado.", i18n.tr("about_odbc"));
+    try std.testing.expectEqualStrings("Licença: GPLv2", i18n.tr("about_license_line"));
+    i18n.lang = .en;
+    try std.testing.expectEqualStrings("Tools: SQLite " ++ sqlite_version ++ ", DuckDB 2.0.0, mdbtools " ++ mdbtools_version, toolsText(&bb, "2.0.0"));
+    try std.testing.expectEqualStrings("ODBC driver support, if installed.", i18n.tr("about_odbc"));
+    try std.testing.expectEqualStrings("License: GPLv2", i18n.tr("about_license_line"));
+    i18n.lang = .es;
+    try std.testing.expectEqualStrings("Herramientas: SQLite " ++ sqlite_version ++ ", DuckDB 2.0.0, mdbtools " ++ mdbtools_version, toolsText(&bb, "2.0.0"));
+    try std.testing.expectEqualStrings("Soporte del controlador ODBC, si está instalado.", i18n.tr("about_odbc"));
     var want: [96]u8 = undefined;
-    try std.testing.expectEqualStrings(try std.fmt.bufPrint(&want, "Zig {s} + Dear ImGui 1.93.0", .{zig_version}), stackText(&sb, "1.93.0"));
+    try std.testing.expectEqualStrings(try std.fmt.bufPrint(&want, "Zig {s}, Dear ImGui 1.93.0, GLFW 3.4.0, OpenGL 3.3", .{zig_version}), runtimeText(&bb, "1.93.0", .{ 3, 4, 0 }));
+    // a versao do SQLite e a gravada no sqlite_scanner que vai junto (o teste roda na pasta com a extensao)
+    const ext = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "sqlite_scanner.duckdb_extension", std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(ext);
+    try std.testing.expect(std.mem.indexOf(u8, ext, "\x00" ++ sqlite_version ++ "\x00") != null);
 }
 
 test "UI texts: one Export button, no copyright line, no lecturing hints" {
@@ -144,12 +170,34 @@ test "item 13 f: every button has the height of its line (none taller to show hi
     try std.testing.expectEqual(1, std.mem.count(u8, ui, "ImGuiStyleVar_FramePadding"));
 }
 
+test "item 18 d: the Log starts closed, whatever was saved by the last run" {
+    try expectOrder("app.prefs = settings.Settings.load(init.io, app.prefs_path);", &.{ "i18n.lang = app.prefs.lang;", "app.prefs.log_open = false;" });
+    try std.testing.expect(!(settings_defaults.log_open));
+}
+
+const settings_defaults: @import("settings.zig").Settings = .{};
+
+test "item 18 e: one font only: the UI font at one size in tabs, boxes, grids, labels, the About and the Log" {
+    const ui = @embedFile("main.zig");
+    try std.testing.expect(std.mem.indexOf(u8, ui, "igPushFont") == null);
+    try std.testing.expectEqual(2, std.mem.count(u8, ui, "shim_add_font(")); // a declaracao e a fonte da interface
+    try std.testing.expect(std.mem.indexOf(u8, ui, "mono_font") == null);
+}
+
+test "item 19 e: the Advanced Search report is suggested as \"<database> - Pesquisa Avançada.xlsx\" (the tab name), never _termos or .xls" {
+    try expectOrder("// item 19 e:", &.{ ".terms_xlsx, .terms_csv, .terms_sqlite, .terms_duckdb => std.fmt.bufPrint(&name_buf, \"{s} - {s}\"", "tr(\"tab_terms\")" });
+    const ui = @embedFile("main.zig");
+    try std.testing.expect(std.mem.indexOf(u8, ui, "_termos") == null);
+    try std.testing.expect(std.mem.indexOf(u8, ui, "\".xls\"") == null);
+    try std.testing.expectEqualStrings("Pesquisa Avançada", i18n.catalogs[1].tab_terms);
+}
+
 test "item 17: Advanced Search starts in All tables, never the Data tab default scope; This table says where it searched" {
     const ui = @embedFile("main.zig");
     try std.testing.expect(std.mem.indexOf(u8, ui, "terms_scope: settings.SearchScope = .all,") != null);
     try std.testing.expect(std.mem.indexOf(u8, ui, "terms_scope = app.prefs.search_scope") == null);
     try std.testing.expect(std.mem.indexOf(u8, ui, "app.terms_scope = s;") == null);
-    try expectOrder("fn drawTerms(", &.{ "\"terms_summary\"", "if (res.only) |ti|", "\"terms_only_in\"" });
+    try expectOrder("fn drawTerms(", &.{ "\"terms_summary\"", "if (r.only) |ti|", "\"terms_only_in\"" });
 }
 
 test "item 14: top bar path | Open... | Export...: Open... opens the file dialog, Enter goes by the typed path rule; no Browse" {
@@ -172,18 +220,19 @@ test "exit question (item 27): Save on the left, Back and Exit on the right; no 
     for ([_][]const u8{ "converted_remember", "session_choice", "requestLeave" }) |gone| try std.testing.expect(std.mem.indexOf(u8, ui, gone) == null);
 }
 
-test "About as in Rust (Build, Stack, Window, Databases, Access reading, Author, License, links), titled About mdb2sql" {
-    const pt = i18n.catalogs[1];
-    try std.testing.expectEqualStrings("Sobre o mdb2sql", pt.about_title);
-    inline for (.{ .{ "about_build", "Build" }, .{ "about_stack", "Stack" }, .{ "about_window", "Janela" }, .{ "about_database", "Bancos" }, .{ "about_access", "Leitura do Access" }, .{ "about_author", "Autor" }, .{ "about_license", "Licença" } }) |p|
-        try std.testing.expectEqualStrings(p[1], @field(pt, p[0]));
-    // item 28: a linha Gravacao logo depois de Leitura do Access
-    try expectOrder("fn drawAbout(", &.{ "tr(\"about_build\")", "tr(\"about_stack\")", "tr(\"about_window\")", "tr(\"about_database\")", "tr(\"about_access\")", "tr(\"about_write\")", "tr(\"about_author\")", "tr(\"about_license\")", "about.links" });
-    try std.testing.expectEqualStrings("Gravação", pt.about_write);
+test "item 18 b: About, the same in the 4: title, version, runtime, tools, ODBC, author, license, links; nothing else" {
+    try std.testing.expectEqualStrings("Sobre o mdb2sql", i18n.catalogs[1].about_title);
+    try expectOrder("fn drawAbout(", &.{ "about.title_line", "about.versionLine(", "about.runtimeText(", "about.toolsText(", "tr(\"about_odbc\")", "\"about_author_line\"", "tr(\"about_license_line\")", "about.links", "tr(\"close\")" });
+    const ui = @embedFile("main.zig");
+    for ([_][]const u8{ "about_tagline", "about_build", "about_stack", "about_window", "about_database", "about_access", "about_write" }) |gone|
+        try std.testing.expect(std.mem.indexOf(u8, ui, gone) == null);
 }
 
-test "Terms tab (item 32), top to bottom: box, matching, scope, button and count, summary, tables and grid, not found" {
-    try expectOrder("fn drawTerms(", &.{ "\"##terms\"", "tr(\"terms_hint\")", "tr(\"match_whole\")", "tr(\"match_contains\")", "tr(\"match_tip\")", "tr(\"scope_table\")", "tr(\"scope_all\")", "tr(\"terms_run\")", "\"terms_count\"", "\"terms_summary\"", "\"##terms_tables\"", "drawGrid(\"##termsgrid\"", "\"rows_showing\"", "\"not_found_title\"", "tr(\"copy\")", "\"##notfound\"" });
+test "Advanced Search tab (items 32, 18 c), top to bottom: box; Search terms | box with input lines and summary | matching, scope; tables and grid; not found" {
+    try expectOrder("fn drawTerms(", &.{ "\"##terms\"", "tr(\"terms_hint\")", "tr(\"terms_run\")", "\"terms_lines\"", "\"terms_summary\"", "\"terms_only_in\"", "vline();", "frameText(info", "segmented(1, &match_l", "tr(\"match_tip\")", "vline();", "segmented(2, &scope_l", "\"##terms_tables\"", "drawGrid(\"##termsgrid\"", "\"rows_showing\"", "\"not_found_title\"", "tr(\"copy\")", "\"##notfound\"" });
+    const ui = @embedFile("main.zig");
+    // sai "N termos" e a linha do resumo embaixo dos controles
+    for ([_][]const u8{ "\"terms_count\"", "\"terms_repeated\"" }) |gone| try std.testing.expect(std.mem.indexOf(u8, ui, gone) == null);
     // a aba nova vem depois da SQL; Ctrl+4 a abre
     try expectOrder("fn drawContent(", &.{ "\"tab_data\"", "\"tab_schema\"", "\"tab_sql\"", "\"tab_terms\"" });
     try expectOrder("const chord = ig.igIsKeyChordPressed_Nil;", &.{ "ImGuiKey_3)", "ImGuiKey_4)" });
@@ -199,10 +248,10 @@ test "menus of item 28: the fixed Export list, Edit, View and Settings in the br
     try expectOrder("fn drawMenu(", &.{ "igBeginMenu(file_l", "igBeginMenu(edit_l", "igBeginMenu(view_l", "igBeginMenu(settings_l", "igBeginMenu(help_l" });
 }
 
-test "license: GPL v2 or later in About (three languages), LICENSE file is the GPL v2 text" {
-    try std.testing.expectEqualStrings("GPL v2 or later (GPL-2.0-or-later)", i18n.catalogs[0].about_license_text);
-    try std.testing.expectEqualStrings("GPL v2 ou posterior (GPL-2.0-or-later)", i18n.catalogs[1].about_license_text);
-    try std.testing.expectEqualStrings("GPL v2 o posterior (GPL-2.0-or-later)", i18n.catalogs[2].about_license_text);
+test "license: GPLv2 in About (three languages, item 18 b), LICENSE file is the GPL v2 text" {
+    try std.testing.expectEqualStrings("License: GPLv2", i18n.catalogs[0].about_license_line);
+    try std.testing.expectEqualStrings("Licença: GPLv2", i18n.catalogs[1].about_license_line);
+    try std.testing.expectEqualStrings("Licencia: GPLv2", i18n.catalogs[2].about_license_line);
     const text = @embedFile("LICENSE"); // o mesmo arquivo que vai no zip e no instalador
     var lines = std.mem.tokenizeAny(u8, text, "\r\n");
     try std.testing.expectEqualStrings("GNU GENERAL PUBLIC LICENSE", std.mem.trim(u8, lines.next().?, " "));

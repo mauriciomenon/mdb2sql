@@ -97,7 +97,6 @@ pub const Req = struct {
     terms_only: ?usize = null, // terms: so esta tabela (Esta tabela); null = todas
     terms_res: ?*const terms.Result = null, // terms_page, terms_copy, relatorio: o resultado mostrado (da UI)
     terms_hit: usize = 0, // terms_page, terms_copy: indice em terms_res.tables
-    terms_titles: terms.Titles = undefined, // titulos da coluna do termo e do relatorio, no idioma da tela
     hits: []const Hit = &.{}, // export global_xlsx: as tabelas da busca em todas as tabelas (copia do gpa da UI)
 
     pub fn destPath(r: *const Req) []const u8 {
@@ -204,13 +203,13 @@ fn exec(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *expor
             var res = try terms.search(db, gpa, req.terms_text, req.term_match, req.terms_only, progress);
             errdefer res.deinit();
             // a grade da primeira tabela com acerto ja vem junto
-            if (res.tables.len > 0) out.data = try terms.page(db, gpa, &res, res.tables[0], req.terms_titles.term, req.limit);
+            if (res.tables.len > 0) out.data = try terms.page(db, gpa, &res, res.tables[0], req.limit);
             out.terms = res;
         },
         .terms_page => {
             const res = req.terms_res orelse return error.TableNotFound;
             if (req.terms_hit >= res.tables.len) return error.TableNotFound;
-            out.data = try terms.page(db, gpa, res, res.tables[req.terms_hit], req.terms_titles.term, req.limit);
+            out.data = try terms.page(db, gpa, res, res.tables[req.terms_hit], req.limit);
         },
         .terms_copy => {
             const res = req.terms_res orelse return error.TableNotFound;
@@ -354,11 +353,11 @@ fn exportJob(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *
             return exporter.bundle(db, env.io, .xlsx, items, dest, progress, req.total_hint);
         },
         .terms_xlsx, .terms_csv, .terms_sqlite, .terms_duckdb => {
-            // resumo, uma aba por tabela com acerto e os nao encontrados (a mesma lista nos 4 formatos)
+            // uma aba por tabela com acerto, so com as colunas dela (a mesma lista nos 4 formatos; item 19 d)
             const res = req.terms_res orelse return error.TableNotFound;
             var arena: std.heap.ArenaAllocator = .init(gpa);
             defer arena.deinit();
-            const items = try terms.reportItems(arena.allocator(), db.table_names, res, req.terms_titles);
+            const items = try terms.reportItems(arena.allocator(), db.table_names, res);
             const format: exporter.BundleFormat = switch (req.export_kind) {
                 .terms_xlsx => .xlsx,
                 .terms_csv => .csv_dir,
@@ -907,8 +906,7 @@ test "term search jobs (item 32): result with the first table's grid, another ta
     defer db.close();
     try db.openReadOnly(path);
     var slot: Slot = .{ .db = &db, .gpa = t.allocator, .env = .{ .io = t.io } };
-    const titles: terms.Titles = .{ .term = "Termo", .status = "Situação", .table = "Tabela", .rows = "Linhas", .found = "Encontrado", .not_found = "Não encontrado", .sheet_result = "Resultado Filtro" };
-    slot.req = .{ .kind = .terms, .terms_text = "nada\n149\nZé\nacao", .terms_titles = titles, .limit = 100 };
+    slot.req = .{ .kind = .terms, .terms_text = "nada\n149\nZé\nacao", .limit = 100 };
     try slot.start();
     var out = slot.wait().?;
     try t.expect(out.err == null);
@@ -918,15 +916,18 @@ test "term search jobs (item 32): result with the first table's grid, another ta
     // 149 em big.n; Zé e acao em people (valor inteiro, sem diferenciar maiusculas; acento conta)
     try t.expectEqual(2, res.tables.len);
     try t.expectEqualStrings("nada", res.not_found);
-    try t.expectEqualStrings("Termo", out.data.?.columns[0]);
+    // so as colunas da tabela (item 19 d): big tem uma, n
+    try t.expectEqual(1, out.data.?.columns.len);
+    try t.expectEqualStrings("n", out.data.?.columns[0]);
     try t.expectEqualStrings("149", out.data.?.rows[0][0].?);
     out.deinit(t.allocator);
 
-    slot.req = .{ .kind = .terms_page, .terms_res = &res, .terms_hit = 1, .terms_titles = titles, .limit = 1 };
+    slot.req = .{ .kind = .terms_page, .terms_res = &res, .terms_hit = 1, .limit = 1 };
     try slot.start();
     out = slot.wait().?;
     try t.expect(out.err == null and out.data.?.rows.len == 1);
-    try t.expectEqualStrings("Zé", out.data.?.rows[0][0].?); // ordem dos termos colados
+    try t.expectEqualStrings("id", out.data.?.columns[0]);
+    try t.expectEqualStrings("Zé", out.data.?.rows[0][1].?); // ordem dos termos colados
     out.deinit(t.allocator);
 
     slot.req.kind = .terms_copy;
@@ -937,7 +938,7 @@ test "term search jobs (item 32): result with the first table's grid, another ta
 
     // relatorio em CSV: uma pasta, um arquivo por aba
     var b2: [256]u8 = undefined;
-    slot.req = .{ .kind = .export_, .export_kind = .terms_csv, .terms_res = &res, .terms_titles = titles };
+    slot.req = .{ .kind = .export_, .export_kind = .terms_csv, .terms_res = &res };
     slot.req.setDest(dbm.tmpPath(&b2, &tmp, ""));
     try slot.start();
     out = slot.wait().?;
@@ -945,9 +946,10 @@ test "term search jobs (item 32): result with the first table's grid, another ta
     out.deinit(t.allocator);
     var b3: [300]u8 = undefined;
     var cbuf: [256]u8 = undefined;
-    // a aba Resultado Filtro tem os nao encontrados tambem
-    const csv = try std.Io.Dir.cwd().readFile(t.io, try exporter.csvPath(&b3, dbm.tmpPath(&b2, &tmp, ""), "Resultado Filtro"), &cbuf);
-    try t.expect(std.mem.startsWith(u8, csv, "\xEF\xBB\xBFTermo") and std.mem.indexOf(u8, csv, "nada") != null);
+    // um arquivo por tabela com acerto, com os titulos dela; sem Resultado Filtro
+    const csv = try std.Io.Dir.cwd().readFile(t.io, try exporter.csvPath(&b3, dbm.tmpPath(&b2, &tmp, ""), "people"), &cbuf);
+    try t.expect(std.mem.startsWith(u8, csv, "\xEF\xBB\xBFid,name,score") and std.mem.indexOf(u8, csv, "Zé") != null);
+    try t.expectError(error.FileNotFound, std.Io.Dir.cwd().access(t.io, try exporter.csvPath(&b3, dbm.tmpPath(&b2, &tmp, ""), "Resultado Filtro"), .{}));
 }
 
 test "Export list (item 28): every table to CSV in a folder, the all-tables search to Excel, the database schema" {
@@ -1002,6 +1004,27 @@ test "marked rows come in table order on a big table too (several row groups rea
     defer g.deinit();
     var buf: [64]u8 = undefined;
     try t.expectEqualStrings("7,120000,250000,299999", idsOf(&buf, g, 0));
+}
+
+test "item 18 a: the Data search in All tables (the default scope) finds the owner's term in DB3 (optional)" {
+    const path = t.environ.getAlloc(t.allocator, "MDB2SQL_TEST_TERMS_DB") catch return error.SkipZigTest;
+    defer t.allocator.free(path);
+    if (std.mem.indexOf(u8, path, "DB3") == null) return error.SkipZigTest;
+    var db = dbm.testDb();
+    defer db.close();
+    try db.openReadOnly(path);
+    var p: exporter.Progress = .{};
+    const hits = try searchAll(&db, t.allocator, "GENERADOR CGS VIBRACION ANORMAL 1 CANAL 1", &p);
+    defer t.allocator.free(hits);
+    var eqid: u64 = 0;
+    var stat: u64 = 0;
+    for (hits) |h| {
+        std.debug.print("search all: {s} {d}\n", .{ db.table_names[h.table], h.rows });
+        if (std.mem.eql(u8, db.table_names[h.table], "RANGER_SOEQID")) eqid = h.rows;
+        if (std.mem.eql(u8, db.table_names[h.table], "RANGER_SOSTAT")) stat = h.rows;
+    }
+    try t.expectEqual(2, eqid);
+    try t.expectEqual(2, stat);
 }
 
 test "item 13 h: pages of the Data tab: 2,500 rows in pages of 1000, the last one incomplete; marked rows on top of every page" {
