@@ -2,8 +2,7 @@
 
 // janela principal
 pub const path_hint = "arquivo do banco (.accdb, .mdb, .sqlite, .duckdb)";
-pub const browse = "Procurar...";
-pub const open = "Abrir";
+pub const open = "Abrir...";
 pub const export_button = "Exportar...";
 pub const no_db = "Nenhum banco aberto";
 pub const filter_tables = "Filtrar {d} tabelas";
@@ -246,7 +245,7 @@ pub const err_choose_other = "Escolha outro arquivo: este é o banco que está a
 pub const err_table_name_long = "Nome de tabela longo demais";
 pub const err_save_sqlite = "Não foi possível salvar o arquivo SQLite: {t}";
 pub const err_no_dialog = "Diálogo de arquivos indisponível (falta o zenity): digite o caminho na caixa";
-pub const err_file_not_found = "Arquivo não encontrado";
+pub const err_file_not_found = "Arquivo não encontrado: {s}";
 pub const err_reader_name = "MDB2SQL_ACCESS_READER deve ser odbc, mdbtools ou auto";
 pub const err_reader_forced = "O leitor do Access definido em MDB2SQL_ACCESS_READER não está disponível neste computador";
 pub const err_no_reader = "Não é possível abrir arquivos Access: falta a pasta mdbtools ao lado do programa";

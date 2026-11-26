@@ -94,7 +94,7 @@ fn isForced(forced: []const u8) bool {
 pub fn open(db: *Db, io: Io, path: []const u8, opts: Options, progress: *Progress, tmp: *TempPath) !dbm.Source {
     tmp.len = 0;
     // o arquivo tem de existir (o driver ODBC daria uma mensagem confusa)
-    Io.Dir.cwd().access(io, path, .{}) catch return fail(db, i18n.tr("err_file_not_found"));
+    Io.Dir.cwd().access(io, path, .{}) catch return error.FileNotFound;
     const tools_ok = opts.tools_dir.len > 0 and mdbtoolsPresent(io, opts.tools_dir);
     const odbc_ok = is_windows and odbcDriverInstalled();
     const reader = choose(opts.forced, odbc_ok, tools_ok) catch |e| return fail(db, switch (e) {
@@ -774,8 +774,7 @@ test "a file that is not Access fails with a message, through every reader avail
         var it = dir.iterate();
         try t.expect(try it.next(t.io) == null);
     } else |_| {}
-    try t.expectError(error.Failed, open(&db, t.io, "nao/existe.accdb", .{ .tools_dir = tools }, &p, &out));
-    try t.expectEqualStrings("File not found", db.lastError());
+    try t.expectError(error.FileNotFound, open(&db, t.io, "nao/existe.accdb", .{ .tools_dir = tools }, &p, &out));
 }
 
 test "Access types from mdb-schema" {

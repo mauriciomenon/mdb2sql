@@ -23,6 +23,25 @@ pub fn sourceKind(path: []const u8) PathError!SourceKind {
     return error.UnsupportedExtension;
 }
 
+// !T: What the typed path does (Enter in the box, File > Open the typed path; item 14): empty = the open dialog; a
+// relative path is never resolved (against the exe folder or any other) = "File not found"; else open it
+pub const Typed = enum { pick, not_found, open };
+
+pub fn typedPath(text: []const u8) Typed {
+    const p = std.mem.trim(u8, text, &std.ascii.whitespace);
+    if (p.len == 0) return .pick;
+    return if (std.fs.path.isAbsolute(p)) .open else .not_found;
+}
+
+test "typed path: empty opens the dialog, relative is not found, absolute opens" {
+    try std.testing.expectEqual(Typed.pick, typedPath(""));
+    try std.testing.expectEqual(Typed.pick, typedPath("  \t"));
+    try std.testing.expectEqual(Typed.not_found, typedPath("data"));
+    try std.testing.expectEqual(Typed.not_found, typedPath("bancos\\DB3.accdb"));
+    const abs = if (@import("builtin").os.tag == .windows) "C:\\dados\\DB3.accdb" else "/dados/DB3.accdb";
+    try std.testing.expectEqual(Typed.open, typedPath(abs));
+}
+
 // !T: Whitelist check, the SQL injection guard every implementation uses
 pub fn contains(names: []const []const u8, name: []const u8) bool {
     for (names) |n| if (std.mem.eql(u8, n, name)) return true;
