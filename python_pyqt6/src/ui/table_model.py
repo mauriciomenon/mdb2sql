@@ -8,7 +8,9 @@ from decimal import Decimal
 from typing import Any
 
 import pandas as pd
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, pyqtSignal
+
+from backend.db_manager import MARK_KEY
 
 # !T: Role read by QSortFilterProxyModel so numbers sort as numbers, not as text
 SORT_ROLE = Qt.ItemDataRole.UserRole
@@ -64,13 +66,54 @@ def search_words(query: str) -> list[str]:
 
 
 class TableModel(QAbstractTableModel):
-    def __init__(self, parent=None) -> None:
+    """Linhas (dicts por coluna) e, na grade de Dados, a caixa de marcar de cada linha: uma coluna a mais, a ultima
+    (a janela a mostra primeiro), ligada as identidades marcadas da tabela (`marks`, a chave MARK_KEY da linha)."""
+
+    marksChanged = pyqtSignal()
+
+    def __init__(self, parent=None, markable: bool = False) -> None:
         super().__init__(parent)
         self.rows: list[dict[str, Any]] = []
         self.columns: list[str] = []
         self.column_tips: list[str] = []
         self.numeric: list[bool] = []
         self.null_text = ""  # texto da celula NULL na grade: "NULL" ou vazio (Configuracoes > Exibir NULL)
+        self.marks: set[Any] | None = set() if markable else None
+        self.mark_tip = ""
+
+    def mark_column(self) -> int:
+        """Coluna da caixa de marcar (-1: sem ela)."""
+        return len(self.columns) if self.marks is not None and self.columns else -1
+
+    def toggle_mark(self, row: int) -> None:
+        # linhas iguais (identidade pelo texto da linha) marcam e desmarcam juntas
+        assert self.marks is not None
+        key = self.rows[row].get(MARK_KEY)
+        if key in self.marks:
+            self.marks.discard(key)
+        else:
+            self.marks.add(key)
+        self.marks_reset()
+
+    def marks_reset(self) -> None:
+        """As marcas mudaram: a coluna das caixas e redesenhada."""
+        column = self.mark_column()
+        if column >= 0 and self.rows:
+            self.dataChanged.emit(self.index(0, column), self.index(len(self.rows) - 1, column),
+                                  [Qt.ItemDataRole.CheckStateRole])
+        self.marksChanged.emit()
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        flags = super().flags(index)
+        if index.isValid() and index.column() == self.mark_column():
+            flags |= Qt.ItemFlag.ItemIsUserCheckable
+        return flags
+
+    def setData(self, index: QModelIndex, value: Any, role: int = Qt.ItemDataRole.EditRole) -> bool:  # noqa: N802 (Qt)
+        if role != Qt.ItemDataRole.CheckStateRole or not index.isValid() or index.column() != self.mark_column():
+            return False
+        self.toggle_mark(index.row())
+        return True
 
     def set_null_text(self, text: str) -> None:
         self.null_text = text
@@ -89,13 +132,18 @@ class TableModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self.rows)
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(self.columns)
+        return 0 if parent.isValid() else len(self.columns) + (self.mark_column() >= 0)
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
         if not index.isValid():
             return None
 
         column = index.column()
+        if column == self.mark_column():
+            if role != Qt.ItemDataRole.CheckStateRole:
+                return None
+            marked = self.rows[index.row()].get(MARK_KEY) in self.marks  # type: ignore[operator]
+            return Qt.CheckState.Checked if marked else Qt.CheckState.Unchecked
         if role == Qt.ItemDataRole.TextAlignmentRole:
             side = Qt.AlignmentFlag.AlignRight if self.numeric[column] else Qt.AlignmentFlag.AlignLeft
             return side | Qt.AlignmentFlag.AlignVCenter
@@ -119,6 +167,8 @@ class TableModel(QAbstractTableModel):
     ) -> Any:
         if orientation == Qt.Orientation.Vertical:
             return str(section + 1) if role == Qt.ItemDataRole.DisplayRole else None
+        if section == self.mark_column():  # caixa de marcar: sem titulo, so a dica
+            return self.mark_tip if role == Qt.ItemDataRole.ToolTipRole else None
         if not 0 <= section < len(self.columns):
             return None
         if role == Qt.ItemDataRole.DisplayRole:

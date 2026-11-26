@@ -30,6 +30,7 @@ from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QGuiApplication, Q
 from PyQt6.QtWidgets import (
     QAbstractButton,
     QApplication,
+    QCheckBox,
     QComboBox,
     QDockWidget,
     QFileDialog,
@@ -246,6 +247,10 @@ class MainWindow(QMainWindow):
         self.view_table: str | None = None
         self.filters: list[tuple[str, Any]] = []
         self.hidden_columns: set[str] = set()
+        # linhas marcadas da aba Dados: tabela -> identidades (MARK_KEY), enquanto o arquivo estiver aberto
+        self.marks: dict[str, set[Any]] = {}
+        self.loaded_shown = 0  # linhas da consulta na grade (sem as marcadas que vieram so por estarem marcadas)
+        self.loaded_only_marked = False  # a grade carregada mostra so as marcadas
         self.matched_rows = 0  # linhas da tabela que passam nos filtros e na pesquisa
         self.loaded_search = ""  # pesquisa usada na consulta da tabela carregada
         self.loaded_filters: list[tuple[str, Any]] = []  # filtros usados na consulta da tabela carregada
@@ -336,6 +341,15 @@ class MainWindow(QMainWindow):
         self.export_sql_actions = []
         for suffix, key in ((".csv", "export.sql_csv"), (".xlsx", "export.sql_xlsx")):
             self.export_sql_actions.append(self._action(key, lambda _c=False, s=suffix: self.export_sql_as(s)))
+        self.export_marked_actions = []
+        for suffix, key in ((".csv", "export.csv"), (".xlsx", "export.xlsx")):
+            self.export_marked_actions.append(self._action(key, lambda _c=False, s=suffix: self.export_marked_as(s)))
+
+        # linhas marcadas (aba Dados): Espaco na grade, Editar e o menu da celula marcam/desmarcam a linha atual
+        self.mark_action = self._action("action.mark", self.toggle_current_mark, "Space")
+        self.mark_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.unmark_all_action = self._action("action.unmark_all", self.unmark_all)
+        self.only_marked_action = self._action("action.only_marked", self.set_only_marked, checkable=True)
 
         self.copy_action = self._action("action.copy_value", self.copy_selection, QKeySequence.StandardKey.Copy)
         # !T: Scoped to the tables so Ctrl+C keeps working in the text fields
@@ -405,7 +419,9 @@ class MainWindow(QMainWindow):
         self.show_null_action.toggled.connect(self.set_show_null)
 
     def _create_central(self) -> None:
-        self.table_model = TableModel(self)
+        self.table_model = TableModel(self, markable=True)
+        self._t(lambda text: setattr(self.table_model, "mark_tip", text), "mark.tip")
+        self.table_model.marksChanged.connect(self._marks_changed)
         self.data_proxy, self.data_table = self._create_table_view(self.table_model, "a11y.data")
         self.schema_model = TableModel(self)
         self.schema_proxy, self.schema_table = self._create_table_view(self.schema_model, "a11y.schema")
@@ -457,13 +473,20 @@ class MainWindow(QMainWindow):
         # !T: On the tabs for the shortcut scope, on each view for its right-click menu
         copy_actions = [self.copy_action, self.copy_row_action, self.copy_row_header_action]
         self.tabs.addActions(copy_actions)
-        # menu da celula igual nas 4 versoes (Go): na aba Data primeiro os filtros por valor, depois copiar
-        separator = QAction(self)
-        separator.setSeparator(True)
-        self.data_table.addActions([self.filter_value_action, self.clear_filters_action, separator])
+        # menu da celula igual nas 4 versoes (Go): na aba Data primeiro os filtros por valor, depois copiar e as linhas
+        # marcadas
+        separators = [QAction(self) for _ in range(2)]
+        for separator in separators:
+            separator.setSeparator(True)
+        self.data_table.addActions([self.filter_value_action, self.clear_filters_action, separators[0]])
         for view in (self.data_table, self.schema_table, self.sql_table):
             view.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
             view.addActions(copy_actions)
+        self.marked_menu = QMenu(self)  # "Exportar linhas marcadas >" (as acoes de Exportar > Linhas marcadas)
+        self._t(self.marked_menu.setTitle, "mark.export")
+        self.marked_menu.addActions(self.export_marked_actions)
+        self.data_table.addActions([separators[1], self.mark_action, self.unmark_all_action,
+                                    self.marked_menu.menuAction()])
         for view in (self.data_table, self.sql_table):
             view.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             # !T: The slot must not hold the header itself: header wrapper <-> slot is a cycle only the GC sees, and
@@ -561,12 +584,21 @@ class MainWindow(QMainWindow):
         self.info_label.setContentsMargins(6, 0, 6, 2)
         self.info_label.setWordWrap(True)  # janela estreita: quebra a linha, nada cortado
         self._copy_menu_on(self.info_label)
+        # a direita, so com linhas marcadas: "So as marcadas" (= Exibir > So as linhas marcadas)
+        self.only_marked_box = QCheckBox()
+        self._t(self.only_marked_box.setText, "mark.only")
+        self.only_marked_box.setContentsMargins(0, 0, 6, 2)
+        self.only_marked_box.toggled.connect(self.set_only_marked)
+        self.only_marked_box.hide()
+        self.info_row = QHBoxLayout()
+        self.info_row.addWidget(self.info_label, 1)
+        self.info_row.addWidget(self.only_marked_box)
 
         layout.setSpacing(4)
         layout.addLayout(bar)
         layout.addWidget(self.filters_bar)
         layout.addWidget(self.data_stack)
-        layout.addWidget(self.info_label)
+        layout.addLayout(self.info_row)
         return self.data_page
 
     def _fit_search_minimum(self) -> None:
@@ -826,6 +858,9 @@ class MainWindow(QMainWindow):
         self.export_menu = QMenu(self)
         self._t(self.export_menu.setTitle, "menu.export")
         self.export_menu.addActions(self.export_table_actions)
+        marked = self.export_menu.addMenu("")
+        self._t(marked.setTitle, "export.marked")
+        marked.addActions(self.export_marked_actions)
         self.export_menu.addSeparator()
         self.export_menu.addActions(self.export_sql_actions)
         self.export_button = QPushButton()
@@ -917,13 +952,15 @@ class MainWindow(QMainWindow):
         edit_menu.addActions([self.copy_action, self.copy_row_action, self.copy_row_header_action, self.find_action])
         edit_menu.addSeparator()
         edit_menu.addActions([self.filter_value_action, self.clear_filters_action])
+        edit_menu.addSeparator()
+        edit_menu.addActions([self.mark_action, self.unmark_all_action])
 
         view_menu = menu_bar.addMenu("")
         self._t(view_menu.setTitle, "menu.view")
         toggle_tables = self.tables_dock.toggleViewAction()
         self._t(toggle_tables.setText, "menu.tables_panel")
         toggle_tables.setShortcut(QKeySequence("Ctrl+B"))
-        view_menu.addActions([toggle_tables, self.log_action, self.tables_action])
+        view_menu.addActions([toggle_tables, self.log_action, self.tables_action, self.only_marked_action])
         view_menu.addSeparator()
         view_menu.addActions([self.data_tab_action, self.schema_tab_action, self.sql_tab_action, self.run_sql_action])
 
@@ -1146,7 +1183,8 @@ class MainWindow(QMainWindow):
         view = self._current_view()
         if view is None:
             return
-        indexes = sorted(view.selectedIndexes(), key=lambda i: (i.row(), i.column()))
+        columns = len(view.model().sourceModel().columns)  # sem a caixa de marcar
+        indexes = sorted((i for i in view.selectedIndexes() if i.column() < columns), key=lambda i: (i.row(), i.column()))
         if len(indexes) == 1:
             QGuiApplication.clipboard().setText(str(indexes[0].data(COPY_ROLE) or ""))  # valor puro, sem aspas de TSV
             return
@@ -1162,7 +1200,7 @@ class MainWindow(QMainWindow):
         if view is None:
             return
         model = view.model()
-        columns = range(model.columnCount())
+        columns = range(len(model.sourceModel().columns))  # sem a caixa de marcar
         rows = sorted({index.row() for index in view.selectedIndexes()})
         if not rows:
             return
@@ -1275,6 +1313,7 @@ class MainWindow(QMainWindow):
         # reabrir (F5) o mesmo arquivo: o anterior fecha agora; o SQLite convertido dele, se nao foi salvo, e
         # descartado (Log) e substituido pelo novo, sem pergunta
         self._drop_manager()
+        self._reset_marks()
         self.manager = manager
         self.current_db_path = db_path
         self.current_db_key = source_key
@@ -1354,6 +1393,7 @@ class MainWindow(QMainWindow):
         self.manager = None
         self.current_db_path = None
         self.converted_saved = False
+        self._reset_marks()
         self.loaded_table = None
         self.loaded_schema = []
         self.sql_query = None
@@ -1512,11 +1552,14 @@ class MainWindow(QMainWindow):
         limit = self.limit_combo.currentData()
         filters = list(self.filters)
         search = self.search_edit.text()
+        marked = list(self.marks.get(table_name, ()))
+        only_marked = self.only_marked_action.isChecked() and bool(marked)
         self.pending_table_name = None
         self._table_request += 1
         self._run(
             self._table_request,
-            lambda _report: load_table_payload(manager, table_name, limit, filters, search),
+            lambda _report: (only_marked, load_table_payload(manager, table_name, limit, filters, search, marked,
+                                                             only_marked)),
             self._on_table_loaded,
             self._on_table_error,
         )
@@ -1546,7 +1589,7 @@ class MainWindow(QMainWindow):
         model: TableModel = view.model().sourceModel()
         # margem do texto pelo estilo da grade (no Schema, 6 px a mais de cada lado: PaddedStyle)
         padding = 2 * (view.style().pixelMetric(QStyle.PixelMetric.PM_FocusFrameHMargin, None, view) + 1) + 8
-        for column in range(model.columnCount()) if columns is None else columns:
+        for column in range(len(model.columns)) if columns is None else columns:
             view.resizeColumnToContents(column)  # !T: Qt takes the larger of the header text and the content
             # !T: Qt measures only the first rows (resize precision); the longest texts of all loaded rows are
             # !T: measured here so no value is cut with "..."; only above MAX_COLUMN_WIDTH (tooltip has the full text)
@@ -1559,8 +1602,10 @@ class MainWindow(QMainWindow):
         if request_id != self._table_request:
             return  # resposta de uma selecao antiga
 
-        payload: TablePayload = result  # type: ignore[assignment]
+        payload: TablePayload
+        self.loaded_only_marked, payload = result  # type: ignore[misc]
         schema = payload["schema"]
+        self.table_model.marks = self.marks.setdefault(payload["table_name"], set())
         self.table_model.set_rows(
             payload["rows"],
             [column["column_name"] for column in schema],
@@ -1569,6 +1614,7 @@ class MainWindow(QMainWindow):
         self.loaded_schema = schema
         self._show_schema()
         self.loaded_table = (payload["table_name"], payload["total_rows"])
+        self.loaded_shown = payload["shown"]
         self.matched_rows = payload["matched_rows"]
         self.loaded_filters = list(payload["filters"])  # os da consulta que deu esta contagem
         self.loaded_search = payload["search"]
@@ -1576,6 +1622,7 @@ class MainWindow(QMainWindow):
         for view in (self.data_table, self.schema_table):
             view.sortByColumn(-1, Qt.SortOrder.AscendingOrder)  # volta para a ordem do backend
             self._fit_columns(view)
+        self._place_mark_column()
         self._apply_hidden_columns()  # o reset do modelo mostra todas: oculta de novo as escolhidas
         self._apply_search()
         self._update_export_actions()
@@ -1602,15 +1649,93 @@ class MainWindow(QMainWindow):
         self.hidden_label.setVisible(bool(hidden))
         if self.loaded_table is None:
             self.info_label.clear()
+            self.only_marked_box.hide()
             return
 
         table, total_rows = self.loaded_table
-        loaded = num(self.table_model.rowCount())
-        if self.loaded_filters or self.loaded_search.split():  # contagem no banco, alem das linhas carregadas
+        loaded = num(self.loaded_shown)
+        narrowed = (self.loaded_filters or self.loaded_search.split()) and not self.loaded_only_marked
+        if narrowed:  # contagem no banco, alem das linhas carregadas
             message = counted("status.showing_matched", self.matched_rows, table=table, loaded=loaded)
         else:
             message = counted("status.showing", total_rows, table=table, loaded=loaded)
+        marked = len(self.marks.get(table, ()))
+        if marked:
+            message += counted("mark.count", marked)
         self._set_message(self.info_label, message, log=False)
+        self.only_marked_box.setVisible(bool(marked))
+
+    # ----------------------------------------------------- linhas marcadas
+
+    def _place_mark_column(self) -> None:
+        # a caixa de marcar e a ultima coluna do modelo, mostrada primeiro, estreita, e as colunas da tabela na ordem
+        # dela
+        # !T: A model reset keeps the visual order of the sections that still exist: with another column count the
+        # !T: previous move would shuffle the table columns, so every section is put back in place
+        column = self.table_model.mark_column()
+        if column < 0:
+            return
+        header = self.data_table.horizontalHeader()
+        for visual, logical in enumerate([column, *range(column)]):
+            header.moveSection(header.visualIndex(logical), visual)
+        header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+        indicator = self.data_table.style().pixelMetric(QStyle.PixelMetric.PM_IndicatorWidth, None, self.data_table)
+        self.data_table.setColumnWidth(column, indicator + 16)
+
+    def toggle_current_mark(self) -> None:
+        """Marca ou desmarca a linha atual da grade de Dados (Espaco, Editar, menu da celula)."""
+        if self.loaded_table is None or self.data_stack.currentWidget() is not self.data_table:
+            return
+        index = self.data_table.currentIndex()
+        selected = self.data_table.selectedIndexes()
+        if selected and index not in selected:
+            index = selected[0]  # !T: UI Automation / screen readers select a cell without making it current
+        index = self.data_proxy.mapToSource(index)
+        if index.isValid():
+            self.table_model.toggle_mark(index.row())
+
+    def unmark_all(self) -> None:
+        """Desmarca todas as linhas da tabela atual (as marcas sao por tabela)."""
+        if self.table_model.marks:
+            self.table_model.marks.clear()
+            self.table_model.marks_reset()
+
+    def _marks_changed(self) -> None:
+        # a linha marcada ou desmarcada fica onde esta ate a proxima consulta (nada pula na grade); sem marcas, "So as
+        # marcadas" desliga e a grade volta para a pesquisa
+        if not self.table_model.marks and self.only_marked_action.isChecked():
+            self.set_only_marked(False)
+        self._apply_search()
+        self._update_export_actions()
+
+    def set_only_marked(self, checked: bool) -> None:
+        """Exibir > So as linhas marcadas e a caixa ao lado da linha da tabela: a grade so com as marcadas."""
+        for control in (self.only_marked_action, self.only_marked_box):
+            control.blockSignals(True)
+            control.setChecked(bool(checked))
+            control.blockSignals(False)
+        self.reload_table()
+
+    def _reset_marks(self) -> None:
+        # fechar, abrir outro arquivo e reabrir limpam as marcas
+        self.marks = {}
+        self.table_model.marks = set()
+        for control in (self.only_marked_action, self.only_marked_box):
+            control.blockSignals(True)
+            control.setChecked(False)
+            control.blockSignals(False)
+
+    def export_marked_as(self, suffix: str) -> None:
+        # as marcadas da tabela atual, todas as colunas, na ordem da tabela: <tabela>_marcadas
+        if self.manager is None or self.loaded_table is None or not self.marks.get(self.loaded_table[0]):
+            return
+        table, manager = self.loaded_table[0], self.manager
+        query, params = manager.marked_query(table, list(self.marks[table]))
+        out = self._ask_save_path(tr("export.marked"), f"{table}_marcadas", (suffix,))
+        if out is not None:
+            self._start_export(
+                out, lambda report, cancel: export_result(manager, query, table, out, report, cancel, params), "rows"
+            )
 
     # ----------------------------------------------- filtros e colunas ocultas
 
@@ -1627,7 +1752,7 @@ class MainWindow(QMainWindow):
         if selected and index not in selected:
             index = selected[0]  # !T: UI Automation / screen readers select a cell without making it current
         index = self.data_proxy.mapToSource(index)
-        if index.isValid():
+        if index.isValid() and index.column() < len(self.table_model.columns):  # nao a caixa de marcar
             column = self.table_model.columns[index.column()]
             self.add_filter(column, self.table_model.rows[index.row()].get(column))
 
@@ -1793,6 +1918,11 @@ class MainWindow(QMainWindow):
             action.setEnabled(self.manager is not None and self.loaded_table is not None)
         for action in self.export_sql_actions:
             action.setEnabled(self.manager is not None and self.sql_query is not None)
+        marked = self.manager is not None and self.loaded_table is not None and bool(self.marks.get(self.loaded_table[0]))
+        for action in (*self.export_marked_actions, self.unmark_all_action, self.only_marked_action):
+            action.setEnabled(marked)
+        self.marked_menu.setEnabled(marked)
+        self.mark_action.setEnabled(self.manager is not None and self.loaded_table is not None)
         self.export_button.setEnabled(self.manager is not None)
         self.close_db_action.setEnabled(self.manager is not None)
 

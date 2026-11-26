@@ -51,7 +51,12 @@ def test_copy_value_and_row(qtbot, tmp_path: Path) -> None:
         "C&lear filters",
         "",  # separador
         *copy_texts,
+        "",
+        "&Mark or unmark row",  # linhas marcadas (item 31)
+        "&Unmark all rows",
+        "Export marked rows",
     ]
+    assert win.data_table.actions()[-1].menu() is win.marked_menu
     assert [action.text() for action in win.sql_table.actions()] == copy_texts
     assert [action.text() for action in win.schema_table.actions()] == copy_texts
 

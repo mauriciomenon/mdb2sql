@@ -236,7 +236,8 @@ def test_data_tab_has_one_line_then_filters_grid_and_table_line(qtbot, window: M
     assert window.tabs.cornerWidget(Qt.Corner.TopRightCorner) is None  # Linhas nao fica mais ao lado das abas
     page = window.data_page.layout()
     widgets = [page.itemAt(i).widget() or page.itemAt(i).layout() for i in range(page.count())]
-    assert widgets[1:] == [window.filters_bar, window.data_stack, window.info_label]
+    assert widgets[1:] == [window.filters_bar, window.data_stack, window.info_row]
+    assert [window.info_row.itemAt(i).widget() for i in range(2)] == [window.info_label, window.only_marked_box]
     assert window.filters_bar.isHidden()
     _reloaded(qtbot, window, lambda: window.add_filter("name", "Ana"))
     assert not window.filters_bar.isHidden()
@@ -678,6 +679,93 @@ def test_save_and_export_actions_write_files_next_to_source(qtbot, window: MainW
     qtbot.waitUntil(lambda: not window.findChildren(QProgressDialog), timeout=5000)
 
 
+def test_marked_rows_stay_on_top_during_other_searches(qtbot, tmp_path: Path, monkeypatch) -> None:
+    # item 31, o exemplo do dono: busca kkk, marca 1 de 3; busca jjj (a de kkk no topo), marca 1; busca hhh, marca 1:
+    # 3 marcadas no topo, na ordem da tabela
+    import csv
+
+    import duckdb
+
+    db_file = tmp_path / "marks.duckdb"
+    with duckdb.connect(str(db_file)) as conn:
+        conn.execute("CREATE TABLE t AS SELECT i AS id, ['kkk', 'jjj', 'hhh', 'zzz'][i % 4 + 1] AS word"
+                     " FROM range(12) r(i) ORDER BY i")
+        conn.execute("CREATE TABLE u (x INTEGER)")
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.show()
+    win.open_database(db_file)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
+    _select_table(qtbot, win, "t")
+    mark = win.table_model.mark_column()
+    header = win.data_table.horizontalHeader()
+    # caixa de marcar primeiro, estreita, sem titulo, com a dica; as colunas da tabela na ordem
+    assert [header.logicalIndex(v) for v in range(3)] == [mark, 0, 1] and win.data_table.columnWidth(mark) < 40
+    assert win.table_model.headerData(mark, Qt.Orientation.Horizontal) is None
+    assert win.table_model.headerData(mark, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole) == "Mark rows"
+    assert win.mark_action.shortcut().toString() == "Space"
+    assert win.mark_action.shortcutContext() == Qt.ShortcutContext.WidgetWithChildrenShortcut
+    assert not win.unmark_all_action.isEnabled() and win.only_marked_box.isHidden()
+
+    def search(text: str) -> list[str]:
+        win.search_edit.setText(text)
+        _reloaded(qtbot, win, win.search_timer.timeout.emit)
+        return _column(win, 0)
+
+    def checked() -> list[bool]:
+        proxy = win.data_proxy
+        return [proxy.index(r, mark).data(Qt.ItemDataRole.CheckStateRole) == Qt.CheckState.Checked
+                for r in range(proxy.rowCount())]
+
+    assert search("kkk") == ["0", "4", "8"]
+    assert win.data_proxy.setData(win.data_proxy.index(1, mark), Qt.CheckState.Checked.value,
+                                  Qt.ItemDataRole.CheckStateRole)  # clique na caixa
+    assert checked() == [False, True, False]
+    assert win.info_label.text() == "t: showing 3 of 3 rows found, 1 marked" and not win.only_marked_box.isHidden()
+    assert search("jjj") == ["4", "1", "5", "9"]
+    win.data_table.setCurrentIndex(win.data_proxy.index(2, 0))
+    win.mark_action.trigger()  # Espaco / Editar / menu da celula
+    assert search("hhh") == ["4", "5", "2", "6", "10"]
+    win.data_table.setCurrentIndex(win.data_proxy.index(3, 1))
+    win.mark_action.trigger()
+    assert search("hhh") == ["4", "5", "6", "2", "10"] and checked() == [True, True, True, False, False]
+    assert win.info_label.text() == "t: showing 3 of 3 rows found, 3 marked"
+
+    # So as marcadas (caixa ao lado da linha = Exibir > So as linhas marcadas)
+    _reloaded(qtbot, win, win.only_marked_box.click)
+    assert _column(win, 0) == ["4", "5", "6"] and win.only_marked_action.isChecked()
+    assert win.info_label.text() == "t: showing 3 of 12 rows, 3 marked"
+
+    # copiar a linha nao leva a caixa; exportar: as marcadas, todas as colunas, ordem da tabela, <tabela>_marcadas
+    win.data_table.selectRow(0)
+    win.copy_row_action.trigger()
+    assert QApplication.clipboard().text() == "4\tkkk"
+    out = tmp_path / "out.csv"
+    asked = []
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a: asked.append(Path(a[2]).name) or (str(out), ""))
+    win.export_marked_actions[0].trigger()
+    qtbot.waitUntil(lambda: win._job is None and out.exists(), timeout=30000)
+    with open(out, encoding="utf-8-sig", newline="") as handle:
+        assert list(csv.reader(handle)) == [["id", "word"], ["4", "kkk"], ["5", "jjj"], ["6", "hhh"]]
+    assert asked == ["t_marcadas.csv"]
+
+    # marcas por tabela; Desmarcar todas as linhas: "So as marcadas" desliga e a grade volta para a pesquisa
+    _select_table(qtbot, win, "u")
+    assert win.marks["t"] and not win.marks.get("u") and win.only_marked_box.isHidden()
+    _select_table(qtbot, win, "t")
+    _reloaded(qtbot, win, win.unmark_all_action.trigger)
+    assert _column(win, 0) == ["2", "6", "10"] and not win.only_marked_action.isChecked()
+    assert win.only_marked_box.isHidden() and not win.export_marked_actions[0].isEnabled()
+
+    # reabrir (F5) limpa as marcas
+    win.data_table.setCurrentIndex(win.data_proxy.index(0, 0))
+    win.mark_action.trigger()
+    assert win.marks["t"]
+    win.reload_action.trigger()
+    qtbot.waitUntil(lambda: win._busy == 0 and win.loaded_table is not None, timeout=30000)
+    assert win.marks.get("t", set()) == set() and win.table_model.marks == set()
+
+
 def test_export_of_a_subset_asks_whole_table_or_found_rows(qtbot, window: MainWindow, people_db: Path,
                                                            monkeypatch) -> None:
     # igual nas 4 versoes: a grade mostra parte da tabela (pesquisa ou filtro por valor): "Tabela inteira" ou "So as N
@@ -881,7 +969,7 @@ def test_nothing_duplicated(qtbot, points_window: MainWindow) -> None:
 
 
 def _hidden(win: MainWindow) -> list[bool]:
-    return [win.data_table.isColumnHidden(c) for c in range(win.table_model.columnCount())]
+    return [win.data_table.isColumnHidden(c) for c in range(len(win.table_model.columns))]  # sem a caixa de marcar
 
 
 def _reloaded(qtbot, win: MainWindow, action) -> None:
