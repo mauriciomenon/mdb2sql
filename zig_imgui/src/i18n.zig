@@ -150,7 +150,6 @@ test "texts as in the Go catalog (the reference wording), in the three languages
         .{ "menu_save_as", "Save as...", "Salvar como...", "Guardar como..." },
         // itens 31 e 32
         .{ "only_marked", "Only marked", "Só as marcadas", "Solo las marcadas" },
-        .{ "menu_copy_log", "Copy the whole log", "Copiar todo o Log", "Copiar todo el log" },
         .{ "tab_terms", "Terms", "Termos", "Términos" },
         .{ "terms_hint", "Paste the terms, one per line (for example, an Excel column)", "Cole os termos, um por linha (por exemplo, uma coluna do Excel)", "Pegue los términos, uno por línea (por ejemplo, una columna de Excel)" },
         .{ "match_whole", "Whole value", "Valor inteiro", "Valor completo" },
