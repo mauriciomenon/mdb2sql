@@ -86,6 +86,7 @@ pub const terms_count_one = "{d} termo";
 pub const terms_repeated = ", {d} repetidos";
 pub const terms_repeated_one = ", {d} repetido";
 pub const terms_summary = "{s}: {s} em {s}";
+pub const terms_only_in = " (só em {s})";
 pub const terms_found = "{d} de {d} termos encontrados";
 pub const terms_found_one = "{d} de {d} termo encontrado";
 pub const terms_rows = "{d} linhas";

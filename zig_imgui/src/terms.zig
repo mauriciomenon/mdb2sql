@@ -56,6 +56,7 @@ pub const Result = struct {
     repeated: usize = 0,
     pairs: []const Pair = &.{}, // na ordem das tabelas; dentro da tabela, na ordem dos termos
     tables: []const Table = &.{}, // na ordem da lista de tabelas
+    only: ?usize = null, // pesquisou so esta tabela ("Esta tabela"); null = todas
     found: usize = 0, // termos com pelo menos uma linha
     rows: u64 = 0,
     not_found: [:0]const u8 = "", // os termos sem acerto, um por linha, na ordem colada (a caixa copiavel da tela)
@@ -68,7 +69,7 @@ pub const Result = struct {
 // Pesquisa os termos de `text` em todas as tabelas (only = null) ou so na tabela `only`. Cancelar: error.Canceled
 // (ou o erro do DuckDB interrompido); nada pela metade e devolvido.
 pub fn search(db: *Db, gpa: Allocator, text: []const u8, match: Match, only: ?usize, progress: *Progress) !Result {
-    var res: Result = .{ .arena = .init(gpa), .match = match };
+    var res: Result = .{ .arena = .init(gpa), .match = match, .only = only };
     errdefer res.deinit();
     const a = res.arena.allocator();
     const list = try parse(a, try a.dupe(u8, text));
@@ -608,6 +609,30 @@ test "term search on a real database: every table's grid has the rows counted (o
                 g.deinit();
             }
             std.debug.print("{s}: {d} ms\n", .{ variant, t1.durationTo(std.Io.Timestamp.now(t.io, .awake)).toMilliseconds() });
+        }
+    }
+    // item 17: os 8 termos do dono (a lista sem o titulo PNTNAM) colados com CRLF, como o Excel copia, em Todas as
+    // tabelas (o escopo com que a aba abre): 8 de 8, RANGER_SOEQID 8 e RANGER_SOSTAT 8 no DB3
+    {
+        var crlf: std.ArrayList(u8) = .empty;
+        defer crlf.deinit(t.allocator);
+        var lines = std.mem.splitScalar(u8, text, '\n');
+        _ = lines.next(); // PNTNAM
+        while (lines.next()) |l| {
+            const term = std.mem.trim(u8, l, &std.ascii.whitespace);
+            if (term.len == 0) continue;
+            try crlf.appendSlice(t.allocator, term);
+            try crlf.appendSlice(t.allocator, "\r\n");
+        }
+        var p: Progress = .{};
+        var res = try search(&db, t.allocator, crlf.items, .whole, null, &p);
+        defer res.deinit();
+        std.debug.print("8 terms CRLF: {d} of {d}, {d} tables\n", .{ res.found, res.terms.len, res.tables.len });
+        if (std.mem.indexOf(u8, path, "DB3") != null) {
+            try t.expectEqual(8, res.terms.len);
+            try t.expectEqual(8, res.found);
+            try t.expectEqual(2, res.tables.len);
+            for (res.tables) |hit| try t.expectEqual(8, hit.rows);
         }
     }
     // varias vezes: com o leitor do SQLite em paralelo, a grade ja veio vazia numa rodada e cheia na outra
