@@ -641,11 +641,11 @@ func TestTermsReportResultSheet(t *testing.T) {
 	}
 }
 
-// owner 26/11 (13a): in Whole value a term and a cell that read as numbers meet when any reading of one equals any
-// reading of the other (the readings of the Python): "216" finds 216.0, "216,0" and 216 but not 2160 nor 216.5;
-// "0,1" and "0.1" find 0.10 and "0,1"; "1" does not find "0,1"; "1234.5" finds "1.234,5"; "1.234" finds "1,234"
-// (both read 1.234 or 1234); "1234,567" is 1234.567 only (no thousands mark after 4 digits); text that is no number
-// compares as text; a row met twice by one term (its text and its number) is one row
+// owner 26/11 (13a, corrected by standard 20): in Whole value only the TERM is read as a number (the readings of the
+// Python), compared by value with the numeric columns of the schema; a text column compares as text. "216" finds
+// 216.0 and 216 (never 2160 nor 216.5); "216,0" and "0,1" find their numbers and, as text, the cells "216,0" and
+// "0,1"; "0.1" and "1234.5" find only the numbers (the text cells "0,1" and "1.234,5" are text); "1.234" finds
+// nothing (no number 1.234 or 1234; "1,234" is text); a row met twice by one term is one row
 func TestTermsFindNumbersLoosely(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "n.duckdb")
 	db, err := sql.Open("duckdb", path)
@@ -669,8 +669,8 @@ func TestTermsFindNumbersLoosely(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"216/n/ii", "216,0/n/ii", "0,1/n/ii", "0.1/n/ii", "1234.5/n/ii", "1.234/n/i", "216.5/n/i", "abc/n/i", "2160/n/i", "1/n/i"}
-	if !reflect.DeepEqual(hitsOf(res), want) || !reflect.DeepEqual(res.NotFound, []string{"1234567", "999"}) {
+	want := []string{"216/n/ii", "216,0/n/ii", "0,1/n/ii", "0.1/n/i", "1234.5/n/i", "216.5/n/i", "abc/n/i", "2160/n/i", "1/n/i"}
+	if !reflect.DeepEqual(hitsOf(res), want) || !reflect.DeepEqual(res.NotFound, []string{"1.234", "1234567", "999"}) {
 		t.Errorf("hits %v, not found %q\nwant %v", hitsOf(res), res.NotFound, want)
 	}
 	grid, err := m.TermRows(ctx, "n", res.Terms, false, 0)
@@ -678,7 +678,7 @@ func TestTermsFindNumbersLoosely(t *testing.T) {
 		t.Fatal(err)
 	}
 	// each row once (standard 19d), in the order of the first term that finds it: 216 (i 7, 216), 0,1 (11),
-	// 1234.5 (2160), 1.234 (9)
+	// 1234.5 (2160), 1 (9)
 	var got []string
 	for _, r := range grid.Rows {
 		got = append(got, cellString(r["i"]))

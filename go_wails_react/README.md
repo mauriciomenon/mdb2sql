@@ -172,11 +172,11 @@ has none: there all the values of the row count, so equal rows are marked togeth
 
 Advanced Search tab: paste a list (one term per line, for example an Excel column); each term is searched in every
 column of this table or of all tables, the whole cell (Whole value) or inside it (Contains), ignoring case and the
-spaces at the ends. In Whole value a term and a cell that read as numbers meet when any reading of one equals any
-reading of the other. A text reads as a number with a decimal point and commas of thousands, or with a decimal
-comma and points of thousands; a thousands mark only stands between groups of 3 digits. So "216" finds 216.0,
-"216,0" and 216 (never 2160), "0,1" finds 0.1 (and "1" does not find "0,1"), "1234.5" finds "1.234,5" and "1,234"
-reads 1.234 or 1234. The tables found, their rows (the columns of the table as they are, each row once, in the
+spaces at the ends. In Whole value a term that reads as a number also finds the numeric columns (by the schema) with
+that value; a text column compares as text. The term reads as a number with a decimal point and commas of thousands,
+or with a decimal comma and points of thousands; a thousands mark only stands between groups of 3 digits. So "216"
+and "216,0" find 216 and 216.0 (never 2160), "0,1" and "0.1" find 0.1, "1234.5" and "1.234,5" find 1234.5; the text
+"1,234" is found only by "1,234". The tables found, their rows (the columns of the table as they are, each row once, in the
 order of the first term that finds it) and the terms not found (copiable). Its report: one sheet (or table, or CSV
 file) per table found, with those rows.
 

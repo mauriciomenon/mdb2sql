@@ -82,8 +82,8 @@ const (
 	commaNumber = `[+-]?(?:\d+|\d{1,3}(?:\.\d{3})+)(?:,\d+)?`
 )
 
-// readings is the SQL list of the keys of the readings of the number-like text x (a column); a reading that does not
-// fit is NULL, which meets nothing
+// readings is the SQL list of the keys of the readings of the number-like term x (only the term is read so, standard
+// 20); a reading that does not fit is NULL, which meets nothing
 func readings(x string) string {
 	return "[CASE WHEN regexp_full_match(" + x + ", '" + dotNumber + "') THEN " + numKey("TRY_CAST(replace("+x+", ',', '') AS DOUBLE)") +
 		" END, CASE WHEN regexp_full_match(" + x + ", '" + commaNumber + "') THEN " +
@@ -96,7 +96,7 @@ var numberTerm = regexp.MustCompile(`^[+-]?[0-9]+([.,][0-9]+)*$`)
 // termsWith is the WITH of a term search in one table, ending in hits(rn, ord, term): each row (rn = its rowid, or its
 // position for a table without one, as base.mdb2sql_rn) and each term (ord = position in the pasted list) that finds
 // it, once. Whole value: the trimmed lowercase text of every cell equal to the term; and, when a term reads as a
-// number, the value of the numeric cells and the readings of the number-like texts equal to a reading of the term.
+// number, the value of the numeric columns (by the schema) equal to a reading of the term.
 // Contains: the cells of a row as one lowercase text, apart by a control character no term has, containing the term.
 func termsWith(table string, schema []ColumnSchema, rowID bool, terms []string, contains bool) string {
 	// base is read more than once: a position (no rowid) is numbered once, so every read sees the same numbers
@@ -133,13 +133,10 @@ func termsWith(table string, schema []ColumnSchema, rowID bool, terms []string, 
 		keys = append(keys, "SELECT rn, lower(x) AS key FROM cells")
 	}
 	termKeys := "SELECT ord, term, lower(term) AS key FROM v"
-	if numeric {
-		if len(numbers) > 0 {
-			keys = append(keys, "SELECT mdb2sql_rn AS rn, unnest(["+strings.Join(numbers, ", ")+"]) AS key FROM base")
-		}
-		if len(texts) > 0 {
-			keys = append(keys, "SELECT rn, unnest("+readings("x")+") AS key FROM cells WHERE regexp_full_match(x, "+numberLike+")")
-		}
+	// the readings of a number-like term meet the numeric columns of the schema by value; a text column is text
+	// (standard 20: no number read inside a text cell)
+	if numeric && len(numbers) > 0 {
+		keys = append(keys, "SELECT mdb2sql_rn AS rn, unnest(["+strings.Join(numbers, ", ")+"]) AS key FROM base")
 		termKeys += " UNION ALL SELECT ord, term, unnest(" + readings("term") + ") FROM v WHERE regexp_full_match(term, " + numberLike + ")"
 	}
 	if len(keys) == 0 { // no column the terms can meet

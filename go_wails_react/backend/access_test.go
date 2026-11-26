@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -16,10 +17,27 @@ const typesMDB = "testdata/types.mdb"
 var wantDecl = []string{"ID INTEGER", "Flag BOOLEAN", "B INTEGER", "S INTEGER", "L INTEGER", "Money DECIMAL(19,4)",
 	"Dec DECIMAL(10,2)", "Sng REAL", "Dbl DOUBLE", "When DATETIME", "Txt TEXT", "Note TEXT", "Bin BLOB"}
 
-// how SQLite stores the numbers of Tipos row 1 (standard 19h: an integer INTEGER, any other number REAL, never text)
-const typeofQuery = `SELECT * FROM sqlite_query('src', 'SELECT typeof(Money), typeof("Dec"), typeof(Sng), typeof(Dbl), typeof(B), typeof(L) FROM Tipos WHERE ID = 1')`
+// declTipos is the schema of Tipos in the open SQLite file, "name TYPE" per column (standard 20: the tests check the
+// schema, the type of each column as in Access)
+func declTipos(t *testing.T, m *DBManager) []string {
+	t.Helper()
+	var decl []string
+	for _, r := range queryText(t, m, `SELECT * FROM sqlite_query('src', 'SELECT name, type FROM pragma_table_info(''Tipos'')')`) {
+		decl = append(decl, r[0]+" "+r[1])
+	}
+	return decl
+}
 
-var wantTypeof = [][]string{{"real", "real", "real", "real", "integer", "integer"}}
+// numericTipos: the number columns of Tipos are numeric types when read (a declared DECIMAL reads as DOUBLE)
+func numericTipos(t *testing.T, m *DBManager) {
+	t.Helper()
+	schema, _ := m.GetTableSchema("Tipos")
+	for _, c := range schema {
+		if strings.Contains("|B|S|L|Money|Dec|Sng|Dbl|", "|"+c.Name+"|") && !numericType(c.Type) {
+			t.Errorf("column %s reads as %s, not a number", c.Name, c.Type)
+		}
+	}
+}
 
 // rows of Tipos by ID as cellString text; NULL stays NULL
 var wantRows = [][]string{
@@ -82,17 +100,10 @@ func TestAccessConvertsToSQLite(t *testing.T) {
 			if tables, _ := m.ListTables(); !reflect.DeepEqual(tables, []string{"Cidades e Regiões", "Tipos"}) {
 				t.Fatalf("tables %q", tables)
 			}
-			var decl []string
-			for _, r := range queryText(t, m, `SELECT * FROM sqlite_query('src', 'SELECT name, type FROM pragma_table_info(''Tipos'')')`) {
-				decl = append(decl, r[0]+" "+r[1])
-			}
-			if !reflect.DeepEqual(decl, wantDecl) {
+			if decl := declTipos(t, m); !reflect.DeepEqual(decl, wantDecl) {
 				t.Errorf("declared types\n got %q\nwant %q", decl, wantDecl)
 			}
-			// standard 19h: Currency, Numeric(p,s>0), Single and Double are stored as numbers (REAL), never text
-			if got := queryText(t, m, typeofQuery); !reflect.DeepEqual(got, wantTypeof) {
-				t.Errorf("converted storage %q, want %q", got, wantTypeof)
-			}
+			numericTipos(t, m)
 			// Save as DuckDB keeps DECIMAL and BOOLEAN (DuckDB reads them from SQLite as DOUBLE and BIGINT)
 			duck := filepath.Join(t.TempDir(), "saved.duckdb")
 			if err := m.ExportDatabase(context.Background(), "duckdb", duck, func(int, int, string) {}); err != nil {
@@ -155,10 +166,10 @@ func TestAccessConvertsToSQLite(t *testing.T) {
 			if n, _ := back.GetRowCount("Tipos", ""); n != 3 {
 				t.Errorf("saved file: %d rows", n)
 			}
-			if got := queryText(t, back, typeofQuery); !reflect.DeepEqual(got, wantTypeof) {
-				t.Errorf("saved storage %q, want %q", got, wantTypeof)
+			if decl := declTipos(t, back); !reflect.DeepEqual(decl, wantDecl) {
+				t.Errorf("saved file declared types\n got %q\nwant %q", decl, wantDecl)
 			}
-			// Save as SQLite of the open file keeps the declared types and stores numbers (standard 19h)
+			// Save as SQLite of the open file keeps the schema (standard 19h and 20)
 			lite := filepath.Join(t.TempDir(), "again.sqlite")
 			if err := back.ExportDatabase(context.Background(), "sqlite", lite, func(int, int, string) {}); err != nil {
 				t.Fatal(err)
@@ -168,9 +179,10 @@ func TestAccessConvertsToSQLite(t *testing.T) {
 			if err := again.Connect(lite); err != nil {
 				t.Fatal(err)
 			}
-			if got := queryText(t, again, typeofQuery); !reflect.DeepEqual(got, wantTypeof) {
-				t.Errorf("Save as SQLite storage %q, want %q", got, wantTypeof)
+			if decl := declTipos(t, again); !reflect.DeepEqual(decl, wantDecl) {
+				t.Errorf("Save as SQLite declared types\n got %q\nwant %q", decl, wantDecl)
 			}
+			numericTipos(t, again)
 		})
 	}
 }

@@ -423,9 +423,9 @@ func (m *DBManager) writeAtomically(out string, write func(tmp string) error) er
 }
 
 // sqliteColumn gives the declared SQLite type of a DuckDB column and the expression that writes it (the conversion of
-// Access and Save as SQLite). Nothing numeric reaches SQLite as text (standard 19h): an integer is stored INTEGER, any
-// other number REAL. SQLite has no boolean, decimal or date types: the declared name keeps the type for readers
-// (DuckDB reads DATETIME as TIMESTAMP, a declared DECIMAL as DOUBLE), booleans are stored 0/1, dates as ISO text.
+// Access and Save as SQLite). The type is the column's (standard 20): the declared name carries the nature of the
+// number and the values go as they are, no cast that changes it (DuckDB reads DATETIME as TIMESTAMP and a declared
+// DECIMAL as DOUBLE; Save as reads DECIMAL and BOOLEAN back by that name, savedSelect).
 func sqliteColumn(name, duckType string) (decl, expr string) {
 	col := quoteIdent(name)
 	t := strings.ToUpper(duckType)
@@ -438,8 +438,8 @@ func sqliteColumn(name, duckType string) (decl, expr string) {
 		// through text: Access Single 0.1 must stay 0.1, not 0.10000000149011612
 		return "REAL", "CAST(CAST(" + col + " AS VARCHAR) AS DOUBLE)"
 	case "HUGEINT", "UBIGINT", "UHUGEINT":
-		// wider than SQLite's 64-bit integer: a number all the same (REAL, exact up to 2^53)
-		return "REAL", "CAST(" + col + " AS DOUBLE)"
+		// an integer column; a value beyond SQLite's 64-bit integer stops the save with DuckDB's error
+		return "INTEGER", col
 	case "TIMESTAMP", "TIMESTAMP_S", "TIMESTAMP_MS", "TIMESTAMP_NS":
 		return "DATETIME", col
 	}
@@ -450,8 +450,8 @@ func sqliteColumn(name, duckType string) (decl, expr string) {
 		if _, err := fmt.Sscanf(t, "DECIMAL(%d,%d)", &p, &s); err == nil && s == 0 && p <= 18 {
 			return "INTEGER", col
 		}
-		// with places (Currency, Numeric(p,s>0)) or wider: REAL, exact up to 15 significant digits (standard 19h)
-		return t, "CAST(" + col + " AS DOUBLE)"
+		// with places (Currency DECIMAL(19,4), Numeric(p,s)) or wider: declared as it is
+		return t, col
 	}
 	// VARCHAR, UUID, TIME, lists...: text keeps every character
 	return "TEXT", "CAST(" + col + " AS VARCHAR)"
