@@ -160,7 +160,8 @@ test "texts as in the Go catalog (the reference wording), in the three languages
         // item 13 d: a aba Termos vira Pesquisa Avançada (Exibir Ctrl+4 e Exportar)
         .{ "tab_terms", "Advanced Search", "Pesquisa Avançada", "Búsqueda Avanzada" },
         .{ "export_terms", "Advanced Search report", "Relatório da Pesquisa Avançada", "Informe de la Búsqueda Avanzada" },
-        .{ "terms_hint", "Paste the terms, one per line (for example, an Excel column)", "Cole os termos, um por linha (por exemplo, uma coluna do Excel)", "Pegue los términos, uno por línea (por ejemplo, una columna de Excel)" },
+        // item 13 e: o texto de fundo da caixa com o exemplo em linhas separadas
+        .{ "terms_hint", "Paste the terms, one per line (for example, an Excel column). Example:\ntext1\ntext2\ntext3\nsearches the 3 terms in all tables or only in the selected table.", "Cole os termos, um por linha (por exemplo, uma coluna do Excel). Exemplo:\ntexto1\ntexto2\ntexto3\npesquisa os 3 termos em todas as tabelas ou só na tabela selecionada.", "Pegue los términos, uno por línea (por ejemplo, una columna de Excel). Ejemplo:\ntexto1\ntexto2\ntexto3\nbusca los 3 términos en todas las tablas o solo en la tabla seleccionada." },
         .{ "match_whole", "Whole value", "Valor inteiro", "Valor completo" },
         .{ "terms_progress", "Searching terms: table {d} of {d} ({s})", "Pesquisando termos: tabela {d} de {d} ({s})", "Buscando términos: tabla {d} de {d} ({s})" },
         .{ "copy_hits", "Copy the rows found in this table", "Copiar as linhas encontradas desta tabela", "Copiar las filas encontradas en esta tabla" },

@@ -72,7 +72,7 @@ pub const fmt_duckdb = "DuckDB (.duckdb)...";
 
 // aba Pesquisa Avançada (pesquisa de termos)
 pub const tab_terms = "Pesquisa Avançada";
-pub const terms_hint = "Cole os termos, um por linha (por exemplo, uma coluna do Excel)";
+pub const terms_hint = "Cole os termos, um por linha (por exemplo, uma coluna do Excel). Exemplo:\ntexto1\ntexto2\ntexto3\npesquisa os 3 termos em todas as tabelas ou só na tabela selecionada.";
 pub const match_whole = "Valor inteiro";
 pub const match_contains = "Contém";
 pub const match_tip = "Valor inteiro: a célula inteira é igual ao termo. Contém: a célula contém o termo. Maiúsculas e espaços nas pontas não contam.";

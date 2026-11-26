@@ -71,7 +71,7 @@ pub const fmt_duckdb = "DuckDB (.duckdb)...";
 
 // Terms tab (term search)
 pub const tab_terms = "Advanced Search";
-pub const terms_hint = "Paste the terms, one per line (for example, an Excel column)";
+pub const terms_hint = "Paste the terms, one per line (for example, an Excel column). Example:\ntext1\ntext2\ntext3\nsearches the 3 terms in all tables or only in the selected table.";
 pub const match_whole = "Whole value";
 pub const match_contains = "Contains";
 pub const match_tip = "Whole value: the whole cell equals the term. Contains: the cell contains the term. Case and spaces at the ends do not count.";
