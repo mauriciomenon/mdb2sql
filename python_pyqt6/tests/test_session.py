@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from PyQt6.QtCore import QSettings, Qt, QTimer
 from PyQt6.QtTest import QTest
-from PyQt6.QtGui import QAction, QFontDatabase
+from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QDockWidget, QLabel, QLineEdit, QMenu, QTabWidget
 
 from backend import access
@@ -352,9 +352,9 @@ def test_log_panel_collapsed_shows_the_most_important_line(qtbot) -> None:
     assert win.log_dock.isHidden() and win.log_action.shortcut().toString() == "Ctrl+L"
     assert win.tables_action.shortcut().toString() == "Ctrl+T"
     assert win.log_toggle.arrowType() == Qt.ArrowType.UpArrow and win.log_unread.isHidden()
-    # fonte monoespacada um passo menor que a base; minimo de 3 linhas
-    assert win.log_view.font().family() == QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()
-    assert win.log_view.font().pointSizeF() == max(8.0, win.font().pointSizeF() - 1)
+    # uma fonte so (BRIEF 18 e): o Log e a caixa do SQL na fonte do app (Segoe UI 14 px); minimo de 3 linhas
+    for box in (win.log_view, win.sql_edit, win.terms_edit, win.data_table, win.terms_table):
+        assert box.font() == QApplication.font(), box.accessibleName()
     assert win.log_view.minimumHeight() >= 3 * win.log_view.fontMetrics().lineSpacing()
 
     # erro > aviso > ultima acao: com o painel recolhido, o erro fica na barra (destacado) mesmo depois de outra acao

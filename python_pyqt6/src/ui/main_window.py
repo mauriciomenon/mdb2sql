@@ -26,7 +26,7 @@ from PyQt6.QtCore import (
     QTranslator,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QGuiApplication, QIcon, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QGuiApplication, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -502,10 +502,7 @@ class MainWindow(QMainWindow):
 
         self.sql_edit = QPlainTextEdit()
         self.sql_edit.setAccessibleName("SQL")
-        self.sql_edit.setPlaceholderText("SELECT * FROM ...")
-        sql_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        sql_font.setPointSizeF(self.font().pointSizeF())  # monoespacada no tamanho da base (14 px), nao nos 9 pt
-        self.sql_edit.setFont(sql_font)
+        self.sql_edit.setPlaceholderText("SELECT * FROM ...")  # a fonte do app, como todo o resto (BRIEF 18 e)
         self.sql_edit.addAction(self.run_sql_action)
         # botao do mesmo tipo dos outros das abas (QToolButton): mesma altura e preenchimento numa linha (13 f)
         run_button = QToolButton()
@@ -873,15 +870,12 @@ class MainWindow(QMainWindow):
 
     def _create_log(self) -> None:
         # Painel Log embaixo: mensagens da sessao (hora + texto), selecionaveis, Ctrl+C e "Copiar tudo";
-        # recolhido por padrao (estado lembrado); recolhido, a barra de status mostra erro > aviso > ultima acao
+        # recolhido ao abrir; recolhido, a barra de status mostra erro > aviso > ultima acao; a fonte do app (BRIEF 18 e)
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self._t(self.log_view.setAccessibleName, "log.title")
         self.log_view.setMaximumBlockCount(LOG_LINES)
         self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        font.setPointSizeF(max(8.0, self.font().pointSizeF() - 1))  # um passo menor que a base, legivel
-        self.log_view.setFont(font)
         self.log_view.setMinimumHeight(3 * self.log_view.fontMetrics().lineSpacing() + 10)  # minimo: 3 linhas
         panel = QWidget()
         layout = QVBoxLayout(panel)
