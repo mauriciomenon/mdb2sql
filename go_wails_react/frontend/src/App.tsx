@@ -261,9 +261,13 @@ export function statusLine(entries: LogEntry[], readMark: number, status: string
   return { text: pick?.text ?? (error || status), level: pick?.level ?? (error ? 'error' : 'info'), unread: unread.length };
 }
 
-// Keeps a context menu inside the window: a long column list moves it up (taller than the window, it scrolls)
+// Keeps a context menu inside the window: a long column list moves it up (taller than the window, it scrolls), a
+// menu opened near the right edge moves left
 function keepInWindow(el: HTMLElement | null) {
-  if (el) el.style.top = `${Math.max(4, Math.min(el.getBoundingClientRect().top, window.innerHeight - el.offsetHeight - 4))}px`;
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  el.style.top = `${Math.max(4, Math.min(r.top, window.innerHeight - el.offsetHeight - 4))}px`;
+  el.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - el.offsetWidth - 4))}px`;
 }
 
 // a menu drawn from data: commands, check/radio items, separators and submenus (opened by hover or click)
@@ -1793,8 +1797,9 @@ function App() {
           place={keepInWindow}
           items={cellItems}
           label={t('cellmenu.label')}
-          className="menu cell-menu"
-          style={{ left: Math.min(menu.x, window.innerWidth - 260), top: menu.y }}
+          // in the right half of the window its submenus open to the left
+          className={menu.x > window.innerWidth / 2 ? 'menu cell-menu right' : 'menu cell-menu'}
+          style={{ left: menu.x, top: menu.y }}
         />
       )}
 

@@ -640,6 +640,7 @@ td[aria-selected='true'] {
   gap: 16px;
   border: 0;
   text-align: left;
+  white-space: nowrap;
 }
 
 /* the column list of the header menu: check mark, then the name (as in Settings) */
