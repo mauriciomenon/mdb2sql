@@ -546,3 +546,35 @@ func TestMarkedRowsOfABigTableInTableOrder(t *testing.T) {
 		t.Errorf("export %q", data)
 	}
 }
+
+// review 26/11 (B2): a column of the table called as the term column (Term, Termo, Término) keeps its values under
+// "<name> (2)" in the grid of the Terms tab, in the 3 languages
+func TestTermColumnNameOfTheTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.duckdb")
+	db, err := sql.Open("duckdb", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE t ("Term" VARCHAR, "Termo" VARCHAR, "Término" VARCHAR, x VARCHAR); INSERT INTO t VALUES ('en', 'pt', 'es', 'abc')`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewDBManager()
+	if err := m.Connect(path); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	defer i18n.SetLang("en")
+	for lang, own := range map[string]string{"en": "en", "pt-BR": "pt", "es": "es"} {
+		i18n.SetLang(lang)
+		label := i18n.T("terms.col")
+		res, err := m.TermRows(context.Background(), "t", []string{"abc"}, false, 0)
+		if err != nil || len(res.Rows) != 1 || res.Columns[0] != label || len(res.Columns) != 5 {
+			t.Fatalf("%s: %v (%v)", lang, res, err)
+		}
+		if res.Rows[0][label] != "abc" || res.Rows[0][label+" (2)"] != own {
+			t.Errorf("%s: row %v", lang, res.Rows[0])
+		}
+	}
+}
