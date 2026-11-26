@@ -424,7 +424,7 @@ const Capture = struct {
             const ok = switch (ty) {
                 .sqlite => std.mem.eql(u8, head, "SQLite format 3\x00"),
                 .duckdb => head.len >= 12 and std.mem.eql(u8, head[8..12], "DUCK"),
-                .xlsx => std.mem.startsWith(u8, head, "PK\x03\x04"),
+                .xlsx => std.mem.startsWith(u8, head, &.{ 'P', 'K', 3, 4 }), // zip
             };
             if (!ok) {
                 c.failed = "the saved file is missing or is not of the type saved";
