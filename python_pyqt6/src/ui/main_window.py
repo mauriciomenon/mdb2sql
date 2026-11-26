@@ -65,7 +65,6 @@ from PyQt6.QtWidgets import (
 
 from backend.database_tasks import (
     TablePayload,
-    database_path_from_env,
     load_table_payload,
     open_database,
 )
@@ -348,7 +347,7 @@ class MainWindow(QMainWindow):
     def _create_actions(self) -> None:
         self.open_action = self._action("action.open", self.choose_database, QKeySequence.StandardKey.Open)
         self._t(self.open_action.setToolTip, "tip.open")
-        self.open_typed_action = self._action("action.open_typed", self.open_typed_path)  # = botao Abrir
+        self.open_typed_action = self._action("action.open_typed", self.open_typed_path)  # = Enter no caminho
         self._t(self.open_typed_action.setToolTip, "tip.open_path")
         self.reload_action = self._action("action.reload", self.load_database, "F5")
         self._t(self.reload_action.setToolTip, "tip.reload")
@@ -1021,20 +1020,17 @@ class MainWindow(QMainWindow):
 
     def _create_top_bar(self) -> None:
         # linha de cima igual nas 4 versoes (Zig): caminho do arquivo ocupando a linha (longo: mostra o fim) e
-        # Procurar... / Abrir / Exportar... a direita; arrastar um arquivo para a janela tambem abre
+        # Abrir... (a caixa de escolher arquivo, = Ctrl+O) / Exportar... a direita; o caminho digitado abre com Enter
+        # (BRIEF 14); arrastar um arquivo para a janela tambem abre
         self.path_edit = PathEdit()
         self._t(self.path_edit.setPlaceholderText, "path.hint")
         self._t(self.path_edit.setAccessibleName, "path.name")
         self.path_edit.setMinimumWidth(120)
         self.path_edit.returnPressed.connect(self.open_typed_path)
-        self.browse_button = QPushButton()
-        self._t(self.browse_button.setText, "button.browse")
-        self._t(self.browse_button.setToolTip, "tip.open")
-        self.browse_button.clicked.connect(self.choose_database)
         self.open_button = QPushButton()
         self._t(self.open_button.setText, "button.open")
-        self._t(self.open_button.setToolTip, "tip.open_path")
-        self.open_button.clicked.connect(self.open_typed_path)
+        self._t(self.open_button.setToolTip, "tip.open")
+        self.open_button.clicked.connect(self.choose_database)
 
         # Exportar... abre o mesmo menu de Arquivo > Exportar, logo abaixo do botao. Lista fixa, igual nas 4 versoes;
         # o que nao se aplica fica desabilitado
@@ -1066,7 +1062,7 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout(bar)
         row.setContentsMargins(6, 4, 6, 4)
         row.addWidget(self.path_edit, 1)
-        for button in (self.browse_button, self.open_button, self.export_button):
+        for button in (self.open_button, self.export_button):
             row.addWidget(button)
         self.top_bar = toolbar = QToolBar(self)
         self._t(toolbar.setWindowTitle, "toolbar.main")
@@ -1102,21 +1098,21 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.open_typed_path)  # !T: after the drag ends: the open may ask (Access SQLite)
 
     def open_typed_path(self) -> None:
-        """Abrir: o caminho do campo (Enter, botao ou arquivo arrastado); vazio, o dialogo de abrir."""
+        """O caminho do campo (Enter, Abrir o caminho digitado, arquivo arrastado); vazio, a caixa de abrir."""
         text = self.path_edit.text().strip().strip('"')
         if not text:
             self.choose_database()
             return
         path = Path(text).expanduser()
-        if not path.is_file():  # o banco aberto continua aberto
-            self._set_message(self.status_label, tr("status.not_found", name=text), error=True)
+        # relativo nunca vale (seria contra a pasta de trabalho, a do exe); o banco aberto continua aberto
+        if not path.is_absolute() or not path.is_file():
+            self._set_message(self.status_label, tr("status.not_found", path=text), error=True)
             return
         self._open_chosen(path)
 
     def _set_opening(self, opening: bool) -> None:
-        # abrindo um arquivo: Abrir, Procurar..., Ctrl+O e F5 esperam
-        for item in (self.open_action, self.open_typed_action, self.reload_action, self.browse_button,
-                     self.open_button):
+        # abrindo um arquivo: Abrir..., Ctrl+O e F5 esperam
+        for item in (self.open_action, self.open_typed_action, self.reload_action, self.open_button):
             item.setEnabled(not opening)
 
     def _open_chosen(self, path: Path) -> None:
@@ -1498,13 +1494,15 @@ class MainWindow(QMainWindow):
             self._open_chosen(Path(file_name))
 
     def load_database(self):
-        # Recarrega o banco atual; sem banco aberto usa a env var ou o caminho default
-        # !T: Check env var or use default path
-        self.open_database(self.current_db_path or database_path_from_env())
+        # Reabrir (F5): o banco aberto de novo; sem banco aberto, a caixa de escolher arquivo, nunca um banco padrao
+        if self.current_db_path is None:
+            self.choose_database()
+            return
+        self.open_database(self.current_db_path)
 
     def open_database(self, db_path: Path) -> None:
-        if not db_path.exists():
-            self._set_message(self.status_label, tr("status.not_found", name=db_path.name), error=True)
+        if not db_path.is_file():  # uma pasta tambem: o motor daria o texto do sistema
+            self._set_message(self.status_label, tr("status.not_found", path=str(db_path)), error=True)
             return
 
         self._set_opening(True)

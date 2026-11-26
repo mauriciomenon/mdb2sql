@@ -51,8 +51,10 @@ def test_missing_database_reports_error(qtbot, tmp_path: Path) -> None:
     qtbot.addWidget(win)
     win.open_database(tmp_path / "nope.duckdb")
 
-    assert win.status_label.text() == "Error: nope.duckdb not found"
+    assert win.status_label.text() == f"File not found: {tmp_path / 'nope.duckdb'}"
     assert win.current_db_path is None
+    win.open_database(tmp_path)  # uma pasta (o Go dava o texto do sistema, GetFileAttributesEx)
+    assert win.status_label.text() == f"File not found: {tmp_path}" and win.current_db_path is None
 
 
 def test_open_lists_tables_and_loads_first(window: MainWindow) -> None:
@@ -134,7 +136,7 @@ def test_select_sort_search_and_copy(qtbot, window: MainWindow) -> None:
 
 
 def test_top_bar_path_open_and_drop(qtbot, window: MainWindow, people_db: Path, tmp_path: Path) -> None:
-    # linha de cima igual nas 4 versoes (Zig): caminho do arquivo aberto, Procurar... / Abrir / Exportar...
+    # linha de cima igual nas 4 versoes: caminho do arquivo aberto, Abrir... / Exportar... (BRIEF 14)
     from PyQt6.QtCore import QMimeData, QPointF, QUrl
     from PyQt6.QtGui import QDropEvent
 
@@ -166,9 +168,10 @@ def test_top_bar_path_open_and_drop(qtbot, window: MainWindow, people_db: Path, 
         conn.execute("CREATE TABLE b AS SELECT 1 AS x")
     window.path_edit.setText(str(tmp_path / "missing.duckdb"))
     window.path_edit.returnPressed.emit()
-    assert window.current_db_path == people_db and window.status_label.text().startswith("Error:")
+    assert window.current_db_path == people_db
+    assert window.status_label.text() == f"File not found: {tmp_path / 'missing.duckdb'}"
     window.path_edit.setText(f'"{other}"')  # aspas do "Copiar como caminho" do Windows
-    window.open_button.click()
+    window.open_typed_action.trigger()  # Arquivo > Abrir o caminho digitado
     qtbot.waitUntil(lambda: window.current_db_path == other and window._busy == 0, timeout=30000)
 
     # arquivo arrastado para a janela ou para um campo de texto dela abre como o Abrir
@@ -187,6 +190,27 @@ def test_top_bar_path_open_and_drop(qtbot, window: MainWindow, people_db: Path, 
         expected = people_db if target is window else other
         qtbot.waitUntil(lambda: window.current_db_path == expected and window._busy == 0, timeout=30000)
     assert window.search_edit.text() == ""  # o arquivo nao virou texto da pesquisa
+
+
+def test_open_button_and_empty_enter_ask_for_the_file(window: MainWindow, people_db: Path, monkeypatch) -> None:
+    # BRIEF 14: Abrir... = a caixa de escolher arquivo (Ctrl+O); Procurar... saiu; relativo nunca abre
+    asked = []
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a: asked.append(a) or ("", ""))
+    top = [b.text() for b in window.top_bar.findChildren(QAbstractButton) if b.isVisible()]
+    assert top == ["Open...", "Export..."] and window.open_button.toolTip().endswith("(Ctrl+O)")
+    window.open_button.click()
+    window.path_edit.setText("  ")
+    window.path_edit.returnPressed.emit()
+    assert len(asked) == 2 and window.current_db_path == people_db
+    for typed in ("data", "people.duckdb"):  # nem a pasta do exe nem a de trabalho resolvem um caminho relativo
+        window.path_edit.setText(typed)
+        window.path_edit.returnPressed.emit()
+        assert window.status_label.text() == f"File not found: {typed}"
+        assert window.log_view.toPlainText().splitlines()[-1].endswith(f"File not found: {typed}")
+    assert len(asked) == 2 and window.current_db_path == people_db
+    window.release_database()
+    window.reload_action.trigger()  # F5 sem banco aberto: a caixa, nunca um banco padrao
+    assert len(asked) == 3 and window.current_db_path is None
 
 
 def test_narrow_window_wraps_the_data_bar_and_the_search_stretches(qtbot, window: MainWindow) -> None:
@@ -1370,7 +1394,7 @@ def test_nothing_duplicated(qtbot, points_window: MainWindow) -> None:
     buttons = _texts(b for b in win.findChildren(QAbstractButton) if b.isVisible())
     assert _repeated(buttons) == []
     assert buttons.count("Export...") == 1 and buttons.count("Columns...") == 1 and buttons.count("Clear filters") == 1
-    assert {"Browse...", "Open"} <= set(buttons)  # linha de cima igual ao Zig
+    assert "Open..." in buttons and "Browse..." not in buttons  # linha de cima: Abrir... / Exportar... (BRIEF 14)
     # nenhum item repetido dentro de um menu (os formatos CSV... / Excel (.xlsx)... se repetem em submenus diferentes)
     menus = [a.menu() for a in win.menuBar().actions()]
     while menus:
