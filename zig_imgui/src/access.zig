@@ -1005,6 +1005,42 @@ fn checkTypes(db: *Db, path: []const u8, reader: []const u8) !void {
     if (std.mem.indexOf(u8, path, "DB3") == null) return;
     try t.expectEqualStrings("float 5816; int 1681; text 2867; ", line.items);
     try t.expectEqual(2, key.rows.len);
+    try reportOfOwnerTerms(db);
+}
+
+// Item 19 f: a Pesquisa Avançada dos 8 termos do dono (MDB2SQL_TEST_TERMS sem o titulo PNTNAM) no DB3 convertido,
+// exportada para .xlsx e lida de volta: RTUNO e PNTNO celulas numericas, os titulos da tabela, sem coluna Termo
+fn reportOfOwnerTerms(db: *Db) !void {
+    const terms = @import("terms.zig");
+    const exporter = @import("exporter.zig");
+    const xlsx = @import("xlsx.zig");
+    const list = t.environ.getAlloc(t.allocator, "MDB2SQL_TEST_TERMS") catch return;
+    defer t.allocator.free(list);
+    var buf: [64 * 1024]u8 = undefined;
+    const text = try std.Io.Dir.cwd().readFile(t.io, list, &buf);
+    const eight = text[(std.mem.indexOfScalar(u8, text, '\n') orelse return) + 1 ..];
+    var p: Progress = .{};
+    var res = try terms.search(db, t.allocator, eight, .whole, null, &p);
+    defer res.deinit();
+    try t.expectEqual(8, res.found);
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const items = try terms.reportItems(arena.allocator(), db.table_names, &res);
+    const out = ".zig-cache/tmp/DB3 - Pesquisa Avançada.xlsx";
+    defer deleteQuiet(t.io, out);
+    try t.expectEqual(2, try exporter.bundle(db, t.io, .xlsx, items, out, &p, 0));
+    for ([_][]const u8{ "xl/worksheets/sheet1.xml", "xl/worksheets/sheet2.xml" }) |part| {
+        const sheet = try xlsx.readPart(t.allocator, t.io, out, part);
+        defer t.allocator.free(sheet);
+        try t.expect(std.mem.indexOf(u8, sheet, ">Termo<") == null and std.mem.indexOf(u8, sheet, ">Term<") == null);
+        try t.expect(std.mem.indexOf(u8, sheet, "<cols>") != null);
+        if (std.mem.eql(u8, part, "xl/worksheets/sheet2.xml")) {
+            // RANGER_SOSTAT: os titulos RTUNO e PNTNO; RTUNO 50 e PNTNO 238 como numero (texto seria inlineStr)
+            try t.expect(std.mem.indexOf(u8, sheet, ">RTUNO</t>") != null and std.mem.indexOf(u8, sheet, ">PNTNO</t>") != null);
+            try t.expect(std.mem.indexOf(u8, sheet, "><v>50</v></c>") != null and std.mem.indexOf(u8, sheet, "><v>238</v></c>") != null);
+        }
+    }
+    std.debug.print("DB3 report of the 8 terms: 2 sheets, numbers as numeric cells, no Term column\n", .{});
 }
 
 // Tabelas e linhas do Access convertido iguais as do conversor de referencia (MDB2SQL_TEST_REF: .sqlite ou .duckdb)

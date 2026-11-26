@@ -649,6 +649,47 @@ test "item 13 a: whole value with numbers, the loose rule: DOUBLE, DECIMAL, INTE
     }
 }
 
+test "item 19 f/g: Advanced Search report to Excel read back: the table's titles, numbers as numeric cells, dates as dates, no Term column, column widths" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var b1: [256]u8 = undefined;
+    var b2: [256]u8 = undefined;
+    const duck = dbm.tmpPath(&b1, &tmp, "x.duckdb");
+    const out = dbm.tmpPath(&b2, &tmp, "x - Pesquisa Avançada.xlsx");
+    var db = dbm.testDb();
+    defer db.close();
+    try db.open(duck, false);
+    try db.exec("CREATE TABLE pts AS SELECT * FROM (VALUES (50::BIGINT, 238::BIGINT, 'GENERADOR CGS VIBRACION ANORMAL 1 CANAL 1', TIMESTAMP '2026-07-14 10:30:00'), " ++
+        "(2, 7, 'OUTRO', NULL)) v(RTUNO, PNTNO, PNTNAM, DATEF)");
+    try db.open(":memory:", false);
+    try db.openReadOnly(duck);
+    var p: Progress = .{};
+    var res = try search(&db, t.allocator, "GENERADOR CGS VIBRACION ANORMAL 1 CANAL 1\r\n", .whole, null, &p);
+    defer res.deinit();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const items = try reportItems(arena.allocator(), db.table_names, &res);
+    try t.expectEqual(1, try exporter.bundle(&db, t.io, .xlsx, items, out, &p, 0));
+    const sheet = try @import("xlsx.zig").readPart(t.allocator, t.io, out, "xl/worksheets/sheet1.xml");
+    defer t.allocator.free(sheet);
+    // titulos da tabela, na ordem dela; sem coluna Termo
+    for ([_][]const u8{ "A1", "B1", "C1", "D1" }, [_][]const u8{ "RTUNO", "PNTNO", "PNTNAM", "DATEF" }) |ref, title| {
+        var cb: [160]u8 = undefined;
+        try t.expect(std.mem.indexOf(u8, sheet, try std.fmt.bufPrint(&cb, "<c r=\"{s}\" s=\"1\" t=\"inlineStr\"><is><t xml:space=\"preserve\">{s}</t>", .{ ref, title })) != null);
+    }
+    try t.expect(std.mem.indexOf(u8, sheet, "Termo") == null and std.mem.indexOf(u8, sheet, "E1") == null);
+    // RTUNO e PNTNO sao celulas numericas; a data e uma data do Excel (estilo 2); so a linha achada
+    try t.expect(std.mem.indexOf(u8, sheet, "<c r=\"A2\"><v>50</v></c><c r=\"B2\"><v>238</v></c>") != null);
+    try t.expect(std.mem.indexOf(u8, sheet, "<c r=\"D2\" s=\"2\"><v>46217.4375</v></c>") != null);
+    try t.expect(std.mem.indexOf(u8, sheet, "<row r=\"3\"") == null);
+    // larguras pelo conteudo: o PNTNAM achado tem 41 letras (+2)
+    try t.expect(std.mem.indexOf(u8, sheet, "<col min=\"3\" max=\"3\" width=\"43\" customWidth=\"1\"/>") != null);
+    const book = try @import("xlsx.zig").readPart(t.allocator, t.io, out, "xl/workbook.xml");
+    defer t.allocator.free(book);
+    try t.expectEqual(1, std.mem.count(u8, book, "<sheet name="));
+    try t.expect(std.mem.indexOf(u8, book, "<sheet name=\"pts\"") != null);
+}
+
 test "a table column named Termo stays as it is in the grid, the copy and the report (no term column is added)" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
