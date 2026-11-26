@@ -7,6 +7,7 @@ import csv
 import os
 import re
 import shutil
+import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
@@ -18,7 +19,7 @@ from typing import Any, Callable, Iterable, Iterator, Sequence
 import xlsxwriter
 
 from backend.access import quote
-from backend.db_manager import DBManager, load_sqlite_extension, sql_string
+from backend.db_manager import DBManager, sql_string
 from shared.i18n import num, tr
 
 Progress = Callable[[int, int, str], None]
@@ -164,30 +165,74 @@ def database_schema_query(tables: Sequence[str]) -> tuple[str, list[Any]]:
 def _sheets_to_db(
     manager: DBManager, sheets: Sequence[Sheet], out: Path, progress: Progress, cancel: threading.Event | None
 ) -> None:
-    sqlite = out.suffix.lower() == ".sqlite"
+    if out.suffix.lower() == ".sqlite":
+        _sheets_to_sqlite(manager, sheets, out, progress, cancel)
+        return
     with manager.cursor() as cursor:
-        if sqlite:
-            load_sqlite_extension(cursor)
-            cursor.execute(f"ATTACH {sql_string(str(out))} AS export_db (TYPE sqlite, READ_WRITE)")
-        else:
-            cursor.execute(f"ATTACH {sql_string(str(out))} AS export_db (READ_WRITE)")
+        cursor.execute(f"ATTACH {sql_string(str(out))} AS export_db (READ_WRITE)")
         try:
             for done, (name, query, params) in enumerate(sheets):
                 _check(cancel)
                 progress(done, len(sheets), name)
-                select = "*"
-                if sqlite:
-                    # o DuckDB grava DECIMAL no SQLite como VARCHAR (texto: > 20, ORDER BY e SUM comparariam texto);
-                    # DOUBLE vira REAL, com afinidade numerica
-                    columns = cursor.execute(f"SELECT * FROM ({query}) LIMIT 0", list(params)).description
-                    select = ", ".join(
-                        f"CAST({quote(c[0])} AS DOUBLE) AS {quote(c[0])}" if str(c[1]).startswith("DECIMAL")
-                        else quote(c[0]) for c in columns
-                    )
-                cursor.execute(f"CREATE TABLE export_db.{quote(name)} AS SELECT {select} FROM ({query})", list(params))
+                cursor.execute(f"CREATE TABLE export_db.{quote(name)} AS SELECT * FROM ({query})", list(params))
         finally:
             # o ATTACH vale para todos os cursores do banco: soltar o arquivo mesmo em erro/cancelamento
             cursor.execute("DETACH export_db")
+
+
+_SQLITE_KEPT = re.compile(r"(?:U?(?:TINY|SMALL|BIG|HUGE)?INT(?:EGER)?|DOUBLE|FLOAT|REAL|BOOLEAN|DATE|TIME|BLOB"
+                          r"|DECIMAL\(\d+,\d+\))")
+
+
+def _sqlite_type(kind: str) -> str:
+    """Tipo declarado no SQLite para um tipo do DuckDB, como o Access convertido (BRIEF 19 c): o leitor do app (e
+    outros programas) le de volta o mesmo tipo. O DuckDB gravaria DECIMAL e TIMESTAMP como texto e BOOLEAN como
+    BIGINT."""
+    kind = kind.upper()
+    if _SQLITE_KEPT.fullmatch(kind):
+        return kind
+    return "DATETIME" if kind.startswith("TIMESTAMP") else "TEXT"
+
+
+def _sqlite_value(value: object) -> object:
+    # Decimal inteiro como int, com casas como texto exato (a coluna DECIMAL tem afinidade numerica); data e hora no
+    # formato do Access convertido; o que o SQLite nao guarda (lista, intervalo, uuid...) como texto
+    if isinstance(value, Decimal):
+        return int(value) if value.is_finite() and value == value.to_integral_value() else str(value)
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(value, (date, time)):
+        return value.isoformat()
+    if isinstance(value, int) and not -(2**63) <= value < 2**63:
+        return str(value)  # HUGEINT alem do inteiro do SQLite: texto exato
+    if value is None or isinstance(value, (str, int, float, bytes)):
+        return value
+    return str(value)
+
+
+def _sheets_to_sqlite(
+    manager: DBManager, sheets: Sequence[Sheet], out: Path, progress: Progress, cancel: threading.Event | None
+) -> None:
+    # cada tabela com os tipos declarados da origem e os valores nas classes do SQLite (sqlite3 do Python, como a
+    # conversao do Access)
+    lite = sqlite3.connect(out)
+    try:
+        lite.execute("PRAGMA journal_mode = OFF")
+        lite.execute("PRAGMA synchronous = OFF")
+        with manager.cursor() as cursor:
+            for done, (name, query, params) in enumerate(sheets):
+                _check(cancel)
+                progress(done, len(sheets), name)
+                cursor.execute(query, list(params))
+                columns = ", ".join(f"{quote(c[0])} {_sqlite_type(str(c[1]))}" for c in cursor.description)
+                lite.execute(f"CREATE TABLE {quote(name)} ({columns})")
+                insert = f"INSERT INTO {quote(name)} VALUES ({', '.join('?' * len(cursor.description))})"
+                for rows in _chunks(cursor):
+                    _check(cancel)
+                    lite.executemany(insert, [tuple(_sqlite_value(v) for v in row) for row in rows])
+        lite.commit()
+    finally:
+        lite.close()
 
 
 def _excel_value(value: object) -> object:

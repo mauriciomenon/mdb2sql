@@ -25,7 +25,9 @@ def test_export_to_sqlite_keeps_decimals_numeric(tmp_path: Path) -> None:
 
     lite = sqlite3.connect(out)
     expected = sorted(p for p in prices if p > 20)
-    assert lite.execute("SELECT DISTINCT typeof(UnitPrice) FROM Products").fetchall() == [("real",)]
+    # numero, nunca texto (18 vira inteiro 18, 21.35 real), na coluna declarada DECIMAL(19,4) como a da origem
+    assert {row[0] for row in lite.execute("SELECT DISTINCT typeof(UnitPrice) FROM Products")} == {"integer", "real"}
+    assert lite.execute("PRAGMA table_info(Products)").fetchone()[2] == "DECIMAL(19,4)"
     count, total = lite.execute("SELECT count(*), round(sum(UnitPrice), 2) FROM Products WHERE UnitPrice > 20").fetchone()
     assert (count, total) == (len(expected), round(sum(expected), 2))
     top = [r[0] for r in lite.execute("SELECT UnitPrice FROM Products ORDER BY UnitPrice DESC LIMIT 3")]
@@ -70,6 +72,9 @@ def test_every_output_keeps_the_columns_titles_and_types(tmp_path: Path) -> None
         types = saved.column_types()["t"]
         assert list(types) == list(header) and types["NOME"] == "VARCHAR"
         assert all(kind != "VARCHAR" for column, kind in types.items() if column != "NOME"), types
+        assert types["PRECO"] == "DECIMAL(19,4)" and types["ATIVO"] == "BOOLEAN" and types["QUANDO"] == "TIMESTAMP"
+        row = saved.query_table("t")[0]
+        assert (row["RTUNO"], row["PNTNO"], row["ATIVO"], str(row["QUANDO"])) == (50, 238, True, "2026-07-14 10:11:12")
 
 
 def test_sheet_name_rules() -> None:
