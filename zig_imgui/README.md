@@ -396,6 +396,8 @@ file's catalog again (about 0.3 s per table, 287 tables).
   search, done by the database, covers all of Unicode.
 - Excel keeps at most 32,767 characters per cell and 16,384 columns per sheet (the status line says how many were
   cut). Grids show at most 512 columns (Dear ImGui limit); exports write all of them.
+- Every Excel export keeps the column types (numbers are numeric cells, DATE and TIMESTAMP are Excel dates, NULL is
+  an empty cell) and sets each column's width to its content (the title and the first 2,048 rows are measured).
 - The GUI has no UI Automation tree (Dear ImGui); it is checked with the `--capture` screenshots.
 
 ## Build

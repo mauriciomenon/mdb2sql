@@ -278,18 +278,32 @@ fn writeSheets(wb: *xlsx.Workbook, db: *Db, sel: Select, progress: *Progress, ro
     defer db.gpa.free(header);
     for (header, 0..) |*h, i| h.* = .{ .text = rows.name(i) };
 
+    // Largura de cada coluna ajustada ao conteudo (item 19 g): o titulo e o primeiro bloco de linhas (ate 2.048),
+    // lido antes de abrir a aba (as larguras vem antes dos dados no XML).
+    // shortcut: only the first chunk is measured; a longer value further down is wider than its column
+    var more = try rows.next();
+    const widths = try db.gpa.alloc(u16, n);
+    defer db.gpa.free(widths);
+    var cell_buf: [64]u8 = undefined;
+    for (widths, 0..) |*w, col| {
+        w.* = textWidth(rows.name(col)) + 1; // o titulo em negrito e um pouco mais largo
+        if (more) for (0..rows.size) |r| {
+            w.* = @max(w.*, textWidth(rows.cell(col, r, &cell_buf) orelse ""));
+        };
+        w.* = std.math.clamp(w.* + 2, 6, 80);
+    }
+
     var part: usize = 1;
-    _ = try wb.beginSheet(sel.sheet, part);
+    _ = try wb.beginSheet(sel.sheet, part, widths);
     try wb.writeRow(header);
     var in_sheet: usize = 0;
-    var cell_buf: [64]u8 = undefined;
-    while (try rows.next()) {
+    while (more) : (more = try rows.next()) {
         try progress.check();
         for (0..rows.size) |r| {
             if (in_sheet == rows_per_sheet) {
                 try wb.endSheet();
                 part += 1;
-                _ = try wb.beginSheet(sel.sheet, part);
+                _ = try wb.beginSheet(sel.sheet, part, widths);
                 try wb.writeRow(header);
                 in_sheet = 0;
             }
@@ -303,6 +317,12 @@ fn writeSheets(wb: *xlsx.Workbook, db: *Db, sel: Select, progress: *Progress, ro
         progress.add(rows.size);
     }
     try wb.endSheet();
+}
+
+// Caracteres de um texto (UTF-8), ate 200: a medida da largura de uma coluna do Excel
+fn textWidth(s: []const u8) u16 {
+    const n = std.unicode.utf8CountCodepoints(s) catch s.len;
+    return @intCast(@min(n, 200));
 }
 
 // Texto da celula -> celula da planilha, conforme o tipo original da coluna: numero e celula numerica, data e

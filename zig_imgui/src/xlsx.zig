@@ -149,6 +149,28 @@ pub fn dateSerial(s: []const u8) ?Date {
     return .{ .serial = serial, .time = true };
 }
 
+// Testes: o XML de uma parte do .xlsx (ex.: "xl/worksheets/sheet1.xml"), lido de volta do arquivo (gpa libera)
+pub fn readPart(gpa: Allocator, io: Io, path: []const u8, part: []const u8) ![]u8 {
+    const file = try Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+    var rbuf: [4096]u8 = undefined;
+    var reader = file.reader(io, &rbuf);
+    var it = try std.zip.Iterator.init(&reader);
+    while (try it.next()) |e| {
+        var name_buf: [128]u8 = undefined;
+        if (e.filename_len > name_buf.len) continue;
+        try reader.seekTo(e.header_zip_offset + @sizeOf(std.zip.CentralDirectoryFileHeader));
+        const name = name_buf[0..e.filename_len];
+        try reader.interface.readSliceAll(name);
+        if (!std.mem.eql(u8, name, part)) continue;
+        var data: Io.Writer.Allocating = .init(gpa);
+        errdefer data.deinit();
+        try e.extractTo(&reader, &data.writer);
+        return data.toOwnedSlice();
+    }
+    return error.FileNotFound;
+}
+
 test "Excel date serials: DATE and TIMESTAMP text, before 1900-03-01 and other text stay text" {
     try std.testing.expectEqual(Date{ .serial = 45000, .time = false }, dateSerial("2023-03-15").?);
     try std.testing.expectEqual(Date{ .serial = 61, .time = false }, dateSerial("1900-03-01").?);
@@ -296,8 +318,9 @@ pub const Workbook = struct {
         try wb.endEntry();
     }
 
-    // Nova aba: `table` vira um nome valido e unico; `part` > 1 para as continuacoes de uma tabela grande
-    pub fn beginSheet(wb: *Workbook, table: []const u8, part: usize) Error![]const u8 {
+    // Nova aba: `table` vira um nome valido e unico; `part` > 1 para as continuacoes de uma tabela grande.
+    // `widths`: largura de cada coluna em caracteres (item 19 g, ajustada ao conteudo); vazio = a padrao do Excel
+    pub fn beginSheet(wb: *Workbook, table: []const u8, part: usize, widths: []const u16) Error![]const u8 {
         if (wb.sheets.items.len >= 60_000) return error.TooManySheets;
         const name = try wb.names.make(table, part);
         try wb.sheets.append(wb.gpa, @constCast(name));
@@ -305,8 +328,16 @@ pub const Workbook = struct {
         try wb.beginEntry(std.fmt.bufPrint(&path_buf, "xl/worksheets/sheet{d}.xml", .{wb.sheets.items.len}) catch unreachable);
         try wb.put("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n" ++
             "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">" ++
-            "<sheetViews><sheetView workbookViewId=\"0\"><pane ySplit=\"1\" topLeftCell=\"A2\" activePane=\"bottomLeft\" state=\"frozen\"/></sheetView></sheetViews>" ++
-            "<sheetData>");
+            "<sheetViews><sheetView workbookViewId=\"0\"><pane ySplit=\"1\" topLeftCell=\"A2\" activePane=\"bottomLeft\" state=\"frozen\"/></sheetView></sheetViews>");
+        if (widths.len > 0) {
+            try wb.put("<cols>");
+            for (widths[0..@min(widths.len, max_cols)], 1..) |w, i| {
+                try wb.room(96);
+                try wb.xml.print("<col min=\"{d}\" max=\"{d}\" width=\"{d}\" customWidth=\"1\"/>", .{ i, i, w });
+            }
+            try wb.put("</cols>");
+        }
+        try wb.put("<sheetData>");
         wb.row = 0;
         return name;
     }
@@ -362,7 +393,7 @@ pub const Workbook = struct {
     // Partes fixas do pacote + diretorio central. Uma pasta sem abas ganha uma aba vazia.
     pub fn finish(wb: *Workbook) Error!void {
         if (wb.sheets.items.len == 0) {
-            _ = try wb.beginSheet("Sheet1", 1);
+            _ = try wb.beginSheet("Sheet1", 1, &.{});
             try wb.endSheet();
         }
         var x: Io.Writer.Allocating = .init(wb.gpa);
@@ -542,7 +573,7 @@ test "random cell sizes never overflow the XML buffer" {
     {
         var wb = try Workbook.create(t.allocator, t.io, path);
         defer wb.deinit();
-        _ = try wb.beginSheet("stress", 1);
+        _ = try wb.beginSheet("stress", 1, &.{});
         var cells: [12]Cell = undefined;
         for (0..n_rows) |_| {
             for (&cells, 0..) |*cell, i| {
@@ -589,7 +620,7 @@ test "workbook round trip through std.zip" {
     var wb = try Workbook.create(t.allocator, t.io, path);
     {
         defer wb.deinit();
-        _ = try wb.beginSheet("people", 1);
+        _ = try wb.beginSheet("people", 1, &.{ 6, 30, 4 });
         try wb.writeRow(&.{ .{ .text = "id" }, .{ .text = "name" }, .{ .text = "ok" } });
         try wb.writeRow(&.{ .{ .number = "1" }, .{ .text = "Ação & <cia>" }, .{ .boolean = true } });
         try wb.writeRow(&.{ .{ .number = "2" }, .empty, .{ .boolean = false } });
@@ -598,7 +629,7 @@ test "workbook round trip through std.zip" {
             try wb.writeRow(&.{ .{ .number = std.fmt.bufPrint(&nb, "{d}", .{i}) catch unreachable }, .{ .text = &@as([50]u8, @splat('x')) } });
         }
         try wb.endSheet();
-        _ = try wb.beginSheet("people", 2);
+        _ = try wb.beginSheet("people", 2, &.{});
         try wb.writeRow(&.{.{ .text = "id" }});
         try wb.endSheet();
         try wb.finish();
@@ -639,5 +670,8 @@ test "workbook round trip through std.zip" {
     try t.expect(std.mem.indexOf(u8, sheet1, "<c r=\"A1\" s=\"1\" t=\"inlineStr\">") != null);
     try t.expect(std.mem.indexOf(u8, sheet1, "<row r=\"3\"><c r=\"A3\"><v>2</v></c><c r=\"C3\" t=\"b\"><v>0</v></c></row>") != null);
     try t.expect(std.mem.indexOf(u8, sheet1, "<row r=\"5003\">") != null);
+    // larguras das colunas antes dos dados (item 19 g)
+    try t.expect(std.mem.indexOf(u8, sheet1, "</sheetViews><cols><col min=\"1\" max=\"1\" width=\"6\" customWidth=\"1\"/><col min=\"2\" max=\"2\" width=\"30\" customWidth=\"1\"/>" ++
+        "<col min=\"3\" max=\"3\" width=\"4\" customWidth=\"1\"/></cols><sheetData>") != null);
     try t.expect(std.mem.indexOf(u8, workbook_xml, "<sheet name=\"people (2)\" sheetId=\"2\" r:id=\"rId2\"/>") != null);
 }
