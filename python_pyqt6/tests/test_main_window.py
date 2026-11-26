@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import QSettings, QSize, Qt
+from PyQt6.QtCore import QPoint, QSettings, QSize, Qt
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QFileDialog, QLabel, QProgressDialog, QWidget
 
@@ -454,6 +454,32 @@ def test_terms_box_background_text_has_the_example_in_separate_lines(window: Mai
     assert window.terms_edit.placeholderText().split("\n")[1:4] == ["text1", "text2", "text3"]
     # cabem as 5 linhas: a caixa tem ~8 linhas de altura
     assert window.terms_edit.height() >= 5 * window.terms_edit.fontMetrics().lineSpacing()
+
+
+def test_advanced_search_controls_line(qtbot, window: MainWindow) -> None:
+    # BRIEF 18 c: Pesquisar termos | caixa ("N linhas de entrada" + resumo, nada cortado) | encostados a direita:
+    # Valor inteiro | Contem, linha fina, Esta tabela | Todas as tabelas; o resumo nao tem mais linha propria
+    from PyQt6.QtWidgets import QFrame, QToolButton
+
+    window.resize(1280, 800)
+    window.tabs.setCurrentWidget(window.terms_page)
+    window.terms_edit.setPlainText("a\nb\nA\n")
+    QApplication.processEvents()
+    assert window.terms_count.text() == "3 input lines"
+    box = window.terms_summary.parentWidget()
+    assert box is window.terms_count.parentWidget() and isinstance(box, QFrame)
+    assert box.width() >= box.minimumSizeHint().width()  # o texto inteiro cabe
+    buttons = {a: next(b for b in window.terms_page.findChildren(QToolButton) if b.defaultAction() is a)
+               for a in (*window.match_actions.values(), *window.terms_scope_actions.values())}
+    line = [window.terms_run_button, box, *buttons.values()]
+    page = window.terms_page
+    xs = [w.mapTo(page, w.rect().topLeft()).x() for w in line]
+    assert xs == sorted(xs) and len({w.mapTo(page, w.rect().center()).y() // 8 for w in line}) == 1
+    last = buttons[window.terms_scope_actions["all"]]
+    assert last.mapTo(page, last.rect().topRight()).x() >= page.width() - 12  # encostado a direita
+    lines = [f for f in page.findChildren(QFrame) if f.frameShape() == QFrame.Shape.VLine and f.isVisible()]
+    match_right = buttons[window.match_actions["contains"]].mapTo(page, QPoint(0, 0)).x()
+    assert len(lines) == 1 and lines[0].mapTo(page, QPoint(0, 0)).x() > match_right
 
 
 def test_buttons_of_a_row_have_one_height_and_do_not_touch_the_boxes(qtbot, window: MainWindow) -> None:
@@ -1138,7 +1164,7 @@ def test_terms_tab_lists_hits_in_list_order_copies_and_reports(qtbot, tmp_path: 
         assert [k.toString() for k in action.shortcuts()] == ["Ctrl+Enter", "Ctrl+Return"]
     assert not win.run_sql_action.isEnabled() and not win.run_terms_action.isEnabled()  # caixa vazia
     win.terms_edit.setPlainText("PNTNAM\nu9a\n\n turbina cgi \nU9A\n")
-    assert win.terms_count.text() == "3 terms, 1 repeated"
+    assert win.terms_count.text() == "4 input lines"  # linhas nao vazias, a repetida incluida (BRIEF 18 c)
     assert win.run_terms_action.isEnabled() and win.terms_run_button.isEnabled()
     assert win.match_actions["whole"].isChecked() and win.match_actions["whole"].toolTip().startswith("Whole value:")
     win.terms_scope_actions["all"].trigger()

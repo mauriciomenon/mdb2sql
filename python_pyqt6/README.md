@@ -118,7 +118,9 @@ Tabs:
   Contains" (default in Settings > Term matching) and "This table | All tables" (it always starts in All tables;
   with This table the summary ends with `(only in <table>)`), and Search terms (Ctrl+Enter in the tab). Every column of every table is compared as text: whole value = the cell without spaces at the ends is
   the term; contains = the cell contains it; case does not count. Empty lines are skipped and a repeated term is
-  searched once (`8 terms, 2 repeated`); a header pasted from Excel is a term like any other. The search runs in
+  searched once; a header pasted from Excel is a term like any other. The line of controls is Search terms, a box
+  with `N input lines` and the summary of the search, then, at the right, Whole value | Contains and This table |
+  All tables. The search runs in
   the database engine with progress and Cancel, then shows `X of Y terms found: N rows in M tables`, the tables with
   hits as `table (n)` and the grid of the chosen one: the columns of the table (names, order and types as in the
   table, nothing added), each row found once, in the order of the first term that found it and then of the

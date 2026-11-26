@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDockWidget,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -719,16 +720,32 @@ class MainWindow(QMainWindow):
         self.terms_run_button = QToolButton()  # como as alternancias da mesma linha: mesma altura (13 f)
         self._t(self.terms_run_button.setText, "terms.run")
         self.terms_run_button.clicked.connect(self.run_terms)
+        height = self.terms_run_button.sizeHint().height()
+        # linha dos controles (BRIEF 18 c): Pesquisar termos | caixa fixa com margem ("N linhas de entrada" e o resumo
+        # da pesquisa; estica, nunca menor que o texto: nada cortado) | encostados a direita: Valor inteiro | Contem,
+        # linha fina, Esta tabela | Todas as tabelas. Janela estreita: o que nao cabe vai para a linha de baixo
         self.terms_count = QLabel()
-        bar = FlowLayout()
-        bar.addWidget(self._toggle_pair(self.match_actions, "menu.terms_match"))
-        bar.addWidget(self._toggle_pair(self.terms_scope_actions, "scope.name"))
-        bar.addWidget(self.terms_run_button)
-        bar.addWidget(self.terms_count)
-
         self.terms_summary = QLabel()
-        self.terms_summary.setWordWrap(True)
         self._copy_menu_on(self.terms_summary)
+        summary_box = QFrame()
+        summary_box.setFrameShape(QFrame.Shape.StyledPanel)
+        summary_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        summary_box.setFixedHeight(height)
+        box_row = QHBoxLayout(summary_box)
+        box_row.setContentsMargins(8, 0, 8, 0)
+        box_row.setSpacing(12)
+        box_row.addWidget(self.terms_count)
+        box_row.addWidget(self.terms_summary, 1)
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.VLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setFixedHeight(height)
+        bar = FlowLayout()
+        bar.addWidget(self.terms_run_button)
+        bar.addWidget(summary_box)
+        bar.addWidget(self._toggle_pair(self.match_actions, "menu.terms_match"))
+        bar.addWidget(separator)
+        bar.addWidget(self._toggle_pair(self.terms_scope_actions, "scope.name"))
         # tabelas com acerto "tabela (n)" (como a busca em todas as tabelas) e a grade da escolhida
         self.terms_found = QListWidget()
         self._t(self.terms_found.setAccessibleName, "search.found_name")
@@ -771,7 +788,6 @@ class MainWindow(QMainWindow):
         layout.setSpacing(6)
         layout.addWidget(self.terms_edit)
         layout.addLayout(bar)
-        layout.addWidget(self.terms_summary)
         layout.addWidget(results, 1)
         layout.addLayout(title_row)
         layout.addWidget(self.not_found_edit)
@@ -2228,12 +2244,10 @@ class MainWindow(QMainWindow):
         self.terms_edit.setFocus()
 
     def _count_terms(self) -> None:
-        # "8 termos, 2 repetidos" enquanto o texto muda
+        # "10 linhas de entrada" (linhas nao vazias, repetidas incluidas) enquanto o texto muda (BRIEF 18 c)
         terms, repeated = parse_terms(self.terms_edit.toPlainText())
-        text = counted("terms.count", len(terms)) if terms else ""
-        if repeated:
-            text += counted("terms.repeated", repeated)
-        self.terms_count.setText(text)
+        lines = len(terms) + repeated
+        self.terms_count.setText(counted("terms.lines", lines) if lines else "")
         self._update_run_actions()
 
     def _update_run_actions(self) -> None:
