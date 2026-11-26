@@ -3,6 +3,7 @@
 # !T: read-only through the bundled sqlite extension (typed views on top), DuckDB file read-only. Each call uses
 # !T: its own cursor (threads); close() waits for the cursors still in use
 
+import json
 import re
 import shutil
 import sqlite3
@@ -10,7 +11,7 @@ import tempfile
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence
 
 import duckdb
 
@@ -30,6 +31,72 @@ _BOOLEAN = re.compile(r"\s*BOOL(?:EAN)?\s*", re.IGNORECASE)
 
 def sql_string(text: str) -> str:
     return "'" + text.replace("'", "''") + "'"
+
+
+# tipos de comando do DuckDB que so leem: SELECT (tambem WITH, VALUES, FROM, TABLE, SHOW, DESCRIBE, SUMMARIZE),
+# EXPLAIN, PRAGMA e MULTI (o PIVOT sem lista de valores)
+READ_STATEMENTS = {"SELECT", "EXPLAIN", "PRAGMA", "MULTI"}
+# coluna com a identidade da linha (linhas marcadas da aba Dados); vem nas linhas da grade, nunca na tela
+MARK_KEY = "mdb2sql_mark"
+
+
+# funcoes que um SELECT pode chamar e que anexam, gravam, rodam outro SQL ou mudam o estado do motor: sqlite_attach
+# (e qualquer *_attach) troca ou cria as views da memoria; sqlite_query/*_query/*_execute e query() rodam um SQL que a
+# checagem nao ve; checkpoint, logs, perfil e recursos externos mexem no arquivo ou no motor
+_WRITING_FUNCTIONS = re.compile(
+    r"\w+_(?:attach|query|execute)|query|checkpoint|force_checkpoint|\w*external_resource\w*"
+    r"|(?:enable|disable)_(?:logging|profiling)|truncate_duckdb_logs",
+    re.IGNORECASE,
+)
+
+
+def _function_names(node: Any) -> Iterator[str]:
+    """Nomes das funcoes (de tabela e escalares) na arvore do comando, inclusive em subconsultas e CTEs."""
+    if isinstance(node, dict):
+        if isinstance(node.get("function_name"), str):
+            yield node["function_name"]
+        for value in node.values():
+            yield from _function_names(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _function_names(value)
+
+
+def _calls_writer(statement: str) -> bool:
+    with duckdb.connect() as conn:
+        tree = json.loads(conn.execute("SELECT json_serialize_sql(?)", [statement]).fetchone()[0])
+    if tree.get("error"):
+        # !T: json_serialize_sql only takes a plain SELECT; for EXPLAIN ANALYZE, PRAGMA and MULTI the call is looked
+        # !T: for in the text (a name in a string or a comment also counts: refused, never run)
+        return re.search(rf"\b(?:{_WRITING_FUNCTIONS.pattern})\s*\(", statement, re.IGNORECASE) is not None
+    return any(_WRITING_FUNCTIONS.fullmatch(name) for name in _function_names(tree))
+
+
+def reads_only(query: str) -> bool:
+    """A aba SQL so le: todo comando de query e de leitura, pelo tipo que o DuckDB da a ele (nao pelo texto), e
+    nenhum chama uma funcao que anexa, grava ou roda outro SQL (_WRITING_FUNCTIONS).
+
+    !T: The engine also runs the query in a read-only transaction (execute_query), which refuses what these types can
+    !T: still write: EXPLAIN ANALYZE of a write, IMPORT DATABASE (a PRAGMA)
+    """
+    try:
+        return all(statement.type.name in READ_STATEMENTS and not _calls_writer(statement.query)
+                   for statement in duckdb.extract_statements(query))
+    except duckdb.ParserException:
+        return True  # erro de sintaxe: a consulta roda e mostra o erro do motor
+    except ValueError:
+        return False  # tipo de comando que esta versao do duckdb nao sabe nomear (UPDATE EXTENSIONS)
+
+
+def unique_names(names: Iterable[str]) -> list[str]:
+    """Nomes de coluna sem repeticao (SELECT a, a: a, a_2): as linhas sao dicts por nome."""
+    columns: list[str] = []
+    for name in names:
+        unique, n = name, 2
+        while unique in columns:
+            unique, n = f"{name}_{n}", n + 1
+        columns.append(unique)
+    return columns
 
 
 Filters = Sequence[tuple[str, Any]]  # (coluna, valor) do clique direito "Filtrar por este valor"
@@ -89,21 +156,21 @@ def column_expr(name: str, declared: str) -> str:
     return f"CAST({quote(name)} AS {kind}) AS {quote(name)}"
 
 
-def sqlite_views(path: str) -> list[tuple[str, str]]:
-    """(nome, SELECT ...) de cada tabela e view do SQLite, lidas por source_db, com os tipos declarados."""
+def sqlite_views(path: str) -> list[tuple[str, str, str | None]]:
+    """(nome, SELECT ..., SELECT com o rowid na coluna MARK_KEY ou None) de cada tabela e view do SQLite, lidas por
+    source_db, com os tipos declarados. Sem rowid: view e tabela WITHOUT ROWID."""
     lite = sqlite3.connect(Path(path).as_uri() + "?mode=ro", uri=True)
     try:
-        names = [
-            row[0]
-            for row in lite.execute(
-                "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite~_%' ESCAPE '~'"
-            )
-        ]
+        found = lite.execute(
+            "SELECT name, type = 'table' AND upper(sql) NOT LIKE '%WITHOUT ROWID%' FROM sqlite_master"
+            " WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite~_%' ESCAPE '~'"
+        ).fetchall()
         views = []
-        for name in names:
+        for name, rowid in found:
             columns = lite.execute(f"PRAGMA table_info({quote(name)})").fetchall()
             select = ", ".join(column_expr(column[1], column[2]) for column in columns) or "*"
-            views.append((name, f"SELECT {select} FROM source_db.{quote(name)}"))
+            keyed = f"SELECT rowid AS {MARK_KEY}, {select} FROM source_db.{quote(name)}" if rowid else None
+            views.append((name, f"SELECT {select} FROM source_db.{quote(name)}", keyed))
         return views
     finally:
         lite.close()
@@ -128,6 +195,7 @@ class DBManager:
         self.converted: Optional[Path] = None  # SQLite convertido do Access (pasta propria, apagada em release())
         self.sqlite_file: Optional[str] = None  # o arquivo SQLite lido (o proprio .sqlite ou o convertido do Access)
         self._tables: Optional[List[str]] = None
+        self._keyed: Dict[str, str] = {}  # tabela com rowid -> SELECT com ele na coluna MARK_KEY
         self._cursors: set[duckdb.DuckDBPyConnection] = set()  # em uso (outras threads); close() interrompe e espera
         self._idle = threading.Condition()
 
@@ -159,6 +227,11 @@ class DBManager:
         if suffix in DUCKDB_EXT:
             self.conn = duckdb.connect(validated_path, read_only=True)
             self.reader = "DuckDB"
+            tables = self.conn.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_type = 'BASE TABLE'"
+                " AND table_catalog = current_database() AND table_schema = current_schema()"
+            ).fetchall()
+            self._keyed = {name: f"SELECT rowid AS {MARK_KEY}, * FROM {quote(name)}" for (name,) in tables}
         else:
             sqlite_path = validated_path
             if suffix in ACCESS_EXT:
@@ -181,14 +254,15 @@ class DBManager:
             self.sqlite_file = sqlite_path
         self.current_db = validated_path
 
-    @staticmethod
-    def _open_sqlite(path: str) -> duckdb.DuckDBPyConnection:
+    def _open_sqlite(self, path: str) -> duckdb.DuckDBPyConnection:
         conn = duckdb.connect(":memory:")
         try:
             load_sqlite_extension(conn)
             conn.execute(f"ATTACH {sql_string(path)} AS source_db (TYPE sqlite, READ_ONLY)")
-            for name, select in sqlite_views(path):
+            for name, select, keyed in sqlite_views(path):
                 conn.execute(f"CREATE VIEW {quote(name)} AS {select}")
+                if keyed:
+                    self._keyed[name] = keyed
         except BaseException:
             conn.close()
             raise
@@ -283,47 +357,106 @@ class DBManager:
         columns = [column["column_name"] for column in self.get_table_schema(table_name)] if search.split() else []
         return where_clause(filters, columns, search)
 
-    def select_table(self, table_name: str, filters: Filters = (), search: str = "") -> tuple[str, list[Any]]:
-        """SELECT da tabela inteira com os filtros e a pesquisa (o que a grade mostra) e os parametros."""
+    def keyed_table(self, table_name: str) -> str:
+        """SELECT da tabela com a identidade de cada linha na coluna MARK_KEY (linhas marcadas): o rowid do motor
+        quando a tabela tem um (tabela DuckDB; tabela SQLite, tambem a do Access convertido); numa view ou tabela
+        SQLite WITHOUT ROWID, o texto da linha inteira (linhas iguais tem a mesma identidade e marcam juntas)."""
+        self._validate_table_name(table_name)
+        # !T: The alias is the row itself (a struct); a prefixed name so a column called q is not taken for it
+        return (self._keyed.get(table_name)
+                or f"SELECT CAST(mdb2sql_q AS VARCHAR) AS {MARK_KEY}, mdb2sql_q.* FROM {quote(table_name)} mdb2sql_q")
+
+    def select_table(
+        self, table_name: str, filters: Filters = (), search: str = "", keyed: bool = False
+    ) -> tuple[str, list[Any]]:
+        """SELECT da tabela inteira com os filtros e a pesquisa (o que a grade mostra) e os parametros; keyed: com a
+        identidade da linha na coluna MARK_KEY."""
         self._validate_table_name(table_name)
         where, params = self._where(table_name, filters, search)
-        return f"SELECT * FROM {quote(table_name)}{where}", params
+        source = f"({self.keyed_table(table_name)}) t" if keyed else quote(table_name)
+        return f"SELECT * FROM {source}{where}", params
+
+    def marked_query(self, table_name: str, keys: Sequence[Any], keyed: bool = False) -> tuple[str, list[Any]]:
+        """SELECT das linhas marcadas (identidades `keys`), na ordem da tabela; sem keyed, so as colunas da tabela."""
+        # !T: The IN filter over a parallel scan of a big table (several row groups) returns rows out of order: the
+        # !T: position in the table is numbered before the filter and the result is ordered by it
+        columns = "* EXCLUDE (mdb2sql_pos)" if keyed else f"* EXCLUDE (mdb2sql_pos, {MARK_KEY})"
+        numbered = f"SELECT row_number() OVER () AS mdb2sql_pos, * FROM ({self.keyed_table(table_name)}) t"
+        return (f"SELECT {columns} FROM ({numbered}) m WHERE {MARK_KEY} IN (SELECT unnest(?)) ORDER BY mdb2sql_pos",
+                [list(keys)])
+
+    def fetch_rows(self, query: str, params: Sequence[Any] = (), limit: Optional[int] = None,
+                   offset: int = 0) -> List[Dict[str, Any]]:
+        """Linhas (dicts por coluna) de uma consulta do proprio app, ate limit, pulando as `offset` primeiras."""
+        # !T: Plain Python values, not pandas: DECIMAL(10,0) stays 1 (pandas would show 1.0) and NULL stays None
+        # !T: No ORDER BY: DuckDB keeps the insertion order (preserve_insertion_order), so the pages follow the table
+        with self.cursor() as cursor:
+            page = "" if limit is None else f" LIMIT {int(limit)} OFFSET {int(offset)}"
+            cursor.execute(f"{query}{page}", list(params))
+            columns = unique_names(column[0] for column in cursor.description)
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     def query_table(
-        self, table_name: str, limit: int = 100, filters: Filters = (), search: str = ""
+        self, table_name: str, limit: int = 100, filters: Filters = (), search: str = "", keyed: bool = False,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """
-        Executa SELECT na tabela e retorna ate limit linhas (so as que passam nos filtros e na pesquisa).
+        Executa SELECT na tabela e retorna ate limit linhas a partir de offset (so as que passam nos filtros e na
+        pesquisa): uma pagina da aba Dados.
         """
         if not self.conn:
             return []
 
         # SELECT com LIMIT para nao carregar tabela inteira
-        # !T: Plain Python values, not pandas: DECIMAL(10,0) stays 1 (pandas would show 1.0) and NULL stays None
-        select, params = self.select_table(table_name, filters, search)
+        select, params = self.select_table(table_name, filters, search, keyed)
+        return self.fetch_rows(select, params, limit, offset)
+
+    def column_types(self) -> Dict[str, Dict[str, str]]:
+        """Tipo de cada coluna de cada tabela (o do DuckDB: INTEGER, DOUBLE, DECIMAL(10,2), VARCHAR...)."""
         with self.cursor() as cursor:
-            cursor.execute(f"{select} LIMIT {int(limit)}", params)
-            columns = [column[0] for column in cursor.description]
-            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+            rows = cursor.execute(
+                "SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_catalog ="
+                " current_database() AND table_schema = current_schema() ORDER BY ordinal_position"
+            ).fetchall()
+        types: Dict[str, Dict[str, str]] = {}
+        for table, column, kind in rows:
+            types.setdefault(table, {})[column] = kind
+        return types
+
+    def table_columns(self) -> Dict[str, List[str]]:
+        """Colunas de cada tabela, na ordem, numa consulta so (PRAGMA por tabela: ~2.5 s nas 287 do DB4)."""
+        with self.cursor() as cursor:
+            columns = cursor.execute(
+                "SELECT table_name, column_name FROM information_schema.columns WHERE table_catalog = current_database()"
+                " AND table_schema = current_schema() ORDER BY ordinal_position"
+            ).fetchall()
+        by_table: Dict[str, List[str]] = {}
+        for table, column in columns:
+            by_table.setdefault(table, []).append(column)
+        return by_table
 
     def execute_query(self, query: str, limit: int = 1000) -> tuple[List[str], List[Dict[str, Any]], bool]:
         """
-        Executa SQL livre; devolve (colunas, ate limit linhas, ha mais linhas).
+        Executa SQL livre, so de leitura; devolve (colunas, ate limit linhas, ha mais linhas).
+
+        Comando que nao e de leitura e recusado antes de rodar (PermissionError): o banco, a copia convertida e a
+        memoria nunca mudam.
         """
         if not self.conn:
             return [], [], False
+        if not reads_only(query):
+            raise PermissionError(tr("error.sql_read_only"))
 
         with self.cursor() as cursor:
-            cursor.execute(query)
+            # !T: The cursor is closed after the query, which rolls this transaction back (temporary objects too)
+            cursor.execute("BEGIN TRANSACTION READ ONLY")
+            try:
+                cursor.execute(query)
+            except duckdb.TransactionException as exc:  # o motor recusou uma escrita
+                raise PermissionError(tr("error.sql_read_only")) from exc
             if cursor.description is None:  # comando sem resultado (SET, CREATE ...)
                 return [], [], False
-            columns: list[str] = []
-            for name in (column[0] for column in cursor.description):
-                # nomes repetidos (SELECT a, a) viram a, a_2: as linhas sao dicts por nome
-                unique, n = name, 2
-                while unique in columns:
-                    unique, n = f"{name}_{n}", n + 1
-                columns.append(unique)
+            columns = unique_names(column[0] for column in cursor.description)
             rows = cursor.fetchmany(limit + 1)
         return columns, [dict(zip(columns, row)) for row in rows[:limit]], len(rows) > limit
 
@@ -334,15 +467,7 @@ class DBManager:
         !T: accents), so the count listed is the count the opened table shows. `stop` is checked between tables so
         !T: a newer search ends this one
         """
-        # colunas de todas as tabelas numa consulta so (PRAGMA por tabela: ~2.5 s nas 287 do DB4)
-        with self.cursor() as cursor:
-            columns = cursor.execute(
-                "SELECT table_name, column_name FROM information_schema.columns WHERE table_catalog = current_database()"
-                " AND table_schema = current_schema() ORDER BY ordinal_position"
-            ).fetchall()
-        by_table: dict[str, list[str]] = {}
-        for table, column in columns:
-            by_table.setdefault(table, []).append(column)
+        by_table = self.table_columns()
         found = []
         for table in self.list_tables():
             if stop():
@@ -421,16 +546,14 @@ class DBManager:
         self.reader = ""
         self.sqlite_file = None
         self._tables = None
+        self._keyed = {}
 
-    def release(self, save_to: Optional[Path] = None) -> None:
-        """Fecha; o SQLite convertido do Access vai para save_to ou e apagado (com a pasta dele)."""
+    def release(self) -> None:
+        """Fecha; o SQLite convertido do Access e apagado (com a pasta dele)."""
         self.close()
         converted, self.converted = self.converted, None
-        if converted is None:
-            return
-        if save_to is not None and converted.is_file():
-            shutil.move(converted, save_to)  # outro disco: copia e apaga; destino existente e substituido
-        shutil.rmtree(converted.parent, ignore_errors=True)
+        if converted is not None:
+            shutil.rmtree(converted.parent, ignore_errors=True)
 
     def __enter__(self):
         # Suporte a context manager (with statement)

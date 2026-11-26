@@ -78,6 +78,7 @@ def about_fields() -> list[tuple[str, str]]:
         (tr("about.window"), f"Qt {qVersion()}"),
         (tr("about.databases"), f"SQLite {sqlite3.sqlite_version}, DuckDB {duckdb.__version__}"),
         (tr("about.access"), access_engine()),
+        (tr("about.write"), tr("about.write_text")),
         (tr("about.author"), "Mauricio Menon"),
         (tr("about.license"), tr("about.license_text")),
     ]

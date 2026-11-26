@@ -35,6 +35,11 @@ def tr(key: str, **values: object) -> str:
     return text.format(**values) if values else text
 
 
+def every_language(key: str, **values: object) -> list[str]:
+    """O texto de `key` nos 3 idiomas (o tamanho de um botao nao muda com o idioma)."""
+    return [text.format(**values) if values else text for text in (catalog(code)[key] for code in LANGUAGES)]
+
+
 def num(value: int) -> str:
     """Inteiro com separador de milhar do idioma: 36,754 (en) ou 36.754 (pt_BR, es)."""
     return f"{value:,}".replace(",", tr("number.thousands"))

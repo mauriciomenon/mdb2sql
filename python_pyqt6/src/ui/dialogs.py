@@ -1,5 +1,7 @@
-# Dialogos da janela principal: Sobre (Ajuda > Sobre) e Colunas (ocultar/mostrar varias colunas de uma vez)
-# !T: Both are opened with open() by the caller: no nested event loop, so tests and UI Automation do not block
+# Dialogos da janela principal: Sobre (Ajuda > Sobre), Colunas (ocultar/mostrar varias colunas de uma vez) e a
+# pergunta com botoes proprios (sair com o SQLite convertido nao salvo, sair com exportacao em andamento)
+# !T: About and Columns are opened with open() by the caller: no nested event loop, so tests and UI Automation do
+# !T: not block
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QGuiApplication, QPixmap
@@ -22,8 +24,19 @@ from PyQt6.QtWidgets import (
 from shared.about import APP_NAME, LINKS, about_fields, app_version, link_html
 from shared.bundle import resource
 from shared.display import HELP, Notice
-from shared.i18n import tr
+from shared.i18n import every_language, tr
 
+
+def same_size(buttons: list, texts: list[str]) -> None:
+    """Os botoes de uma caixa com a mesma largura e altura: as do maior texto de `texts` (os 3 idiomas), entao a caixa
+    nao muda com o idioma nem com o texto de cada botao."""
+    probe = QPushButton()  # !T: same style and font as the dialog buttons (no style sheet on them)
+    size = QSize()
+    for text in texts:
+        probe.setText(text)
+        size = size.expandedTo(probe.sizeHint())
+    for button in buttons:
+        button.setFixedSize(size)
 
 
 class AboutDialog(QDialog):
@@ -87,6 +100,41 @@ class AboutDialog(QDialog):
         self.setMinimumWidth(560)
 
 
+class ChoiceBox(QDialog):
+    """Pergunta sem icone com botoes proprios (chave -> texto): os de `left` a esquerda e os de `right` a direita,
+    lado a lado, como OK/Cancelar. Depois de exec(), `choice` e a chave do botao clicado; Esc e o X da caixa deixam
+    `escape`. Enter aciona `default`. Todos os botoes com o tamanho do maior texto de `sizes` (os textos deles nos 3
+    idiomas; sem `sizes`, os textos de agora)."""
+
+    def __init__(self, title: str, text: str, left: dict[str, str], right: dict[str, str], default: str, escape: str,
+                 parent: QWidget | None = None, sizes: list[str] | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.choice = escape
+        self.text = QLabel(text)
+        self.buttons: dict[str, QPushButton] = {}
+        row = QHBoxLayout()
+        for side in (left, right):
+            for key, caption in side.items():
+                button = self.buttons[key] = QPushButton(caption)
+                button.setDefault(key == default)
+                button.clicked.connect(lambda _checked=False, k=key: self._pick(k))
+                row.addWidget(button)
+            if side is left:
+                row.addStretch(1)
+        same_size(list(self.buttons.values()), sizes or [*left.values(), *right.values()])
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 16)
+        layout.setSpacing(18)
+        layout.addWidget(self.text)
+        layout.addLayout(row)
+        self.buttons[default].setFocus()
+
+    def _pick(self, key: str) -> None:
+        self.choice = key
+        self.accept()
+
+
 class DisplayWarning(QDialog):
     """Linux sem X11: 'X11 indisponivel; usando Wayland.', 'Falta: ...', '<distro>: <comando>' (selecionavel, Copiar)
     e o link Ajuda (abre o navegador)."""
@@ -123,6 +171,8 @@ class DisplayWarning(QDialog):
         ok = QPushButton(tr("button.ok"))
         ok.setDefault(True)
         ok.clicked.connect(self.accept)
+        if notice.command:
+            same_size([copy, ok], every_language("display.copy") + every_language("button.ok"))
         bottom = QHBoxLayout()
         bottom.addWidget(self.help)
         bottom.addStretch(1)
@@ -186,6 +236,8 @@ class ColumnsDialog(QDialog):
         close = QPushButton(tr("button.close"))
         close.setDefault(True)
         close.clicked.connect(self.accept)
+        same_size([show_all, hide_all, close], [text for key in ("columns.show_all", "columns.hide_all", "button.close")
+                                                for text in every_language(key)])
         buttons = QHBoxLayout()
         buttons.addWidget(show_all)
         buttons.addWidget(hide_all)

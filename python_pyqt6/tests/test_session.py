@@ -2,6 +2,8 @@
 import json
 import re
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,43 +20,78 @@ from ui.main_window import MainWindow
 SAMPLE = Path(__file__).with_name("data") / "sample.mdb"
 SRC = Path(__file__).resolve().parents[1] / "src"
 needs_mdbtools = pytest.mark.skipif(access.mdbtools_dir() is None, reason="sem .tools/mdbtools")
-REAL_ASK = MainWindow.ask_converted  # a pergunta de verdade (o conftest troca por "Apagar" em cada teste)
+REAL_ASK = MainWindow.ask_exit  # a pergunta de verdade (o conftest troca por "Sair" em cada teste)
 
 
-@pytest.mark.parametrize(("key", "expected"), [("esc", mw.CANCEL), ("x", mw.CANCEL), ("enter", mw.SAVE)])
-def test_converted_prompt_esc_and_x_cancel_enter_saves(qtbot, monkeypatch, key, expected) -> None:
-    monkeypatch.setattr(MainWindow, "ask_converted", REAL_ASK)
+@pytest.mark.parametrize(("key", "expected"), [("esc", mw.BACK), ("x", mw.BACK), ("enter", mw.SAVE)])
+def test_exit_prompt_has_save_on_the_left_and_esc_or_x_go_back(qtbot, monkeypatch, key, expected) -> None:
+    # item 27: "Salvar" a esquerda; "Voltar" e "Sair" a direita, lado a lado; sem "Lembrar nesta sessao"
+    monkeypatch.setattr(MainWindow, "ask_exit", REAL_ASK)
     win = MainWindow()
     qtbot.addWidget(win)
     seen = []
 
     def answer() -> None:
         box = QApplication.activeModalWidget()
-        seen.append(box.defaultButton().text())  # botao padrao (Enter) com o foco inicial
+        save, back, leave = (box.buttons[k] for k in (mw.SAVE, mw.BACK, mw.EXIT))
+        seen.append((box.windowTitle(), box.text.text(), [b.text() for b in (save, back, leave)], save.isDefault(),
+                     len(box.findChildren(QAbstractButton))))
+        # a folga fica entre Salvar e os dois da direita
+        assert back.x() - save.geometry().right() > leave.x() - back.geometry().right() >= 0
         if key == "esc":
             QTest.keyClick(box, Qt.Key.Key_Escape)
         elif key == "x":
-            box.close()  # o X da janela
+            box.close()  # o X da caixa
         else:
             QTest.keyClick(box, Qt.Key.Key_Return)
 
     QTimer.singleShot(0, answer)
-    assert win.ask_converted(Path("db.accdb")) == (expected, False)
-    assert seen == ["Save..."]
+    assert win.ask_exit(Path("db.accdb")) == expected
+    assert seen == [("Converted SQLite file", "The database converted from db.accdb was not saved. Save before exiting?",
+                     ["Save", "Back", "Exit"], True, 3)]
 
 
-def test_cancelling_the_save_dialog_returns_to_the_prompt(qtbot, monkeypatch) -> None:
+def test_exit_during_an_export_asks_first_and_exit_cancels_it(qtbot, people_db: Path, monkeypatch) -> None:
+    # antes de tudo: "Voltar" mantem a exportacao; "Sair" cancela (nada gravado pela metade) e fecha
+    from backend.export import Cancelled
+
     win = MainWindow()
     qtbot.addWidget(win)
-    win.manager = type("Converted", (), {"converted": Path("x.sqlite")})()  # banco Access aberto (so o necessario)
-    win.current_db_path = Path("db.accdb")
-    answers = [(mw.SAVE, False), (mw.CANCEL, False)]
-    monkeypatch.setattr(win, "ask_converted", lambda _path: answers.pop(0))
-    monkeypatch.setattr(win, "ask_converted_target", lambda _path: None)  # Cancelar no dialogo de salvar
+    win.show()
+    win.open_database(people_db)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
+    out = people_db.parent / "slow.csv"
 
-    assert win.release_database() is False  # voltou para a pergunta; Esc/Cancelar nela nao fecha nada
-    assert answers == [] and win.current_db_path == Path("db.accdb")
-    win.manager = None
+    def slow(_report, cancel):
+        cancel.wait(60)
+        raise Cancelled()
+
+    win._start_export(out, slow, "rows")
+    box = win.export_running_box(out.name)
+    assert (box.windowTitle(), box.text.text()) == ("Export in progress", "Exiting cancels the export of slow.csv.")
+    assert [b.text() for b in box.buttons.values()] == ["Back", "Exit"] and box.buttons[mw.BACK].isDefault()
+    # exportando: a janela nao aceita mais nada, mas sair continua valendo (Ctrl+Q tambem com o menu desabilitado)
+    assert not win.menuBar().isEnabled() and not win.centralWidget().isEnabled() and win.isEnabled()
+    assert win.quit_action in win.actions()
+    answers = [mw.BACK, mw.EXIT]
+    monkeypatch.setattr(win, "ask_export_running", lambda name: answers.pop(0))
+    win.close()
+    assert win.isVisible() and win._job is not None and answers == [mw.EXIT]
+    win.close()
+    assert not win.isVisible() and answers == [] and not out.exists()
+
+
+def test_a_finished_job_gives_the_window_back(qtbot, people_db: Path) -> None:
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.show()
+    win.open_database(people_db)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
+    done = []
+    win._start_export(people_db.parent / "x.csv", lambda _report, _cancel: 3, "rows", lambda: done.append(1))
+    qtbot.waitUntil(lambda: win._job is None, timeout=30000)
+    assert done == [1] and win.menuBar().isEnabled() and win.centralWidget().isEnabled()
+    assert win.status_label.text().startswith("Exported 3 rows to ")
 
 
 @pytest.fixture
@@ -84,78 +121,177 @@ def test_access_opens_through_one_sqlite_conversion(access_window: MainWindow) -
 
 
 @needs_mdbtools
-def test_close_asks_and_deletes_or_saves_or_cancels(qtbot, access_window: MainWindow, tmp_path: Path, monkeypatch):
-    win = access_window
-    source = win.current_db_path
-    answers = [(mw.CANCEL, False), (mw.SAVE, False)]
+def test_without_a_temp_folder_the_conversion_goes_next_to_the_file_and_leaves_nothing(qtbot, tmp_path: Path,
+                                                                                       monkeypatch) -> None:
+    # item 29: pasta temporaria do usuario, senao a do sistema e so por ultimo a pasta do arquivo aberto
+    from backend import temp_store
+
+    monkeypatch.setenv("MDB2SQL_ACCESS_READER", "mdbtools")
+    blocked = tmp_path / "no temp"
+    blocked.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(temp_store, "temp_folders", lambda: [blocked])
+    folder = tmp_path / "source"
+    folder.mkdir()
+    copy = folder / "sample.mdb"
+    shutil.copy2(SAMPLE, copy)
+    # sobra de uma sessao que caiu nessa pasta: sai ao abrir o arquivo, com a linha do Log
+    stale = folder / temp_store.NAME / "dead"
+    stale.mkdir(parents=True)
+    (stale / "old.sqlite").write_bytes(b"x")
+    crashed = ("import os, sys; from PyQt6.QtCore import QLockFile; lock = QLockFile(sys.argv[1]);"
+               "assert lock.tryLock(0); os._exit(0)")  # trava gravada, processo morto sem soltar
+    subprocess.run([sys.executable, "-c", crashed, str(stale.with_suffix(".lock"))], check=True)
+    win = MainWindow()
+    qtbot.addWidget(win)
+    assert win.session is None
+    win.open_database(copy)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=60000)
+
+    assert win.session.path.parent == folder / temp_store.NAME and not stale.exists()
+    assert [p.name for p in _converted_files(win)] == ["sample.sqlite"]
+    assert "Removed 1 converted file left by a previous session" in win.log_view.toPlainText()
+    win.close()
+    assert [p.name for p in folder.iterdir()] == ["sample.mdb"]  # nada fica na pasta do original
+
+
+def test_settings_file_from_the_environment_replaces_the_registry(qtbot, tmp_path: Path, monkeypatch) -> None:
+    # MDB2SQL_SETTINGS=<arquivo.ini>: capturas e testes do exe nunca tocam nas configuracoes do usuario
+    ini = tmp_path / "isolated.ini"
+    monkeypatch.setenv("MDB2SQL_SETTINGS", str(ini))
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.set_default_scope("all")
+    win.settings.sync()
+    assert "search_scope=all" in ini.read_text(encoding="utf-8")
+    assert QSettings().value("search_scope") is None and mw.app_settings().value("search_scope") == "all"
+
+
+def _reopen(qtbot, win: MainWindow, source: Path) -> None:
+    win.open_database(source)
+    qtbot.waitUntil(lambda: win.manager is not None and win.loaded_table is not None and win._busy == 0, timeout=120000)
+
+
+def _save(qtbot, win: MainWindow, monkeypatch, target: Path, picked: str = "", save_as: bool = False) -> list:
+    """Arquivo > Salvar com a caixa respondendo `target` (e o tipo `picked`); devolve o que a caixa recebeu."""
     asked = []
-    monkeypatch.setattr(win, "ask_converted", lambda path: asked.append(path) or answers.pop(0))
-    target = tmp_path / "kept" / "sample.sqlite"
-    target.parent.mkdir()
-    monkeypatch.setattr(win, "ask_converted_target", lambda path: target)
-
-    win.close_db_action.trigger()  # Cancelar: continua aberto
-    assert win.manager is not None and len(_converted_files(win)) == 1
-
-    win.close_db_action.trigger()  # Salvar: vai para a pasta escolhida, nada fica no temporario
-    assert asked == [source, source]
-    assert win.manager is None and win.stack.currentWidget() is win.empty_label
-    assert target.is_file() and _converted_files(win) == []
-    assert win.status_label.text() == f"Saved the converted file to {target}"
-
-    # Apagar, lembrado nesta sessao: a proxima vez nao pergunta (o SQLite salvo foi apagado: converte de novo)
-    target.unlink()
-    win.open_database(source)
-    qtbot.waitUntil(lambda: win.manager is not None and win._busy == 0, timeout=60000)
-    monkeypatch.setattr(win, "ask_converted", lambda path: asked.append(path) or (mw.DELETE, True))
-    assert win.release_database() and _converted_files(win) == []
-    win.open_database(source)
-    qtbot.waitUntil(lambda: win.manager is not None and win._busy == 0, timeout=60000)
-    assert win.release_database() and _converted_files(win) == []
-    assert len(asked) == 3 and win.converted_choice == mw.DELETE
-    assert "Deleted the converted file sample.sqlite" in win.log_view.toPlainText()
+    monkeypatch.setattr(mw.QFileDialog, "getSaveFileName", lambda *a: asked.append(a[1:]) or (str(target), picked))
+    (win.save_as_action if save_as else win.save_action).trigger()
+    qtbot.waitUntil(lambda: win._job is None and win._busy == 0, timeout=120000)
+    return asked
 
 
 @needs_mdbtools
-def test_saved_conversion_opens_without_asking_again(qtbot, access_window: MainWindow, tmp_path: Path, monkeypatch):
-    # igual nas 4 versoes: o mesmo Access (caminho, tamanho, data) ja salvo como SQLite abre o salvo, sem converter
-    # nem perguntar ao fechar, tambem na proxima execucao; mudou o Access ou o SQLite, converte de novo
+def test_close_open_another_and_reopen_do_not_ask_and_log_the_discarded_conversion(qtbot, access_window: MainWindow,
+                                                                                    people_db: Path, monkeypatch):
+    # item 27: so sair do programa pergunta; o convertido nao salvo e apagado e o Log diz qual
+    win = access_window
+    source = win.current_db_path
+    monkeypatch.setattr(win, "ask_exit", lambda path: pytest.fail("asked"))
+    discarded = "SQLite converted from sample.mdb discarded"
+
+    win.close_db_action.trigger()  # Fechar
+    assert win.manager is None and win.stack.currentWidget() is win.empty_label and _converted_files(win) == []
+    assert win.log_view.toPlainText().count(discarded) == 1
+
+    _reopen(qtbot, win, source)
+    win.reload_action.trigger()  # Reabrir (F5): a conversao nova troca a anterior
+    qtbot.waitUntil(lambda: win.log_view.toPlainText().count(discarded) == 2 and win._busy == 0, timeout=120000)
+    assert win.manager is not None and len(_converted_files(win)) == 1
+
+    monkeypatch.setattr(mw.QFileDialog, "getOpenFileName", lambda *a: (str(people_db), ""))
+    win.choose_database()  # abrir outro
+    qtbot.waitUntil(lambda: win.current_db_path == people_db and win._busy == 0, timeout=30000)
+    assert win.log_view.toPlainText().count(discarded) == 3 and _converted_files(win) == []
+
+
+@needs_mdbtools
+def test_exit_asks_only_for_an_unsaved_conversion_and_save_closes_after_writing(qtbot, access_window: MainWindow,
+                                                                                tmp_path: Path, monkeypatch) -> None:
+    win = access_window
+    source = win.current_db_path
+    target = tmp_path / "kept" / "sample.sqlite"
+    target.parent.mkdir()
+    answers = [mw.BACK, mw.SAVE, mw.BACK, mw.SAVE]
+    asked = []
+    monkeypatch.setattr(win, "ask_exit", lambda path: asked.append(path) or answers.pop(0))
+    dialog = [("", ""), (str(target), "")]  # a caixa de salvar: cancelada, depois o arquivo
+    monkeypatch.setattr(mw.QFileDialog, "getSaveFileName", lambda *a: dialog.pop(0))
+
+    win.close()  # Voltar: nada muda
+    assert win.isVisible() and win.manager is not None and len(_converted_files(win)) == 1
+    win.close()  # Salvar com a caixa cancelada: a pergunta volta (Voltar)
+    assert win.isVisible() and answers == [mw.SAVE] and asked == [source] * 3
+    win.close()  # Salvar: grava e so entao fecha
+    qtbot.waitUntil(lambda: not win.isVisible(), timeout=120000)
+    assert asked == [source] * 4 and target.is_file() and not win.session.path.exists()
+    assert win.saved_conversion(source) == target  # o mesmo Access, sem mudanca, abre o salvo
+
+
+@needs_mdbtools
+def test_exit_of_an_unsaved_conversion_deletes_the_temporary_file(qtbot, access_window: MainWindow, monkeypatch):
+    win = access_window
+    asked = []
+    monkeypatch.setattr(win, "ask_exit", lambda path: asked.append(path) or mw.EXIT)
+    win.close()
+    assert not win.isVisible() and len(asked) == 1 and not win.session.path.exists()  # nada orfao no temporario
+
+
+@needs_mdbtools
+def test_save_offers_sqlite_duckdb_and_excel_and_remembers_the_access_conversion(qtbot, access_window: MainWindow,
+                                                                                 tmp_path: Path, monkeypatch) -> None:
+    # item 28: a caixa abre na pasta do original com o nome dele e o tipo do aberto (Access -> SQLite) ja marcado
     import os
 
     win = access_window
     source = win.current_db_path
-    target = source.with_suffix(".sqlite")  # o padrao do Salvar...: ao lado do Access
-    asked = []
-    monkeypatch.setattr(win, "ask_converted", lambda path: asked.append(path) or (mw.SAVE, False))
-    monkeypatch.setattr(win, "ask_converted_target", lambda path: target)
-    assert win.release_database() and target.is_file() and asked == [source]
+    monkeypatch.setattr(win, "ask_exit", lambda path: pytest.fail("asked"))
+    types = "SQLite database (*.sqlite);;DuckDB database (*.duckdb);;Excel workbook (*.xlsx)"
+    title = "Save as SQLite, DuckDB or Excel (.mdb and .accdb files cannot be written)"
 
-    win.open_database(source)
-    qtbot.waitUntil(lambda: win.manager is not None and win.loaded_table is not None and win._busy == 0, timeout=60000)
-    assert win.manager.converted is None and win.manager.reader == "SQLite" and _converted_files(win) == []
+    # Excel: a pergunta ao sair some, mas a conversao nao fica lembrada
+    book = tmp_path / "sample.xlsx"
+    asked = _save(qtbot, win, monkeypatch, book)
+    assert asked == [(title, str(source.with_suffix(".sqlite")), types, "SQLite database (*.sqlite)")]
+    assert book.is_file() and win.converted_saved and win.saved_conversion(source) is None
+    assert win.status_label.text() == f"Exported 2 tables to {book}"
+
+    # DuckDB escolhido no tipo, com o nome sugerido como veio: grava .duckdb; fica lembrado
+    _reopen(qtbot, win, source)
+    assert not win.converted_saved
+    duck = tmp_path / "sample.duckdb"
+    _save(qtbot, win, monkeypatch, source.with_suffix(".sqlite"), "DuckDB database (*.duckdb)")
+    assert duck.is_file() and not source.with_suffix(".sqlite").exists() and win.saved_conversion(source) == duck
+    # o temporario nunca e o destino: recusado com a mensagem de exportar sobre o aberto
+    _save(qtbot, win, monkeypatch, win.manager.converted)
+    assert win.status_label.text() == "Export failed: The output file is the open database; choose another name"
+
+    # o mesmo Access, sem mudanca, abre o DuckDB salvo (sem converter); Salvar nunca sugere o arquivo aberto
+    _reopen(qtbot, win, source)
+    assert win.manager.converted is None and win.manager.reader == "DuckDB" and _converted_files(win) == []
     assert win.windowTitle().startswith("sample.mdb - ")
-    assert f"sample.mdb: opened the SQLite saved from it ({target})" in win.log_view.toPlainText()
-    assert win.release_database() and asked == [source]  # nada a salvar: nao pergunta
-
+    # 13 b): o formato real do arquivo salvo, lido do arquivo (aqui DuckDB; abaixo SQLite)
+    assert f"sample.mdb: opened the DuckDB saved from it ({duck})" in win.log_view.toPlainText()
+    assert "opened the SQLite saved" not in win.log_view.toPlainText()
+    lite = tmp_path / "other" / "sample.sqlite"
+    lite.parent.mkdir()
+    assert _save(qtbot, win, monkeypatch, lite)[0][1:] == (str(source.with_suffix(".sqlite")), types,
+                                                         "SQLite database (*.sqlite)")
+    assert win.saved_conversion(source) == lite
+    # Salvar como...: comeca na ultima pasta em que o usuario salvou
+    assert _save(qtbot, win, monkeypatch, lite, save_as=True)[0][1] == str(lite.parent / "sample.sqlite")
+    _reopen(qtbot, win, source)
+    assert f"sample.mdb: opened the SQLite saved from it ({lite})" in win.log_view.toPlainText()
     again = MainWindow()  # proxima execucao: lembrado nas configuracoes
     qtbot.addWidget(again)
-    assert again.saved_conversion(source) == target
-    # lendo o SQLite salvo, Exportar > Banco para SQLite nunca sugere o proprio arquivo que esta aberto
-    win.open_database(source)
-    qtbot.waitUntil(lambda: win.manager is not None and win.loaded_table is not None and win._busy == 0, timeout=60000)
-    suggested = []
-    monkeypatch.setattr(mw.QFileDialog, "getSaveFileName", lambda *a: suggested.append(Path(a[2])) or ("", ""))
-    win._ask_save_path("t", target.stem, ".sqlite")
-    assert suggested == [target.with_name("sample_export.sqlite")]
-    assert win.release_database()
-    # o SQLite salvo mudou: converte de novo; o Access mudou: tambem
-    os.utime(target, ns=(target.stat().st_atime_ns, target.stat().st_mtime_ns + 10**9))
+    assert again.saved_conversion(source) == lite
+    win.close()
+    assert not win.isVisible()  # nada a salvar: nao pergunta
+
+    # o arquivo salvo mudou: converte de novo; o Access mudou: tambem
+    os.utime(lite, ns=(lite.stat().st_atime_ns, lite.stat().st_mtime_ns + 10**9))
     assert again.saved_conversion(source) is None
     os.utime(source, ns=(source.stat().st_atime_ns, source.stat().st_mtime_ns + 10**9))
     assert again.saved_conversion(source) is None
-    win.open_database(source)
-    qtbot.waitUntil(lambda: win.manager is not None and win._busy == 0, timeout=60000)
-    assert win.manager.converted is not None and len(_converted_files(win)) == 1
 
 
 @needs_mdbtools
@@ -168,52 +304,18 @@ def test_saved_key_is_the_one_read_when_the_access_file_opened(qtbot, access_win
     source = win.current_db_path
     target = tmp_path / "kept.sqlite"
     os.utime(source, ns=(source.stat().st_atime_ns, source.stat().st_mtime_ns + 10**9))
-    monkeypatch.setattr(win, "ask_converted", lambda path: (mw.SAVE, False))
-    monkeypatch.setattr(win, "ask_converted_target", lambda path: target)
-    assert win.release_database() and target.is_file()
-    assert win.saved_conversion(source) is None
+    _save(qtbot, win, monkeypatch, target)
+    assert target.is_file() and win.saved_conversion(source) is None
 
 
 @needs_mdbtools
-def test_close_during_a_reload_keeps_one_database_and_saves_the_one_asked(qtbot, access_window: MainWindow,
-                                                                         tmp_path: Path, monkeypatch) -> None:
-    # F5 ainda convertendo e Fechar: a pergunta vale para o banco aberto; a recarga em andamento e descartada
+def test_close_during_a_reopen_keeps_no_database(qtbot, access_window: MainWindow) -> None:
+    # F5 ainda convertendo e Fechar: o banco aberto fecha e a conversao em andamento e descartada quando termina
     win = access_window
-    source = win.current_db_path
-    target = tmp_path / "kept.sqlite"
-    monkeypatch.setattr(win, "ask_converted", lambda path: (mw.SAVE, False))
-    monkeypatch.setattr(win, "ask_converted_target", lambda path: target)
-    win.load_database()  # F5: conversao nova em andamento
-    assert win.release_database() and target.is_file()
-    qtbot.waitUntil(lambda: win._busy == 0, timeout=60000)
-    assert win.manager is None and _converted_files(win) == []  # a recarga terminou depois e foi descartada
-    assert win.saved_conversion(source) == target and win.loaded_schema == []
-
-
-@needs_mdbtools
-def test_quit_can_be_cancelled_and_cleans_the_session(qtbot, access_window: MainWindow, monkeypatch) -> None:
-    win = access_window
-    monkeypatch.setattr(win, "ask_converted", lambda path: (mw.CANCEL, False))
-    win.close()
-    assert win.isVisible() and win.manager is not None
-
-    monkeypatch.setattr(win, "ask_converted", lambda path: (mw.DELETE, False))
-    win.close()
-    assert not win.isVisible() and not win.session.path.exists()  # nada orfao na pasta temporaria
-
-
-@needs_mdbtools
-def test_open_another_file_asks_first(qtbot, access_window: MainWindow, people_db: Path, monkeypatch) -> None:
-    win = access_window
-    monkeypatch.setattr(mw.QFileDialog, "getOpenFileName", lambda *a: (str(people_db), ""))
-    monkeypatch.setattr(win, "ask_converted", lambda path: (mw.CANCEL, False))
-    win.choose_database()
-    assert win.current_db_path.name == "sample.mdb"  # Cancelar: nada muda
-
-    monkeypatch.setattr(win, "ask_converted", lambda path: (mw.DELETE, False))
-    win.choose_database()
-    qtbot.waitUntil(lambda: win.current_db_path == people_db and win._busy == 0, timeout=30000)
-    assert _converted_files(win) == []
+    win.load_database()
+    win.release_database()
+    qtbot.waitUntil(lambda: win._busy == 0, timeout=120000)
+    assert win.manager is None and _converted_files(win) == [] and win.loaded_schema == []
 
 
 def test_log_panel_keeps_the_messages_and_copies(qtbot, people_db: Path) -> None:
@@ -303,7 +405,7 @@ def test_language_applies_at_once_and_is_saved(qtbot, people_db: Path) -> None:
         assert win.tabs.tabText(0) == "Dados" and win.tables_dock.windowTitle() == "Tabelas"
         assert win.table_list.headerItem().text(1) == "Linhas" and win.limit_label.text() == "&Linhas"
         assert win.search_edit.placeholderText() == "Pesquisar na tabela inteira"
-        assert win.info_label.text() == "empty_table: mostrando 0 de 0 linhas"  # a barra da tabela tambem
+        assert win.info_label.text() == "empty_table: 0 linhas"  # a barra da tabela tambem
         assert win.reader_label.text() == "Aberto via DuckDB"
         assert [win.schema_model.headerData(c, Qt.Orientation.Horizontal) for c in range(3)] == [
             "Coluna", "Tipo", "Aceita nulo"]
@@ -335,18 +437,24 @@ def test_language_applies_at_once_and_is_saved(qtbot, people_db: Path) -> None:
 # nomes proprios e siglas que podem vir com maiuscula no meio da frase
 PROPER = {"SQLite", "DuckDB", "Excel", "CSV", "UTF-8", "Access", "ODBC", "SQL", "NULL", "X11", "Wayland", "DISPLAY",
           "WAYLAND_DISPLAY", "GPL", "Ctrl+O", "Ctrl+F", "Ctrl+L", "Ctrl+Enter", "Enter", "F5", "Windows", "Brasil",
-          "MDB2SQL_ACCESS_READER", "Log", "X"}
+          "MDB2SQL_ACCESS_READER", "Log", "X", "Microsoft",
+          # nome da aba Pesquisa Avancada (13 d), como o dono escreveu
+          "Search", "Pesquisa", "Avançada", "Búsqueda", "Avanzada",
+          # nome da aba do relatorio (13 i), como o dono escreveu
+          "Result", "Filtro"}
 
 
 def test_texts_have_no_title_case() -> None:
-    # igual nas 4 versoes (redacao do Go): so a primeira palavra com maiuscula ("Abrir banco", nao "Abrir Banco")
+    # igual nas 4 versoes (redacao do Go): so a primeira palavra de cada frase com maiuscula ("Abrir banco", nao
+    # "Abrir Banco")
     title_case = []
     for code in i18n.LANGUAGES:
         for key, text in i18n.catalog(code).items():
-            words = [w.rstrip(".") for w in re.findall(r"[\w+./-]+", text.replace("&", "")) if w.rstrip(".")]
-            capitals = [w for w in words[1:] if w[0].isupper() and w not in PROPER and not w.isupper()]
-            if capitals and not key.startswith("language."):
-                title_case.append((code, key, text))
+            for sentence in re.split(r"(?<=[.?!]) ", text.replace("&", "")):
+                words = [w.rstrip(".") for w in re.findall(r"[\w+./-]+", sentence) if w.rstrip(".")]
+                capitals = [w for w in words[1:] if w[0].isupper() and w not in PROPER and not w.isupper()]
+                if capitals and not key.startswith("language."):
+                    title_case.append((code, key, text))
     assert title_case == []
 
 
@@ -381,7 +489,7 @@ def test_catalogs_have_the_same_keys_and_placeholders() -> None:
 # (Sobre: versoes, autor, links; botoes internos do Qt, traduzidos pelo qtbase_<idioma>.qm)
 NOT_TEXT = re.compile(r"(SQL|SELECT \* FROM \.\.\.|[\d,.]+|mdb2sql [\d.]+( - Python)?|GitHub|GitLab|"
                       r"Python .*|Qt [\d.]+|SQLite [\d.]+, DuckDB .*|dev|Mauricio Menon|(GitHub |GitLab )?https://\S+|"
-                      r"<a href=.*|Scroll Left|Scroll Right|Float|Close)")
+                      r"<a href=.*|Scroll Left|Scroll Right|Float|Close|◀|▶)")  # setas das paginas (13 h): sinais, nao texto
 
 
 def test_no_ui_text_outside_the_catalogs(qtbot, people_db: Path, monkeypatch) -> None:

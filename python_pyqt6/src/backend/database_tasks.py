@@ -1,15 +1,17 @@
 import os
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Sequence, TypedDict
 
 from backend.access import Progress
-from backend.db_manager import DBManager, Filters
+from backend.db_manager import MARK_KEY, DBManager, Filters
 
 
 class TablePayload(TypedDict):
     table_name: str
     search: str  # pesquisa de palavras usada na consulta
-    rows: list[dict[str, Any]]
+    rows: list[dict[str, Any]]  # as marcadas primeiro, depois as da consulta sem repetir; MARK_KEY = identidade
+    shown: int  # linhas da consulta na grade, desta pagina (so as marcadas: quantas marcadas)
+    offset: int  # linhas puladas antes desta pagina (a pagina 1 comeca em 0)
     total_rows: int  # linhas na tabela inteira
     matched_rows: int  # linhas que passam nos filtros e na pesquisa (= total_rows sem eles)
     filters: list[tuple[str, Any]]  # filtros coluna = valor usados na consulta
@@ -41,9 +43,16 @@ def open_database(
 
 
 def load_table_payload(
-    manager: DBManager, table_name: str, limit: int = 100, filters: Filters = (), search: str = ""
+    manager: DBManager, table_name: str, limit: int = 100, filters: Filters = (), search: str = "",
+    marked: Sequence[Any] = (), only_marked: bool = False, offset: int = 0,
 ) -> TablePayload:
-    rows = manager.query_table(table_name, limit=limit, filters=filters, search=search)
+    # as marcadas (identidades `marked`) ficam sempre no topo, na ordem da tabela, qualquer que seja a pesquisa ou o
+    # filtro, em toda pagina (offset: o comeco da pagina); so_marcadas: a grade so com elas, sem paginas
+    offset = 0 if only_marked else offset
+    found = [] if only_marked else manager.query_table(table_name, limit, filters, search, keyed=True, offset=offset)
+    on_top = manager.fetch_rows(*manager.marked_query(table_name, marked, keyed=True)) if marked else []
+    keys = {row[MARK_KEY] for row in on_top}
+    rows = on_top + [row for row in found if row[MARK_KEY] not in keys]
     total_rows = manager.get_row_count(table_name)
     narrowed = filters or search.split()
     matched_rows = manager.get_row_count(table_name, filters, search) if narrowed else total_rows
@@ -52,6 +61,8 @@ def load_table_payload(
         "table_name": table_name,
         "search": search,
         "rows": rows,
+        "shown": len(on_top) if only_marked else len(found),
+        "offset": offset,
         "total_rows": total_rows,
         "matched_rows": matched_rows,
         "filters": list(filters),

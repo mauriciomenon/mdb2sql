@@ -18,13 +18,16 @@ def isolated_settings(tmp_path_factory, monkeypatch):
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path_factory.mktemp("settings")))
     monkeypatch.delenv("MDB2SQL_ACCESS_READER", raising=False)
-    # pasta temporaria das sessoes (SQLite convertidos) dentro do tmp do teste; textos em ingles (padrao)
-    monkeypatch.setattr(temp_store, "BASE", tmp_path_factory.mktemp("sessions"))
+    # pastas temporarias das sessoes (SQLite convertidos) dentro do tmp do teste; textos em ingles (padrao)
+    sessions = tmp_path_factory.mktemp("sessions")
+    monkeypatch.setattr(temp_store, "temp_folders", lambda: [sessions])
+    monkeypatch.delenv("MDB2SQL_SETTINGS", raising=False)
     i18n.set_language("en")
-    # a pergunta do SQLite convertido e modal (exec): nos testes responde "Apagar", salvo quando o teste troca
-    from ui.main_window import DELETE, MainWindow
+    # as perguntas ao sair sao modais (exec): nos testes respondem "Sair", salvo quando o teste troca
+    from ui.main_window import EXIT, MainWindow
 
-    monkeypatch.setattr(MainWindow, "ask_converted", lambda _self, _source: (DELETE, False))
+    monkeypatch.setattr(MainWindow, "ask_exit", lambda _self, _source: EXIT)
+    monkeypatch.setattr(MainWindow, "ask_export_running", lambda _self, _name: EXIT)
 
 
 @pytest.fixture
