@@ -174,7 +174,8 @@
   let termList = $derived(parseTerms(termsText)); // { terms, repeated }
   let defaultMatch = $state(loadSetting(MATCH_KEY) === 'contains' ? 'contains' : 'whole');
   let match = $state(defaultMatch); // 'whole' (valor inteiro) | 'contains'
-  let termsScope = $state(defaultScope);
+  // sempre Todas as tabelas ao abrir, nunca o escopo padrao da aba Dados (secao 17: com Esta tabela o dono nao achava nada)
+  let termsScope = $state('all');
   let termsRun = 0; // numero da pesquisa de termos que vale; a resposta de uma anterior e descartada
   let termsWork = $state.raw(null); // { done, total, item } da pesquisa em andamento
   let termsResult = $state.raw(null); // { terms, tables: [{ table, count }], notFound, found, rows }
@@ -715,12 +716,11 @@
     if (termsTable) openTermsTable(termsTable); // o titulo da coluna Termo vem com as linhas
   }
 
-  // Settings > Escopo padrao da busca: gravado, e passa a valer tambem na pesquisa aberta e na aba Termos
+  // Settings > Escopo padrao da busca: gravado, e passa a valer tambem na pesquisa aberta (a Pesquisa Avancada nao muda)
   function setDefaultScope(next) {
     openMenu = null;
     defaultScope = next;
     saveSetting(SCOPE_KEY, next === 'all' ? 'all' : null);
-    termsScope = next;
     setScope(next);
   }
 
@@ -996,8 +996,8 @@
       const table = termsScope === 'table' ? selectedTable : null;
       const hits = await invoke('search_terms', { terms, whole: match === 'whole', table });
       if (run !== termsRun) return;
-      termsResult = { terms, ...termsOutcome(terms, hits) };
-      showStatus('terms.summary', termsValues(termsResult));
+      termsResult = { terms, only: table, ...termsOutcome(terms, hits) };
+      showStatus(termsKey(termsResult), termsValues(termsResult));
       if (termsResult.tables.length) await openTermsTable(termsResult.tables[0].table);
     } catch (err) {
       if (run === termsRun) showError(err);
@@ -1007,7 +1007,9 @@
     }
   }
 
-  const termsValues = (r) => ({ found: fmt(r.found), total: fmt(r.terms.length), rows: fmt(r.rows), tables: fmt(r.tables.length) });
+  const termsValues = (r) => ({ found: fmt(r.found), total: fmt(r.terms.length), rows: fmt(r.rows), tables: fmt(r.tables.length), table: r.only });
+  // pesquisa so na tabela escolhida: o resumo diz "(só em {tabela})", para nunca parecer que o termo nao existe no banco
+  const termsKey = (r) => (r.only ? 'terms.summaryIn' : 'terms.summary');
 
   // linhas achadas da tabela escolhida: a coluna Termo e as colunas da tabela, ate o limite de linhas
   async function openTermsTable(table) {
@@ -1600,7 +1602,7 @@
             {#if termsWork}
               {t('terms.progress', { done: termsWork.total ? termsWork.done + 1 : 0, total: termsWork.total, item: termsWork.item })}
             {:else if termsResult}
-              {t('terms.summary', termsValues(termsResult))}
+              {t(termsKey(termsResult), termsValues(termsResult))}
             {/if}
           </p>
         </div>

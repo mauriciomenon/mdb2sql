@@ -127,6 +127,8 @@ export default {
   'terms.count': '{count} {count|term|terms}',
   'terms.repeated': ', {count} repeated',
   'terms.summary': '{found} of {total} {total|term|terms} found: {rows} {rows|row|rows} in {tables} {tables|table|tables}',
+  'terms.summaryIn':
+    '{found} of {total} {total|term|terms} found: {rows} {rows|row|rows} in {tables} {tables|table|tables} (only in {table})',
   'terms.progress': 'Searching terms: table {done} of {total} ({item})',
   'terms.col': 'Term',
   'terms.notFound': 'Not found ({count})',

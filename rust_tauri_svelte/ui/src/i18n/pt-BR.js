@@ -128,6 +128,8 @@ export default {
   'terms.repeated': ', {count} {count|repetido|repetidos}',
   'terms.summary':
     '{found} de {total} {total|termo encontrado|termos encontrados}: {rows} {rows|linha|linhas} em {tables} {tables|tabela|tabelas}',
+  'terms.summaryIn':
+    '{found} de {total} {total|termo encontrado|termos encontrados}: {rows} {rows|linha|linhas} em {tables} {tables|tabela|tabelas} (só em {table})',
   'terms.progress': 'Pesquisando termos: tabela {done} de {total} ({item})',
   'terms.col': 'Termo',
   'terms.notFound': 'Não encontrados ({count})',

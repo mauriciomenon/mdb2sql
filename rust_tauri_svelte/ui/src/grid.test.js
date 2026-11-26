@@ -95,6 +95,18 @@ test('pasted terms: one per non-empty line, trimmed, repeated ones counted once'
   assert.deepEqual(parseTerms(pasted), { terms: ['PNTNAM', 'GERADOR A', 'TURBINA B', 'C'], repeated: 2 });
   assert.deepEqual(parseTerms('  \n\n'), { terms: [], repeated: 0 });
   assert.deepEqual(parseTerms('um termo com espacos dentro'), { terms: ['um termo com espacos dentro'], repeated: 0 });
+  // secao 17: os 8 termos do dono colados do Excel (CRLF e a quebra do fim) = 8 termos
+  const owner = [
+    'GENERADOR CGS VIBRACION ANORMAL 1 CANAL 1',
+    'GENERADOR CGS VIBRACION ANORMAL 2 CANAL 1',
+    'TURBINA CGI VIBRACION ANORMAL 1 CANAL 1',
+    'GENERADOR COJ EMP VIBRACION ANORMAL 1 CANAL 1',
+    'GENERADOR COJ EMP VIBRACION ANORMAL 2 CANAL 1',
+    'GENERADOR GGB ALIMENTACION CONTROL 24VCC',
+    'GENERADOR GGB INTERRUPTORES CONTROL CIRCUITO 2',
+    'TURBINA CGI VIBRACION ANORMAL 2 CANAL 1',
+  ];
+  assert.deepEqual(parseTerms(`${owner.join('\r\n')}\r\n`), { terms: owner, repeated: 0 });
 });
 
 // resultado: tabelas com acerto (linhas somadas dos termos), nao encontrados na ordem colada, termos achados e linhas

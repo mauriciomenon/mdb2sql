@@ -195,6 +195,8 @@ test('new texts of Save, exit, marked rows and Terms are the agreed ones', () =>
     ['terms.repeated', { count: 1 }, ', 1 repetido', ', 1 repeated', ', 1 repetido'],
     ['terms.summary', { found: 8, total: 9, rows: 8, tables: 1 }, '8 de 9 termos encontrados: 8 linhas em 1 tabela', '8 of 9 terms found: 8 rows in 1 table', '8 de 9 términos encontrados: 8 filas en 1 tabla'],
     ['terms.summary', { found: 1, total: 1, rows: 1, tables: 2 }, '1 de 1 termo encontrado: 1 linha em 2 tabelas', '1 of 1 term found: 1 row in 2 tables', '1 de 1 término encontrado: 1 fila en 2 tablas'],
+    // secao 17: com Esta tabela o resumo diz onde pesquisou
+    ['terms.summaryIn', { found: 0, total: 8, rows: 0, tables: 0, table: 'T' }, '0 de 8 termos encontrados: 0 linhas em 0 tabelas (só em T)', '0 of 8 terms found: 0 rows in 0 tables (only in T)', '0 de 8 términos encontrados: 0 filas en 0 tablas (solo en T)'],
     ['terms.progress', { done: 2, total: 287, item: 'T' }, 'Pesquisando termos: tabela 2 de 287 (T)', 'Searching terms: table 2 of 287 (T)', 'Buscando términos: tabla 2 de 287 (T)'],
     ['terms.col', {}, 'Termo', 'Term', 'Término'],
     ['terms.notFound', { count: 1 }, 'Não encontrados (1)', 'Not found (1)', 'No encontrados (1)'],

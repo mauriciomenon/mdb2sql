@@ -558,7 +558,7 @@ test('Terms tab: box, selectors, summary, tables with hits and grid, terms not f
     "{@render choice(SCOPES, termsScope, (id) => (termsScope = id), t('scope.label'))}",
     "onclick={runTerms} disabled={!canRunTerms}>{t('terms.run')}",
     "t('terms.count'",
-    "t('terms.summary'",
+    't(termsKey(termsResult), termsValues(termsResult))',
     '<div class="terms-found">',
     "t('found.item'",
     '<Grid',
@@ -574,7 +574,14 @@ test('Terms tab: box, selectors, summary, tables with hits and grid, terms not f
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
   assert.match(app, /\['terms', 'tabs\.terms'\],\s*\];/); // a aba depois de SQL
   // o padrao dos seletores vem de Configuracoes: Comparacao dos termos (inicial Valor inteiro) e Escopo padrao da busca
-  assert.match(app, /let defaultMatch = \$state\(loadSetting\(MATCH_KEY\) === 'contains' \? 'contains' : 'whole'\);\s*let match = \$state\(defaultMatch\);[^\n]*\n\s*let termsScope = \$state\(defaultScope\);/);
+  assert.match(app, /let defaultMatch = \$state\(loadSetting\(MATCH_KEY\) === 'contains' \? 'contains' : 'whole'\);\s*let match = \$state\(defaultMatch\);/);
+  // secao 17 (defeito achado pelo dono): a Pesquisa Avancada abre sempre em Todas as tabelas, nunca no escopo padrao
+  // da aba Dados (que comeca em Esta tabela); com Esta tabela o resumo diz "(so em {tabela})"
+  assert.match(app, /\n {2}let termsScope = \$state\('all'\);/);
+  assert.doesNotMatch(appFunction('setDefaultScope'), /termsScope/);
+  assert.match(appFunction('runTerms'), /const table = termsScope === 'table' \? selectedTable : null;[\s\S]*termsResult = \{ terms, only: table, \.\.\.termsOutcome\(terms, hits\) \};\s*showStatus\(termsKey\(termsResult\), termsValues\(termsResult\)\);/);
+  assert.match(app, /const termsKey = \(r\) => \(r\.only \? 'terms\.summaryIn' : 'terms\.summary'\);/);
+  assert.match(app, /const termsValues = \(r\) => \(\{[^\n]*table: r\.only \}\);/);
   const run = appFunction('runTerms');
   assert.match(run, /dropTerms\(\);\s*const run = termsRun;/);
   assert.match(run, /const hits = await invoke\('search_terms', \{ terms, whole: match === 'whole', table \}\);\s*if \(run !== termsRun\) return;/);

@@ -100,7 +100,8 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
 - Aba **Advanced Search** (`Ctrl+4`): cole uma lista (por exemplo uma coluna do Excel, um termo por linha), escolha **Whole
   value** (a celula inteira, sem espacos nas pontas, igual ao termo; numero casa pelo valor, em formato EUA ou BR:
   216 acha 216.0, "216,0" e "216"; 1234.5 acha "1.234,5"; 216 nao acha 2160) ou **Contains**, sem diferenciar maiusculas, e
-  **This table** ou **All tables**; **Search terms** (ou `Ctrl+Enter`) procura no motor, em todas as colunas, com
+  **All tables** (sempre ao abrir, qualquer que seja o escopo padrao da aba Data) ou **This table** (o resumo diz
+  "(only in <tabela>)"); **Search terms** (ou `Ctrl+Enter`) procura no motor, em todas as colunas, com
   progresso e **Cancel**. Mostra o resumo, as tabelas com acerto e a grade da escolhida (coluna **Term** + as colunas
   da tabela, na ordem da lista colada) e os termos nao encontrados (texto copiavel). **Copy the rows found in this
   table** copia todas as linhas achadas com o cabecalho e sem a coluna Term; o relatorio (Export > Term search report)
