@@ -1405,13 +1405,19 @@ describe('App IPC flow', () => {
     expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true'); // Default search scope
     expect(screen.getByRole('radiogroup', { name: 'Term matching' }).title).toMatch(/^Whole value: the whole cell equals the term/);
     fireEvent.change(box, { target: { value: 'TENSAO\n  pntnam \n\nU9A\ntensao\n' } });
-    expect(screen.getByText('3 terms, 1 repeated')).toBeInTheDocument();
+    // standard 18c: the box beside Search terms counts the input lines (the 4 with text, the repeat too)
+    expect(document.querySelector('.terms-bar .terms-status').textContent).toBe('4 input lines');
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
     await waitFor(() => expect(SearchTerms).toHaveBeenCalledWith(['TENSAO', '  pntnam ', '', 'U9A', 'tensao', ''], true, ''));
     act(() => goProgress({ done: 1, total: 2, label: 'RANGER_SOGEN' }));
     expect(screen.getByText('Searching terms: table 1 of 2 (RANGER_SOGEN)')).toBeInTheDocument();
     await act(async () => answer(res));
     expect(await screen.findByText('2 of 3 terms found: 3 rows in 2 tables')).toBeInTheDocument();
+    // standard 18c: Search terms | the box (input lines and the summary, no line below) | match, a thin line, scope
+    const bar = [...document.querySelector('.terms-bar').children];
+    expect(bar.map((el) => el.getAttribute('aria-label') ?? el.className ?? '')).toEqual(['', 'terms-status', 'Term matching', 'terms-sep', 'Search in']);
+    expect(bar[0].textContent).toBe('Search terms');
+    expect([...bar[1].children].map((s) => s.textContent)).toEqual(['4 input lines', '2 of 3 terms found: 3 rows in 2 tables']);
 
     // the first table found is chosen; its rows, its own columns, limited as in Data (Rows)
     await waitFor(() => expect(TermRows).toHaveBeenLastCalledWith('RANGER_SOGEN', res.terms, true, 100));
@@ -1467,7 +1473,7 @@ describe('App IPC flow', () => {
     expect(LANGS.map((l) => translate(l, 'tab.terms'))).toEqual(['Advanced Search', 'Pesquisa Avançada', 'Búsqueda Avanzada']);
     expect(translate('es', 'export.terms')).toBe('Informe de la Búsqueda Avanzada');
     const pt = (key, n, ...args) => translateN('pt-BR', key, n, ...args);
-    expect(pt('terms.count', 1, 1) + pt('terms.repeated', 1, 1)).toBe('1 termo, 1 repetido');
+    expect(pt('terms.lines', 1, 1) + ' / ' + pt('terms.lines', 8, 8)).toBe('1 linha de entrada / 8 linhas de entrada');
     expect(translate('pt-BR', 'terms.summary', pt('terms.found', 1, 1, 1), pt('terms.rows', 1, 1), pt('terms.tables', 1, 1))).toBe('1 de 1 termo encontrado: 1 linha em 1 tabela');
     expect(translate('pt-BR', 'terms.summary', pt('terms.found', 3, 2, 3), pt('terms.rows', 8, 8), pt('terms.tables', 2, 2))).toBe('2 de 3 termos encontrados: 8 linhas em 2 tabelas');
   });

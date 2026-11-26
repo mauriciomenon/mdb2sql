@@ -1043,6 +1043,7 @@ function App() {
   // Terms tab (standard item 32): Go searches every column of the tables in the engine, as a job with progress and
   // Cancel; the answer of an older search never shows
   const termsInfo = useMemo(() => parseTerms(termsText), [termsText]);
+  const inputLines = termsInfo.terms.length + termsInfo.repeated; // the lines with text in the box, repeats too
   async function runTerms() {
     const b = window.go?.main?.App;
     if (!b?.SearchTerms || termsInfo.terms.length === 0 || tables.length === 0 || busy) return;
@@ -1569,7 +1570,25 @@ function App() {
                     }
                   }}
                 />
+                {/* the line of controls (standard 18c): Search terms | a box with the input lines and the summary (it
+                    grows, never smaller than its text) | Whole value | Contains, a thin line, This table | All tables */}
                 <div className="terms-bar">
+                  <button disabled={termsInfo.terms.length === 0} onClick={runTerms} title="Ctrl+Enter">
+                    {t('terms.run')}
+                  </button>
+                  <div className="terms-status">
+                    <span>{tn('terms.lines', inputLines, inputLines)}</span>
+                    {termsRes && (
+                      <span>
+                        {t(
+                          'terms.summary',
+                          tn('terms.found', termsRes.res.terms.length, termsRes.res.terms.length - termsRes.res.notFound.length, termsRes.res.terms.length),
+                          tn('terms.rows', sumRows(termsRes.res.tables), sumRows(termsRes.res.tables)),
+                          tn('terms.tables', termsRes.res.tables.length, termsRes.res.tables.length),
+                        ) + (termsRes.only ? ` ${t('terms.onlyIn', termsRes.only)}` : '')}
+                      </span>
+                    )}
+                  </div>
                   <div className="tabs" role="radiogroup" aria-label={t('menu.termMatch')} title={t('terms.matchTip')}>
                     {MATCHES.map((m) => (
                       <button key={m} role="radio" aria-checked={match === m} onClick={() => setMatch(m)}>
@@ -1577,6 +1596,7 @@ function App() {
                       </button>
                     ))}
                   </div>
+                  <span className="terms-sep" aria-hidden="true" />
                   <div className="tabs" role="radiogroup" aria-label={t('scope.label')}>
                     {SCOPES.map((s) => (
                       <button key={s} role="radio" aria-checked={termsScope === s} onClick={() => setTermsScope(s)}>
@@ -1584,23 +1604,9 @@ function App() {
                       </button>
                     ))}
                   </div>
-                  <button disabled={termsInfo.terms.length === 0} onClick={runTerms} title="Ctrl+Enter">
-                    {t('terms.run')}
-                  </button>
-                  <span className="info">
-                    {tn('terms.count', termsInfo.terms.length, termsInfo.terms.length) + (termsInfo.repeated ? tn('terms.repeated', termsInfo.repeated, termsInfo.repeated) : '')}
-                  </span>
                 </div>
                 {termsRes && (
                   <>
-                    <p className="info">
-                      {t(
-                        'terms.summary',
-                        tn('terms.found', termsRes.res.terms.length, termsRes.res.terms.length - termsRes.res.notFound.length, termsRes.res.terms.length),
-                        tn('terms.rows', sumRows(termsRes.res.tables), sumRows(termsRes.res.tables)),
-                        tn('terms.tables', termsRes.res.tables.length, termsRes.res.tables.length),
-                      ) + (termsRes.only ? ` ${t('terms.onlyIn', termsRes.only)}` : '')}
-                    </p>
                     <div className="terms-hits">
                       <ul className="hits">
                         {termsRes.res.tables.map((h) => (

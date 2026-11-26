@@ -569,11 +569,32 @@ td.mark input {
   padding: 6px 8px;
 }
 
+/* standard 18c: Search terms | the box (input lines and summary; grows, never smaller than its text: nothing cut) |
+   Whole value | Contains, a thin line, This table | All tables; a narrow window moves what does not fit below */
 .terms-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
+  gap: 8px;
+}
+
+.terms-status {
+  flex: 1 0 auto;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-height: 29px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.terms-sep {
+  align-self: stretch;
+  width: 1px;
+  background: var(--border);
 }
 
 .terms-hits {
