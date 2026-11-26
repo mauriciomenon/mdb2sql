@@ -73,7 +73,9 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
 **Tela**:
 - **Tables** (esquerda): lista de tabelas com o nome inteiro (nome longo quebra a linha) e as linhas de cada uma
   (colunas **Table** e **Rows**); **Filter N tables** filtra por nome (300 ms depois da ultima tecla, como a pesquisa
-  da aba Data; Enter filtra na hora). Clique ou setas (Home/End) abrem a tabela.
+  da aba Data; Enter filtra na hora). Clique ou setas (Home/End) abrem a tabela. **Favoritas**: botao direito numa
+  tabela > **Add to favorites** (ou **View > Favorite or unfavorite table**, `Ctrl+D`, na tabela aberta): ela vai para o
+  topo da lista, em ordem alfabetica, com "★ " antes do nome; vale pelo nome enquanto o programa estiver aberto.
 - Aba **Data**, de cima para baixo (igual nas 4 versoes): uma linha com a pesquisa, **This table | All tables**,
   **Rows** (100/500/1000) e **Columns...**; os filtros por valor, quando houver; a grade; embaixo dela
   "<tabela>: showing X of Y rows". A **pesquisa** (**Search the whole
@@ -124,7 +126,7 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
 **Menu File**: **Open...** (`Ctrl+O`), **Open the typed path**, **Reopen** (`F5`), **Save** (`Ctrl+S`), **Save
 as...** (`Ctrl+Shift+S`), **Export** (submenu, abaixo; a mesma lista do botao **Export...**), **Close** (`Ctrl+W`) e
 **Exit** (`Ctrl+Q`). Os outros menus: **Edit** (copiar, Log, pesquisar, filtros, marcar), **View** (abas `Ctrl+1` a
-`4`, Rows, Columns..., escopo, Only marked rows, lista de tabelas `Ctrl+T`, Run SQL, Search terms, Log), **Settings**
+`4`, Rows, Columns..., escopo, Only marked rows, lista de tabelas `Ctrl+T`, favorita `Ctrl+D`, Run SQL, Search terms, Log), **Settings**
 e **Help**: todo botao da tela tem o seu item.
   - Export (lista fixa; o que nao se aplica fica desabilitado): **Current table**, **Marked rows**, **Current table
     schema**, **Database schema** (CSV ou Excel), **All tables to CSV (one file per table)** (pasta; uma pergunta so
@@ -162,7 +164,7 @@ enderecos).
 
 **Atalhos** (os dos itens de menu; valem quando o item vale): `Ctrl+O` abrir, `F5` abrir de novo o banco, `Ctrl+S`
 salvar, `Ctrl+Shift+S` salvar como, `Ctrl+W` fechar, `Ctrl+Q` sair, `Ctrl+F` pesquisar na aba Data, `Ctrl+T` lista de
-tabelas, `Ctrl+1`/`2`/`3`/`4` abas Data/Schema/SQL/Terms, `Ctrl+L` log, `Ctrl+Enter` rodar o SQL ou pesquisar os termos
+tabelas, `Ctrl+D` favoritar a tabela aberta, `Ctrl+1`/`2`/`3`/`4` abas Data/Schema/SQL/Terms, `Ctrl+L` log, `Ctrl+Enter` rodar o SQL ou pesquisar os termos
 (na aba de cada um), `Ctrl+C` copiar a celula escolhida, `Ctrl+Shift+C` a linha, `Espaco` marcar a linha.
 
 **Variaveis de ambiente** (opcionais): `MDB2SQL_DB_PATH` = banco aberto ao iniciar;
