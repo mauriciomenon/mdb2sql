@@ -1241,4 +1241,230 @@ mod tests {
         assert_eq!(page.rows.len(), 1);
         assert_eq!(page.marked, [json!({ "s": "x", "n": 1 }), json!({ "s": "x", "n": 1 })]);
     }
+
+    // item 32: pesquisa de termos em todas as colunas (numeros e datas como texto). Valor inteiro: celula sem espacos nas
+    // pontas igual ao termo, sem maiusculas; Contem: a celula contem o termo. Acertos na ordem da lista colada, depois da
+    // tabela; linha achada por 2 termos aparece 2 vezes; nao encontrados ficam de fora. Relatorio em xlsx, SQLite,
+    // DuckDB e CSV com Resumo, uma tabela por tabela com acerto e Nao encontrados
+    #[test]
+    fn term_search_finds_whole_values_and_contained_text() {
+        use crate::backend::terms::{self, TermHit};
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("terms.duckdb");
+        duckdb::Connection::open(&path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE a_pts (rtu INTEGER, pnt INTEGER, name VARCHAR);
+                 INSERT INTO a_pts VALUES (50, 300, 'GENERADOR X'), (50, 238, 'Generador X'), (50, 242, '  generador y  '), (51, 1, 'OTRO');
+                 CREATE TABLE b_other (code VARCHAR, n DOUBLE, d DATE);
+                 INSERT INTO b_other VALUES ('GENERADOR Y', 1.5, DATE '2024-01-02'), (NULL, NULL, NULL);
+                 CREATE TABLE c_empty (z VARCHAR);",
+            )
+            .unwrap();
+        let manager = DBManager::new();
+        manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+        let tables = manager.list_tables().unwrap();
+        // a interface manda os termos sem repetidos e sem espacos nas pontas, na ordem colada
+        let terms: Vec<String> = ["PNTNAM", "generador x", "GENERADOR Y", "238", "2024-01-02", "Y"].map(String::from).to_vec();
+        let hit = |ord: usize, table: &str, count: i64| TermHit { ord, table: table.to_string(), count };
+
+        let conn = manager.export_connection().unwrap();
+        let whole = terms::search(&conn, &terms, true, &tables, &mut ok_progress()).unwrap();
+        assert_eq!(whole, [hit(1, "a_pts", 2), hit(2, "a_pts", 1), hit(3, "a_pts", 1), hit(2, "b_other", 1), hit(4, "b_other", 1)]);
+        let rows = terms::rows(&conn, "a_pts", "Termo", usize::MAX).unwrap();
+        let names: Vec<&str> = rows.columns.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["Termo", "rtu", "pnt", "name"]);
+        // ordem: o termo na ordem colada, depois a ordem da tabela; o termo como foi colado
+        let found: Vec<(String, i64)> = rows.rows.iter().map(|r| (r["Termo"].as_str().unwrap().to_string(), r["pnt"].as_i64().unwrap())).collect();
+        assert_eq!(found, [("generador x".into(), 300), ("generador x".into(), 238), ("GENERADOR Y".into(), 242), ("238".into(), 238)]);
+        assert_eq!(terms::rows(&conn, "a_pts", "Termo", 2).unwrap().rows.len(), 2, "the grid limit");
+
+        // Contem: "Y" acha as duas linhas de GENERADOR Y (que tambem achou por inteiro): cada uma aparece 2 vezes
+        let conn = manager.export_connection().unwrap();
+        let contains = terms::search(&conn, &terms, false, &tables, &mut ok_progress()).unwrap();
+        assert_eq!(
+            contains,
+            [hit(1, "a_pts", 2), hit(2, "a_pts", 1), hit(3, "a_pts", 1), hit(5, "a_pts", 1), hit(2, "b_other", 1), hit(4, "b_other", 1), hit(5, "b_other", 1)]
+        );
+        // so esta tabela
+        let conn = manager.export_connection().unwrap();
+        assert_eq!(terms::search(&conn, &terms, true, &["b_other".to_string()], &mut ok_progress()).unwrap(), [hit(2, "b_other", 1), hit(4, "b_other", 1)]);
+        // Cancelar (o progresso devolve erro) para a pesquisa
+        let conn = manager.export_connection().unwrap();
+        assert!(terms::search(&conn, &terms, true, &tables, &mut |_, _, _| Err("[[err.searchCancelled]]".into())).is_err());
+
+        // relatorio da pesquisa por inteiro
+        let conn = manager.export_connection().unwrap();
+        terms::search(&conn, &terms, true, &tables, &mut ok_progress()).unwrap();
+        let labels: Vec<String> = ["Termo", "Situação", "Tabela", "Linhas", "Encontrado", "Não encontrado", "Resumo", "Não encontrados"].map(String::from).to_vec();
+        let with_hits = ["a_pts".to_string(), "b_other".to_string()];
+        let names = terms::report(&conn, &with_hits, &labels).unwrap();
+        assert_eq!(names, ["Resumo", "a_pts", "b_other", "Não encontrados"]);
+        let out = dir.path().join("rel.sqlite");
+        export::write_tables(&conn, &names, "sqlite", &out, &mut ok_progress()).unwrap();
+        let rel = rusqlite::Connection::open(&out).unwrap();
+        let summary: Vec<(String, String, String, i64)> = rel
+            .prepare("SELECT \"Termo\", \"Situação\", \"Tabela\", \"Linhas\" FROM \"Resumo\"")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let line = |t: &str, s: &str, tb: &str, n: i64| (t.to_string(), s.to_string(), tb.to_string(), n);
+        assert_eq!(
+            summary,
+            [
+                line("PNTNAM", "Não encontrado", "", 0),
+                line("generador x", "Encontrado", "a_pts", 2),
+                line("GENERADOR Y", "Encontrado", "a_pts", 1),
+                line("GENERADOR Y", "Encontrado", "b_other", 1),
+                line("238", "Encontrado", "a_pts", 1),
+                line("2024-01-02", "Encontrado", "b_other", 1),
+                line("Y", "Não encontrado", "", 0),
+            ]
+        );
+        let missing: Vec<String> = rel.prepare("SELECT \"Termo\" FROM \"Não encontrados\"").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+        assert_eq!(missing, ["PNTNAM", "Y"]);
+        let cols: Vec<String> = rel.prepare("SELECT name FROM pragma_table_info('a_pts')").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+        assert_eq!(cols, ["Termo", "rtu", "pnt", "name"]);
+        assert_eq!(rel.query_row("SELECT count(*) FROM a_pts", [], |r| r.get::<_, i64>(0)).unwrap(), 4);
+        drop(rel);
+        for format in ["duckdb", "xlsx"] {
+            let file = dir.path().join(format!("rel.{format}"));
+            let done = export::write_tables(&conn, &names, format, &file, &mut ok_progress()).unwrap();
+            assert_eq!(done.count, 4);
+            assert!(file.is_file());
+        }
+        let folder = dir.path().join("csv");
+        std::fs::create_dir(&folder).unwrap();
+        export::export_folder(&conn, &names, &folder, &mut ok_progress()).unwrap();
+        assert_eq!(std::fs::read_to_string(folder.join("Não encontrados.csv")).unwrap(), "\u{FEFF}Termo\r\nPNTNAM\r\nY\r\n");
+        assert_eq!(export::csv_files(&folder, &terms::report_names(&with_hits, "Resumo", "Não encontrados")).iter().filter(|f| f.exists()).count(), 4);
+        // a tabela de verdade nao mudou (as views do relatorio sao temporarias da conexao da pesquisa)
+        assert_eq!(manager.get_row_count("a_pts", &[], "").unwrap(), 4);
+        assert_eq!(manager.get_table_schema("a_pts").unwrap().len(), 3);
+    }
+
+    // Exportar > Esquema da tabela atual / do banco: Coluna, Tipo, Aceita nulo traduzidos (e Tabela na frente no do banco);
+    // Todas as tabelas em CSV: um arquivo por tabela na pasta
+    #[test]
+    fn schema_and_all_tables_exports() {
+        use crate::backend::db_manager::schema_select;
+        let dir = tempdir().unwrap();
+        let manager = DBManager::new();
+        manager.connect(sample_duckdb(dir.path()).to_str().unwrap(), &mut no_progress()).unwrap();
+        let conn = manager.export_connection().unwrap();
+        let labels: Vec<String> = ["Tabela", "Coluna", "Tipo", "Aceita nulo", "Sim", "Não"].map(String::from).to_vec();
+        let out = dir.path().join("points_schema.csv");
+        let select = schema_select(Some("points"), &labels).unwrap();
+        export::export_source(&conn, &Source::Query("points_schema".into(), select), "csv", &out, &mut ok_progress()).unwrap();
+        let text = std::fs::read_to_string(&out).unwrap();
+        assert!(text.starts_with("\u{FEFF}Coluna,Tipo,Aceita nulo\r\nid,INTEGER,Sim\r\nname,VARCHAR,Sim\r\n"), "{text}");
+        assert_eq!(text.lines().count(), 10);
+        let out = dir.path().join("real_schema.csv");
+        let select = schema_select(None, &labels).unwrap();
+        export::export_source(&conn, &Source::Query("real_schema".into(), select), "csv", &out, &mut ok_progress()).unwrap();
+        let text = std::fs::read_to_string(&out).unwrap();
+        assert!(text.starts_with("\u{FEFF}Tabela,Coluna,Tipo,Aceita nulo\r\nOther table,k,BIGINT,Sim\r\npoints,id,INTEGER,Sim\r\n"), "{text}");
+        assert!(schema_select(None, &labels[..5]).is_err());
+        let folder = dir.path().join("all");
+        std::fs::create_dir(&folder).unwrap();
+        let tables = manager.list_tables().unwrap();
+        assert_eq!(export::export_folder(&conn, &tables, &folder, &mut ok_progress()).unwrap().count, 2);
+        assert_eq!(std::fs::read_to_string(folder.join("Other table.csv")).unwrap(), "\u{FEFF}k\r\n0\r\n1\r\n2\r\n3\r\n4\r\n");
+        assert!(folder.join("points.csv").is_file());
+    }
+
+    // Aceitacao do BRIEF (secao 7) e tempos com o DB3 do dono (copias fora do git): MDB2SQL_TEST_DB3_DIR = pasta com
+    // DB3.sqlite, DB3.duckdb (e DB3.accdb, opcional: conversao demora) e termos_dono.txt. Imprime os tempos da busca em
+    // todas as tabelas (so colunas de texto, como o dev 2f17599, x todas as colunas) e da pesquisa de termos
+    #[test]
+    fn db3_acceptance_and_times() {
+        use crate::backend::db_manager::{ident, search_condition};
+        use crate::backend::terms;
+        let Ok(folder) = std::env::var("MDB2SQL_TEST_DB3_DIR") else {
+            eprintln!("MDB2SQL_TEST_DB3_DIR not set, skipping");
+            return;
+        };
+        let folder = PathBuf::from(folder);
+        let pasted = std::fs::read_to_string(folder.join("termos_dono.txt")).unwrap();
+        // como a interface (parseTerms): linhas nao vazias, sem espacos nas pontas, sem repetidos
+        let mut terms: Vec<String> = Vec::new();
+        for line in pasted.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            if !terms.iter().any(|t| t.eq_ignore_ascii_case(line)) {
+                terms.push(line.to_string());
+            }
+        }
+        let files: Vec<PathBuf> = ["DB3.sqlite", "DB3.duckdb", "DB3.accdb"].iter().map(|f| folder.join(f)).filter(|f| f.is_file()).collect();
+        for file in files {
+            let manager = DBManager::new();
+            let started = std::time::Instant::now();
+            manager.connect(file.to_str().unwrap(), &mut no_progress()).unwrap();
+            let tables = manager.list_tables().unwrap();
+            eprintln!("DB3 {}: opened in {:?}, {} tables", file.display(), started.elapsed(), tables.len());
+            let conn = manager.export_connection().unwrap();
+            // busca em todas as tabelas: antes (dev 2f17599: so colunas VARCHAR), todas as colunas dobrando toda celula
+            // (o commit wip) e agora (todas as colunas, numeros e datas sem dobrar): as duas ultimas acham o mesmo
+            let columns = crate::backend::db_manager::all_columns(&conn).unwrap();
+            let pick = |only_text: bool| -> Vec<(String, Vec<(String, String)>)> {
+                let as_text = |cols: &Vec<(String, String)>| cols.iter().filter(|c| !only_text || c.1 == "VARCHAR").map(|c| (c.0.clone(), "VARCHAR".to_string())).collect();
+                tables.iter().map(|t| (t.clone(), columns.get(t).map(as_text).unwrap_or_default())).collect()
+            };
+            let count_all = |list: &[(String, Vec<(String, String)>)], search: &str| -> Vec<(String, i64)> {
+                let mut found = Vec::new();
+                for (table, cols) in list {
+                    if let Some((cond, params)) = search_condition(cols, search) {
+                        let n: i64 = conn.query_row(&format!("SELECT count(*) FROM {} WHERE {cond}", ident(table)), duckdb::params_from_iter(params), |r| r.get(0)).unwrap();
+                        if n > 0 {
+                            found.push((table.clone(), n));
+                        }
+                    }
+                }
+                found
+            };
+            let (text_only, all_folded) = (pick(true), pick(false));
+            // a maquina e dividida com outros builds: o menor de 3 tempos de cada jeito
+            let best = |run: &dyn Fn() -> Vec<(String, i64)>| {
+                let mut times = Vec::new();
+                let mut found = Vec::new();
+                for _ in 0..3 {
+                    let t = std::time::Instant::now();
+                    found = run();
+                    times.push(t.elapsed());
+                }
+                (found, times.into_iter().min().unwrap())
+            };
+            for search in ["tension", "tension de campo", "238", "U9A", "2190"] {
+                let (before, before_time) = best(&|| count_all(&text_only, search));
+                let (folded, folded_time) = best(&|| count_all(&all_folded, search));
+                let (now, now_time) = best(&|| manager.search_tables(search, &|| false).unwrap().into_iter().map(|f| (f.table, f.count)).collect());
+                eprintln!(
+                    "DB3 search all tables \"{search}\": text columns {} tables in {before_time:?}; all columns folded {} tables in {folded_time:?}; all columns now {} tables in {now_time:?}",
+                    before.len(),
+                    folded.len(),
+                    now.len()
+                );
+                assert_eq!(now, folded, "{search}");
+            }
+            for whole in [true, false] {
+                let conn = manager.export_connection().unwrap();
+                let t = std::time::Instant::now();
+                let hits = terms::search(&conn, &terms, whole, &tables, &mut ok_progress()).unwrap();
+                let time = t.elapsed();
+                let mut with_hits: Vec<String> = hits.iter().map(|h| h.table.clone()).collect();
+                with_hits.dedup();
+                let missing: Vec<&String> = terms.iter().enumerate().filter(|(i, _)| !hits.iter().any(|h| h.ord == *i)).map(|(_, t)| t).collect();
+                eprintln!("DB3 terms whole={whole}: {} terms, all tables in {time:?}; tables {with_hits:?}; not found {missing:?}", terms.len());
+                let sostat = terms::rows(&conn, "RANGER_SOSTAT", "Termo", usize::MAX).unwrap();
+                // RTUNO e PNTNO sao texto num banco e numero em outro: compara o texto da grade
+                let text = |v: &serde_json::Value| crate::backend::db_manager::json_text(v);
+                let points: Vec<(String, String, String)> = sostat.rows.iter().map(|r| (text(&r["RTUNO"]), text(&r["PNTNO"]), text(&r["SUBNAM"]))).collect();
+                eprintln!("DB3 RANGER_SOSTAT: {points:?}");
+                assert_eq!(points.iter().map(|p| p.1.as_str()).collect::<Vec<_>>(), ["238", "242", "254", "256", "260", "304", "308", "2190"]);
+                assert!(points.iter().all(|p| p.0 == "50"));
+                assert_eq!(points[7].2, "U9A");
+                assert_eq!(missing, [&"PNTNAM".to_string()]);
+            }
+        }
+    }
 }
