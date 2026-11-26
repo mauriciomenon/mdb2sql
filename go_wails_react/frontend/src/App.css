@@ -782,6 +782,23 @@ td[aria-selected='true'] {
   margin-left: auto;
 }
 
+/* the text of a dialog button (Sized in App.tsx): every text of the row in the 3 languages in one grid cell, only its
+   own visible, so all the buttons of the row have one width and height; the hidden ones bold as the default button */
+.sized {
+  display: inline-grid;
+  justify-items: center;
+  white-space: nowrap;
+}
+
+.sized > span {
+  grid-area: 1 / 1;
+}
+
+.sized > .ghost {
+  visibility: hidden;
+  font-weight: 600;
+}
+
 /* questions (exit, export running, whole table or rows found) and the display warning */
 .conversion {
   width: min(480px, 100%);

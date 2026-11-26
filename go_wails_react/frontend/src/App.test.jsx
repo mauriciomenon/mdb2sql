@@ -46,6 +46,11 @@ const pick = (button, ...path) => {
   fireEvent.click(item(path.at(-1)));
 };
 
+// the visible texts of the buttons of a dialog (a sized button also holds, invisible, the texts that set its size)
+const buttonTexts = (el) => within(el).getAllByRole('button').map((b) => (b.querySelector('.sized > span') ?? b).textContent);
+// the hidden texts that size a button (owner 26/11: every button of a dialog as large as the longest text in the 3 languages)
+const sizers = (b) => [...b.querySelectorAll('.sized > .ghost')].map((g) => g.textContent);
+
 // the items of a menu as shown: a separator is "--", a submenu its name with the arrow
 const menuTree = (menuEl) =>
   [...menuEl.children].map((el) => (el.tagName === 'HR' ? '--' : el.classList.contains('menu-root') ? el.querySelector('button').textContent : el.textContent));
@@ -722,7 +727,11 @@ describe('App IPC flow', () => {
     };
     let dialog = await exitQuestion();
     expect(dialog.textContent).toContain('The database converted from DB3.accdb was not saved. Save before exiting?');
-    expect(within(dialog).getAllByRole('button').map((b) => b.textContent)).toEqual(['×', 'Save', 'Back', 'Exit']);
+    expect(buttonTexts(dialog)).toEqual(['×', 'Save', 'Back', 'Exit']);
+    // Save, Back and Exit of one size: each one sized by the same texts, the three of them in the three languages
+    const sized = within(dialog).getAllByRole('button').slice(1).map(sizers);
+    expect(sized[0]).toEqual(['Save', 'Back', 'Exit', 'Salvar', 'Voltar', 'Sair', 'Guardar', 'Volver', 'Salir']);
+    expect(sized.every((s) => s.join() === sized[0].join())).toBe(true);
     expect(within(dialog).getByRole('button', { name: 'Save' })).toHaveFocus(); // Enter = Save
     expect(within(dialog).getByRole('button', { name: 'Back' }).className).toBe('end'); // Back and Exit on the right
     expect(dialog.textContent).not.toMatch(/Remember/);
@@ -785,7 +794,7 @@ describe('App IPC flow', () => {
     });
     let dialog = await screen.findByRole('dialog', { name: 'Export in progress' });
     expect(dialog.textContent).toContain('Exiting cancels the export of RANGER_SOACCU.');
-    expect(within(dialog).getAllByRole('button').map((b) => b.textContent)).toEqual(['×', 'Back', 'Exit']);
+    expect(buttonTexts(dialog)).toEqual(['×', 'Back', 'Exit']);
     fireEvent.keyDown(window, { key: 'Escape' }); // Back: the export goes on
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Export in progress' })).not.toBeInTheDocument());
     expect(CancelJob).not.toHaveBeenCalled();
@@ -1361,7 +1370,7 @@ describe('App IPC flow', () => {
     await screen.findByText(/showing 2 of 1 row found/);
     exportCsv();
     const dialog = await screen.findByRole('dialog', { name: 'Export RANGER_SOACCU' });
-    expect(within(dialog).getAllByRole('button').map((b) => b.textContent)).toEqual(['Whole table', 'Only the 1 row found', 'Cancel']);
+    expect(buttonTexts(dialog)).toEqual(['Whole table', 'Only the 1 row found', 'Cancel']);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Only the 1 row found' }));
     await waitFor(() => expect(ExportTable).toHaveBeenLastCalledWith('RANGER_SOACCU', 'csv', [], 'alp'));
     exportCsv();
@@ -1609,7 +1618,7 @@ describe('language catalogs', () => {
 
   it('hold every key the screen uses', () => {
     const used = [...source.matchAll(/\btn?\(\s*'([^']+)'/g)].map((m) => m[1]);
-    used.push(...['system', 'light', 'dark'].map((th) => `theme.${th}`), ...LANGS.map((l) => `lang.${l}`), 'scope.table', 'scope.all', 'tab.data', 'tab.schema', 'tab.sql', 'tab.terms', 'terms.whole', 'terms.contains', ...['csv', 'xlsx', 'sqlite', 'duckdb'].map((f) => `export.${f}`));
+    used.push(...['system', 'light', 'dark'].map((th) => `theme.${th}`), ...LANGS.map((l) => `lang.${l}`), 'scope.table', 'scope.all', 'tab.data', 'tab.schema', 'tab.sql', 'tab.terms', 'btn.back', 'terms.whole', 'terms.contains', ...['csv', 'xlsx', 'sqlite', 'duckdb'].map((f) => `export.${f}`));
     expect(used.length).toBeGreaterThan(80);
     expect(used.filter((k) => !(k in CATALOGS.en))).toEqual([]);
   });

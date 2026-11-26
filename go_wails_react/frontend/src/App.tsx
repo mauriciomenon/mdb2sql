@@ -26,8 +26,9 @@ export type TermsResult = {
 };
 // the running job: a file being opened, an export or save (what = its name; leaving the app asks first) or a term search
 type Job = { kind: 'load' | 'export' | 'terms'; text: string; what?: string };
-// a question with its buttons in screen order (the first one has the focus: Enter); cls "end" starts the right group
-type Question = { title: string; text: string; buttons: { label: string; value: string; cls?: string }[] };
+// a question with its buttons in screen order (key: catalog key of the text; the first one has the focus: Enter); cls
+// "end" starts the right group
+type Question = { title: string; text: string; buttons: { key: string; value: string; cls?: string }[] };
 // One line of a menu: a separator, a command (run), a submenu (items) or a check/radio item (checked)
 export type MenuItem =
   | { sep: true }
@@ -774,8 +775,8 @@ function App() {
     try {
       const b = window.go?.main?.App;
       if (job?.kind === 'export') {
-        const back = { label: t('btn.back'), value: 'back', cls: 'end' };
-        if ((await ask({ title: t('exportRun.title'), text: t('exportRun.text', job.what), buttons: [back, { label: t('menu.exit'), value: 'exit' }] })) !== 'exit') return;
+        const back = { key: 'btn.back', value: 'back', cls: 'end' };
+        if ((await ask({ title: t('exportRun.title'), text: t('exportRun.text', job.what), buttons: [back, { key: 'menu.exit', value: 'exit' }] })) !== 'exit') return;
       }
       if (job) await b?.CancelJob?.();
       for (;;) {
@@ -785,9 +786,9 @@ function App() {
           title: t('exit.title'),
           text: t('exit.text', name),
           buttons: [
-            { label: t('menu.save'), value: 'save', cls: 'primary' },
-            { label: t('btn.back'), value: 'back', cls: 'end' },
-            { label: t('menu.exit'), value: 'exit' },
+            { key: 'menu.save', value: 'save', cls: 'primary' },
+            { key: 'btn.back', value: 'back', cls: 'end' },
+            { key: 'menu.exit', value: 'exit' },
           ],
         });
         if (answer === 'exit') break;
@@ -1898,9 +1899,25 @@ function App() {
   );
 }
 
+// The text of a dialog button, as wide and tall as the longest of all = every text of its row in the 3 languages
+// (owner, 26/11: the buttons of a dialog have one size): the other texts sit invisible in the same grid cell
+function Sized({ text, all }: { text: string; all: string[] }) {
+  return (
+    <span className="sized">
+      <span>{text}</span>
+      {all.map((s, i) => (
+        <span key={i} className="ghost" aria-hidden="true">
+          {s}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 // A question on exit (standard item 27): title, text and the buttons in screen order, the first one focused (Enter);
 // Esc and the x answer null, as Back
 function QuestionDialog({ title, text, buttons, resolve, t }: Question & { resolve: (answer: string | null) => void; t: T }) {
+  const all = LANGS.flatMap((l) => buttons.map((b) => translate(l, b.key)));
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && resolve(null);
     window.addEventListener('keydown', onKey);
@@ -1919,7 +1936,7 @@ function QuestionDialog({ title, text, buttons, resolve, t }: Question & { resol
         <div className="col-actions">
           {buttons.map((b, i) => (
             <button key={b.value} className={b.cls} autoFocus={i === 0} onClick={() => resolve(b.value)}>
-              {b.label}
+              <Sized text={t(b.key)} all={all} />
             </button>
           ))}
         </div>
@@ -1931,6 +1948,7 @@ function QuestionDialog({ title, text, buttons, resolve, t }: Question & { resol
 // Table export with the search active: the whole table, only the rows found, or Cancel (Esc)
 type ExportAskProps = { table: string; found: number; t: T; tn: TN; onAnswer: (onlyFound: boolean | null) => void };
 function ExportAskDialog({ table, found, t, tn, onAnswer }: ExportAskProps) {
+  const all = LANGS.flatMap((l) => [translate(l, 'exportAsk.all'), translateN(l, 'exportAsk.found', found, found), translate(l, 'job.cancel')]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onAnswer(null);
     window.addEventListener('keydown', onKey);
@@ -1942,11 +1960,13 @@ function ExportAskDialog({ table, found, t, tn, onAnswer }: ExportAskProps) {
         <h2 id="export-ask-title">{t('exportAsk.title', table)}</h2>
         <div className="col-actions">
           <button autoFocus onClick={() => onAnswer(false)}>
-            {t('exportAsk.all')}
+            <Sized text={t('exportAsk.all')} all={all} />
           </button>
-          <button onClick={() => onAnswer(true)}>{tn('exportAsk.found', found, found)}</button>
+          <button onClick={() => onAnswer(true)}>
+            <Sized text={tn('exportAsk.found', found, found)} all={all} />
+          </button>
           <button className="end" onClick={() => onAnswer(null)}>
-            {t('job.cancel')}
+            <Sized text={t('job.cancel')} all={all} />
           </button>
         </div>
       </div>
@@ -1969,6 +1989,7 @@ type ColumnsDialogProps = {
 
 // "Columns...": search on top, responsive checkbox grid (vertical scroll only), buttons in one row
 function ColumnsDialog({ table, columns, hidden, setHidden, onClose, t }: ColumnsDialogProps) {
+  const sizes = LANGS.flatMap((l) => ['cols.showAll', 'cols.hideAll', 'cols.close'].map((k) => translate(l, k)));
   const [query, setQuery] = useState('');
   const listed = useMemo(() => {
     const words = searchWords(query);
@@ -2022,10 +2043,14 @@ function ColumnsDialog({ table, columns, hidden, setHidden, onClose, t }: Column
           {listed.length === 0 && <p className="empty">{t('cols.none')}</p>}
         </div>
         <div className="col-actions">
-          <button onClick={() => showListed(true)}>{t('cols.showAll')}</button>
-          <button onClick={() => showListed(false)}>{t('cols.hideAll')}</button>
+          <button onClick={() => showListed(true)}>
+            <Sized text={t('cols.showAll')} all={sizes} />
+          </button>
+          <button onClick={() => showListed(false)}>
+            <Sized text={t('cols.hideAll')} all={sizes} />
+          </button>
           <button className="primary end" onClick={onClose}>
-            {t('cols.close')}
+            <Sized text={t('cols.close')} all={sizes} />
           </button>
         </div>
       </div>
