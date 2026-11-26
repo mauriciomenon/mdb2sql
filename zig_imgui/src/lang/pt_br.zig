@@ -57,6 +57,16 @@ pub const show_all = "Mostrar todas";
 pub const hide_all = "Ocultar todas";
 pub const columns_title = "Colunas de {s}";
 pub const sql_result = "Resultado SQL";
+pub const mark_tip = "Marcar linhas";
+pub const marked_count = ", {d} marcadas";
+pub const marked_count_one = ", {d} marcada";
+pub const only_marked = "Só as marcadas";
+pub const menu_mark = "Marcar ou desmarcar linha";
+pub const menu_unmark_all = "Desmarcar todas as linhas";
+pub const ctx_export_marked = "Exportar linhas marcadas";
+pub const key_space = "Espaço";
+pub const fmt_csv = "CSV...";
+pub const fmt_xlsx = "Excel (.xlsx)...";
 pub const find_column = "Filtrar colunas";
 pub const columns_shown = "{d} de {d} visíveis";
 

@@ -62,9 +62,45 @@ pub const Grid = struct {
     truncated: bool = false, // o resultado tinha mais que max_rows linhas (as outras nao foram lidas)
     float_cols: []const bool = &.{}, // colunas DOUBLE/FLOAT: a grade mostra 2.0 como 2 (so na tela, como no Go)
     num_cols: []const bool = &.{}, // colunas numericas: a grade alinha a direita (valor e cabecalho)
+    keys: []const []const u8 = &.{}, // identidade de cada linha (consulta com Spec.with_key; linhas marcadas)
 
     pub fn deinit(self: *Grid) void {
         self.arena.deinit();
+    }
+
+    // A 1a coluna (a identidade da linha, Spec.with_key) sai da grade e vira `keys`
+    fn splitKeys(self: *Grid) Allocator.Error!void {
+        if (self.columns.len == 0) return;
+        const a = self.arena.allocator();
+        const keys = try a.alloc([]const u8, self.rows.len);
+        const rows = try a.alloc([]?[]const u8, self.rows.len);
+        for (keys, rows, self.rows) |*k, *r, row| {
+            k.* = row[0] orelse "";
+            r.* = row[1..];
+        }
+        self.keys = keys;
+        self.rows = rows;
+        self.columns = self.columns[1..];
+        self.float_cols = self.float_cols[1..];
+        self.num_cols = self.num_cols[1..];
+    }
+
+    // As linhas de `other` (as mesmas colunas) depois das suas, copiadas para a arena desta grade
+    pub fn append(self: *Grid, other: *const Grid) Allocator.Error!void {
+        const a = self.arena.allocator();
+        const rows = try a.alloc([]?[]const u8, self.rows.len + other.rows.len);
+        @memcpy(rows[0..self.rows.len], self.rows);
+        for (rows[self.rows.len..], other.rows) |*dst, src| {
+            const row = try a.alloc(?[]const u8, src.len);
+            for (row, src) |*cell, s| cell.* = if (s) |v| try a.dupe(u8, v) else null;
+            dst.* = row;
+        }
+        const keys = try a.alloc([]const u8, self.keys.len + other.keys.len);
+        @memcpy(keys[0..self.keys.len], self.keys);
+        for (keys[self.keys.len..], other.keys) |*k, s| k.* = try a.dupe(u8, s);
+        self.rows = rows;
+        self.keys = keys;
+        self.truncated = self.truncated or other.truncated;
     }
 };
 
@@ -508,7 +544,27 @@ pub const Db = struct {
     pub fn page(self: *Db, spec: query.Spec) Error!Grid {
         const built = try query.buildSelect(self.gpa, spec);
         defer built.deinit(self.gpa);
-        return self.run(built.sql, built.params);
+        var g = try self.run(built.sql, built.params);
+        errdefer g.deinit();
+        if (spec.with_key) try g.splitKeys();
+        return g;
+    }
+
+    // !T: Row identity of a table for the marked rows: the engine's rowid when the table has one (DuckDB tables, and
+    // SQLite tables through the sqlite extension, so also the converted Access file); a view, or a table with a
+    // column of its own called rowid, has none and uses the md5 of the whole row (identical rows are one row).
+    pub fn rowKey(self: *Db, table: []const u8, columns: []const []const u8) Error!query.RowKey {
+        if (query.hasRowidColumn(columns)) return .hash;
+        if (!query.contains(self.table_names, table)) return error.TableNotFound;
+        var sql: std.ArrayList(u8) = .empty;
+        defer sql.deinit(self.gpa);
+        try sql.appendSlice(self.gpa, "SELECT " ++ query.row_alias ++ ".rowid FROM ");
+        try query.writeIdent(&sql, self.gpa, table);
+        try sql.appendSlice(self.gpa, " AS " ++ query.row_alias ++ " LIMIT 0");
+        try sql.append(self.gpa, 0);
+        // so prepara (nao roda): sem rowid o DuckDB recusa a coluna
+        _ = self.statementType(sql.items[0 .. sql.items.len - 1 :0]) catch return .hash;
+        return .rowid;
     }
 
     pub fn count(self: *Db, spec: query.Spec) Error!u64 {

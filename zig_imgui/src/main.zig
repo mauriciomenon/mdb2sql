@@ -914,6 +914,14 @@ const App = struct {
     want_filter: ?struct { col: usize, value: ?[]u8 } = null, // novo filtro pedido (valor do gpa; null = NULL)
     want_unfilter: ?usize = null, // remover o filtro de indice N
     want_clear_filters: bool = false,
+    // Linhas marcadas (item 31), por tabela (indice em db.table_names), enquanto o arquivo estiver aberto: a identidade
+    // de cada linha (rowid ou md5 da linha, do gpa). Mudam so sem trabalho rodando (o pedido le a lista).
+    marks: []std.ArrayList([]const u8) = &.{},
+    data_key: ?query.RowKey = null, // identidade de linha da tabela aberta
+    marked_top: usize = 0, // as primeiras linhas de `data` sao as marcadas
+    only_marked: bool = false, // Exibir > So as linhas marcadas (a caixa "So as marcadas")
+    want_mark: ?usize = null, // marcar ou desmarcar esta linha da grade de Dados
+    want_unmark_all: bool = false,
 
     sql: [8192:0]u8 = @splat(0),
     result: ?dbm.Grid = null,
@@ -968,6 +976,7 @@ const App = struct {
         app.clearResult();
         app.clearGlobal();
         app.gpa.free(app.counts);
+        app.freeMarks();
         app.filter_scratch.deinit(app.gpa);
         app.filters.deinit(app.gpa);
         app.db.close();
@@ -995,6 +1004,54 @@ const App = struct {
         const f = add orelse return;
         if (f.col < app.col_names.len) return dbm.gridtools.addFilter(app.gpa, &app.filters, app.col_names[f.col], f.value);
         if (f.value) |v| app.gpa.free(v);
+    }
+
+    fn freeMarks(app: *App) void {
+        for (app.marks) |*list| {
+            for (list.items) |k| app.gpa.free(k);
+            list.deinit(app.gpa);
+        }
+        app.gpa.free(app.marks);
+        app.marks = &.{};
+        app.only_marked = false;
+    }
+
+    // Arquivo novo: nenhuma linha marcada, uma lista por tabela
+    fn resetMarks(app: *App, n: usize) void {
+        app.freeMarks();
+        app.marks = app.gpa.alloc(std.ArrayList([]const u8), n) catch &.{};
+        for (app.marks) |*list| list.* = .empty;
+    }
+
+    fn marksOf(app: *const App, table: ?usize) []const []const u8 {
+        const i = table orelse return &.{};
+        return if (i < app.marks.len) app.marks[i].items else &.{};
+    }
+
+    // Marca ou desmarca a linha pedida da grade de Dados, ou desmarca todas (so sem trabalho rodando)
+    fn editMarks(app: *App) void {
+        const row = app.want_mark;
+        const all = app.want_unmark_all;
+        app.want_mark = null;
+        app.want_unmark_all = false;
+        const index = app.selected orelse return;
+        if (index >= app.marks.len) return;
+        const list = &app.marks[index];
+        if (all) {
+            for (list.items) |k| app.gpa.free(k);
+            list.clearRetainingCapacity();
+        }
+        if (row) |r| if (app.data) |g| if (r < g.keys.len) {
+            const at = for (list.items, 0..) |k, i| {
+                if (std.mem.eql(u8, k, g.keys[r])) break i;
+            } else null;
+            if (at) |i| {
+                app.gpa.free(list.orderedRemove(i));
+            } else if (app.gpa.dupe(u8, g.keys[r])) |k| {
+                list.append(app.gpa, k) catch app.gpa.free(k);
+            } else |_| {}
+        };
+        if (list.items.len == 0) app.only_marked = false;
     }
 
     fn clearTable(app: *App) void {
@@ -1125,6 +1182,7 @@ const App = struct {
             .select => {
                 r.table = app.want_select orelse return;
                 r.search = if (app.select_search) app.search else @splat(0);
+                r.marks = app.marksOf(r.table); // as marcadas desta tabela vem no topo
                 app.select_search = false;
             },
             .search_all => r.search = app.search,
@@ -1135,6 +1193,9 @@ const App = struct {
                 r.filters = app.filters.items;
                 r.sort_col = app.sort_col;
                 r.sort_desc = app.sort_desc;
+                r.key = app.data_key;
+                r.marks = app.marksOf(r.table);
+                r.only_marked = app.only_marked and r.marks.len > 0;
             },
             .sql => r.sql = app.sql,
             .export_ => {}, // preenchido em startExport
@@ -1167,6 +1228,7 @@ const App = struct {
                 app.gpa.free(app.counts);
                 app.counts = out.counts;
                 out.counts = &.{};
+                app.resetMarks(if (app.db.isOpen()) app.db.table_names.len else 0);
                 app.source = if (app.db.isOpen()) out.source else null;
                 app.loaded_path = if (app.db.isOpen()) app.open_request else @splat(0);
                 app.opened_file = if (app.db.isOpen()) app.slot.req.path else @splat(0);
@@ -1204,6 +1266,7 @@ const App = struct {
                 app.data = out.data;
                 out.data = null;
                 app.data_sel.row = null; // as colunas ocultas continuam valendo na mesma tabela
+                app.marked_top = out.marked;
                 app.total = out.total;
                 app.applied_search = app.slot.req.search;
             },
@@ -1313,6 +1376,8 @@ const App = struct {
         app.data = out.data;
         out.schema = null;
         out.data = null;
+        app.data_key = out.key;
+        app.marked_top = out.marked;
         app.total = out.total;
         copyZ(&app.search, search);
         copyZ(&app.applied_search, search);
@@ -1453,6 +1518,7 @@ const App = struct {
         app.db.closeSource();
         app.gpa.free(app.counts);
         app.counts = &.{};
+        app.freeMarks();
         app.source = null;
         app.loaded_path = @splat(0);
         app.opened_file = @splat(0);
@@ -1527,6 +1593,10 @@ const App = struct {
             app.editFilters();
             app.want_reload = true;
         }
+        if (app.want_mark != null or app.want_unmark_all) {
+            app.editMarks();
+            app.want_reload = true;
+        }
         if (app.start_export != null and app.db.isOpen() and !app.want_open and !app.want_reload and !app.want_run) {
             app.want_export = app.start_export;
             app.start_export = null;
@@ -1591,6 +1661,7 @@ const App = struct {
                 else => app.db.table_names[app.selected orelse return],
             },
             .result_csv, .result_xlsx => "query",
+            .marked_csv, .marked_xlsx => std.fmt.bufPrint(&name_buf, "{s}_marcadas", .{app.db.table_names[app.selected orelse return]}) catch "marcadas",
         };
         var file_buf: [600]u8 = undefined;
         var file = settings.fileName(&file_buf, base, kind.ext());
@@ -1609,8 +1680,8 @@ const App = struct {
         const dkind: dialog.Kind = switch (kind) {
             .db_duckdb => .save_duckdb,
             .db_sqlite => .save_sqlite,
-            .db_xlsx, .table_xlsx, .result_xlsx => .save_xlsx,
-            .table_csv, .result_csv => .save_csv,
+            .db_xlsx, .table_xlsx, .result_xlsx, .marked_xlsx => .save_xlsx,
+            .table_csv, .result_csv, .marked_csv => .save_csv,
         };
         var path_buf: dialog.PathBuf = undefined;
         const dest = dialog.pick(app.io, dkind, app.hwnd, initial, &path_buf) orelse {
@@ -1643,8 +1714,17 @@ const App = struct {
                 r.filters = if (whole) &.{} else app.filters.items;
                 r.sort_col = app.sort_col;
                 r.sort_desc = app.sort_desc;
+                r.key = app.data_key;
                 r.total_hint = if (whole and index < app.counts.len) app.counts[index] else app.total;
             }
+        } else if (kind == .marked_csv or kind == .marked_xlsx) {
+            // as linhas marcadas da tabela atual: todas as colunas, na ordem da tabela, nome <tabela>_marcadas
+            const index = app.selected orelse return;
+            r.table = index;
+            r.columns = app.col_names;
+            r.key = app.data_key;
+            r.marks = app.marksOf(index);
+            r.total_hint = r.marks.len;
         } else if (kind == .result_csv or kind == .result_xlsx) {
             r.sql = app.result_sql;
             if (app.result) |g| if (!g.truncated) {
@@ -1867,6 +1947,10 @@ const App = struct {
                 app.focus_search = true;
             }
             if (ig.igIsKeyPressed_Bool(ig.ImGuiKey_F5, false)) app.want_refresh = true;
+            // Espaco na aba Dados (fora de uma caixa de texto): marca ou desmarca a linha da celula selecionada
+            if (app.tab == .data and !ig.igIsAnyItemActive() and ig.igIsKeyPressed_Bool(ig.ImGuiKey_Space, false)) if (app.data_sel.row) |r| {
+                app.want_mark = r;
+            };
             if (chord(ctrl | ig.ImGuiKey_1)) app.want_tab = .data;
             if (chord(ctrl | ig.ImGuiKey_2)) app.want_tab = .schema;
             if (chord(ctrl | ig.ImGuiKey_3)) app.want_tab = .sql;
@@ -2338,7 +2422,7 @@ const App = struct {
                 // um pouco mais de espaco entre as colunas (so o horizontal das celulas, +6 px de cada lado)
                 const pad = ig.igGetStyle().*.CellPadding;
                 ig.igPushStyleVar_Vec2(ig.ImGuiStyleVar_CellPadding, .{ .x = pad.x * 2, .y = pad.y });
-                _ = drawGrid("##schema", &shown, null, &app.schema_sel, null, .plain, &app.prefs, "", 0);
+                _ = drawGrid("##schema", &shown, null, &app.schema_sel, null, .plain, &app.prefs, "", 0, null);
                 ig.igPopStyleVar(1);
             }
         }
@@ -2428,26 +2512,50 @@ const App = struct {
         app.data_sel.has_filters = app.filters.items.len > 0;
         // a grade deixa embaixo a linha da contagem
         const count_h = ig.igGetFrameHeight() + st.*.ItemSpacing.y;
-        if (app.data) |*g| if (drawGrid("##data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null, .filter, &app.prefs, name, count_h)) |s| {
+        const n_marked = app.marksOf(index).len;
+        // a coluna das caixas de marcar so com a identidade das linhas (a grade carregada com ela)
+        const marking: ?Marking = if (app.data) |g| (if (g.keys.len == g.rows.len) Marking{ .top = app.marked_top, .count = n_marked } else null) else null;
+        if (app.data) |*g| if (drawGrid("##data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null, .filter, &app.prefs, name, count_h, marking)) |s| {
             app.sort_col = s.col;
             app.sort_desc = s.desc;
             app.want_reload = true;
         };
-        // "<tabela>: mostrando X de Y linhas" (com busca ou filtro: "X de Y linhas encontradas"); as colunas ocultas
-        // ficam na barra de baixo. Uma linha: o que nao cabe termina em "..." (inteira no tooltip)
+        // "<tabela>: mostrando X de Y linhas" (com busca ou filtro: "X de Y linhas encontradas") + ", N marcadas"; as
+        // colunas ocultas ficam na barra de baixo. Uma linha: o que nao cabe termina em "..." (inteira no tooltip).
+        // Com marcadas, a direita a caixa "So as marcadas" (= Exibir > So as linhas marcadas).
         const shown: u64 = if (app.data) |g| g.rows.len else 0;
         var cb: [700]u8 = undefined;
-        const count_line = if (app.applied_search[0] != 0 or app.filters.items.len > 0)
+        const rows_line = if (app.applied_search[0] != 0 or app.filters.items.len > 0)
             i18n.fmtCount(&cb, "rows_found", app.total, .{ name, shown, app.total })
         else
             i18n.fmtCount(&cb, "rows_showing", app.total, .{ name, shown, app.total });
+        var mb: [64]u8 = undefined;
+        var clb: [780]u8 = undefined;
+        const count_line = if (n_marked > 0) std.fmt.bufPrint(&clb,"{s}{s}", .{ rows_line, i18n.fmtCount(&mb, "marked_count", n_marked, .{n_marked}) }) catch rows_line else rows_line;
+        const only_l = tr("only_marked");
+        const box_w = if (n_marked > 0) ig.igGetFrameHeight() + st.*.ItemInnerSpacing.x + textWidth(only_l) + 2 * gap else 0;
         ig.igAlignTextToFramePadding();
-        var fb: [760]u8 = undefined;
-        const fitted = fitLine(&fb, count_line, ig.igGetContentRegionAvail().x);
+        var fb: [800]u8 = undefined;
+        const fitted = fitLine(&fb, count_line, ig.igGetContentRegionAvail().x - box_w);
         textSlice(fitted);
         if (fitted.len != count_line.len and ig.igIsItemHovered(0)) tooltip(count_line);
-        // pedidos do menu da celula
+        if (n_marked > 0) {
+            ig.igSameLine(0, -1);
+            ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - (box_w - 2 * gap)));
+            var only = app.only_marked;
+            if (ig.igCheckbox(only_l, &only)) {
+                app.only_marked = only;
+                app.want_reload = true;
+            }
+        }
+        // pedidos da grade (caixas de marcar) e do menu da celula
         const sel = &app.data_sel;
+        if (sel.want_mark) |r| app.want_mark = r;
+        if (sel.want_unmark_all) app.want_unmark_all = true;
+        if (sel.want_export) |k| app.want_export = k;
+        sel.want_mark = null;
+        sel.want_unmark_all = false;
+        sel.want_export = null;
         if (sel.want_clear) app.want_clear_filters = true;
         if (sel.want_filter and app.want_filter == null) if (app.data) |g| if (sel.row) |r| if (r < g.rows.len and sel.col < g.columns.len) {
             // o valor e copiado agora: a pagina pode ser trocada antes de o filtro ser aplicado
@@ -2483,7 +2591,7 @@ const App = struct {
             var mb: [96]u8 = undefined;
             textSlice(i18n.fmtCount(&mb, "rows_match", g.rows.len, .{ rows.len, g.rows.len }));
         }
-        _ = drawGrid("##result", g, null, &app.result_sel, app.result_rows, .hide, &app.prefs, tr("sql_result"), 0);
+        _ = drawGrid("##result", g, null, &app.result_sel, app.result_rows, .hide, &app.prefs, tr("sql_result"), 0, null);
     }
 
     // Escopo da busca ao lado da caixa: "Esta tabela" | "Todas as tabelas", dois segmentos colados; o escolhido com
@@ -2577,6 +2685,9 @@ const GridSel = struct {
     has_filters: bool = false, // habilita "Limpar filtros" no menu da celula
     want_filter: bool = false, // menu da celula: filtrar pelo valor da celula selecionada
     want_clear: bool = false, // menu da celula: limpar filtros
+    want_mark: ?usize = null, // caixa da linha ou menu da celula: marcar ou desmarcar a linha
+    want_unmark_all: bool = false, // menu da celula: desmarcar todas
+    want_export: ?ExportKind = null, // menu da celula: exportar as linhas marcadas
 
     // Clique (esquerdo ou direito) na celula: so a selecao muda (refazer o GridSel inteiro mostrava as ocultas de novo)
     fn pick(sel: *GridSel, row: usize, col: usize) void {
@@ -2597,6 +2708,9 @@ const max_grid_cols = 512;
 // plain: so copia; hide: tambem ocultar colunas; filter: tambem "Filtrar por este valor" (aba Dados)
 const GridMode = enum { plain, hide, filter };
 
+// Coluna das caixas de marcar da aba Dados: as `top` primeiras linhas sao as marcadas; `count` marcadas na tabela
+const Marking = struct { top: usize, count: usize };
+
 // Poe na area de transferencia o valor da celula selecionada ou a linha dela separada por TAB (NULL = vazio);
 // `header`: a linha de nomes das colunas vem antes
 fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool, header: bool) void {
@@ -2616,30 +2730,38 @@ fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool, heade
 // Com `mode` != .plain o clique direito no cabecalho abre o menu do cabecalho: ajustar a largura, ocultar e mostrar
 // colunas. NULL aparece como "NULL" ou como celula vazia (Configuracoes > Exibir NULL). `bottom`: altura livre embaixo
 // da grade (a linha da contagem na aba Dados). `owner`: tabela ou resultado,
-// no titulo do dialogo Colunas.
-fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, rows: ?[]const usize, mode: GridMode, prefs: *settings.Settings, owner: []const u8, bottom: f32) ?Sort {
-    const n_cols: usize = @min(g.columns.len, max_grid_cols);
+// no titulo do dialogo Colunas. `mark` (aba Dados): a 1a coluna e a das caixas de marcar a linha.
+fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, rows: ?[]const usize, mode: GridMode, prefs: *settings.Settings, owner: []const u8, bottom: f32, mark: ?Marking) ?Sort {
+    const off: usize = @intFromBool(mark != null); // colunas do ImGui = a das caixas + as do banco
+    const n_cols: usize = @min(g.columns.len, max_grid_cols - off);
     if (n_cols == 0) return null;
     const can_hide = mode != .plain;
     var flags: c_int = ig.ImGuiTableFlags_Borders | ig.ImGuiTableFlags_RowBg | ig.ImGuiTableFlags_Resizable |
         ig.ImGuiTableFlags_ScrollX | ig.ImGuiTableFlags_ScrollY | ig.ImGuiTableFlags_SizingFixedFit;
     if (sort != null) flags |= ig.ImGuiTableFlags_Sortable | ig.ImGuiTableFlags_SortTristate;
     if (can_hide) flags |= ig.ImGuiTableFlags_Hideable;
-    if (!ig.igBeginTable(id, @intCast(n_cols), flags, .{ .x = 0, .y = -bottom }, 0)) return null;
+    if (!ig.igBeginTable(id, @intCast(n_cols + off), flags, .{ .x = 0, .y = -bottom }, 0)) return null;
     defer ig.igEndTable();
     const table = ig.igGetCurrentTable(); // "Ajustar coluna" do menu do cabecalho
 
-    ig.igTableSetupScrollFreeze(0, 1);
+    // a coluna das caixas, estreita e sem titulo, fica parada na rolagem horizontal
+    ig.igTableSetupScrollFreeze(@intCast(off), 1);
+    if (mark != null) ig.igTableSetupColumn("##mark", ig.ImGuiTableColumnFlags_WidthFixed | ig.ImGuiTableColumnFlags_NoResize | ig.ImGuiTableColumnFlags_NoHide |
+        ig.ImGuiTableColumnFlags_NoSort | ig.ImGuiTableColumnFlags_NoReorder, ig.igGetFontSize(), 0);
     for (g.columns[0..n_cols]) |name| ig.igTableSetupColumn(name.ptr, 0, 0, 0);
     var open_header = false;
     var header_at: ?[2]f32 = null; // --capture: onde o menu do cabecalho abre
     if (can_hide) {
         // a lista de ocultas e nossa (GridSel.hidden); o ImGui so executa
-        for (0..n_cols) |c| ig.igTableSetColumnEnabled(@intCast(c), !sel.hidden.isSet(c));
+        for (0..n_cols) |c| ig.igTableSetColumnEnabled(@intCast(c + off), !sel.hidden.isSet(c));
         // cabecalho como o TableHeadersRow, mais o clique direito com o nosso menu
         ig.igTableNextRow(ig.ImGuiTableRowFlags_Headers, ig.igTableGetHeaderRowHeight());
+        if (mark != null and ig.igTableSetColumnIndex(0)) {
+            ig.igTableHeader("##mark");
+            if (ig.igIsItemHovered(0)) tooltip(tr("mark_tip"));
+        }
         for (g.columns[0..n_cols], 0..) |name, c| {
-            if (!ig.igTableSetColumnIndex(@intCast(c))) continue;
+            if (!ig.igTableSetColumnIndex(@intCast(c + off))) continue;
             const avail = ig.igGetContentRegionAvail().x;
             ig.igPushID_Int(@intCast(c));
             var hovered = false;
@@ -2670,8 +2792,8 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
     var changed: ?Sort = null;
     if (sort) |cur| if (ig.igTableGetSortSpecs()) |specs| if (specs.*.SpecsDirty) {
         specs.*.SpecsDirty = false;
-        const new: Sort = if (specs.*.SpecsCount > 0)
-            .{ .col = @intCast(specs.*.Specs[0].ColumnIndex), .desc = specs.*.Specs[0].SortDirection == ig.ImGuiSortDirection_Descending }
+        const new: Sort = if (specs.*.SpecsCount > 0 and specs.*.Specs[0].ColumnIndex >= off)
+            .{ .col = @as(usize, @intCast(specs.*.Specs[0].ColumnIndex)) - off, .desc = specs.*.Specs[0].SortDirection == ig.ImGuiSortDirection_Descending }
         else
             .{ .col = null, .desc = false };
         if (new.col != cur.col or new.desc != cur.desc) changed = new;
@@ -2688,6 +2810,15 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         for (@intCast(start)..@intCast(end)) |shown| {
             const r = if (rows) |list| list[shown] else shown;
             ig.igTableNextRow(0, 0);
+            if (mark) |m| if (ig.igTableNextColumn()) {
+                // caixa da altura do texto: a linha nao cresce
+                var on = r < m.top;
+                ig.igPushID_Int(@intCast(r));
+                ig.igPushStyleVar_Vec2(ig.ImGuiStyleVar_FramePadding, .{ .x = 0, .y = 0 });
+                if (ig.igCheckbox("##m", &on)) sel.want_mark = r;
+                ig.igPopStyleVar(1);
+                ig.igPopID();
+            };
             for (g.rows[r][0..n_cols], 0..) |cell, c| {
                 if (!ig.igTableNextColumn()) continue; // coluna oculta ou fora da tela
                 ig.igPushID_Int(@intCast(r * n_cols + c));
@@ -2733,6 +2864,17 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         if (ig.igMenuItem_Bool(tr("copy_value"), "Ctrl+C", false, true)) copySelection(g, sel, false, false);
         if (ig.igMenuItem_Bool(tr("copy_row"), null, false, true)) copySelection(g, sel, true, false);
         if (ig.igMenuItem_Bool(tr("copy_row_header"), null, false, true)) copySelection(g, sel, true, true);
+        // aba Dados: marcar a linha, exportar as marcadas, desmarcar todas (item 31)
+        if (mark) |m| {
+            ig.igSeparator();
+            if (ig.igMenuItem_Bool(tr("menu_mark"), tr("key_space"), false, sel.row != null)) sel.want_mark = sel.row;
+            if (ig.igBeginMenu(tr("ctx_export_marked"), m.count > 0)) {
+                defer ig.igEndMenu();
+                if (ig.igMenuItem_Bool(tr("fmt_csv"), null, false, true)) sel.want_export = .marked_csv;
+                if (ig.igMenuItem_Bool(tr("fmt_xlsx"), null, false, true)) sel.want_export = .marked_xlsx;
+            }
+            if (ig.igMenuItem_Bool(tr("menu_unmark_all"), null, false, m.count > 0)) sel.want_unmark_all = true;
+        }
     }
     if (!can_hide) return changed;
 
@@ -2744,7 +2886,7 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
     if (ig.igBeginPopup("##header", 0)) {
         defer ig.igEndPopup();
         const visible = n_cols - sel.hiddenCount(n_cols);
-        if (ig.igMenuItem_Bool(tr("fit_column"), null, false, true)) ig.igTableSetColumnWidthAutoSingle(table, @intCast(sel.header_col));
+        if (ig.igMenuItem_Bool(tr("fit_column"), null, false, true)) ig.igTableSetColumnWidthAutoSingle(table, @intCast(sel.header_col + off));
         if (ig.igMenuItem_Bool(tr("fit_all_columns"), null, false, true)) ig.igTableSetColumnWidthAutoAll(table);
         ig.igSeparator();
         if (ig.igMenuItem_Bool(tr("hide_column"), null, false, visible > 1)) sel.hidden.set(sel.header_col);

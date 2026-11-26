@@ -21,13 +21,15 @@ pub const ExportKind = enum {
     table_xlsx,
     result_csv,
     result_xlsx,
+    marked_csv, // linhas marcadas da tabela atual (item 31)
+    marked_xlsx,
 
     pub fn ext(k: ExportKind) []const u8 {
         return switch (k) {
             .db_duckdb => ".duckdb",
             .db_sqlite => ".sqlite",
-            .db_xlsx, .table_xlsx, .result_xlsx => ".xlsx",
-            .table_csv, .result_csv => ".csv",
+            .db_xlsx, .table_xlsx, .result_xlsx, .marked_xlsx => ".xlsx",
+            .table_csv, .result_csv, .marked_csv => ".csv",
         };
     }
 
@@ -61,6 +63,9 @@ pub const Req = struct {
     columns: []const []const u8 = &.{}, // reload/export: colunas da tabela (do schema ja carregado)
     search: [256:0]u8 = @splat(0), // select (vazio = sem busca), reload, export, search_all
     filters: []const query.Criterion = &.{}, // reload/export: filtros coluna = valor exato (a UI so muda a lista sem trabalho rodando)
+    key: ?query.RowKey = null, // reload/export: identidade de linha da tabela (a do Out.key do select)
+    marks: []const []const u8 = &.{}, // select/reload/export: linhas marcadas da tabela (a UI so muda sem trabalho rodando)
+    only_marked: bool = false, // reload: so as linhas marcadas
     sort_col: ?usize = null,
     sort_desc: bool = false,
     limit: u32 = query.default_limit, // open, select, reload: linhas carregadas (lista 100 / 500 / 1000)
@@ -90,7 +95,9 @@ pub const Out = struct {
     schema: ?dbm.Grid = null, // open, select
     columns: []const []const u8 = &.{}, // vive na arena de schema
     data: ?dbm.Grid = null, // open, select, reload
-    total: u64 = 0, // linhas da tabela que casam com a busca e os filtros
+    key: ?query.RowKey = null, // open, select: identidade de linha da tabela
+    marked: usize = 0, // open, select, reload: as primeiras linhas de `data` sao as marcadas
+    total: u64 = 0, // linhas da tabela que casam com a busca e os filtros (mais as marcadas, no topo)
     result: ?dbm.Grid = null, // sql
     exported: u64 = 0, // export: tabelas ou linhas gravadas
     converted: access.TempPath = .{}, // open de Access: o SQLite temporario (len 0 = nenhum)
@@ -147,14 +154,15 @@ fn exec(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *expor
             for (names, 0..) |n, i| {
                 if (std.ascii.eqlIgnoreCase(n, req.table_name)) index = i;
             }
-            try loadTable(db, index, "", req.limit, out);
+            try loadTable(db, index, "", req.limit, &.{}, out);
         },
-        .select => try loadTable(db, req.table, std.mem.sliceTo(&req.search, 0), req.limit, out),
+        .select => try loadTable(db, req.table, std.mem.sliceTo(&req.search, 0), req.limit, req.marks, out),
         .reload => {
             out.table = req.table;
             var spec = try tableSpec(db, req);
             spec.limit = req.limit;
-            try loadRows(db, spec, out);
+            spec.with_key = spec.key != null;
+            try loadRows(db, spec, req.only_marked, out);
         },
         .sql => out.result = try db.runReadOnly(std.mem.sliceTo(&req.sql, 0)), // a aba SQL so le
         .export_ => out.exported = try exportJob(db, gpa, env, req, progress),
@@ -230,6 +238,8 @@ fn tableSpec(db: *dbm.Db, req: *const Req) !query.Spec {
         .criteria = req.filters,
         .sort_column = if (req.sort_col) |c| req.columns[c] else null,
         .sort_desc = req.sort_desc,
+        .key = req.key,
+        .marks = req.marks,
     };
 }
 
@@ -244,12 +254,15 @@ fn exportJob(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *
             try exporter.workbookAll(db, env.io, dest, progress, @import("xlsx.zig").max_data_rows);
             return progress.done.load(.monotonic);
         },
-        .table_csv, .table_xlsx => {
+        .table_csv, .table_xlsx, .marked_csv, .marked_xlsx => {
             var spec = try tableSpec(db, req);
             spec.limit = 0; // todas as linhas
+            // a tabela: a busca e os filtros da tela, sem olhar as marcas; as marcadas: todas, na ordem da tabela
+            const marked = req.export_kind == .marked_csv or req.export_kind == .marked_xlsx;
+            if (marked) spec.marked = .only else spec.marks = &.{};
             const built = try query.buildSelect(gpa, spec);
             defer built.deinit(gpa);
-            const format: exporter.FileFormat = if (req.export_kind == .table_csv) .csv else .xlsx;
+            const format: exporter.FileFormat = if (req.export_kind == .table_csv or req.export_kind == .marked_csv) .csv else .xlsx;
             return exporter.selection(db, env.io, format, .{ .sql = built.sql, .params = built.params, .sheet = spec.table }, dest, progress, req.total_hint);
         },
         .result_csv, .result_xlsx => {
@@ -259,8 +272,9 @@ fn exportJob(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *
     }
 }
 
-// Schema + as primeiras `limit` linhas, sem ordenacao; com a busca pedida (vazia = nenhuma)
-fn loadTable(db: *dbm.Db, index: usize, search: []const u8, limit: u32, out: *Out) dbm.Error!void {
+// Schema + as primeiras `limit` linhas, sem ordenacao; com a busca pedida (vazia = nenhuma) e as linhas marcadas da
+// tabela no topo
+fn loadTable(db: *dbm.Db, index: usize, search: []const u8, limit: u32, marks: []const []const u8, out: *Out) dbm.Error!void {
     if (index >= db.table_names.len) return error.TableNotFound;
     out.table = index;
     out.schema = try db.schema(db.table_names[index]);
@@ -268,13 +282,33 @@ fn loadTable(db: *dbm.Db, index: usize, search: []const u8, limit: u32, out: *Ou
     const cols = try sch.arena.allocator().alloc([]const u8, sch.rows.len);
     for (cols, sch.rows) |*n, row| n.* = row[0] orelse "";
     out.columns = cols;
-    try loadRows(db, .{ .table = db.table_names[index], .tables = db.table_names, .columns = cols, .search = search, .limit = limit }, out);
+    out.key = try db.rowKey(db.table_names[index], cols);
+    try loadRows(db, .{ .table = db.table_names[index], .tables = db.table_names, .columns = cols, .search = search, .limit = limit, .key = out.key, .with_key = true, .marks = marks }, false, out);
 }
 
-// Contagem das linhas que casam e as primeiras spec.limit delas
-fn loadRows(db: *dbm.Db, spec: query.Spec, out: *Out) dbm.Error!void {
-    out.total = try db.count(spec);
-    out.data = try db.page(spec);
+// !T: Rows of the Data tab: the count of the rows that match and the first spec.limit of them. With marked rows
+// (item 31) they all come first, in table order, whatever the search, the filters or the sort; below them the
+// search without them; the total counts both. only_marked: just the marked rows.
+fn loadRows(db: *dbm.Db, spec: query.Spec, only_marked: bool, out: *Out) dbm.Error!void {
+    if (spec.marks.len == 0 and !only_marked) {
+        out.total = try db.count(spec);
+        out.data = try db.page(spec);
+        return;
+    }
+    var top_spec = spec;
+    top_spec.marked = .only;
+    top_spec.limit = 0;
+    out.data = try db.page(top_spec);
+    const top = &out.data.?;
+    out.marked = top.rows.len;
+    out.total = top.rows.len;
+    if (only_marked) return;
+    var rest_spec = spec;
+    rest_spec.marked = .without;
+    out.total += try db.count(rest_spec);
+    var rest = try db.page(rest_spec);
+    defer rest.deinit();
+    try top.append(&rest);
 }
 
 // Uma thread por trabalho. Enquanto busy(), so a thread do trabalho usa o Db.
@@ -656,6 +690,117 @@ test "search in every table reads the whole column catalog, beyond max_rows colu
     try db.refreshTables();
     try t.expectError(error.DuckDb, searchAll(&db, t.allocator, "needle", &p));
     try t.expect(std.mem.indexOf(u8, db.lastError(), "broken view") != null);
+}
+
+// Ids (1a coluna) das linhas de uma grade, "3,4|2"; `top`: quantas sao as marcadas (antes da barra)
+fn idsOf(buf: []u8, g: dbm.Grid, top: usize) []const u8 {
+    var w: std.Io.Writer = .fixed(buf);
+    for (g.rows, 0..) |r, i| {
+        if (i == top and top > 0) w.writeByte('|') catch {} else if (i > 0) w.writeByte(',') catch {};
+        w.writeAll(r[0] orelse "-") catch {};
+    }
+    return w.buffered();
+}
+
+// O exemplo do dono: busca kkk, marca 1 de 3; busca jjj, a de kkk continua no topo; marca 1 de jjj; busca hhh,
+// marca 1: as 3 marcadas no topo, na ordem da tabela
+fn expectMarks(db: *dbm.Db, table: []const u8) !void {
+    const index = out_table(db, table);
+    var out: Out = .{ .kind = .select };
+    try loadTable(db, index, "acao", 100, &.{}, &out);
+    defer out.deinit(t.allocator);
+    const key = out.key.?;
+    const cols = out.columns;
+    var marks: std.ArrayList([]const u8) = .empty;
+    defer marks.deinit(t.allocator);
+    var keep: std.heap.ArenaAllocator = .init(t.allocator);
+    defer keep.deinit();
+    // a grade traz a identidade de cada linha fora das colunas
+    try t.expectEqual(cols.len, out.data.?.columns.len);
+    try t.expectEqual(out.data.?.rows.len, out.data.?.keys.len);
+    try marks.append(t.allocator, out.data.?.keys[1]); // id 3, "acao"
+    var buf: [64]u8 = undefined;
+    const steps = [_]struct { []const u8, ?usize, []const u8, u64 }{
+        .{ "zé", 0, "3|4", 2 }, // a marcada continua no topo; embaixo a busca sem ela; marca o Zé
+        .{ "bruno", 0, "3,4|2", 3 }, // as 2 marcadas na ordem da tabela, depois a busca
+        .{ "", null, "2,3,4|1", 4 }, // a 3a marcada; sem busca, o resto (ordenado por id desc)
+    };
+    for (steps) |s| {
+        var r: Out = .{ .kind = .reload };
+        defer r.deinit(t.allocator);
+        try loadRows(db, .{ .table = table, .tables = db.table_names, .columns = cols, .search = s[0], .sort_column = "id", .sort_desc = true, .key = key, .with_key = true, .marks = marks.items }, false, &r);
+        try t.expectEqualStrings(s[2], idsOf(&buf, r.data.?, r.marked));
+        try t.expectEqual(s[3], r.total);
+        // a UI guarda a identidade copiada (a grade troca a cada busca)
+        if (s[1]) |i| try marks.append(t.allocator, try keep.allocator().dupe(u8, r.data.?.keys[r.marked + i])) else break;
+    }
+    try t.expectEqual(3, marks.items.len);
+    // so as marcadas
+    var only: Out = .{ .kind = .reload };
+    defer only.deinit(t.allocator);
+    try loadRows(db, .{ .table = table, .tables = db.table_names, .columns = cols, .search = "acao", .key = key, .with_key = true, .marks = marks.items }, true, &only);
+    try t.expectEqualStrings("2,3,4", idsOf(&buf, only.data.?, 0));
+    try t.expectEqual(3, only.total);
+}
+
+test "marked rows (item 31): always on top in table order during other searches, only the marked, export; DuckDB, SQLite and a view" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var b1: [256]u8 = undefined;
+    const duck = dbm.tmpPath(&b1, &tmp, "m.duckdb");
+    try dbm.makeSample(duck);
+    var b2: [256]u8 = undefined;
+    const lite = dbm.tmpPath(&b2, &tmp, "m.sqlite");
+    var db = dbm.testDb();
+    defer db.close();
+    // view (sem rowid): a identidade e o texto da linha inteira
+    try db.open(duck, false);
+    try db.exec("CREATE VIEW pv AS SELECT * FROM people");
+    try db.open(":memory:", false);
+    try db.openReadOnly(duck);
+    var p: exporter.Progress = .{};
+    try exporter.database(&db, t.io, .sqlite, lite, &p);
+
+    try expectMarks(&db, "people");
+    try t.expectEqual(query.RowKey.rowid, try db.rowKey("people", &.{ "id", "name", "score" }));
+    try t.expectEqual(query.RowKey.hash, try db.rowKey("pv", &.{ "id", "name", "score" }));
+    try t.expectEqual(query.RowKey.hash, try db.rowKey("people", &.{ "id", "RowID" })); // coluna propria chamada rowid
+    try expectMarks(&db, "pv");
+
+    // exportar as marcadas: todas as colunas, na ordem da tabela, sem a identidade
+    var sel: Out = .{ .kind = .select };
+    defer sel.deinit(t.allocator);
+    try loadTable(&db, out_table(&db, "people"), "", 100, &.{}, &sel);
+    const keys = [_][]const u8{ sel.data.?.keys[3], sel.data.?.keys[0] };
+    var b3: [256]u8 = undefined;
+    const out_csv = dbm.tmpPath(&b3, &tmp, "people_marcadas.csv");
+    var req: Req = .{ .kind = .export_, .export_kind = .marked_csv, .table = out_table(&db, "people"), .columns = sel.columns, .key = sel.key, .marks = &keys };
+    setZ(&req.search, "nada"); // a busca da tela nao vale para as marcadas
+    req.setDest(out_csv);
+    try t.expectEqual(2, try exportJob(&db, t.allocator, .{ .io = t.io }, &req, &p));
+    var cbuf: [256]u8 = undefined;
+    try t.expectEqualStrings("\xEF\xBB\xBFid,name,score\r\n1,Ação,10.5\r\n4,Zé,20.0\r\n", try std.Io.Dir.cwd().readFile(t.io, out_csv, &cbuf));
+
+    // o Access convertido e lido como SQLite: rowid do SQLite
+    try db.openReadOnly(lite);
+    try expectMarks(&db, "people");
+    try t.expectEqual(query.RowKey.rowid, try db.rowKey("people", &.{ "id", "name", "score" }));
+}
+
+test "identical rows of a table without rowid are one row for the marks" {
+    var db = dbm.testDb();
+    defer db.close();
+    try db.start();
+    try db.exec("CREATE TABLE twins AS SELECT * FROM (VALUES (1, 'x'), (1, 'x'), (2, 'y')) v(id, s)");
+    try db.exec("CREATE VIEW tv AS SELECT * FROM twins");
+    try db.refreshTables();
+    const cols = [_][]const u8{ "id", "s" };
+    var g = try db.page(.{ .table = "tv", .tables = db.table_names, .columns = &cols, .key = .hash, .with_key = true });
+    defer g.deinit();
+    try t.expectEqualStrings(g.keys[0], g.keys[1]);
+    const marks = [_][]const u8{g.keys[0]};
+    try t.expectEqual(2, try db.count(.{ .table = "tv", .tables = db.table_names, .columns = &cols, .key = .hash, .marks = &marks, .marked = .only }));
+    try t.expectEqual(1, try db.count(.{ .table = "tv", .tables = db.table_names, .columns = &cols, .key = .hash, .marks = &marks, .marked = .without }));
 }
 
 fn out_table(db: *dbm.Db, name: []const u8) usize {
