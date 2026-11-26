@@ -89,7 +89,9 @@ test('each export sends its request and suggests its name', () => {
   assert.match(exports, /tableSchema: \(\) => \(\{ name: `\$\{selectedTable\}_schema`, unit: 'Rows', request: \{ scope: 'schema', table: selectedTable, labels: schemaLabels\(\) \} \}\),/);
   assert.match(exports, /dbSchema: \(\) => \(\{ name: `\$\{stem\(openedPath\)\}_schema`, unit: 'Rows', request: \{ scope: 'schema', labels: schemaLabels\(\) \} \}\),/);
   assert.match(exports, /tables: \(\) => \(\{ folder: true, unit: 'Tables', request: \{ scope: 'tables' \} \}\),/);
-  assert.match(exports, /name: `\$\{stem\(openedPath\)\}_termos`,\s*folder: format === 'csv',/);
+  // secao 19 e: "<banco> - Pesquisa Avançada.xlsx" (a extensao vem do tipo), nunca "_termos"
+  assert.match(exports, /name: `\$\{stem\(openedPath\)\} - \$\{t\('tabs\.terms'\)\}`,[^\n]*\n\s*folder: format === 'csv',/);
+  assert.doesNotMatch(app, /_termos/);
   assert.match(app, /const schemaLabels = \(\) => \['tables\.name', 'schema\.column', 'schema\.type', 'schema\.nullable', 'schema\.yes', 'schema\.no'\]\.map\(\(key\) => t\(key\)\);/);
   // secao 19 d: o relatorio e so uma aba por tabela com acerto, com as colunas da tabela (sem titulos a mandar)
   assert.match(exports, /request: \{ scope: 'terms', labels: \[\] \},/);

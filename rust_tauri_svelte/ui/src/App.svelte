@@ -1053,7 +1053,7 @@
     sql: () => ({ name: 'query', unit: 'Rows', request: { scope: 'sql', sql: lastSql } }),
     found: () => ({ name: `${stem(openedPath)}_busca`, unit: 'Tables', request: { scope: 'found', search: search.trim() } }),
     terms: (format) => ({
-      name: `${stem(openedPath)}_termos`,
+      name: `${stem(openedPath)} - ${t('tabs.terms')}`, // "DB3 - Pesquisa Avançada.xlsx" (secao 19 e)
       folder: format === 'csv',
       unit: 'Tables',
       request: { scope: 'terms', labels: [] },
