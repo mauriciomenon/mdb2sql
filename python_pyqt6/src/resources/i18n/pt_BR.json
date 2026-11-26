@@ -187,7 +187,7 @@
   "log.stale_removed": "{count} arquivos convertidos de uma sessão anterior removidos",
   "log.stale_removed_one": "{count} arquivo convertido de uma sessão anterior removido",
   "log.discarded": "SQLite convertido de {name} descartado",
-  "log.reused": "{name}: aberto o SQLite salvo dele ({path})",
+  "log.reused": "{name}: aberto o {format} salvo dele ({path})",
   "terms.column": "Termo",
   "terms.hint": "Cole os termos, um por linha (por exemplo, uma coluna do Excel)",
   "terms.whole": "Valor inteiro",

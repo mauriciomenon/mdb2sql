@@ -1505,7 +1505,8 @@ class MainWindow(QMainWindow):
             self._log_stale(temp_store.remove_stale(db_path.parent))
             self.session = self.session or temp_store.open_session([db_path.parent])
         work_dir = self.session.path if self.session else None
-        # o mesmo Access (caminho, tamanho, data) ja convertido e salvo: abre o SQLite salvo, sem converter de novo
+        # o mesmo Access (caminho, tamanho, data) ja convertido e salvo: abre o arquivo salvo (SQLite ou DuckDB), sem
+        # converter de novo
         saved = self.saved_conversion(db_path)
         def task(report):
             source_key = file_key(db_path)  # a versao do arquivo que vai ser lida (lembrada se o SQLite for salvo)
@@ -1532,7 +1533,8 @@ class MainWindow(QMainWindow):
         return saved if isinstance(saved, dict) else {}
 
     def saved_conversion(self, source: Path) -> Path | None:
-        """SQLite salvo deste Access, se nenhum dos dois mudou desde entao (caminho + tamanho + data)."""
+        """Arquivo salvo (SQLite ou DuckDB) deste Access, se nenhum dos dois mudou desde entao (caminho + tamanho +
+        data)."""
         if source.suffix.lower() not in (".accdb", ".mdb"):
             return None
         entry = self._saved_conversions().get(path_key(source))
@@ -1553,7 +1555,8 @@ class MainWindow(QMainWindow):
             manager.release()  # abertura antiga terminou depois de outra mais nova: descarta (e o SQLite dela)
             return
         if saved is not None:
-            self.log(tr("log.reused", name=db_path.name, path=saved))
+            # o formato do arquivo salvo (SQLite ou DuckDB), como o leitor o reconheceu ao abrir
+            self.log(tr("log.reused", name=db_path.name, format=manager.reader, path=saved))
         previous = self._table_of(self.table_list.currentItem()) if self.table_list.currentItem() else None
         if db_path != self.current_db_path:
             self._reset_view(None)  # outro arquivo: filtros e colunas ocultas nao valem mais

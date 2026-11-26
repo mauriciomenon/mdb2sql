@@ -269,7 +269,9 @@ def test_save_offers_sqlite_duckdb_and_excel_and_remembers_the_access_conversion
     _reopen(qtbot, win, source)
     assert win.manager.converted is None and win.manager.reader == "DuckDB" and _converted_files(win) == []
     assert win.windowTitle().startswith("sample.mdb - ")
-    assert f"sample.mdb: opened the SQLite saved from it ({duck})" in win.log_view.toPlainText()
+    # 13 b): o formato real do arquivo salvo, lido do arquivo (aqui DuckDB; abaixo SQLite)
+    assert f"sample.mdb: opened the DuckDB saved from it ({duck})" in win.log_view.toPlainText()
+    assert "opened the SQLite saved" not in win.log_view.toPlainText()
     lite = tmp_path / "other" / "sample.sqlite"
     lite.parent.mkdir()
     assert _save(qtbot, win, monkeypatch, lite)[0][1:] == (str(source.with_suffix(".sqlite")), types,
@@ -277,6 +279,8 @@ def test_save_offers_sqlite_duckdb_and_excel_and_remembers_the_access_conversion
     assert win.saved_conversion(source) == lite
     # Salvar como...: comeca na ultima pasta em que o usuario salvou
     assert _save(qtbot, win, monkeypatch, lite, save_as=True)[0][1] == str(lite.parent / "sample.sqlite")
+    _reopen(qtbot, win, source)
+    assert f"sample.mdb: opened the SQLite saved from it ({lite})" in win.log_view.toPlainText()
     again = MainWindow()  # proxima execucao: lembrado nas configuracoes
     qtbot.addWidget(again)
     assert again.saved_conversion(source) == lite
