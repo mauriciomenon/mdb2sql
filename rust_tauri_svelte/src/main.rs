@@ -174,17 +174,6 @@ fn save_dialog(
         .map(|(path, index)| (path.to_string_lossy().into_owned(), index))
 }
 
-// NIVEL BASICO: Arquivo > Salvar do Access convertido em SQLite: copia o temporario para `path` (a caixa de salvar ja
-// perguntou se substitui). O temporario continua ate a interface dizer que o banco esta salvo (discard_converted)
-#[tauri::command(async)]
-fn save_converted(path: String, state: State<'_, AppState>) -> Result<(), String> {
-    let target = Path::new(&path);
-    check_target(&state, target)?;
-    // o caminho sai do lock antes de copiar: o X da janela (on_window_event) le o mesmo lock na thread da interface
-    let source = state.converted.lock().unwrap().as_ref().ok_or("[[err.noConverted]]")?.path().to_path_buf();
-    export::via_partial(target, |partial| std::fs::copy(&source, partial).map(|_| ()).map_err(|e| e.to_string()))
-}
-
 // NIVEL BASICO: Apaga o SQLite convertido (banco salvo, ou fechado sem salvar)
 #[tauri::command(async)]
 fn discard_converted(state: State<'_, AppState>) {
@@ -275,7 +264,8 @@ fn check_target(state: &AppState, target: &Path) -> Result<(), String> {
     Ok(())
 }
 
-// NIVEL BASICO: Pedido de exportacao da interface. scope: "database" (Arquivo > Salvar: sqlite, duckdb ou xlsx),
+// NIVEL BASICO: Pedido de exportacao da interface. scope: "database" (Arquivo > Salvar: sqlite, duckdb ou xlsx), "converted"
+// (Arquivo > Salvar do Access convertido em SQLite: a copia do temporario),
 // "table" (tabela atual; com filtros ou pesquisa, so as linhas que a grade achou), "marked" (linhas marcadas: ids),
 // "schema" (da tabela, ou do banco sem tabela; labels = titulos), "sql" (resultado do SQL), "found" (resultado da
 // busca em todas as tabelas, xlsx), "tables" (todas as tabelas em CSV; path = pasta) e "terms" (relatorio da
@@ -329,6 +319,15 @@ fn export(app: AppHandle, state: State<'_, AppState>, request: ExportRequest) ->
     let format = request.format.as_str();
     match request.scope.as_str() {
         "database" => export::export_database(&conn, format, target, &mut progress),
+        // Arquivo > Salvar do Access convertido em SQLite: copia o temporario (a caixa de salvar ja perguntou se
+        // substitui); ele continua ate a interface dizer que o banco esta salvo (discard_converted)
+        "converted" => {
+            // o caminho sai do lock antes de copiar: o X da janela (on_window_event) le o mesmo lock na thread da interface
+            let source = state.converted.lock().unwrap().as_ref().ok_or("[[err.noConverted]]")?.path().to_path_buf();
+            progress(0, 1, &request.path)?;
+            export::via_partial(target, |partial| std::fs::copy(&source, partial).map(|_| ()).map_err(|e| e.to_string()))
+                .map(|_| Summary { count: 1, sheets: None })
+        }
         "table" => {
             let table = table()?;
             let source = if request.filters.is_empty() && request.search.trim().is_empty() {
@@ -565,7 +564,6 @@ fn main() {
             close_database,
             clean_stale,
             save_dialog,
-            save_converted,
             discard_converted,
             file_key,
             exit_app,

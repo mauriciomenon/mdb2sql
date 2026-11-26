@@ -144,10 +144,14 @@ test('the converted database question is asked only on exit', () => {
   const quit = appFunction('quit');
   assert.match(quit, /while \(converted\) \{\s*const choice = await ask\(\{\s*title: t\('convert\.title'\),\s*text: t\('exit\.text', \{ name: baseName\(openedPath\) \}\),\s*x: true,/);
   assert.match(quit, /\{ id: 'save', label: t\('file\.save'\), primary: true \},\s*\{ id: 'back', label: t\('common\.back'\), right: true \},\s*\{ id: 'exit', label: t\('file\.exit'\), right: true \},/);
-  assert.match(quit, /if \(choice === 'exit'\) break;[^\n]*\n\s*if \(choice !== 'save'\) return;[^\n]*\n\s*await save\(false\);\s*\}\s*await invoke\('exit_app'\);/);
-  // exportacao em andamento: antes de tudo, Voltar / Sair; Sair cancela a exportacao e espera ela parar
+  // Salvar vale mesmo com pesquisa ou consulta rodando (save ignora busy so quando vem daqui)
+  assert.match(quit, /if \(choice === 'exit'\) break;[^\n]*\n\s*if \(choice !== 'save'\) return;[^\n]*\n\s*await save\(false, true\);\s*\}\s*await invoke\('exit_app'\);/);
+  assert.match(readFileSync(new URL('./App.svelte', import.meta.url), 'utf8'), /if \(\(busy && !exiting\) \|\| !openedPath\) return false;/);
+  // exportacao em andamento: antes de tudo, Voltar / Sair; Sair cancela a exportacao e espera ela parar. Se a exportacao
+  // era o Salvar da pergunta de sair, a pergunta volta no quit que a abriu (uma pergunta de sair por vez)
   assert.match(quit, /if \(progress\) \{\s*const choice = await ask\(\{\s*title: t\('exportRun\.title'\),\s*text: t\('exportRun\.text', \{ name: baseName\(progress\.path\) \}\),/);
-  assert.match(quit, /if \(choice !== 'exit'\) return;\s*await invoke\('cancel_export'\);\s*await exportEnd;\s*\}\s*while \(converted\)/);
+  assert.match(quit, /if \(choice !== 'exit'\) return;\s*await invoke\('cancel_export'\);\s*await exportEnd;\s*\}\s*if \(quitting\) return;[^\n]*\n\s*quitting = true;\s*try \{\s*while \(converted\)/);
+  assert.match(quit, /\} finally \{\s*quitting = false;\s*\}/);
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
   assert.match(app, /listen\('close-requested', quit\),/);
   assert.match(app, /\n {6}exit: \{ run: quit \},/);

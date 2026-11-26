@@ -119,6 +119,7 @@
   let exportEnd = Promise.resolve(); // termina quando a exportacao em andamento para (sair espera por ela)
   let askDialog;
   let question = $state.raw(null); // pergunta aberta: { title, text, x, buttons: [{ id, label, primary, right }], resolve }
+  let quitting = false; // a pergunta de sair (ou o Salvar dela) esta em andamento
   let x11Dialog;
   let x11 = $state.raw(null); // Linux sem X11: { missing, display, distro, command, link } (backend display.rs)
 
@@ -418,22 +419,28 @@
       await invoke('cancel_export');
       await exportEnd;
     }
-    while (converted) {
-      const choice = await ask({
-        title: t('convert.title'),
-        text: t('exit.text', { name: baseName(openedPath) }),
-        x: true,
-        buttons: [
-          { id: 'save', label: t('file.save'), primary: true },
-          { id: 'back', label: t('common.back'), right: true },
-          { id: 'exit', label: t('file.exit'), right: true },
-        ],
-      });
-      if (choice === 'exit') break; // o backend apaga o temporario ao sair
-      if (choice !== 'save') return; // Voltar, Esc ou X da caixa
-      await save(false);
+    if (quitting) return; // era o Salvar desta pergunta: cancelado, ela volta no quit que a abriu
+    quitting = true;
+    try {
+      while (converted) {
+        const choice = await ask({
+          title: t('convert.title'),
+          text: t('exit.text', { name: baseName(openedPath) }),
+          x: true,
+          buttons: [
+            { id: 'save', label: t('file.save'), primary: true },
+            { id: 'back', label: t('common.back'), right: true },
+            { id: 'exit', label: t('file.exit'), right: true },
+          ],
+        });
+        if (choice === 'exit') break; // o backend apaga o temporario ao sair
+        if (choice !== 'save') return; // Voltar, Esc ou X da caixa
+        await save(false, true);
+      }
+      await invoke('exit_app');
+    } finally {
+      quitting = false;
     }
-    await invoke('exit_app');
   }
 
   onMount(() => {
@@ -499,10 +506,11 @@
   // NIVEL BASICO: Arquivo > Salvar (Ctrl+S) e Salvar como... (Ctrl+Shift+S), com qualquer banco aberto: a caixa de
   // salvar nativa com SQLite, DuckDB e Excel, ja marcado o tipo do arquivo aberto (Access e SQLite: SQLite; DuckDB:
   // DuckDB). Salvar comeca na pasta do arquivo original; Salvar como, na ultima pasta em que o usuario salvou ou
-  // exportou (sem ela, a do original). Devolve true se salvou
-  async function save(asLast) {
+  // exportou (sem ela, a do original). Devolve true se salvou. exiting: pedido pela pergunta de sair, que vale mesmo
+  // com uma pesquisa ou consulta rodando (sair cancela a pesquisa)
+  async function save(asLast, exiting = false) {
     openMenu = null;
-    if (busy || !openedPath) return false;
+    if ((busy && !exiting) || !openedPath) return false;
     const access = isAccess(openedPath);
     const selected = !access && source === 'DuckDB' ? 1 : 0;
     const dir = (asLast && loadSetting(SAVE_DIR_KEY)) || dirOf(openedPath);
@@ -519,11 +527,10 @@
       if (!picked) return false; // cancelada
       const { path, format } = savedFormat(...picked);
       saveSetting(SAVE_DIR_KEY, dirOf(path));
-      if (converted && format === 'sqlite') {
-        // Access convertido para SQLite: copia o temporario
-        await invoke('save_converted', { path });
-        showStatus('status.sqliteSaved', { path });
-      } else if (!(await runExport(t('file.save'), { scope: 'database', format, path }, 'Tables'))) {
+      // Access convertido para SQLite: copia o temporario; os outros, o banco inteiro. Os dois com a barra de progresso
+      // (sair durante a copia pergunta antes, como numa exportacao)
+      const copy = converted && format === 'sqlite';
+      if (!(await runExport(t('file.save'), { scope: copy ? 'converted' : 'database', format, path }, copy ? null : 'Tables'))) {
         return false;
       }
       if (access) {
@@ -1048,7 +1055,8 @@
   }
 
   // NIVEL BASICO: Roda a exportacao (ou o Salvar do banco inteiro) com a barra de progresso e Cancelar; no fim, a frase
-  // com as tabelas ou linhas gravadas (e as abas, se foi Excel). Devolve true se gravou
+  // com as tabelas ou linhas gravadas (e as abas, se foi Excel); unit null: a copia do SQLite convertido (frase de salvo).
+  // Devolve true se gravou
   async function runExport(label, request, unit) {
     let finish;
     exportEnd = new Promise((resolve) => (finish = resolve));
@@ -1059,7 +1067,7 @@
     try {
       const done = await invoke('export', { request });
       const values = { count: fmt(done.count), sheets: fmt(done.sheets ?? 0), path: request.path };
-      showStatus(`status.exported${unit}${done.sheets == null ? '' : 'Sheets'}`, values);
+      showStatus(unit ? `status.exported${unit}${done.sheets == null ? '' : 'Sheets'}` : 'status.sqliteSaved', values);
       return true;
     } catch (err) {
       showError(err);

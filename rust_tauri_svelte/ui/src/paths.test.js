@@ -42,7 +42,7 @@ test('Save: types in app order, the format comes from the typed extension or the
   assert.equal(extOf('C:\\a.b\\noext'), '');
   assert.equal(extOf('/tmp/x.SQLite'), 'sqlite');
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
-  const save = app.match(/\n {2}async function save\(asLast\) \{[\s\S]*?\n {2}\}/)[0];
+  const save = app.match(/\n {2}async function save\(asLast[^)]*\) \{[\s\S]*?\n {2}\}/)[0];
   // Access e SQLite: SQLite marcado; DuckDB: DuckDB (um Access reaberto pelo .duckdb salvo continua SQLite)
   assert.match(save, /const selected = !access && source === 'DuckDB' \? 1 : 0;/);
   // Salvar: pasta do original; Salvar como: a ultima pasta em que salvou ou exportou (sem ela, a do original)
@@ -51,7 +51,11 @@ test('Save: types in app order, the format comes from the typed extension or the
   assert.match(save, /const sameDir = dir\.toLowerCase\(\) === dirOf\(readFile\)\.toLowerCase\(\);\s*const name = suggestedName\(stem\(openedPath\), SAVE_FORMATS\[selected\], sameDir \? readFile : ''/);
   assert.match(save, /title: t\('save\.title'\),\s*path: joinPath\(dir, name\),\s*types: SAVE_FORMATS\.map\(\(format\) => \[t\(`save\.\$\{format\}`\), format\]\),\s*selected,/);
   // Access convertido em SQLite: copia o temporario; os outros casos: a exportacao do banco, com progresso e Cancelar
-  assert.match(save, /if \(converted && format === 'sqlite'\) \{[^}]*await invoke\('save_converted', \{ path \}\);[^\n]*\n[^\n]*\n\s*\} else if \(!\(await runExport\(t\('file\.save'\), \{ scope: 'database', format, path \}, 'Tables'\)\)\) \{\s*return false;/);
+  // (a copia tambem com a barra de progresso: sair durante ela pergunta, como numa exportacao)
+  assert.match(save, /const copy = converted && format === 'sqlite';\s*if \(!\(await runExport\(t\('file\.save'\), \{ scope: copy \? 'converted' : 'database', format, path \}, copy \? null : 'Tables'\)\)\) \{\s*return false;/);
+  assert.match(app, /showStatus\(unit \? `status\.exported\$\{unit\}\$\{done\.sheets == null \? '' : 'Sheets'\}` : 'status\.sqliteSaved', values\);/);
+  const main = readFileSync(new URL('../../src/main.rs', import.meta.url), 'utf8');
+  assert.match(main, /"converted" => \{[\s\S]*?export::via_partial\(target, \|partial\| std::fs::copy\(&source, partial\)/);
   assert.match(app, /saveSetting\(SAVE_DIR_KEY, folder \? request\.path : dirOf\(request\.path\)\);/); // exportar tambem lembra a pasta
   assert.equal(CATALOGS['pt-BR']['save.title'], 'Salvar como SQLite, DuckDB ou Excel (arquivos .mdb e .accdb não podem ser gravados)');
 });
