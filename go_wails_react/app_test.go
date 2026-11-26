@@ -258,6 +258,32 @@ func TestDefaultSaveDir(t *testing.T) {
 	}
 }
 
+// coordinator 26/11: the progress of a search goes to the UI at most ~10 times a second, the first and last always
+func TestProgressAtMostTenASecond(t *testing.T) {
+	a := &App{}
+	t0 := time.Now()
+	ms := func(n int) time.Time { return t0.Add(time.Duration(n) * time.Millisecond) }
+	steps := []struct {
+		done, total int
+		at          time.Time
+		want        bool
+	}{
+		{1, 287, ms(0), true},   // the first
+		{2, 287, ms(10), false}, // 10 ms later
+		{3, 287, ms(99), false}, // still inside the 100 ms
+		{4, 287, ms(100), true}, // 100 ms after the last one sent
+		{5, 287, ms(150), false},
+		{287, 287, ms(160), true}, // the last
+		{40, 0, ms(170), false},   // unknown total: also limited
+		{41, 0, ms(260), true},
+	}
+	for _, s := range steps {
+		if got := a.progressDue(s.done, s.total, s.at); got != s.want {
+			t.Errorf("progressDue(%d, %d) at %v = %v, want %v", s.done, s.total, s.at.Sub(t0), got, s.want)
+		}
+	}
+}
+
 // the user's real settings (a saved language, for one) must not change what the tests see
 func TestMain(m *testing.M) {
 	dir, _ := os.MkdirTemp("", "mdb2sql-settings-")

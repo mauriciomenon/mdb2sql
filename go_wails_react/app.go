@@ -48,6 +48,9 @@ type App struct {
 	startLog                 []string        // Log lines of the startup, read by the UI once it listens (StartupLog)
 	displayWarn              *DisplayWarning // Linux: X11 missing, running on Wayland (display.go)
 
+	progressMu   sync.Mutex
+	lastProgress time.Time // when the last "progress" event went to the UI (progressDue)
+
 	jobMu        sync.Mutex
 	cancel       context.CancelFunc // of the running load, export or term search
 	exporting    bool               // the running job is an export or a save: leaving the app asks first
@@ -416,9 +419,22 @@ type Progress struct {
 }
 
 func (a *App) progress(done, total int, label string) {
-	if a.ctx != nil { // nil in tests: the Wails runtime only works inside the app
+	if a.ctx != nil && a.progressDue(done, total, time.Now()) { // ctx nil in tests: the Wails runtime only works inside the app
 		runtime.EventsEmit(a.ctx, "progress", Progress{done, total, label})
 	}
+}
+
+// progressDue: at most one progress event per 100 ms, always the first and the last; each event goes through the
+// window's thread, and with that thread busy (an accessibility client) one event per table made the 287-table term
+// search of DB3 take 472 s instead of 22 s
+func (a *App) progressDue(done, total int, now time.Time) bool {
+	a.progressMu.Lock()
+	defer a.progressMu.Unlock()
+	if done > 1 && (total == 0 || done < total) && now.Sub(a.lastProgress) < 100*time.Millisecond {
+		return false
+	}
+	a.lastProgress = now
+	return true
 }
 
 // startJob gives a load, an export (export true: leaving the app asks first) or a term search its own cancellable
