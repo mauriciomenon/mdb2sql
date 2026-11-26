@@ -110,7 +110,7 @@ test('the menu tree is the agreed one, in this order', () => {
     assert.ok(en.includes(line), `en: ${line}`);
   }
   const es = menuLines(MENUS, translator('es'));
-  for (const line of ['  Abrir la ruta escrita', '  Guardar como...  Ctrl+Shift+S', '  Copiar todo el registro', '  Marcar o desmarcar fila  Espacio', '  Desmarcar todas las filas', '  Solo las filas marcadas', '  Ir a la lista de tablas  Ctrl+T', '  Ejecutar SQL  Ctrl+Enter', '  Buscar términos  Ctrl+Enter', '  Búsqueda Avanzada  Ctrl+4', '  Comparación de términos >', '    Informe de la Búsqueda Avanzada >']) {
+  for (const line of ['  Abrir la ruta escrita', '  Guardar como...  Ctrl+Shift+S', '  Copiar todo el log', '  Marcar o desmarcar fila  Espacio', '  Desmarcar todas las filas', '  Solo las filas marcadas', '  Ir a la lista de tablas  Ctrl+T', '  Ejecutar SQL  Ctrl+Enter', '  Buscar términos  Ctrl+Enter', '  Búsqueda Avanzada  Ctrl+4', '  Comparación de términos >', '    Informe de la Búsqueda Avanzada >']) {
     assert.ok(es.includes(line), `es: ${line}`);
   }
 });

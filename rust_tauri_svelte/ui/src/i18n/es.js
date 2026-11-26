@@ -35,7 +35,7 @@ export default {
   'save.duckdb': 'Base de datos DuckDB',
   'save.xlsx': 'Libro de Excel',
   'save.csv': 'CSV UTF-8',
-  'edit.copyLog': 'Copiar todo el registro',
+  'edit.copyLog': 'Copiar todo el log',
   'edit.find': 'Buscar',
   'edit.mark': 'Marcar o desmarcar fila',
   'edit.unmarkAll': 'Desmarcar todas las filas',

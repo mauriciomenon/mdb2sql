@@ -205,6 +205,9 @@ test('new texts of Save, exit, marked rows and Terms are the agreed ones', () =>
     ['terms.found', {}, 'Encontrado', 'Found', 'Encontrado'],
     ['terms.missing', {}, 'Não encontrado', 'Not found', 'No encontrado'],
     // item 34 (BRIEF secao 11)
+    // BRIEF secao 13 g: "Copiar todo el log" (a aba se chama Log nos 3 idiomas)
+    ['edit.copyLog', {}, 'Copiar todo o Log', 'Copy the whole log', 'Copiar todo el log'],
+    ['view.log', {}, 'Log', 'Log', 'Log'],
     // BRIEF secao 13 d: a aba Termos vira Pesquisa Avancada (Exibir Ctrl+4 e o relatorio em Exportar); o botao fica
     ['tabs.terms', {}, 'Pesquisa Avançada', 'Advanced Search', 'Búsqueda Avanzada'],
     ['export.terms', {}, 'Relatório da Pesquisa Avançada', 'Advanced Search report', 'Informe de la Búsqueda Avanzada'],
