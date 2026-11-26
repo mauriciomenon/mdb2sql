@@ -79,6 +79,9 @@ test('favorite tables come first, in alphabetical order', () => {
   assert.match(app, /return favoritesFirst\(tables\.filter\(\(name\) => hasAllWords\(fold\(name\), words\)\), favorites\);/);
   assert.match(app, /<span class="name">\{favorites\.has\(name\) \? '★ ' : ''\}\{name\}<\/span>/);
   assert.match(app, /oncontextmenu=\{\(e\) => openStatusMenu\(e, name\)\}/);
+  // o menu abre abaixo do ponto clicado (nao cobre a tabela); o da barra de status, acima
+  assert.match(app, /aria-label=\{text\} style="left: \{contextMenu\.x\}px; top: \{contextMenu\.y\}px" use:keepInside=\{false\}>/);
+  assert.match(app, /node\.style\.top = `\$\{Math\.max\(4, Math\.min\(above \? box\.top - box\.height : box\.top \+ 4, innerHeight - box\.height - 4\)\)\}px`;/);
   assert.match(app, /\{@const text = t\(favorites\.has\(contextMenu\.table\) \? 'fav\.remove' : 'fav\.add'\)\}/);
   assert.match(app, /\n {6}favorite: \{ run: \(\) => setFavorite\(selectedTable\), off: !selectedTable \},/);
   assert.doesNotMatch(app.match(/\n {2}function resetTable\(\) \{[\s\S]*?\n {2}\}/)[0], /favorites/);

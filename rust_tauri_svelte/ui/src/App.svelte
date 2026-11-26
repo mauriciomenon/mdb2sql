@@ -1221,11 +1221,12 @@
   // Ctrl+T: a lista de tabelas em foco (setas, Home e End trocam a tabela)
   const focusTables = () => document.querySelector('.table-list')?.focus();
 
-  // menu perto da borda: puxa para dentro da janela
-  const keepInside = (node) => {
+  // menu perto da borda: puxa para dentro da janela. above: abre acima do ponto (barra de status, embaixo); senao abaixo
+  // dele (lista de tabelas: o menu nao cobre a tabela clicada)
+  const keepInside = (node, above = true) => {
     const box = node.getBoundingClientRect();
     node.style.left = `${Math.max(4, Math.min(box.left, innerWidth - box.width - 4))}px`;
-    node.style.top = `${Math.max(4, Math.min(box.top - box.height, innerHeight - box.height - 4))}px`;
+    node.style.top = `${Math.max(4, Math.min(above ? box.top - box.height : box.top + 4, innerHeight - box.height - 4))}px`;
   };
   // submenu ao lado do item; sem lugar a direita, abre para a esquerda
   const beside = (node) => {
@@ -1770,7 +1771,7 @@
 
   {#if contextMenu?.table}
     {@const text = t(favorites.has(contextMenu.table) ? 'fav.remove' : 'fav.add')}
-    <div class="context" role="menu" aria-label={text} style="left: {contextMenu.x}px; top: {contextMenu.y}px" use:keepInside>
+    <div class="context" role="menu" aria-label={text} style="left: {contextMenu.x}px; top: {contextMenu.y}px" use:keepInside={false}>
       <button type="button" role="menuitem" use:focusNow onclick={() => setFavorite(contextMenu.table)}>{text}</button>
     </div>
   {:else if contextMenu}
