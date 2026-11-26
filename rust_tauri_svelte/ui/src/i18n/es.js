@@ -36,6 +36,7 @@ export default {
   'save.xlsx': 'Libro de Excel',
   'save.csv': 'CSV UTF-8',
   'edit.copyLog': 'Copiar todo el registro',
+  'edit.find': 'Buscar',
   'edit.mark': 'Marcar o desmarcar fila',
   'edit.unmarkAll': 'Desmarcar todas las filas',
   'key.space': 'Espacio',

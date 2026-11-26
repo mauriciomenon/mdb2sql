@@ -36,6 +36,7 @@ export default {
   'save.xlsx': 'Pasta de trabalho do Excel',
   'save.csv': 'CSV UTF-8',
   'edit.copyLog': 'Copiar todo o Log',
+  'edit.find': 'Pesquisar',
   'edit.mark': 'Marcar ou desmarcar linha',
   'edit.unmarkAll': 'Desmarcar todas as linhas',
   'key.space': 'Espaço',

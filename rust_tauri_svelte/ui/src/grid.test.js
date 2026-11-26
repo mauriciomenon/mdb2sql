@@ -3,24 +3,99 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import {
+  ROW_ID,
   cellText,
   columnCellWidth,
   filterLabel,
   fold,
+  gridRows,
   hasAllWords,
   importantEntry,
+  parseTerms,
   resolveContext,
   rowToTsv,
+  rowsToTsv,
   searchWords,
   setListed,
   statusLine,
+  termsOutcome,
   toggleHidden,
+  toggleMarked,
   toggleShown,
   tsvField,
   unreadEntries,
   visibleColumns,
   withFilter,
+  withIds,
 } from './grid.js';
+
+// item 31: as marcadas ficam sempre no topo, na ordem da tabela, qualquer que seja a pesquisa; abaixo, as linhas da
+// pesquisa de agora sem repetir as marcadas. Exemplo do dono: busca kkk, marca 1 de 3; busca jjj, a de kkk continua no
+// topo; marca 1 de jjj; busca hhh, marca 1: 3 marcadas no topo
+test('marked rows stay on top in table order, whatever the search', () => {
+  const page = (...ids) => withIds(ids.map((id) => ({ n: id })), ids);
+  const shown = (marked, rows, only) => gridRows(marked, rows, only).map((row) => row[ROW_ID]);
+  const kkk = page(40, 41, 42);
+  let marked = toggleMarked([], kkk[1]);
+  assert.deepEqual(shown(marked, kkk), [41, 40, 42], 'marked first, not repeated below');
+  const jjj = page(7, 8);
+  assert.deepEqual(shown(marked, jjj), [41, 7, 8], 'the kkk row stays on top of another search');
+  marked = toggleMarked(marked, jjj[0]);
+  const hhh = page(90, 91);
+  marked = toggleMarked(marked, hhh[1]);
+  assert.deepEqual(shown(marked, hhh), [7, 41, 91, 90], '3 marked on top, in table order');
+  assert.deepEqual(shown(marked, hhh, true), [7, 41, 91], 'only the marked ones');
+  // a mesma linha relida do banco (outro objeto, mesma identidade) desmarca; a lista antiga nao muda
+  const before = marked;
+  marked = toggleMarked(marked, page(41)[0]);
+  assert.deepEqual(shown(marked, []), [7, 91]);
+  assert.equal(before.length, 3);
+  // tabela sem rowid: a identidade e texto e a linha marcada entra no fim
+  const texts = withIds([{ n: 1 }, { n: 2 }], ['b', 'a']);
+  assert.deepEqual(toggleMarked(toggleMarked([], texts[0]), texts[1]).map((row) => row[ROW_ID]), ['b', 'a']);
+  // a identidade nao e coluna: copiar a linha nao a leva
+  assert.equal(rowToTsv(['n'], kkk[0]), '40');
+  assert.deepEqual(Object.keys(kkk[0]), ['n']);
+});
+
+// item 32: termos = cada linha nao vazia, sem espacos nas pontas; repetidos (sem diferenciar maiusculas, como a
+// comparacao) contam uma vez; nada de tratar cabecalho: a 1a linha colada do Excel e um termo como os outros
+test('pasted terms: one per non-empty line, trimmed, repeated ones counted once', () => {
+  const pasted = 'PNTNAM\r\n  GERADOR A  \r\n\r\nTURBINA B\ngerador a\n\t\nTURBINA B\rC';
+  assert.deepEqual(parseTerms(pasted), { terms: ['PNTNAM', 'GERADOR A', 'TURBINA B', 'C'], repeated: 2 });
+  assert.deepEqual(parseTerms('  \n\n'), { terms: [], repeated: 0 });
+  assert.deepEqual(parseTerms('um termo com espacos dentro'), { terms: ['um termo com espacos dentro'], repeated: 0 });
+});
+
+// resultado: tabelas com acerto (linhas somadas dos termos), nao encontrados na ordem colada, termos achados e linhas
+test('term search outcome: tables with hits, terms not found in pasted order, totals', () => {
+  const terms = ['PNTNAM', 'A', 'B', 'C', 'D'];
+  const hits = [
+    { ord: 1, table: 'RANGER_SOSTAT', count: 2 },
+    { ord: 3, table: 'RANGER_SOSTAT', count: 1 },
+    { ord: 1, table: 'ZZ', count: 4 },
+  ];
+  assert.deepEqual(termsOutcome(terms, hits), {
+    tables: [{ table: 'RANGER_SOSTAT', count: 3 }, { table: 'ZZ', count: 4 }],
+    notFound: ['PNTNAM', 'B', 'D'],
+    found: 2,
+    rows: 7,
+  });
+  assert.deepEqual(termsOutcome(['x'], []), { tables: [], notFound: ['x'], found: 0, rows: 0 });
+});
+
+// Copiar as linhas encontradas: cabecalho e linhas separados por TAB, sem linha a mais (nem no fim)
+test('found rows are copied with the header and no extra line', () => {
+  const rows = [{ Termo: 'A', id: 1, name: 'x\ty' }, { Termo: 'B', id: 2, name: null }];
+  assert.equal(rowsToTsv(['id', 'name'], rows), 'id\tname\r\n1\t"x\ty"\r\n2\t');
+  assert.equal(rowsToTsv(['id'], []), 'id');
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  // todas as linhas achadas (limit 0), sem a coluna Termo (a primeira)
+  assert.match(app, /invoke\('terms_rows', \{ table: termsTable, limit: 0, label: t\('terms\.col'\) \}\);\s*const names = all\.columns\.slice\(1\)\.map\(\(col\) => col\.name\);/);
+  assert.match(app, /extra=\{termsExtra\}\s*copySkip=\{1\}/);
+  const grid = readFileSync(new URL('./Grid.svelte', import.meta.url), 'utf8');
+  assert.match(grid, /const names = columns\.slice\(copySkip\)\.map\(\(col\) => col\.name\);/);
+});
 
 // padrao item 16: SQL que roda sem erro tira o erro de SQL anterior da barra de baixo e do contador (outros erros ficam)
 test('a SQL run without error clears the earlier SQL error from the status bar', () => {
@@ -42,8 +117,10 @@ test('SQL tab: error on the Run line, the old grid leaves, hint SELECT * FROM ..
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
   const run = app.match(/\n {2}async function runSql\(\) \{[\s\S]*?\n {2}\}/)[0];
   assert.match(run, /lastSql = query;\s*sqlError = '';\s*log = resolveContext\(log, 'err\.sql'\);/);
-  assert.match(run, /catch \(err\) \{\s*sqlResult = null;\s*lastSql = '';\s*sqlError = String\(err\);\s*showError\(err, 'err\.sql'\);/);
-  assert.match(app, /\{#if sqlError\}\s*<span class="sql-error">\{statusLine\(errorLine\(sqlError, 'err\.sql'\)\)\}<\/span>\s*\{:else if sqlResult\}/);
+  assert.match(run, /catch \(err\) \{\s*sqlResult = null;\s*lastSql = '';\s*sqlError = String\(err\);\s*showError\(err, sqlContext\(err\)\);/);
+  assert.match(app, /\{#if sqlError\}\s*<span class="sql-error">\{statusLine\(errorLine\(sqlError, sqlContext\(sqlError\)\)\)\}<\/span>\s*\{:else if sqlResult\}/);
+  // erro do motor: prefixo "Erro na consulta SQL"; comando recusado (aba so de leitura): so a frase do catalogo
+  assert.match(app, /const sqlContext = \(err\) => \(String\(err\)\.includes\('\[\[err\.sqlReadOnly\]\]'\) \? undefined : 'err\.sql'\);/);
   assert.match(app, /const SQL_HINT = 'SELECT \* FROM \.\.\.';/);
   // abrir outro arquivo ou fechar tira o erro de SQL da linha do botao e da barra de baixo, juntos
   for (const name of ['openDatabase', 'closeDatabase']) {
@@ -108,7 +185,7 @@ test('grid shows whole doubles without .0 and NULL as the Show NULL setting says
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
   assert.match(app, /let showNull = \$state\(loadSetting\(NULL_KEY\) === 'on'\);/); // desligado por padrao (sem valor), gravado
   assert.match(app, /saveSetting\(NULL_KEY, show \? 'on' : 'off'\);/);
-  assert.equal(app.split('{nullText}').length - 1, 3); // Data, Schema e SQL
+  assert.equal(app.split('{nullText}').length - 1, 4); // Data, Schema, SQL e Termos
 });
 
 test('Columns... cell fits the longest name and type', () => {

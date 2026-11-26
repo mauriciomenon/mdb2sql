@@ -65,7 +65,7 @@ export const MENUS = [
       ['copyRowHeader', 'grid.copyRowHeader'],
       ['copyLog', 'edit.copyLog'],
       '-',
-      ['find', 'search.label', 'Ctrl+F'],
+      ['find', 'edit.find', 'Ctrl+F'],
       ['filterValue', 'grid.filterValue'],
       ['clearFilters', 'grid.clearFilters'],
       '-',

@@ -36,6 +36,7 @@ export default {
   'save.xlsx': 'Excel workbook',
   'save.csv': 'CSV UTF-8',
   'edit.copyLog': 'Copy the whole log',
+  'edit.find': 'Search',
   'edit.mark': 'Mark or unmark row',
   'edit.unmarkAll': 'Unmark all rows',
   'key.space': 'Space',
