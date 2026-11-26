@@ -52,7 +52,7 @@ pub fn parse(args: []const []const u8) error{Usage}!?Options {
 // (whole|contains), pesquisa, escolhe a tabela RANGER_SOSTAT e grava o resultado em capture_terms.txt (sem a
 // variavel: pulado); terms_show mostra a aba Termos (outro idioma); save_dialog abre a caixa de salvar nativa (so com
 // MDB2SQL_CAPTURE_DIALOG=1: ela bloqueia ate um script de fora fotografar e fechar).
-pub const Action = enum { display_warning, log_error, log_error_open, exit_esc, show, filter, columns, close_columns, other_table, about, log, settings_menu, lang_en, lang_pt_br, lang_es, prompt, prompt_delete, click_cell, global_late, global_clear, global, open_hit, reopen, export_ask, header_menu, cell_menu, file_menu, export_menu, sql_tab, sql_error, key_ctrl_enter, key_ctrl_1, key_ctrl_2, key_ctrl_f, key_f5, reopen_saved, sql_write, favorites, table, search_mark, search_only, only_marked, unmark_all, edit_menu, view_menu, terms, terms_show, save_dialog };
+pub const Action = enum { display_warning, log_error, log_error_open, exit_esc, show, filter, columns, close_columns, other_table, about, log, settings_menu, lang_en, lang_pt_br, lang_es, prompt, prompt_delete, click_cell, global_late, global_clear, global, open_hit, reopen, export_ask, header_menu, cell_menu, file_menu, export_menu, sql_tab, sql_error, key_ctrl_enter, key_ctrl_1, key_ctrl_2, key_ctrl_f, key_f5, reopen_saved, sql_write, favorites, table, search_mark, search_only, only_marked, unmark_all, page_next, edit_menu, view_menu, terms, terms_show, terms_empty, save_dialog };
 pub const Step = struct { name: []const u8, action: Action, w: u32, h: u32, arg: []const u8 = "" };
 pub const default_size = [2]u32{ 1280, 800 }; // tamanho em que o programa abre
 pub const max_size = [2]u32{ 1920, 1129 }; // area de trabalho de 1920x1200 menos a barra de tarefas e o titulo
@@ -100,6 +100,8 @@ pub const plan = [_]Step{
     // itens 27-33, em pt-BR: linhas marcadas, menus, aba Termos, caixa de salvar
     .{ .name = "t_lang_pt_br", .action = .lang_pt_br, .w = default_size[0], .h = default_size[1] },
     .{ .name = "t_table", .action = .table, .w = default_size[0], .h = default_size[1], .arg = first_table },
+    // item 13 h: a pagina 2 da tabela (linhas 101 a 200), com ◀ ▶ na linha de baixo
+    .{ .name = "w_page_2_pt_br", .action = .page_next, .w = default_size[0], .h = default_size[1] },
     .{ .name = "t_mark_1", .action = .search_mark, .w = default_size[0], .h = default_size[1], .arg = mark_terms[0] },
     .{ .name = "t_mark_2", .action = .search_mark, .w = default_size[0], .h = default_size[1], .arg = mark_terms[1] },
     .{ .name = "t_mark_3", .action = .search_mark, .w = default_size[0], .h = default_size[1], .arg = mark_terms[2] },
@@ -113,6 +115,8 @@ pub const plan = [_]Step{
     .{ .name = "s_menu_settings_pt_br", .action = .settings_menu, .w = default_size[0], .h = default_size[1] },
     // item 34: 3 favoritas no topo da lista e o clique direito aberto na primeira
     .{ .name = "v_favorites_pt_br", .action = .favorites, .w = default_size[0], .h = default_size[1] },
+    // item 13 e: a aba Pesquisa Avançada vazia, com o texto de fundo do exemplo
+    .{ .name = "u_terms_empty_pt_br", .action = .terms_empty, .w = default_size[0], .h = default_size[1] },
     .{ .name = "u_terms_pt_br", .action = .terms, .w = default_size[0], .h = default_size[1], .arg = "whole" },
     .{ .name = "u_terms_contains_pt_br", .action = .terms, .w = default_size[0], .h = default_size[1], .arg = "contains" },
     .{ .name = "u_terms_max_pt_br", .action = .terms_show, .w = max_size[0], .h = max_size[1] },

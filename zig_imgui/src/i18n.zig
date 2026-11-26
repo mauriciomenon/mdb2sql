@@ -288,9 +288,14 @@ test "Data tab count line under the grid: shown of all rows, or of the rows foun
     lang = .pt_br;
     try t.expectEqualStrings("Tipos: mostrando 3 de 3 linhas", fmtCount(&b, "rows_showing", 3, .{ "Tipos", 3, 3 }));
     try t.expectEqualStrings("Tipos: mostrando 1 de 1 linha", fmtCount(&b, "rows_showing", 1, .{ "Tipos", 1, 1 }));
-    try t.expectEqualStrings("Medições: mostrando 1 de 1 linha encontrada", fmtCount(&b, "rows_found", 1, .{ "Medições", 1, 1 }));
-    try t.expectEqualStrings("T: mostrando 100 de 604 linhas encontradas", fmtCount(&b, "rows_found", 604, .{ "T", 100, 604 }));
+    // aba Dados (item 13 h): a pagina, de quantas (com busca ou filtro: encontradas)
+    try t.expectEqualStrings("T: linhas 1 a 100 de 36804", fmtCount(&b, "rows_page", 36804, .{ "T", 1, 100, 36804 }));
+    try t.expectEqualStrings("Medições: linha 1 a 1 de 1 encontrada", fmtCount(&b, "rows_page_found", 1, .{ "Medições", 1, 1, 1 }));
+    try t.expectEqualStrings("T: linhas 601 a 604 de 604 encontradas", fmtCount(&b, "rows_page_found", 604, .{ "T", 601, 604, 604 }));
+    lang = .en;
+    try t.expectEqualStrings("T: rows 101 to 200 of 250", fmtCount(&b, "rows_page", 250, .{ "T", 101, 200, 250 }));
     lang = .es;
+    try t.expectEqualStrings("T: filas 0 a 0 de 0", fmtCount(&b, "rows_page", 0, .{ "T", 0, 0, 0 }));
     try t.expectEqualStrings("T: mostrando 0 de 0 filas", fmtCount(&b, "rows_showing", 0, .{ "T", 0, 0 }));
     // Todas as tabelas
     lang = .pt_br;

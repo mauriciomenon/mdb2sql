@@ -115,7 +115,7 @@ else
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
     };
 
-// De onde vem a estrela das tabelas favoritas (U+2605) quando a fonte da interface nao a tem (a Segoe UI nao tem)
+// De onde vem a estrela das favoritas (U+2605) e as setas das paginas (U+25B6, U+25C0): a Segoe UI nao as tem
 pub const star_fonts = if (is_windows)
     [_][:0]const u8{"C:\\Windows\\Fonts\\seguisym.ttf"}
 else

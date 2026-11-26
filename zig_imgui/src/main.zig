@@ -33,7 +33,9 @@ extern fn ImGui_ImplOpenGL3_Shutdown() void;
 // src/shim.c: campos de structs que o translate-c deixa opacos
 extern fn shim_io_setup() void;
 extern fn shim_add_font(path: [*:0]const u8, size_pixels: f32) ?*ig.ImFont;
-extern fn shim_merge_glyph(path: [*:0]const u8, size_pixels: f32, glyph: c_uint) ?*ig.ImFont;
+extern fn shim_merge_glyphs(path: [*:0]const u8, size_pixels: f32, ranges: [*]const ig.ImWchar) ?*ig.ImFont;
+// juntados da fonte de simbolos: setas das paginas da aba Dados e a estrela das favoritas (pares inicio-fim, 0 no fim)
+const symbol_glyphs = [_]ig.ImWchar{ 0x25B6, 0x25B6, 0x25C0, 0x25C0, 0x2605, 0x2605, 0 };
 extern fn shim_clipper_range(clipper: *const ig.ImGuiListClipper, start: *c_int, end: *c_int) void;
 extern fn shim_capture_setup() void;
 extern fn shim_capture_frame(w: f32, h: f32) void;
@@ -282,7 +284,7 @@ const Capture = struct {
         app.close_popups = true;
         switch (action) {
             .sql_tab, .sql_error, .sql_write, .key_ctrl_enter => app.want_tab = .sql,
-            .terms, .terms_show => app.want_tab = .terms,
+            .terms, .terms_show, .terms_empty => app.want_tab = .terms,
             .key_ctrl_1, .key_ctrl_2, .key_ctrl_f => {},
             else => app.want_tab = .data,
         }
@@ -340,9 +342,13 @@ const Capture = struct {
             },
             .only_marked => {
                 app.only_marked = true;
-                app.want_reload = true;
+                app.reloadFirstPage();
             },
             .unmark_all => app.want_unmark_all = true,
+            .page_next => {
+                app.page += 1;
+                app.want_reload = true;
+            },
             .favorites => {
                 // as 3 favoritas (as que o arquivo tiver) e o menu do clique direito na tabela aberta
                 for (cap.fav_tables) |name| if (indexOf(app.db.table_names, name)) |i| {
@@ -437,7 +443,7 @@ const Capture = struct {
                 if (app.selected != i) app.want_select = i;
             },
             .about => app.want_about = true,
-            .log, .log_error_open => {},
+            .log, .log_error_open, .terms_empty => {},
             .log_error => {
                 // erro de verdade (SQL errado) com o Log recolhido: a barra de status mostra o erro em destaque
                 copyZ(&app.sql, "SELEC 1");
@@ -604,6 +610,8 @@ const Capture = struct {
             .search_only => if (app.marked_top != 3) c.note(app.gpa, "the 3 marked rows are not on top during another search"),
             .only_marked => if (app.data == null or app.data.?.rows.len != app.marksOf(app.selected).len) c.note(app.gpa, "Only marked does not show just the marked rows"),
             .unmark_all => if (app.marksOf(app.selected).len != 0 or app.only_marked) c.note(app.gpa, "Unmark all rows left marks"),
+            // pagina 2 da tabela: as linhas depois das primeiras `limit`
+            .page_next => if (app.page != 1 or app.data == null or app.data.?.rows.len == 0) c.note(app.gpa, "the next page of the Data tab did not load"),
             // as favoritas no topo da lista, em ordem alfabetica
             .favorites => {
                 const order = app.table_order.items;
@@ -1084,7 +1092,8 @@ const App = struct {
     select_search: bool = false, // o proximo select abre a tabela com a busca da caixa (escolha na busca global)
     sort_col: ?usize = null,
     sort_desc: bool = false,
-    limit: u32 = query.default_limit, // linhas carregadas na aba Dados (lista 100 / 500 / 1000)
+    limit: u32 = query.default_limit, // linhas por pagina na aba Dados (lista 100 / 500 / 1000)
+    page: u64 = 0, // pagina da aba Dados (0 = a primeira); as marcadas ficam fora dela, no topo
     total: u64 = 0,
     // busca que vale para as linhas na tela (a caixa de busca pode ter texto ainda nao aplicado)
     applied_search: [256:0]u8 = @splat(0),
@@ -1309,14 +1318,17 @@ const App = struct {
         app.global = null;
     }
 
+    // A grade da aba Dados de novo, da pagina 1: a busca, os filtros, a ordenacao, Linhas ou So as marcadas mudou
+    fn reloadFirstPage(app: *App) void {
+        app.page = 0;
+        app.want_reload = true;
+    }
+
     // Busca da caixa da aba Data no escopo atual (Enter ou 300 ms depois da ultima tecla). Todas as tabelas: a lista
     // anterior some ate o resultado do termo novo chegar
     fn runSearch(app: *App) void {
         app.search_wait.due = null;
-        if (app.scope == .table) {
-            app.want_reload = true;
-            return;
-        }
+        if (app.scope == .table) return app.reloadFirstPage();
         app.clearGlobal();
         app.want_global = std.mem.indexOfNone(u8, zstr(&app.search), &std.ascii.whitespace) != null;
     }
@@ -1398,6 +1410,7 @@ const App = struct {
         switch (kind) {
             .open => {
                 r.path = app.path;
+                app.page = 0;
                 app.open_request = app.path;
                 // Access ja convertido e salvo (chave caminho + tamanho + data, gravada nas configuracoes) e sem mudanca
                 // desde entao: abre o SQLite salvo, sem converter de novo nem perguntar ao fechar
@@ -1421,6 +1434,7 @@ const App = struct {
             },
             .select => {
                 r.table = app.want_select orelse return;
+                app.page = 0; // outra tabela: pagina 1
                 r.search = if (app.select_search) app.search else @splat(0);
                 r.marks = app.marksOf(r.table); // as marcadas desta tabela vem no topo
                 app.select_search = false;
@@ -1436,6 +1450,7 @@ const App = struct {
                 r.key = app.data_key;
                 r.marks = app.marksOf(r.table);
                 r.only_marked = app.only_marked and r.marks.len > 0;
+                r.offset = app.page * app.limit;
             },
             .sql => r.sql = app.sql,
             .export_ => {}, // preenchido em startExport
@@ -1523,6 +1538,12 @@ const App = struct {
                 app.marked_top = out.marked;
                 app.total = out.total;
                 app.applied_search = app.slot.req.search;
+                // a pagina passou do fim (linhas que sairam dela foram marcadas): a ultima que existe
+                const listed = app.total -| app.marked_top;
+                if (app.page > 0 and !app.only_marked and app.page * app.limit >= listed) {
+                    app.page = if (listed == 0) 0 else (listed - 1) / app.limit;
+                    app.want_reload = true;
+                }
             },
             .sql => {
                 // erro: a grade velha some; certo: o erro anterior sai da linha do botao e da barra de baixo
@@ -1868,7 +1889,7 @@ const App = struct {
         }
         if (app.want_filter != null or app.want_unfilter != null or app.want_clear_filters) {
             app.editFilters();
-            app.want_reload = true;
+            app.reloadFirstPage();
         }
         if (app.want_mark != null or app.want_unmark_all) {
             app.editMarks();
@@ -2273,7 +2294,7 @@ const App = struct {
                     const item = std.fmt.bufPrintSentinel(&nb, "{d}", .{n}, 0) catch continue;
                     if (ig.igMenuItem_Bool(item, null, app.limit == n, true) and n != app.limit) {
                         app.limit = n;
-                        app.want_reload = true;
+                        app.reloadFirstPage();
                     }
                 }
             }
@@ -2298,7 +2319,7 @@ const App = struct {
             }
             if (ig.igMenuItem_Bool(tr("menu_only_marked"), null, app.only_marked, has_db and app.marksOf(app.selected).len > 0)) {
                 app.only_marked = !app.only_marked;
-                app.want_reload = true;
+                app.reloadFirstPage();
             }
             if (ig.igMenuItem_Bool(tr("menu_goto_tables"), "Ctrl+T", false, has_db)) app.focus_tables = true;
             if (ig.igMenuItem_Bool(tr("fav_toggle"), "Ctrl+D", false, has_db and app.selected != null)) app.want_fav = app.selected;
@@ -3056,7 +3077,7 @@ const App = struct {
                 const item = std.fmt.bufPrintSentinel(&nb, "{d}", .{n}, 0) catch continue;
                 if (ig.igSelectable_Bool(item, n == app.limit, 0, .{ .x = 0, .y = 0 }) and n != app.limit) {
                     app.limit = n;
-                    app.want_reload = true;
+                    app.reloadFirstPage();
                 }
             }
         }
@@ -3065,7 +3086,7 @@ const App = struct {
         columnsButton(&app.data_sel);
 
         // Abaixo da busca, igual nas 4 (padrao 24): so com filtros por valor, a linha deles; a grade; embaixo dela a
-        // contagem. Nada mais (sem paginas, sem contagem acima da grade).
+        // contagem com as paginas ◀ ▶ (item 13 h). Nada acima da grade.
         // Filtros ativos: um botao por filtro (clicar remove) e Limpar filtros; o que nao cabe desce de linha
         const filters_l = tr("filters_label");
         for (app.filters.items, 0..) |f, i| {
@@ -3096,34 +3117,60 @@ const App = struct {
         if (app.data) |*g| if (drawGrid("##data", g, .{ .col = app.sort_col, .desc = app.sort_desc }, &app.data_sel, null, .filter, &app.prefs, name, count_h, marking)) |s| {
             app.sort_col = s.col;
             app.sort_desc = s.desc;
-            app.want_reload = true;
+            app.reloadFirstPage();
         };
-        // "<tabela>: mostrando X de Y linhas" (com busca ou filtro: "X de Y linhas encontradas") + ", N marcadas"; as
-        // colunas ocultas ficam na barra de baixo. Uma linha: o que nao cabe termina em "..." (inteira no tooltip).
-        // Com marcadas, a direita a caixa "So as marcadas" (= Exibir > So as linhas marcadas).
+        // "<tabela>: linhas 1 a 100 de 36804" (com busca ou filtro: "... encontradas") + ", N marcadas" e as paginas
+        // ◀ ▶ (a pagina = a lista Linhas; as marcadas ficam fora dela, no topo de toda pagina); as colunas ocultas
+        // ficam na barra de baixo. Uma linha: o que nao cabe termina em "..." (inteira no tooltip). Com marcadas, a
+        // direita a caixa "So as marcadas" (= Exibir > So as linhas marcadas).
         const shown: u64 = if (app.data) |g| g.rows.len else 0;
+        const top: u64 = if (app.only_marked) 0 else app.marked_top;
+        const listed = app.total -| top;
+        const on_page = shown -| top;
+        const first_row = if (on_page == 0) 0 else app.page * app.limit + 1;
+        const last_row = app.page * app.limit + on_page;
         var cb: [700]u8 = undefined;
         const rows_line = if (app.applied_search[0] != 0 or app.filters.items.len > 0)
-            i18n.fmtCount(&cb, "rows_found", app.total, .{ name, shown, app.total })
+            i18n.fmtCount(&cb, "rows_page_found", listed, .{ name, first_row, last_row, listed })
         else
-            i18n.fmtCount(&cb, "rows_showing", app.total, .{ name, shown, app.total });
+            i18n.fmtCount(&cb, "rows_page", listed, .{ name, first_row, last_row, listed });
         var mb: [64]u8 = undefined;
         var clb: [780]u8 = undefined;
         const count_line = if (n_marked > 0) std.fmt.bufPrint(&clb,"{s}{s}", .{ rows_line, i18n.fmtCount(&mb, "marked_count", n_marked, .{n_marked}) }) catch rows_line else rows_line;
         const only_l = tr("only_marked");
         const box_w = if (n_marked > 0) ig.igGetFrameHeight() + st.*.ItemInnerSpacing.x + textWidth(only_l) + 2 * gap else 0;
+        const prev_l = "\u{25C0}##page_prev";
+        const next_l = "\u{25B6}##page_next";
+        const pager_w = buttonWidth(prev_l) + buttonWidth(next_l) + 2 * gap;
         ig.igAlignTextToFramePadding();
         var fb: [800]u8 = undefined;
-        const fitted = fitLine(&fb, count_line, ig.igGetContentRegionAvail().x - box_w);
+        const fitted = fitLine(&fb, count_line, ig.igGetContentRegionAvail().x - box_w - pager_w);
         textSlice(fitted);
         if (fitted.len != count_line.len and ig.igIsItemHovered(0)) tooltip(count_line);
+        const last_page = if (listed == 0) 0 else (listed - 1) / app.limit;
+        ig.igSameLine(0, -1);
+        ig.igBeginDisabled(app.page == 0 or app.only_marked);
+        if (button(prev_l)) {
+            app.page -= 1;
+            app.want_reload = true;
+        }
+        itemTooltip(tr("page_prev"));
+        ig.igEndDisabled();
+        ig.igSameLine(0, -1);
+        ig.igBeginDisabled(app.page >= last_page or app.only_marked);
+        if (button(next_l)) {
+            app.page += 1;
+            app.want_reload = true;
+        }
+        itemTooltip(tr("page_next"));
+        ig.igEndDisabled();
         if (n_marked > 0) {
             ig.igSameLine(0, -1);
             ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - (box_w - 2 * gap)));
             var only = app.only_marked;
             if (ig.igCheckbox(only_l, &only)) {
                 app.only_marked = only;
-                app.want_reload = true;
+                app.reloadFirstPage();
             }
         }
         // pedidos da grade (caixas de marcar) e do menu da celula
@@ -3845,9 +3892,9 @@ fn run(init: std.process.Init) !void {
     const ui_font = for (platform.fonts) |font| {
         if (std.Io.Dir.cwd().access(init.io, font, .{})) |_| {
             _ = shim_add_font(font, 18.6 * scale);
-            // a estrela das favoritas (U+2605) de outra fonte, juntada a esta (a Segoe UI nao tem)
+            // a estrela das favoritas (U+2605) e as setas das paginas (U+25B6, U+25C0) de outra fonte, juntada a esta
             for (platform.star_fonts) |star| if (std.Io.Dir.cwd().access(init.io, star, .{})) |_| {
-                _ = shim_merge_glyph(star, 18.6 * scale, 0x2605);
+                _ = shim_merge_glyphs(star, 18.6 * scale, &symbol_glyphs);
                 break;
             } else |_| {};
             break true;

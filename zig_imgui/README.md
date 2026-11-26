@@ -122,10 +122,11 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   with `★ ` before the name, then the other tables; the filter applies to them too. They are kept by table name
   while the program is open (Close, another file and Reopen keep them; a name the file does not have is not shown)
   and are not saved.
-- **Data** tab, top to bottom: one line with the search box, **This table** | **All tables**, **Rows** (the first 100,
+- **Data** tab, top to bottom: one line with the search box, **This table** | **All tables**, **Rows** (pages of 100,
   500 or 1000 rows) and **Columns...** (a narrow window wraps it, nothing cut); the value filters line, only when
-  there are filters; the grid (click a column header to sort); under the grid `<table>: showing <n> of <total> rows`
-  (with a search or filter: `... rows found`). The search
+  there are filters; the grid (click a column header to sort); under the grid `<table>: rows <first> to <last> of <total>`
+  (with a search or filter: `... found`) and the pages ◀ ▶ (disabled at the ends; the marked rows stay on top of every
+  page; a new search, filter, sort, Rows or table goes back to page 1). The search
   runs 300 ms after the last key (Enter: at once), in the database over the **whole table** (every column), for
   Access, SQLite and DuckDB alike, before the row limit: the row count follows it.
 - Next to the search box, **This table** | **All tables**: with **All tables** the text is searched in every table

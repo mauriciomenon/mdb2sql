@@ -123,8 +123,8 @@ test "All tables result: the count line and the list \"table (n)\" (Python and R
     try expectOrder("fn drawGlobal(", &.{ "\"global_found\"", "\"{s} ({d})\"" });
 }
 
-test "Data tab below the search (standard 24): filters line, grid, then the count line; no pages" {
-    try expectOrder("fn drawData(", &.{ "tr(\"rows_label\")", "tr(\"columns_button\")", "tr(\"filters_label\")", "drawGrid(\"##data\"", "\"rows_showing\"" });
+test "Data tab below the search (standard 24): filters line, grid, then the count line with the pages (item 13 h)" {
+    try expectOrder("fn drawData(", &.{ "tr(\"rows_label\")", "tr(\"columns_button\")", "tr(\"filters_label\")", "drawGrid(\"##data\"", "\"rows_page_found\"", "\"rows_page\"", "tr(\"page_prev\")", "tr(\"page_next\")" });
     const ui = @embedFile("main.zig");
     for ([_][]const u8{ "tr(\"prev\")", "tr(\"next\")", "page_line" }) |gone| try std.testing.expect(std.mem.indexOf(u8, ui, gone) == null);
 }

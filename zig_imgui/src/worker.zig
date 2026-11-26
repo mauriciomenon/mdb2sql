@@ -84,7 +84,8 @@ pub const Req = struct {
     only_marked: bool = false, // reload: so as linhas marcadas
     sort_col: ?usize = null,
     sort_desc: bool = false,
-    limit: u32 = query.default_limit, // open, select, reload: linhas carregadas (lista 100 / 500 / 1000)
+    limit: u32 = query.default_limit, // open, select, reload: linhas carregadas (lista 100 / 500 / 1000) = tamanho da pagina
+    offset: u64 = 0, // reload: primeira linha da pagina, sem contar as marcadas (que vem no topo de toda pagina)
     sql: [8192:0]u8 = @splat(0), // sql, export do resultado
     export_kind: ExportKind = .db_duckdb,
     dest: [4096]u8 = undefined, // export: arquivo de destino (UTF-8)
@@ -189,6 +190,7 @@ fn exec(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *expor
             out.table = req.table;
             var spec = try tableSpec(db, req);
             spec.limit = req.limit;
+            spec.offset = req.offset;
             spec.with_key = spec.key != null;
             try loadRows(db, spec, req.only_marked, out);
         },
@@ -379,9 +381,9 @@ fn loadTable(db: *dbm.Db, index: usize, search: []const u8, limit: u32, marks: [
     try loadRows(db, .{ .table = db.table_names[index], .tables = db.table_names, .columns = cols, .search = search, .limit = limit, .key = out.key, .with_key = true, .marks = marks }, false, out);
 }
 
-// !T: Rows of the Data tab: the count of the rows that match and the first spec.limit of them. With marked rows
+// !T: Rows of the Data tab: the count of the rows that match and the page spec.offset .. +spec.limit of them. With marked rows
 // (item 31) they all come first, in table order, whatever the search, the filters or the sort; below them the
-// search without them; the total counts both. only_marked: just the marked rows.
+// search without them, paged; the total counts both. only_marked: just the marked rows.
 fn loadRows(db: *dbm.Db, spec: query.Spec, only_marked: bool, out: *Out) dbm.Error!void {
     if (spec.marks.len == 0 and !only_marked) {
         out.total = try db.count(spec);
@@ -391,6 +393,7 @@ fn loadRows(db: *dbm.Db, spec: query.Spec, only_marked: bool, out: *Out) dbm.Err
     var top_spec = spec;
     top_spec.marked = .only;
     top_spec.limit = 0;
+    top_spec.offset = 0; // a pagina e so das outras linhas
     out.data = try db.page(top_spec);
     const top = &out.data.?;
     out.marked = top.rows.len;
@@ -985,6 +988,43 @@ test "marked rows come in table order on a big table too (several row groups rea
     defer g.deinit();
     var buf: [64]u8 = undefined;
     try t.expectEqualStrings("7,120000,250000,299999", idsOf(&buf, g, 0));
+}
+
+test "item 13 h: pages of the Data tab: 2,500 rows in pages of 1000, the last one incomplete; marked rows on top of every page" {
+    var db = dbm.testDb();
+    defer db.close();
+    try db.start();
+    try db.exec("CREATE TABLE pg AS SELECT range AS id FROM range(2500)");
+    try db.refreshTables();
+    const cols = [_][]const u8{"id"};
+    const spec: query.Spec = .{ .table = "pg", .tables = db.table_names, .columns = &cols, .key = .rowid, .with_key = true, .limit = 1000 };
+    // pagina 3: as linhas 2001 a 2500 (500), de 2500
+    var last: Out = .{ .kind = .reload };
+    defer last.deinit(t.allocator);
+    var s3 = spec;
+    s3.offset = 2000;
+    try loadRows(&db, s3, false, &last);
+    try t.expectEqual(2500, last.total);
+    try t.expectEqual(500, last.data.?.rows.len);
+    try t.expectEqualStrings("2000", last.data.?.rows[0][0].?);
+    try t.expectEqualStrings("2499", last.data.?.rows[499][0].?);
+    // 2 marcadas no topo; a pagina 2 e das outras 2498 linhas, em ordem decrescente: 1498 ... 499
+    const marks = [_][]const u8{ "1500", "5" };
+    var mid: Out = .{ .kind = .reload };
+    defer mid.deinit(t.allocator);
+    var s2 = spec;
+    s2.offset = 1000;
+    s2.sort_column = "id";
+    s2.sort_desc = true;
+    s2.marks = &marks;
+    try loadRows(&db, s2, false, &mid);
+    try t.expectEqual(2, mid.marked);
+    try t.expectEqual(2500, mid.total);
+    try t.expectEqual(2 + 1000, mid.data.?.rows.len);
+    try t.expectEqualStrings("5", mid.data.?.rows[0][0].?);
+    try t.expectEqualStrings("1500", mid.data.?.rows[1][0].?);
+    try t.expectEqualStrings("1498", mid.data.?.rows[2][0].?);
+    try t.expectEqualStrings("499", mid.data.?.rows[1001][0].?);
 }
 
 test "identical rows of a table without rowid are one row for the marks" {

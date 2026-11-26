@@ -260,6 +260,8 @@ pub fn buildSelect(a: Allocator, spec: Spec) BuildError!Built {
         try out.appendSlice(a, " ORDER BY ");
         try writeIdent(&out, a, col);
         try out.appendSlice(a, if (spec.sort_desc) " DESC NULLS LAST" else " ASC NULLS LAST");
+        // empates na ordem da tabela: as paginas nao repetem nem pulam linhas (a ordenacao do motor nao e estavel)
+        if (spec.key == .rowid) try out.appendSlice(a, ", " ++ row_alias ++ ".rowid");
     }
     // limit 0 = todas as linhas (exportacao da tabela inteira)
     if (spec.limit > 0) try out.print(a, " LIMIT {d} OFFSET {d}", .{ spec.limit, spec.offset });
