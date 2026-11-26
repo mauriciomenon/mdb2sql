@@ -33,6 +33,37 @@ pub fn readsOnly(ty: c.duckdb_statement_type) bool {
     return ty == c.DUCKDB_STATEMENT_TYPE_SELECT or ty == c.DUCKDB_STATEMENT_TYPE_EXPLAIN;
 }
 
+// !T: The format written in the file itself (its first bytes), not in its name: SQLite or DuckDB; null = neither
+pub fn fileFormat(io: std.Io, path: []const u8) ?Source {
+    var hb: [16]u8 = undefined;
+    const h = std.Io.Dir.cwd().readFile(io, path, &hb) catch return null;
+    if (std.mem.eql(u8, h, "SQLite format 3\x00")) return .sqlite;
+    if (h.len >= 12 and std.mem.eql(u8, h[8..12], "DUCK")) return .duckdb;
+    return null;
+}
+
+test "the format of a saved file comes from its first bytes (a DuckDB is not called SQLite)" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var b1: [256]u8 = undefined;
+    var b2: [256]u8 = undefined;
+    const duck = tmpPath(&b1, &tmp, "f.duckdb");
+    const lite = tmpPath(&b2, &tmp, "f.sqlite");
+    var db = testDb();
+    defer db.close();
+    try db.open(duck, false);
+    try db.exec("CREATE TABLE x AS SELECT 1 AS a");
+    try db.open(":memory:", false);
+    try db.loadSqlite();
+    var ab: [400]u8 = undefined;
+    try db.exec(try std.fmt.bufPrintSentinel(&ab, "ATTACH '{s}' AS l (TYPE sqlite)", .{lite}, 0));
+    try db.exec("CREATE TABLE l.x AS SELECT 1 AS a");
+    try db.exec("DETACH l");
+    try t.expectEqual(Source.duckdb, fileFormat(t.io, duck).?);
+    try t.expectEqual(Source.sqlite, fileFormat(t.io, lite).?);
+    try t.expect(fileFormat(t.io, "nao_existe.sqlite") == null);
+}
+
 // !T: A call of a table function that attaches another database (sqlite_attach, postgres_attach, ... : a name
 // ending in _attach, plain or quoted, followed by "("), outside string literals and comments. The statement type of
 // such a SELECT is SELECT, so the type alone would let it run.

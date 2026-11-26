@@ -151,6 +151,8 @@ test "texts as in the Go catalog (the reference wording), in the three languages
         // itens 31 e 32
         .{ "only_marked", "Only marked", "Só as marcadas", "Solo las marcadas" },
         .{ "menu_copy_log", "Copy the whole log", "Copiar todo o Log", "Copiar todo el log" },
+        // o Access reaproveitado diz o formato real do salvo (SQLite ou DuckDB)
+        .{ "converted_reused", "{s}: opened the {s} saved from it ({s})", "{s}: aberto o {s} salvo dele ({s})", "{s}: abierto el {s} guardado de él ({s})" },
         .{ "tab_terms", "Terms", "Termos", "Términos" },
         .{ "terms_hint", "Paste the terms, one per line (for example, an Excel column)", "Cole os termos, um por linha (por exemplo, uma coluna do Excel)", "Pegue los términos, uno por línea (por ejemplo, una columna de Excel)" },
         .{ "match_whole", "Whole value", "Valor inteiro", "Valor completo" },
