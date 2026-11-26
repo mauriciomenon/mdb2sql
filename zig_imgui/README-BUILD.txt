@@ -148,7 +148,7 @@ Debian - dist/debian/amd64/
   filtro, com a contagem listada) e o mesmo arquivo aberto de novo (filtro da lista de tabelas e busca vazios, escopo
   padrao). Estados do padrao das 4 versoes (p_, q_, r_): pergunta "Tabela inteira / So as N linhas encontradas" ao
   exportar com a busca ativa, menu do cabecalho, menu da celula, menu Arquivo e Exportar..., atalhos teclados de
-  verdade (Ctrl+2 Esquema, Ctrl+1 Dados, Ctrl+F busca, F5 abrir de novo, Ctrl+Q na saida com Access), aba SQL vazia
+  verdade (Ctrl+2 Schema, Ctrl+1 Dados, Ctrl+F busca, F5 abrir de novo, Ctrl+Q na saida com Access), aba SQL vazia
   (dica), SQL errado (erro na barra) e o certo por Ctrl+Enter (o erro sai da barra). Conferencia que falha vai para
   capture_error.txt (saida 2) e a captura continua. Com
   $env:MDB2SQL_CAPTURE_SAVE = 'sqlite' (ou 'duckdb', 'xlsx') o passo Fechar salva antes, sem a caixa, em
