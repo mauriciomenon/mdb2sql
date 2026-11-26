@@ -984,6 +984,29 @@ fn exportAndCompare(db: *Db, total: u64) !void {
     }
 }
 
+// Item 19 a: cada coluna do convertido com o tipo do Access (ODBC e mdbtools): no DB3 o mdb-schema da 1.681
+// Numeric(p,0) (inteiras), 5.816 Double e 2.867 Text; RANGER_SOSTAT.RTUNO e PNTNO inteiras. Um convertidor que
+// grava numero como texto daria VARCHAR nessas colunas (foi o que o dono achou no Excel).
+fn checkTypes(db: *Db, path: []const u8, reader: []const u8) !void {
+    var g = try db.run("SELECT CASE WHEN data_type IN ('TINYINT', 'SMALLINT', 'INTEGER', 'BIGINT', 'UTINYINT', 'USMALLINT', 'UINTEGER') THEN 'int' " ++
+        "WHEN data_type IN ('DOUBLE', 'FLOAT') THEN 'float' WHEN data_type = 'VARCHAR' THEN 'text' ELSE data_type END AS k, count(*) " ++
+        "FROM duckdb_columns() WHERE database_name = 'src' GROUP BY k ORDER BY k", &.{});
+    defer g.deinit();
+    var line: std.ArrayList(u8) = .empty;
+    defer line.deinit(t.allocator);
+    for (g.rows) |r| try line.print(t.allocator, "{s} {s}; ", .{ r[0].?, r[1].? });
+    std.debug.print("{s}: column types {s}\n", .{ reader, line.items });
+    var key = try db.run("SELECT column_name || ' ' || data_type FROM duckdb_columns() WHERE database_name = 'src' AND table_name = 'RANGER_SOSTAT' " ++
+        "AND column_name IN ('RTUNO', 'PNTNO') ORDER BY column_name", &.{});
+    defer key.deinit();
+    if (key.rows.len == 2) {
+        for (key.rows) |r| try t.expect(std.mem.endsWith(u8, r[0].?, "INT") or std.mem.endsWith(u8, r[0].?, "INTEGER"));
+    }
+    if (std.mem.indexOf(u8, path, "DB3") == null) return;
+    try t.expectEqualStrings("float 5816; int 1681; text 2867; ", line.items);
+    try t.expectEqual(2, key.rows.len);
+}
+
 // Tabelas e linhas do Access convertido iguais as do conversor de referencia (MDB2SQL_TEST_REF: .sqlite ou .duckdb)
 fn compareWithReference(db: *Db, counts: []const u64) !void {
     const ref_path = t.environ.getAlloc(t.allocator, "MDB2SQL_TEST_REF") catch return;
@@ -1144,7 +1167,9 @@ test "real Access file through the readers, compared with the reference converte
         std.debug.print("{s}: {d} tables, {d} rows, converted to SQLite in {d} ms, counted in {d} ms\n", .{ reader, db.table_names.len, total, ms, count_ms });
         if (first_total) |ft| try t.expectEqual(ft, total) else first_total = total;
         try compareWithReference(&db, counts);
-        try searchBeyondFirstPage(&db);
+        try checkTypes(&db, path, reader);
+        // "tension de campo" so existe no DB4
+        if (std.mem.indexOf(u8, path, "DB4") != null) try searchBeyondFirstPage(&db);
         try compareNumericQueries(&db);
         if (i == 0) try exportAndCompare(&db, total);
     }
