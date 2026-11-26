@@ -171,9 +171,10 @@ has none: there all the values of the row count, so equal rows are marked togeth
 Advanced Search tab: paste a list (one term per line, for example an Excel column); each term is searched in every
 column of this table or of all tables, the whole cell (Whole value) or inside it (Contains), ignoring case and the
 spaces at the ends. In Whole value a term and a cell that read as numbers meet when any reading of one equals any
-reading of the other: with "." and "," the last of the two is the decimal mark, one mark repeated is the thousands
-mark, one mark alone reads both ways (thousands only with 3 digits after it), so "216" finds 216.0, "216,0" and 216,
-"0,1" finds 0.1 and "1234.5" finds "1.234,5". The tables found, their rows with the term first, and the terms not
+reading of the other. A text reads as a number with a decimal point and commas of thousands, or with a decimal
+comma and points of thousands; a thousands mark only stands between groups of 3 digits. So "216" finds 216.0,
+"216,0" and 216 (never 2160), "0,1" finds 0.1 (and "1" does not find "0,1"), "1234.5" finds "1.234,5" and "1,234"
+reads 1.234 or 1234. The tables found, their rows with the term first, and the terms not
 found (copiable). Its report: a first sheet "Filter Result" with every term, where it was found and how many rows,
 then one sheet per table.
 

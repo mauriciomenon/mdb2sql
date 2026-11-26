@@ -631,9 +631,10 @@ func TestTermsReportResultSheet(t *testing.T) {
 }
 
 // owner 26/11 (13a): in Whole value a term and a cell that read as numbers meet when any reading of one equals any
-// reading of the other: "216" finds 216.0, "216,0" and 216 but not 2160 nor 216.5; "0,1" and "0.1" find 0.10;
-// "1234.5" finds "1.234,5"; "1.234" finds "1,234" (both read 1.234 or 1234); text that is no number compares as text;
-// a row met twice by one term (its text and its number) is one row
+// reading of the other (the readings of the Python): "216" finds 216.0, "216,0" and 216 but not 2160 nor 216.5;
+// "0,1" and "0.1" find 0.10 and "0,1"; "1" does not find "0,1"; "1234.5" finds "1.234,5"; "1.234" finds "1,234"
+// (both read 1.234 or 1234); "1234,567" is 1234.567 only (no thousands mark after 4 digits); text that is no number
+// compares as text; a row met twice by one term (its text and its number) is one row
 func TestTermsFindNumbersLoosely(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "n.duckdb")
 	db, err := sql.Open("duckdb", path)
@@ -641,7 +642,7 @@ func TestTermsFindNumbersLoosely(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = db.Exec(`CREATE TABLE n (d DOUBLE, m DECIMAL(10,2), i INTEGER, s VARCHAR);
-		INSERT INTO n VALUES (216.0, 0.10, 7, '216,0'), (5.5, 1234.50, 2160, 'abc'), (216.5, 3.00, 216, '1.234,5'), (1.0, 2.00, 9, '1,234'); CREATE VIEW nv AS SELECT * FROM n`)
+		INSERT INTO n VALUES (216.0, 0.10, 7, '216,0'), (5.5, 1234.50, 2160, 'abc'), (216.5, 3.00, 216, '1.234,5'), (1.0, 2.00, 9, '1,234'), (NULL, NULL, 11, '0,1'), (NULL, NULL, 12, '1234,567'); CREATE VIEW nv AS SELECT * FROM n`)
 	db.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -652,13 +653,13 @@ func TestTermsFindNumbersLoosely(t *testing.T) {
 	}
 	defer m.Close()
 	ctx := context.Background()
-	lines := []string{"216", "216,0", "0,1", "0.1", "1234.5", "1.234", "216.5", "abc", "2160", "999"}
+	lines := []string{"216", "216,0", "0,1", "0.1", "1234.5", "1.234", "216.5", "abc", "2160", "1", "1234567", "999"}
 	res, err := m.SearchTerms(ctx, lines, false, "n", noProgress)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"216/n/ii", "216,0/n/ii", "0,1/n/i", "0.1/n/i", "1234.5/n/ii", "1.234/n/i", "216.5/n/i", "abc/n/i", "2160/n/i"}
-	if !reflect.DeepEqual(hitsOf(res), want) || !reflect.DeepEqual(res.NotFound, []string{"999"}) {
+	want := []string{"216/n/ii", "216,0/n/ii", "0,1/n/ii", "0.1/n/ii", "1234.5/n/ii", "1.234/n/i", "216.5/n/i", "abc/n/i", "2160/n/i", "1/n/i"}
+	if !reflect.DeepEqual(hitsOf(res), want) || !reflect.DeepEqual(res.NotFound, []string{"1234567", "999"}) {
 		t.Errorf("hits %v, not found %q\nwant %v", hitsOf(res), res.NotFound, want)
 	}
 	grid, err := m.TermRows(ctx, "n", res.Terms, false, 0)
@@ -669,7 +670,7 @@ func TestTermsFindNumbersLoosely(t *testing.T) {
 	for _, r := range grid.Rows {
 		got = append(got, cellString(r["Term"])+":"+cellString(r["i"]))
 	}
-	wantGrid := []string{"216:7", "216:216", "216,0:7", "216,0:216", "0,1:7", "0.1:7", "1234.5:2160", "1234.5:216", "1.234:9", "216.5:216", "abc:2160", "2160:2160"}
+	wantGrid := []string{"216:7", "216:216", "216,0:7", "216,0:216", "0,1:7", "0,1:11", "0.1:7", "0.1:11", "1234.5:2160", "1234.5:216", "1.234:9", "216.5:216", "abc:2160", "2160:2160", "1:9"}
 	if !reflect.DeepEqual(got, wantGrid) {
 		t.Errorf("grid rows %v\nwant %v", got, wantGrid)
 	}

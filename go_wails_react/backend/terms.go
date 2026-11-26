@@ -67,21 +67,26 @@ func numericType(t string) bool {
 // shortcut: through DOUBLE, integers above 2^53 may meet a neighbor; exact keys if such values ever matter
 func numKey(v string) string { return "chr(30) || CAST(" + v + " AS VARCHAR)" }
 
-// numberLike: the texts that may read as a number (digits with "." or "," between them)
+// numberLike: the texts that may read as a number (digits with "." or "," between them), a cheap filter before the
+// readings
 const numberLike = "'[+-]?[0-9]+([.,][0-9]+)*'"
 
-// readings is the SQL list of the keys of the readings of the number-like text x (a column), by the owner's loose rule
-// (standard 13a): with "." and "," the last of the two is the decimal mark (1.234,5 = 1,234.5 = 1234.5); one kind of
-// mark repeated is the thousands mark (1.234.567); one mark alone reads both ways, decimal and, with 3 digits after it,
-// thousands (1,234 = 1.234 or 1234; 216,0 = 216)
+// The two readings of a number-like text, by the owner's loose rule (standard 13a; the same as the Python,
+// python_pyqt6\src\backend\terms.py): dot decimal with comma thousands, comma decimal with dot thousands; a thousands
+// mark only between groups of 3 digits. So with both marks only the reading where the last is the decimal one fits
+// (1.234,5 = 1,234.5 = 1234.5), one mark repeated is thousands (1.234.567), one mark alone reads both ways when they
+// fit (1,234 = 1.234 or 1234; 216,0 = 216, never 2160; 0,1 = 0.1, never 1; 1234,567 = 1234.567 only)
+const (
+	dotNumber   = `[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?`
+	commaNumber = `[+-]?(?:\d+|\d{1,3}(?:\.\d{3})+)(?:,\d+)?`
+)
+
+// readings is the SQL list of the keys of the readings of the number-like text x (a column); a reading that does not
+// fit is NULL, which meets nothing
 func readings(x string) string {
-	both := "CASE WHEN strpos(reverse(" + x + "), '.') < strpos(reverse(" + x + "), ',') THEN replace(" + x + ", ',', '') " +
-		"ELSE replace(replace(" + x + ", '.', ''), ',', '.') END"
-	plain := "replace(replace(" + x + ", '.', ''), ',', '')"
-	return "CASE WHEN contains(" + x + ", '.') AND contains(" + x + ", ',') THEN [" + numKey("TRY_CAST("+both+" AS DOUBLE)") + "] " +
-		"WHEN length(" + x + ") - length(" + plain + ") > 1 THEN [" + numKey("TRY_CAST("+plain+" AS DOUBLE)") + "] " +
-		"ELSE [" + numKey("TRY_CAST(replace("+x+", ',', '.') AS DOUBLE)") + ", CASE WHEN regexp_full_match(" + x +
-		", '[+-]?[0-9]+[.,][0-9]{3}') THEN " + numKey("TRY_CAST("+plain+" AS DOUBLE)") + " END] END"
+	return "[CASE WHEN regexp_full_match(" + x + ", '" + dotNumber + "') THEN " + numKey("TRY_CAST(replace("+x+", ',', '') AS DOUBLE)") +
+		" END, CASE WHEN regexp_full_match(" + x + ", '" + commaNumber + "') THEN " +
+		numKey("TRY_CAST(replace(replace("+x+", '.', ''), ',', '.') AS DOUBLE)") + " END]"
 }
 
 // numberTerm tells whether a term reads as a number (then the numeric keys are worth computing)
