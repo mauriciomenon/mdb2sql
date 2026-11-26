@@ -156,8 +156,7 @@ Menus:
   (This table / All tables), Only marked rows, Go to the table list (Ctrl+T), Run SQL (Ctrl+Enter), Search terms
   (Ctrl+Enter in the Advanced Search tab), Log (Ctrl+L). The tables panel cannot be closed.
   The **Log** panel, at the bottom (about 10% of the height, drag the edge to resize), lists the messages of the
-  session with the time in a smaller fixed font (selectable, Ctrl+C, "Copy all"). It starts collapsed and keeps
-  the last state; the arrow in its header and the arrow at the left of the status bar collapse and expand it. While
+  session with the time in a smaller fixed font (selectable, Ctrl+C, "Copy all"). It always starts collapsed; the arrow in its header and the arrow at the left of the status bar collapse and expand it. While
   it is collapsed, the status bar shows the most important message (last error in red, then last warning, then
   the last action) and, at its right end, the number of errors and warnings not seen yet; a click on the message
   opens the log. Right-click on the status bar: Copy (the whole message) and Log. Numeric columns and their headers

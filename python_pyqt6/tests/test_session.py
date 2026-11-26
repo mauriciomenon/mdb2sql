@@ -368,21 +368,22 @@ def test_log_panel_collapsed_shows_the_most_important_line(qtbot) -> None:
     # o contador fica a direita, a mensagem a esquerda (barra de baixo igual ao Go)
     assert win.log_unread.x() > win.status_label.x()
 
-    # clique na mensagem reexibe o log e zera os nao lidos; a seta do cabecalho recolhe; estado lembrado
+    # clique na mensagem reexibe o log e zera os nao lidos; a seta do cabecalho recolhe
     qtbot.mouseClick(win.status_label, Qt.MouseButton.LeftButton)
-    assert not win.log_dock.isHidden() and win.log_unread.isHidden() and QSettings().value("log_visible") in (True, "true")
+    assert not win.log_dock.isHidden() and win.log_unread.isHidden()
     assert win.log_toggle.arrowType() == Qt.ArrowType.DownArrow
     assert "SQL error: boom" in win.log_view.toPlainText()
     bar = win.log_view.verticalScrollBar()
     qtbot.waitUntil(lambda: bar.maximum() > 0 and bar.value() == bar.maximum(), timeout=5000)
     assert win.log_dock.maximumHeight() <= max(round(win.height() * 0.25), win.log_view.minimumHeight() + 32)
     win.log_collapse.click()
-    assert win.log_dock.isHidden() and QSettings().value("log_visible") in (False, "false")
+    assert win.log_dock.isHidden()
     win.log_toggle.click()
     assert not win.log_dock.isHidden()
-    again = MainWindow()  # proxima abertura: como ficou
+    again = MainWindow()  # proxima abertura: recolhido, mesmo tendo ficado aberto (BRIEF 18 d, igual nas 4)
     qtbot.addWidget(again)
-    assert not again.log_dock.isHidden()
+    again.show()
+    assert again.log_dock.isHidden() and not again.log_action.isChecked()
 
 
 def test_language_applies_at_once_and_is_saved(qtbot, people_db: Path) -> None:

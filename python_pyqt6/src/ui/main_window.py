@@ -936,7 +936,6 @@ class MainWindow(QMainWindow):
         self._refresh_log_status()
 
     def set_log_visible(self, visible: bool) -> None:
-        self.settings.setValue("log_visible", bool(visible))
         self.log_action.setChecked(bool(visible))
         self.log_dock.setVisible(bool(visible))
         if visible:
@@ -1299,7 +1298,7 @@ class MainWindow(QMainWindow):
         status_bar.addPermanentWidget(self.log_unread)
         status_bar.addPermanentWidget(self.hidden_label)
         status_bar.addPermanentWidget(self.reader_label)
-        self.set_log_visible(self.settings.value("log_visible", False, type=bool))  # padrao: recolhido
+        self.set_log_visible(False)  # sempre recolhido ao abrir, nas 4 versoes (BRIEF 18 d)
 
     def status_menu(self, label: QLabel) -> QMenu:
         menu = QMenu(self)
