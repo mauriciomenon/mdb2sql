@@ -74,7 +74,8 @@ pub fn odbc_installed() -> bool {
     false
 }
 
-// o mdbtools vai dentro do exe deste build? (senao e o do PATH)
+// o mdbtools vai dentro do exe deste build? (senao e o do PATH); so o teste do build oficial pergunta
+#[cfg(test)]
 pub fn mdbtools_embedded() -> bool {
     cfg!(mdbtools_embedded)
 }

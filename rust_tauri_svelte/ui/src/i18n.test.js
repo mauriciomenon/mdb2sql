@@ -85,10 +85,11 @@ test('Schema titles name the nullability column, never just NULL', () => {
   assert.deepEqual([yesNo('pt-BR'), yesNo('es'), yesNo('en')], [['Sim', 'Não'], ['Sí', 'No'], ['Yes', 'No']]);
 });
 
-test('license line of the About says GPL v2 or later in each language', () => {
-  assert.equal(CATALOGS['pt-BR']['about.licenseValue'], 'GPL v2 ou posterior');
-  assert.equal(CATALOGS.en['about.licenseValue'], 'GPL v2 or later');
-  assert.equal(CATALOGS.es['about.licenseValue'], 'GPL v2 o posterior');
+// secao 18 b: so "GPLv2", sem "ou posterior" nem nota
+test('license line of the About says GPLv2 in each language', () => {
+  assert.equal(CATALOGS['pt-BR']['about.license'], 'Licença: GPLv2');
+  assert.equal(CATALOGS.en['about.license'], 'License: GPLv2');
+  assert.equal(CATALOGS.es['about.license'], 'Licencia: GPLv2');
 });
 
 // padrao item 23: o mesmo item com o mesmo texto do catalogo do Go (a referencia de redacao), nas 3 linguas. Ficam com o
@@ -109,7 +110,7 @@ test('texts of the same item match the Go catalog in the 3 languages', (t) => {
     ['menu.help', 'menu.help'], ['view.log', 'menu.log'], ['settings.theme', 'menu.theme'], ['settings.language', 'menu.language'],
     ['settings.showNull', 'menu.showNull'], ['settings.searchScope', 'menu.searchScope'], ['edit.find', 'menu.search'], ['theme.system', 'theme.system'],
     ['theme.light', 'theme.light'], ['theme.dark', 'theme.dark'], ['open.title', 'dlg.open'], ['open.all', 'filter.all'],
-    ['about.author', 'about.author'], ['about.license', 'about.license'], ['about.licenseValue', 'about.licenseText'],
+    // Autor e Licenca: os textos da secao 18 b, iguais nas 4 (o Go passa a ter os mesmos)
     ['about.linkTip', 'about.openLink'], ['common.close', 'about.close'], ['common.cancel', 'conv.cancel'],
     ['convert.title', 'conv.title'], ['columns.search', 'cols.filter'],
     ['columns.none', 'cols.none'], ['columns.showAll', 'cols.showAll'], ['columns.hideAll', 'cols.hideAll'],
@@ -169,8 +170,6 @@ test('new texts of Save, exit, marked rows and Terms are the agreed ones', () =>
     ['exportRun.text', { name: 'x.csv' }, 'Sair cancela a exportação de x.csv.', 'Exiting cancels the export of x.csv.', 'Salir cancela la exportación de x.csv.'],
     ['save.title', {}, 'Salvar como SQLite, DuckDB ou Excel (arquivos .mdb e .accdb não podem ser gravados)', 'Save as SQLite, DuckDB or Excel (.mdb and .accdb files cannot be written)', 'Guardar como SQLite, DuckDB o Excel (los archivos .mdb y .accdb no se pueden escribir)'],
     ['save.copyName', { name: 'DB3' }, 'DB3 (cópia)', 'DB3 (copy)', 'DB3 (copia)'],
-    ['about.write', {}, 'Gravação', 'Writing', 'Escritura'],
-    ['about.writeValue', {}, 'SQLite, DuckDB, Excel e CSV. Arquivos .mdb e .accdb não podem ser gravados: o formato do Access é proprietário da Microsoft.', 'SQLite, DuckDB, Excel and CSV. .mdb and .accdb files cannot be written: the Access format is proprietary to Microsoft.', 'SQLite, DuckDB, Excel y CSV. Los archivos .mdb y .accdb no se pueden escribir: el formato de Access es propiedad de Microsoft.'],
     ['ask.overwriteMany', { count: 3 }, '3 arquivos já existem nesta pasta. Substituir?', '3 files already exist in this folder. Replace them?', '3 archivos ya existen en esta carpeta. ¿Reemplazarlos?'],
     ['ask.overwriteMany', { count: 1 }, '1 arquivo já existe nesta pasta. Substituir?', '1 file already exists in this folder. Replace it?', '1 archivo ya existe en esta carpeta. ¿Reemplazarlo?'],
     ['err.sqlReadOnly', {}, 'A aba SQL só lê o banco: este comando não é permitido', 'The SQL tab only reads the database: this command is not allowed', 'La pestaña SQL solo lee la base de datos: este comando no está permitido'],

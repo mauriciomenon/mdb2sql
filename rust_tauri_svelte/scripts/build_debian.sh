@@ -39,10 +39,10 @@ fi
 
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
 source_id=$(git describe --tags --always --long 2>/dev/null || git rev-parse --short HEAD)
-MDB2SQL_BUILD_NUMBER=$(git rev-list --count HEAD)
-MDB2SQL_BUILD_DATE=$(date -u +%F)
-export MDB2SQL_BUILD_NUMBER MDB2SQL_BUILD_DATE
-echo "Source: $source_id  versao $version  build $MDB2SQL_BUILD_NUMBER ($MDB2SQL_BUILD_DATE)"
+MDB2SQL_COMMIT=$(git rev-parse HEAD)
+MDB2SQL_COMMIT_DATE=$(git log -1 --format=%cs)
+export MDB2SQL_COMMIT MDB2SQL_COMMIT_DATE
+echo "Source: $source_id  versao $version  commit $MDB2SQL_COMMIT ($MDB2SQL_COMMIT_DATE)"
 
 # no maximo 4 nucleos em todo build e teste (cargo e o C++ do DuckDB pelo jobserver do cargo), como no Windows
 export CARGO_BUILD_JOBS=4

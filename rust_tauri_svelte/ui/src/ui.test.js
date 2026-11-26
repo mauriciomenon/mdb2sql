@@ -121,23 +121,28 @@ test('table list shows the row count of each table', () => {
   assert.match(main, /let tables = manager\.list_tables\(\)\?;\s*let rows = manager\.table_rows\(&tables\)\?;\s*show_title\(&app, Some\(&opened\)\);/);
 });
 
-// padrao item 21: Sobre = conteudo desta versao (Build, Stack, Janela, Bancos, Leitura do Access, Autor, Licenca, links)
-// com o titulo do Zig, "Sobre o mdb2sql" (o mesmo do menu Ajuda), nas 3 linguas
-test('About: title About mdb2sql and the rows of this stack', () => {
+// secao 18 b: Sobre igual nas 4, so estas linhas, nesta ordem: MDB2SQL (Rust) / Versao 1.3.0 - commit <hash> - <data> /
+// runtime / Ferramentas / Suporte ao driver ODBC / Autor / Licenca: GPLv2 / GitHub / GitLab; nada de Build, Stack,
+// Janela, Bancos, Leitura do Access, Gravacao nem frase explicativa
+test('About: the same lines in the 4 versions', () => {
   const ui = markup('./App.svelte');
   const about = ui.match(/<dialog bind:this=\{aboutDialog\}[\s\S]*?<\/dialog>/)[0];
-  assert.match(about, /<h2 id="about-title">\{t\('help\.about'\)\} <span class="version">\{aboutInfo\.version\}<\/span><\/h2>/);
-  const pt = (key) => (key in en ? (CATALOG_PT[key] ?? '') : '');
-  assert.deepEqual([pt('help.about'), en['help.about'], CATALOG_ES['help.about']], ['Sobre o mdb2sql', 'About mdb2sql', 'Acerca de mdb2sql']);
+  assert.match(about, /<h2 id="about-title">MDB2SQL \(Rust\)<\/h2>\s*\{#each aboutLines as line\}\s*<p>\{line\}<\/p>\s*\{\/each\}\s*<p class="links">/);
+  assert.match(about, /\{#if i\}\/\{\/if\}\s*<a href=\{url\}[^>]*>\{label\}<\/a>/);
+  assert.doesNotMatch(about, /<dl|tagline|class="version"/);
   const code = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
   assert.match(code, /\n {6}about: \{ run: showAbout \},/); // Ajuda > Sobre o mdb2sql (menus.js)
-  const rows = [...code.match(/let aboutRows = \$derived\.by\(\(\) => \{[\s\S]*?\n {2}\}\);/)[0].matchAll(/\[t\('(about\.\w+)'\)/g)].map((m) => m[1]);
-  // item 28: a linha Gravacao logo depois de Leitura do Access (nao se grava em .mdb/.accdb)
-  assert.deepEqual(rows, ['about.build', 'about.stack', 'about.window', 'about.engines', 'about.access', 'about.write', 'about.author', 'about.license']);
-  assert.match(code, /\[t\('about\.write'\), t\('about\.writeValue'\)\],/);
-  // rotulos traduzidos como no Sobre do Zig (Stack = Tecnologia / Tecnologia; Build fica, como no Go e no Zig)
-  assert.deepEqual(rows.map(pt), ['Build', 'Tecnologia', 'Janela', 'Bancos', 'Leitura do Access', 'Gravação', 'Autor', 'Licença']);
-  assert.deepEqual([en['about.stack'], CATALOG_ES['about.stack'], CATALOG_ES['about.build']], ['Stack', 'Tecnología', 'Compilación']);
+  const lines = [...code.match(/let aboutLines = \$derived\([\s\S]*?\n {2}\);/)[0].matchAll(/(t\('about\.\w+'|aboutInfo\.runtime)/g)].map((m) => m[1]);
+  assert.deepEqual(lines, ["t('about.version'", 'aboutInfo.runtime', "t('about.tools'", "t('about.odbc'", "t('about.author'", "t('about.license'"]);
+  const say = (key, values) => [CATALOG_PT, en, CATALOG_ES].map((c) => c[key].replace(/\{(\w+)\}/g, (_, k) => values[k]));
+  const build = 'commit 0123456789abcdef0123456789abcdef01234567 - 2026-11-26';
+  assert.deepEqual(say('about.version', { version: '1.3.0', build }), [`Versão 1.3.0 - ${build}`, `Version 1.3.0 - ${build}`, `Versión 1.3.0 - ${build}`]);
+  const tools = 'SQLite 3.50.4, DuckDB 1.4.2, mdbtools 1.0.1';
+  assert.deepEqual(say('about.tools', { tools }), [`Ferramentas: ${tools}`, `Tools: ${tools}`, `Herramientas: ${tools}`]);
+  assert.deepEqual(say('about.odbc', {}), ['Suporte ao driver ODBC, caso instalado.', 'ODBC driver support, if installed.', 'Soporte del controlador ODBC, si está instalado.']);
+  assert.deepEqual(say('about.author', { name: 'Mauricio Menon' }), ['Autor: Mauricio Menon', 'Author: Mauricio Menon', 'Autor: Mauricio Menon']);
+  assert.deepEqual(say('about.license', {}), ['Licença: GPLv2', 'License: GPLv2', 'Licencia: GPLv2']);
+  for (const gone of ['about.description', 'about.build', 'about.stack', 'about.write', 'about.licenseValue']) assert.ok(!(gone in en), gone);
 });
 
 // item 27: a pergunta do banco convertido so ao sair do programa (Arquivo > Sair, Ctrl+Q, X da janela, Alt+F4): Salvar a
@@ -276,7 +281,6 @@ test('Access comes first, then SQLite, then DuckDB', () => {
   const paths = readFileSync(new URL('./paths.js', import.meta.url), 'utf8');
   assert.match(paths, /export const SAVE_FORMATS = \['sqlite', 'duckdb', 'xlsx'\];/); // tipos da caixa de salvar
   assert.ok(isSorted(order(en['header.placeholder'], ['.accdb', '.sqlite', '.duckdb'])));
-  assert.ok(isSorted(order(en['about.description'], ['Access', 'SQLite', 'DuckDB'])));
 });
 
 // colunas quase so de NULL pareciam transparentes: celula de dado nao pode ter opacity nem cor apagada

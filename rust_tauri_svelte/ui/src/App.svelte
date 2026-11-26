@@ -249,24 +249,19 @@
   let x11Text = $derived(
     x11 ? [t('x11.wayland'), x11Missing, x11.command ? `${x11.distro}: ${x11.command}` : ''].filter(Boolean).join(' ') : ''
   );
-  let aboutRows = $derived.by(() => {
-    if (!aboutInfo) return [];
-    const access = aboutInfo.access_odbc
-      ? 'about.accessOdbc'
-      : aboutInfo.mdbtools_embedded
-        ? 'about.accessEmbedded'
-        : 'about.accessSystem';
-    return [
-      [t('about.build'), aboutInfo.build],
-      [t('about.stack'), aboutInfo.stack],
-      [t('about.window'), aboutInfo.webview],
-      [t('about.engines'), aboutInfo.engines],
-      [t('about.access'), t(access, { version: aboutInfo.mdbtools })],
-      [t('about.write'), t('about.writeValue')],
-      [t('about.author'), aboutInfo.author],
-      [t('about.license'), t('about.licenseValue')],
-    ];
-  });
+  // Sobre igual nas 4 (secao 18 b): so estas linhas, nesta ordem, texto tecnico; depois os links GitHub / GitLab
+  let aboutLines = $derived(
+    aboutInfo
+      ? [
+          t('about.version', { version: aboutInfo.version, build: aboutInfo.build }),
+          aboutInfo.runtime,
+          t('about.tools', { tools: aboutInfo.tools }),
+          t('about.odbc'),
+          t('about.author', { name: aboutInfo.author }),
+          t('about.license'),
+        ]
+      : [],
+  );
 
   $effect(() => {
     document.documentElement.lang = lang;
@@ -1353,21 +1348,17 @@
 
   <dialog bind:this={aboutDialog} class="about" aria-labelledby="about-title">
     {#if aboutInfo}
-      <!-- titulo "Sobre o mdb2sql" (o do Zig, o mesmo do menu); o conteudo e o desta versao -->
-      <h2 id="about-title">{t('help.about')} <span class="version">{aboutInfo.version}</span></h2>
-      <p class="tagline">{t('about.description')}</p>
-      <dl>
-        {#each aboutRows as [label, value]}
-          <dt>{label}</dt>
-          <dd>{value}</dd>
+      <!-- secao 18 b: igual nas 4, "MDB2SQL (Rust)" e as linhas de aboutLines, nada mais; os links por ultimo -->
+      <h2 id="about-title">MDB2SQL (Rust)</h2>
+      {#each aboutLines as line}
+        <p>{line}</p>
+      {/each}
+      <p class="links">
+        {#each aboutInfo.links as [label, url], i}
+          {#if i}/{/if}
+          <a href={url} title={t('about.linkTip')} onclick={(e) => openLink(e, url)} onauxclick={(e) => e.preventDefault()}>{label}</a>
         {/each}
-        {#each aboutInfo.links as [label, url]}
-          <dt>{label}</dt>
-          <dd>
-            <a href={url} title={t('about.linkTip')} onclick={(e) => openLink(e, url)} onauxclick={(e) => e.preventDefault()}>{url}</a>
-          </dd>
-        {/each}
-      </dl>
+      </p>
     {/if}
     <button type="button" class="default" onclick={() => aboutDialog.close()}>{t('common.close')}</button>
   </dialog>
@@ -2086,59 +2077,23 @@
     width: 460px;
   }
 
-  /* Sobre: nome e versao em destaque, frase, e os detalhes numa grade de duas colunas alinhadas */
+  /* Sobre: largura para a linha do commit (40 digitos) caber inteira */
   dialog.about {
     width: 560px;
   }
 
-  dialog.about h2 {
-    font-size: inherit;
-    letter-spacing: 0.01em;
+  /* Sobre: uma linha por informacao, texto simples (secao 18 b) */
+  dialog.about p {
+    margin: 4px 0;
   }
 
-  .version {
-    margin-left: 6px;
-    padding: 2px 10px;
-    border-radius: 999px;
-    background: var(--accent);
-    color: var(--accent-text);
-    font-size: inherit;
-    vertical-align: middle;
-  }
-
-  dialog .tagline {
-    margin: 6px 0 14px;
-    color: var(--muted);
-  }
-
-  dl {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 7px 18px;
-    margin: 0;
-    padding-top: 14px;
-    border-top: 1px solid var(--border);
-  }
-
-  dt {
-    color: var(--muted);
-    font-size: inherit;
-    font-weight: 600;
-    line-height: 20px;
-  }
-
-  dd {
-    margin: 0;
-    overflow-wrap: anywhere;
-  }
-
-  dd a {
+  dialog.about .links a {
     color: var(--accent);
     text-decoration: underline;
     cursor: pointer;
   }
 
-  dd a:focus-visible {
+  dialog.about .links a:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }

@@ -166,9 +166,9 @@ search scope** (This table, All tables), **Term matching** (Whole value, Contain
 NULL** (desligado por padrao: a celula NULL fica vazia; ligado, mostra
 `NULL`); as escolhas ficam gravadas e valem na hora.
 
-**Menu Help > About mdb2sql** (o titulo do dialogo): versao, build, stack (Rust + Tauri + Svelte), janela (WebView2/WebKitGTK), SQLite e
-DuckDB, leitor do Access, gravacao (SQLite, DuckDB, Excel e CSV; .mdb/.accdb nao), autor, licenca e os links do codigo no GitHub e no GitLab (o app so pode abrir esses dois
-enderecos).
+**Menu Help > About mdb2sql**, igual nas 4 versoes: "MDB2SQL (Rust)", "Version 1.3.0 - commit <hash> - <data>", a
+linha de runtime (Rust, Tauri, Svelte, WebView2/WebKitGTK), "Tools: SQLite, DuckDB, mdbtools" com as versoes, "ODBC driver
+support, if installed.", autor, "License: GPLv2" e os links GitHub / GitLab (o app so pode abrir esses dois enderecos).
 
 **Atalhos** (os dos itens de menu; valem quando o item vale): `Ctrl+O` abrir, `F5` abrir de novo o banco (sem banco aberto: o dialogo), `Ctrl+S`
 salvar, `Ctrl+Shift+S` salvar como, `Ctrl+W` fechar, `Ctrl+Q` sair, `Ctrl+F` pesquisar na aba Data, `Ctrl+T` lista de
@@ -287,8 +287,8 @@ Stack: Rust 1.99.1, tauri 2.12 (tauri-cli 2.12.4, tauri-plugin-dialog 2.8, tauri
 
 ## Versao
 
-A fonte unica e `version` em `Cargo.toml`; `ui/package.json` repete o numero e o `cargo test` confere. Numero do
-build (`git rev-list --count HEAD`) e data entram no About pelo build oficial; fora dele, "build dev".
+A fonte unica e `version` em `Cargo.toml`; `ui/package.json` repete o numero e o `cargo test` confere. O commit
+(`git rev-parse HEAD`) e a data dele entram no About pelo build oficial; fora dele, "dev".
 Historico: [CHANGELOG.md](CHANGELOG.md).
 
 ## Seguranca

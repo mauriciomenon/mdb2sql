@@ -484,41 +484,35 @@ const LINKS: [(&str, &str); 2] = [
 // motor da janela de cada sistema (o Tauri usa o webview do sistema)
 const WEBVIEW: &str = if cfg!(windows) { "WebView2" } else if cfg!(target_os = "macos") { "WKWebView" } else { "WebKitGTK" };
 
-// NIVEL BASICO: Dados do dialogo Sobre. Rotulos e frases ficam nos catalogos de idioma da interface; daqui vem so
-// o que e dado: versoes, build e como o Access e lido
+// NIVEL BASICO: Dados do dialogo Sobre (secao 18 b, igual nas 4): versao, commit e data do build, a linha de runtime e
+// as ferramentas com as versoes reais. As frases ficam nos catalogos de idioma da interface
 #[derive(Serialize)]
 struct About {
     version: &'static str,
-    build: String,
-    stack: String,
-    webview: String,
-    engines: String,
-    access_odbc: bool,
-    mdbtools: &'static str,
-    mdbtools_embedded: bool,
+    // "commit <hash de 40 digitos> - <AAAA-MM-DD>" no build oficial, "dev" fora dele
+    build: &'static str,
+    runtime: String,
+    tools: String,
     author: &'static str,
     links: [(&'static str, &'static str); 2],
 }
 
-// NIVEL TECNICO: The version comes from Cargo.toml (single source), build number and date from the
-// official build (build.rs). Runtime versions are read when the dialog opens; Svelte reports its
-// own version from the webview, the Rust compiler version is captured by build.rs
+// NIVEL TECNICO: The version comes from Cargo.toml (single source), commit and date from the official build
+// (build.rs). Runtime versions are read when the dialog opens; Svelte reports its own version from the webview,
+// the Rust compiler version is captured by build.rs
 #[tauri::command]
 fn about(svelte_version: String) -> About {
     let duckdb = duckdb::Connection::open_in_memory()
         .and_then(|conn| conn.query_row("SELECT version()", [], |row| row.get::<_, String>(0)))
+        .map(|v| v.trim_start_matches('v').to_string())
         .unwrap_or_else(|e| format!("? ({e})"));
     let webview = tauri::webview_version().unwrap_or_else(|_| "?".to_string());
     About {
         version: env!("CARGO_PKG_VERSION"),
-        build: env!("BUILD_LABEL").trim_start_matches("build ").to_string(),
-        stack: format!("Rust {} + Tauri {} + Svelte {svelte_version}", env!("RUSTC_VERSION"), tauri::VERSION),
-        webview: format!("{WEBVIEW} {webview}"),
+        build: env!("BUILD_LABEL"),
+        runtime: format!("Rust {}, Tauri {}, Svelte {svelte_version}, {WEBVIEW} {webview}", env!("RUSTC_VERSION"), tauri::VERSION),
         // ordem do app: SQLite antes de DuckDB
-        engines: format!("SQLite {}, DuckDB {duckdb}", rusqlite::version()),
-        access_odbc: backend::access::odbc_installed(),
-        mdbtools: backend::access::MDBTOOLS_VERSION,
-        mdbtools_embedded: backend::access::mdbtools_embedded(),
+        tools: format!("SQLite {}, DuckDB {duckdb}, mdbtools {}", rusqlite::version(), backend::access::MDBTOOLS_VERSION),
         author: "Mauricio Menon",
         links: LINKS,
     }
@@ -613,17 +607,19 @@ mod tests {
     fn about_has_version_build_stack_engines_and_links() {
         let about = about("5.0.0".to_string());
         assert_eq!(about.version, "1.3.0");
-        // "123 (2026-11-15)" no build oficial, "dev" fora dele
-        let official = about.build.split_once(" (").is_some_and(|(n, d)| {
-            n.parse::<u32>().is_ok() && d.len() == 11 && d.ends_with(')') && d.as_bytes()[4] == b'-'
+        // secao 18 b: "commit <40 digitos hex> - AAAA-MM-DD" no build oficial, "dev" fora dele (nada de "Build 552")
+        let official = about.build.strip_prefix("commit ").and_then(|rest| rest.split_once(" - ")).is_some_and(|(hash, date)| {
+            hash.len() == 40 && hash.chars().all(|c| c.is_ascii_hexdigit()) && date.len() == 10 && date.as_bytes()[4] == b'-'
         });
         assert!(about.build == "dev" || official, "{}", about.build);
-        let stack = format!("Rust {} + Tauri {} + Svelte 5.0.0", env!("RUSTC_VERSION"), tauri::VERSION);
-        assert_eq!(about.stack, stack);
-        assert!(!stack.contains("unknown") && stack.starts_with("Rust 1.") && stack.contains(" + Tauri 2."));
-        assert!(about.webview.starts_with(WEBVIEW), "{}", about.webview);
-        assert!(about.engines.starts_with("SQLite 3.") && about.engines.contains(", DuckDB v"), "{}", about.engines);
-        assert_eq!(about.mdbtools, "1.0.1");
+        // uma linha de runtime so; ferramentas com as versoes reais, sem o "v" do DuckDB
+        let runtime = format!("Rust {}, Tauri {}, Svelte 5.0.0, {WEBVIEW} ", env!("RUSTC_VERSION"), tauri::VERSION);
+        assert!(about.runtime.starts_with(&runtime) && !about.runtime.contains("unknown"), "{}", about.runtime);
+        assert!(about.runtime.starts_with("Rust 1.") && about.runtime.contains(", Tauri 2."), "{}", about.runtime);
+        let tools = about.tools.split(", ").map(|t| t.split_once(' ').unwrap()).collect::<Vec<_>>();
+        assert_eq!(tools.iter().map(|t| t.0).collect::<Vec<_>>(), ["SQLite", "DuckDB", "mdbtools"], "{}", about.tools);
+        assert!(tools.iter().all(|t| t.1.split('.').count() == 3 && t.1.chars().next().unwrap().is_ascii_digit()), "{}", about.tools);
+        assert_eq!(tools[2].1, "1.0.1");
         assert_eq!(about.author, "Mauricio Menon");
         assert_eq!(
             about.links,

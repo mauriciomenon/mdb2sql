@@ -14,12 +14,13 @@ fn main() {
     let version = text.split_whitespace().nth(1).unwrap_or("unknown");
     println!("cargo:rustc-env=RUSTC_VERSION={version}");
 
-    // numero e data do build para o Sobre, gravados pelos scripts de build; fora do build oficial: "build dev"
-    println!("cargo:rerun-if-env-changed=MDB2SQL_BUILD_NUMBER");
-    println!("cargo:rerun-if-env-changed=MDB2SQL_BUILD_DATE");
-    let label = match (std::env::var("MDB2SQL_BUILD_NUMBER"), std::env::var("MDB2SQL_BUILD_DATE")) {
-        (Ok(n), Ok(d)) if !n.is_empty() && !d.is_empty() => format!("build {n} ({d})"),
-        _ => "build dev".to_string(),
+    // commit (hash completo) e data dele para o Sobre, gravados pelos scripts de build (secao 18 b: "commit <hash> -
+    // <AAAA-MM-DD>"); fora do build oficial: "dev"
+    println!("cargo:rerun-if-env-changed=MDB2SQL_COMMIT");
+    println!("cargo:rerun-if-env-changed=MDB2SQL_COMMIT_DATE");
+    let label = match (std::env::var("MDB2SQL_COMMIT"), std::env::var("MDB2SQL_COMMIT_DATE")) {
+        (Ok(c), Ok(d)) if c.len() == 40 && !d.is_empty() => format!("commit {c} - {d}"),
+        _ => "dev".to_string(),
     };
     println!("cargo:rustc-env=BUILD_LABEL={label}");
 
