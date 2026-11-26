@@ -289,11 +289,63 @@ impl Drop for Probe {
 }
 
 // comandos que a aba SQL roda: consulta (SELECT, WITH, VALUES, FROM, SHOW, DESCRIBE, SUMMARIZE e os PRAGMA de leitura,
-// que o DuckDB reescreve como SELECT) e EXPLAIN
-const READ_STATEMENTS: [ffi::duckdb_statement_type; 2] =
-    [ffi::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_SELECT, ffi::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_EXPLAIN];
+// que o DuckDB reescreve como SELECT) e EXPLAIN de uma consulta
+const EXPLAIN: ffi::duckdb_statement_type = ffi::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_EXPLAIN;
+const READ_STATEMENTS: [ffi::duckdb_statement_type; 2] = [ffi::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_SELECT, EXPLAIN];
+
+// pula espacos e comentarios (-- ate o fim da linha, /* ... */)
+fn blank(mut text: &str) -> &str {
+    loop {
+        text = text.trim_start();
+        if let Some(rest) = text.strip_prefix("--") {
+            text = rest.find('\n').map_or("", |end| &rest[end..]);
+        } else if let Some(rest) = text.strip_prefix("/*") {
+            text = rest.find("*/").map_or("", |end| &rest[end + 2..]);
+        } else {
+            return text;
+        }
+    }
+}
+
+// o texto depois da palavra-chave (sem diferenciar maiusculas), se ele comeca com ela
+fn keyword<'a>(text: &'a str, word: &str) -> Option<&'a str> {
+    let rest = text.get(word.len()..)?;
+    let whole = !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_');
+    (text[..word.len()].eq_ignore_ascii_case(word) && whole).then_some(rest)
+}
+
+// NIVEL BASICO: O comando que um EXPLAIN explica: o texto depois de EXPLAIN [ANALYZE | ANALYSE | (opcoes)]. None se o
+// texto nao comeca assim (a aba SQL recusa)
+// NIVEL TECNICO: the C API gives the statement type but not the explained statement; DuckDB still classifies the
+// text found here, the text only tells where it starts
+fn explained(sql: &str) -> Option<&str> {
+    let rest = blank(keyword(blank(sql), "EXPLAIN")?);
+    let rest = match keyword(rest, "ANALYZE").or_else(|| keyword(rest, "ANALYSE")) {
+        Some(after) => after,
+        None if rest.starts_with('(') => &rest[rest.find(')')? + 1..],
+        None => rest,
+    };
+    Some(blank(rest))
+}
 
 impl Probe {
+    // NIVEL BASICO: true se todo comando de `sql` so le. EXPLAIN so com uma consulta: EXPLAIN ANALYZE roda o comando
+    // que explica, e um COPY ... TO gravaria um arquivo (a transacao so de leitura nao impede)
+    fn reads_only(&self, sql: &str) -> Result<bool, String> {
+        let kinds = self.statement_types(sql)?;
+        if kinds.iter().any(|kind| !READ_STATEMENTS.contains(kind)) {
+            return Ok(false);
+        }
+        if !kinds.contains(&EXPLAIN) {
+            return Ok(true);
+        }
+        // o texto do comando explicado so se acha quando ele e o unico
+        match (kinds.len(), explained(sql)) {
+            (1, Some(inner)) => self.reads_only(inner),
+            _ => Ok(false),
+        }
+    }
+
     fn run(&self, sql: &str) -> Result<(), String> {
         let text = std::ffi::CString::new(sql).map_err(|e| e.to_string())?;
         unsafe {
@@ -368,12 +420,12 @@ fn new_duckdb() -> Result<Engine, String> {
     Ok(Engine { conn, probe })
 }
 
-// NIVEL BASICO: Roda `f` numa transacao desfeita no fim: o que a aba SQL (e a exportacao do resultado dela) roda nunca
-// muda o banco, a copia nem a memoria
+// NIVEL BASICO: Roda `f` numa transacao so de leitura, desfeita no fim: o que a aba SQL (e a exportacao do resultado
+// dela) roda nunca muda o banco, a copia nem a memoria
 // NIVEL TECNICO: the statement type already refuses every write; EXPLAIN ANALYZE is allowed and runs the statement
-// it explains, so a write under it is undone here
+// it explains, so a write under it fails in the READ ONLY transaction
 pub(crate) fn rolled_back<T>(conn: &Connection, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
-    conn.execute_batch("BEGIN TRANSACTION").map_err(|e| e.to_string())?;
+    conn.execute_batch("BEGIN TRANSACTION READ ONLY").map_err(|e| e.to_string())?;
     let result = f(conn);
     let _ = conn.execute_batch("ROLLBACK");
     result
@@ -694,14 +746,20 @@ impl DBManager {
         Ok(self.table_page(table_name, limit, filters, search, &[])?.rows)
     }
 
-    // NIVEL BASICO: SQL da aba SQL: so comandos de leitura, ate `limit` linhas. Outro comando e recusado antes de
-    // rodar ([[err.sqlReadOnly]])
+    // NIVEL BASICO: SQL da aba SQL (e da exportacao do resultado dele): algum comando que nao e de leitura recusa tudo
+    // antes de rodar ([[err.sqlReadOnly]])
     // NIVEL TECNICO: DuckDB itself says what each statement is (Probe::statement_types), never the text
+    pub fn check_read_only(&self, sql: &str) -> Result<(), String> {
+        self.with_open(|open| match open.engine.probe.reads_only(sql)? {
+            true => Ok(()),
+            false => Err("[[err.sqlReadOnly]]".to_string()),
+        })
+    }
+
+    // NIVEL BASICO: SQL da aba SQL: so comandos de leitura, ate `limit` linhas
     pub fn run_sql(&self, sql: &str, limit: usize) -> Result<SqlResult, String> {
+        self.check_read_only(sql)?;
         self.with_open(|open| {
-            if open.engine.probe.statement_types(sql)?.iter().any(|kind| !READ_STATEMENTS.contains(kind)) {
-                return Err("[[err.sqlReadOnly]]".to_string());
-            }
             rolled_back(&open.engine.conn, |conn| {
                 let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
                 let mut rows = stmt.query([]).map_err(|e| e.to_string())?;

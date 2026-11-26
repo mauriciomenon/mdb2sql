@@ -91,8 +91,9 @@ mod tests {
         assert_eq!(rows[0]["u"], 7);
         assert!(manager.query_table("missing", 10, &[], "").is_err());
 
-        // somente leitura: o SQL livre nao consegue gravar no arquivo aberto
-        assert!(manager.run_sql("INSERT INTO points VALUES (3, 'x', NULL, NULL, NULL, NULL, NULL, NULL, NULL)", 10).is_err());
+        // somente leitura: o SQL livre nao consegue gravar no arquivo aberto (recusado antes de rodar)
+        let insert = manager.run_sql("INSERT INTO points VALUES (3, 'x', NULL, NULL, NULL, NULL, NULL, NULL, NULL)", 10);
+        assert_eq!(insert.unwrap_err(), "[[err.sqlReadOnly]]");
         let result = manager.run_sql("SELECT id, name FROM points ORDER BY id", 1).unwrap();
         assert_eq!(result.columns.len(), 2);
         assert_eq!(result.rows.len(), 1);
@@ -1062,5 +1063,85 @@ mod tests {
         manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
         let rows = manager.query_table("t", 10, &[filter("id", json!("9007199254740993"))], "").unwrap();
         assert_eq!(rows, [json!({ "id": "9007199254740993" })]);
+    }
+
+    // item 33: a aba SQL roda so comandos de leitura (tipo do comando pelo DuckDB); os outros sao recusados antes de
+    // rodar e o banco, a copia e a memoria nunca mudam (EXPLAIN ANALYZE de escrita tambem nao)
+    #[test]
+    fn sql_tab_runs_only_read_statements() {
+        let dir = tempdir().unwrap();
+        let lite = dir.path().join("ro.sqlite");
+        rusqlite::Connection::open(&lite).unwrap().execute_batch("CREATE TABLE t (id INTEGER, s TEXT); INSERT INTO t VALUES (1, 'a'), (2, 'b');").unwrap();
+        let copy = dir.path().join("copy.csv");
+        let copy_sql = copy.to_string_lossy().replace('\'', "''");
+        for path in [lite.clone(), sample_duckdb(dir.path())] {
+            let manager = DBManager::new();
+            manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+            let table = if path == lite { "t" } else { "points" };
+            let reads = [
+                format!("SELECT * FROM {table}"),
+                format!("WITH x AS (SELECT * FROM {table}) SELECT count(*) FROM x"),
+                format!("FROM {table}"),
+                "VALUES (1, 2)".to_string(),
+                "SHOW TABLES".to_string(),
+                format!("DESCRIBE {table}"),
+                format!("SUMMARIZE {table}"),
+                format!("PRAGMA table_info('{table}')"),
+                "PRAGMA show_tables".to_string(),
+                format!("EXPLAIN SELECT * FROM {table}"),
+                format!("EXPLAIN ANALYZE SELECT * FROM {table}"),
+                format!("-- c\n explain /* c */ analyze FROM {table};"),
+                format!("EXPLAIN (ANALYZE) SELECT * FROM {table}"),
+                format!("SELECT 1; SELECT count(*) FROM {table}"),
+            ];
+            for sql in &reads {
+                assert!(manager.run_sql(sql, 10).is_ok(), "{sql}: {:?}", manager.run_sql(sql, 10).err());
+            }
+            let writes = [
+                format!("INSERT INTO {table} (id) VALUES (3)"),
+                format!("UPDATE {table} SET id = 9"),
+                format!("DELETE FROM {table}"),
+                "CREATE TABLE u (x INTEGER)".to_string(),
+                "CREATE TEMP TABLE u AS SELECT 1".to_string(),
+                "CREATE VIEW v AS SELECT 1".to_string(),
+                format!("DROP TABLE {table}"),
+                format!("ALTER TABLE {table} ADD COLUMN z INTEGER"),
+                "ATTACH ':memory:' AS other".to_string(),
+                format!("COPY {table} TO '{copy_sql}'"),
+                "SET threads = 1".to_string(),
+                "PRAGMA threads = 1".to_string(),
+                "CALL pragma_version()".to_string(),
+                "USE memory".to_string(),
+                "BEGIN TRANSACTION".to_string(),
+                "CHECKPOINT".to_string(),
+                "INSTALL json".to_string(),
+                "LOAD json".to_string(),
+                format!("EXPORT DATABASE '{}'", dir.path().join("exp").to_string_lossy().replace('\'', "''")),
+                format!("SELECT 1; DROP TABLE {table}"),
+                // EXPLAIN ANALYZE roda o comando que explica: so vale com uma consulta (COPY ... TO gravaria o arquivo
+                // mesmo na transacao so de leitura)
+                format!("EXPLAIN ANALYZE INSERT INTO {table} (id) VALUES (3)"),
+                format!("explain analyse DELETE FROM {table}"),
+                format!("EXPLAIN (ANALYZE) DELETE FROM {table}"),
+                "EXPLAIN ANALYZE CREATE TABLE u AS SELECT 1".to_string(),
+                format!("EXPLAIN ANALYZE COPY {table} TO '{copy_sql}'"),
+                format!("/* x */ EXPLAIN -- y\n ANALYZE /* z */ COPY {table} TO '{copy_sql}';"),
+                format!("EXPLAIN COPY {table} TO '{copy_sql}'"),
+                format!("EXPLAIN SELECT 1; EXPLAIN ANALYZE COPY {table} TO '{copy_sql}'"),
+            ];
+            for sql in &writes {
+                assert_eq!(manager.run_sql(sql, 10).err().as_deref(), Some("[[err.sqlReadOnly]]"), "{sql}");
+            }
+            assert_eq!(manager.get_row_count(table, &[], "").unwrap(), 2, "{table}");
+            assert_eq!(manager.list_tables().unwrap().len(), if path == lite { 1 } else { 2 });
+            assert!(!copy.exists(), "EXPLAIN ANALYZE COPY wrote a file");
+            // erro do banco: o texto do DuckDB, nao a recusa
+            let typo = manager.run_sql("SELEC 1", 10).unwrap_err();
+            assert!(typo.contains("syntax error") && !typo.contains("sqlReadOnly"), "{typo}");
+            assert!(manager.run_sql("SELECT * FROM missing_table", 10).unwrap_err().contains("missing_table"));
+            // a exportacao do resultado usa a mesma recusa (main.rs export "sql")
+            assert_eq!(manager.check_read_only(&format!("DELETE FROM {table}")).err().as_deref(), Some("[[err.sqlReadOnly]]"));
+            assert!(manager.check_read_only(&format!("SELECT * FROM {table}")).is_ok());
+        }
     }
 }

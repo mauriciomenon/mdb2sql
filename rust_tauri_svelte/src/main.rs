@@ -350,7 +350,9 @@ fn export(app: AppHandle, state: State<'_, AppState>, request: ExportRequest) ->
             export::export_source(&conn, &Source::Query(name, select), format, target, &mut progress)
         }
         "sql" => {
-            let source = Source::Sql(request.sql.clone().ok_or("No SQL to export")?);
+            let sql = request.sql.clone().ok_or("No SQL to export")?;
+            state.db_manager.lock().unwrap().check_read_only(&sql)?;
+            let source = Source::Sql(sql);
             // como na aba SQL: o que o resultado rodar e desfeito no fim
             db_manager::rolled_back(&conn, |conn| export::export_source(conn, &source, format, target, &mut progress))
         }
