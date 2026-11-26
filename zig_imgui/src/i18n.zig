@@ -145,7 +145,6 @@ test "texts as in the Go catalog (the reference wording), in the three languages
         .{ "log_discarded", "SQLite converted from {s} discarded", "SQLite convertido de {s} descartado", "SQLite convertido de {s} descartado" },
         .{ "export_run_text", "Exiting cancels the export of {s}.", "Sair cancela a exportação de {s}.", "Salir cancela la exportación de {s}." },
         .{ "copy_name", "{s} (copy)", "{s} (cópia)", "{s} (copia)" },
-        .{ "about_write", "Writing", "Gravação", "Escritura" },
         .{ "menu_open_typed", "Open the typed path", "Abrir o caminho digitado", "Abrir la ruta escrita" },
         // item 14: o botao Abrir... escolhe o arquivo; arquivo que nao existe, so a mensagem curta com o caminho
         .{ "open", "Open...", "Abrir...", "Abrir..." },

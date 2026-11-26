@@ -2464,49 +2464,27 @@ const App = struct {
         defer ig.igEndPopup();
         if (!app.about_open) ig.igCloseCurrentPopup(); // --capture fecha pelo estado
         const about = dbm.about;
-        // nome e versao em destaque (mesma fonte, maior)
-        ig.igPushFont(null, ig.igGetStyle().*.FontSizeBase * 1.4);
-        textSlice(about.name ++ " " ++ about.version);
-        ig.igPopFont();
-        textSlice(tr("about_tagline"));
-        ig.igSpacing();
-        ig.igSeparator();
-        ig.igSpacing();
-
+        // item 18 b: so estas linhas, nesta ordem, igual nas 4 (texto tecnico, a fonte de toda a tela)
         var glfw_ver: [3]c_int = undefined;
         glfwGetVersion(&glfw_ver[0], &glfw_ver[1], &glfw_ver[2]);
-        var bufs: [5][160]u8 = undefined;
-        const rows = [_]struct { [:0]const u8, []const u8 }{
-            .{ tr("about_build"), about.build(&bufs[0]) },
-            .{ tr("about_stack"), about.stackText(&bufs[1], std.mem.span(ig.igGetVersion())) },
-            .{ tr("about_window"), std.fmt.bufPrint(&bufs[2], "GLFW {d}.{d}.{d} + OpenGL 3.3", .{ glfw_ver[0], glfw_ver[1], glfw_ver[2] }) catch "" },
-            .{ tr("about_database"), std.fmt.bufPrint(&bufs[3], "DuckDB {s}", .{std.mem.trimStart(u8, dbm.libraryVersion(), "v")}) catch "" },
-            .{ tr("about_access"), if (platform.is_windows) i18n.fmt(&bufs[4], "about_access_win", .{about.mdbtools_version}) else i18n.fmt(&bufs[4], "about_access_unix", .{about.mdbtools_version}) },
-            .{ tr("about_write"), tr("about_write_value") },
-            .{ tr("about_author"), about.author },
-            .{ tr("about_license"), tr("about_license_text") },
-        };
-        if (ig.igBeginTable("##about_rows", 2, ig.ImGuiTableFlags_SizingFixedFit, .{ .x = 0, .y = 0 }, 0)) {
-            defer ig.igEndTable();
-            // a linha de Gravacao (mais longa) quebra na largura da de Leitura do Access: o dialogo fica do mesmo tamanho
-            const wrap_w = rawWidth(rows[4][1]) + 1;
-            for (rows) |row| {
-                ig.igTableNextRow(0, 0);
-                _ = ig.igTableNextColumn();
-                ig.igTextDisabled("%s", row[0].ptr);
-                _ = ig.igTableNextColumn();
-                ig.igPushTextWrapPos(ig.igGetCursorPosX() + wrap_w);
-                textSlice(row[1]);
-                ig.igPopTextWrapPos();
+        var bufs: [4][200]u8 = undefined;
+        textSlice(about.title_line);
+        textSlice(about.versionLine(&bufs[0]));
+        textSlice(about.runtimeText(&bufs[1], std.mem.span(ig.igGetVersion()), glfw_ver));
+        textSlice(about.toolsText(&bufs[2], dbm.libraryVersion()));
+        // o driver ODBC do Access so existe no Windows (no Linux o Access e lido so pelo mdbtools)
+        if (platform.is_windows) textSlice(tr("about_odbc"));
+        textSlice(i18n.fmt(&bufs[3], "about_author_line", .{about.author}));
+        textSlice(tr("about_license_line"));
+        // GitHub / GitLab: links (abrem no navegador)
+        for (about.links, 0..) |link, i| {
+            if (i > 0) {
+                ig.igSameLine(0, -1);
+                textSlice("/");
+                ig.igSameLine(0, -1);
             }
-            for (about.links) |link| {
-                ig.igTableNextRow(0, 0);
-                _ = ig.igTableNextColumn();
-                ig.igTextDisabled("%s", link.label.ptr);
-                _ = ig.igTableNextColumn();
-                if (ig.igTextLink(link.url)) openLink(link.url);
-                itemTooltip(tr("about_open_browser"));
-            }
+            if (ig.igTextLink(link.label)) openLink(link.url);
+            itemTooltip(tr("about_open_browser"));
         }
         ig.igSpacing();
         ig.igSeparator();

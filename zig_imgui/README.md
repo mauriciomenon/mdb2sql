@@ -230,8 +230,10 @@ While a file opens, the status line shows the time, a progress bar (tables conve
 - **Settings > Theme**: System, Light, Dark. **Settings > Language**: English, Português (Brasil), Español.
   **Settings > Default search scope**: This table, All tables. **Settings > Term matching**: Whole value, Contains.
   **Settings > Show NULL** (off by default). All are saved and apply at once, without restarting.
-- **Help > About mdb2sql**: version, build, stack, Access reader, Writing (SQLite, DuckDB, Excel and CSV; `.mdb` and
-  `.accdb` cannot be written), license and the GitHub and GitLab links.
+- **Help > About mdb2sql** (the same lines in the 4 versions): `MDB2SQL (Zig)`, `Version 1.3.0 - commit <full hash> -
+  <date>` (`dev` outside the official build), the runtime (Zig, Dear ImGui, GLFW, OpenGL), `Tools: SQLite, DuckDB,
+  mdbtools` with their versions, `ODBC driver support, if installed.` (Windows), the author, `License: GPLv2` and the
+  GitHub / GitLab links.
 
 ### Saved settings
 

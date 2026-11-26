@@ -153,19 +153,12 @@ pub const export_found_one = "Solo la {d} fila encontrada";
 
 // Acerca de
 pub const about_title = "Acerca de mdb2sql";
-pub const about_tagline = "Abre bases de datos Access, SQLite y DuckDB y exporta a SQLite, DuckDB, Excel y CSV.";
-pub const about_build = "Compilación";
-pub const about_stack = "Stack";
-pub const about_window = "Ventana";
-pub const about_database = "Bases de datos";
-pub const about_access = "Lectura de Access";
-pub const about_access_win = "mdbtools {s} (incluido) o el controlador ODBC de Access, convertido una vez a SQLite";
-pub const about_access_unix = "mdbtools {s} (incluido), convertido una vez a SQLite";
-pub const about_write = "Escritura";
-pub const about_write_value = "SQLite, DuckDB, Excel y CSV. Los archivos .mdb y .accdb no se pueden escribir: el formato de Access es propiedad de Microsoft.";
-pub const about_author = "Autor";
-pub const about_license = "Licencia";
-pub const about_license_text = "GPL v2 o posterior (GPL-2.0-or-later)";
+pub const about_version = "Versión {s} - commit {s} - {s}";
+pub const about_version_dev = "Versión {s} - dev";
+pub const about_tools = "Herramientas: SQLite {s}, DuckDB {s}, mdbtools {s}";
+pub const about_odbc = "Soporte del controlador ODBC, si está instalado.";
+pub const about_author_line = "Autor: {s}";
+pub const about_license_line = "Licencia: GPLv2";
 pub const about_open_browser = "Abrir en el navegador";
 
 // botones comunes

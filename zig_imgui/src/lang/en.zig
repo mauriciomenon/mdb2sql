@@ -153,19 +153,12 @@ pub const export_found_one = "Only the {d} row found";
 
 // About
 pub const about_title = "About mdb2sql";
-pub const about_tagline = "Opens Access, SQLite and DuckDB databases and exports to SQLite, DuckDB, Excel and CSV.";
-pub const about_build = "Build";
-pub const about_stack = "Stack";
-pub const about_window = "Window";
-pub const about_database = "Databases";
-pub const about_access = "Access reading";
-pub const about_access_win = "mdbtools {s} (included) or the Access ODBC driver, converted once to SQLite";
-pub const about_access_unix = "mdbtools {s} (included), converted once to SQLite";
-pub const about_write = "Writing";
-pub const about_write_value = "SQLite, DuckDB, Excel and CSV. .mdb and .accdb files cannot be written: the Access format is proprietary to Microsoft.";
-pub const about_author = "Author";
-pub const about_license = "License";
-pub const about_license_text = "GPL v2 or later (GPL-2.0-or-later)";
+pub const about_version = "Version {s} - commit {s} - {s}";
+pub const about_version_dev = "Version {s} - dev";
+pub const about_tools = "Tools: SQLite {s}, DuckDB {s}, mdbtools {s}";
+pub const about_odbc = "ODBC driver support, if installed.";
+pub const about_author_line = "Author: {s}";
+pub const about_license_line = "License: GPLv2";
 pub const about_open_browser = "Open in the browser";
 
 // common buttons

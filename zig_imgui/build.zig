@@ -21,8 +21,12 @@ pub fn build(b: *std.Build) void {
     options.addOption(bool, "console", console);
     options.addOption([]const u8, "build_number", b.option([]const u8, "build_number", "Build number (git rev-list --count HEAD)") orelse "");
     options.addOption([]const u8, "build_date", b.option([]const u8, "build_date", "Build date (YYYY-MM-DD)") orelse "");
+    // commit completo do build (git rev-parse HEAD), na linha de versao do Sobre; vazio = "dev"
+    options.addOption([]const u8, "commit", b.option([]const u8, "commit", "Full commit hash (git rev-parse HEAD)") orelse "");
     const mdbtools_version = "1.0.1"; // a mesma dos scripts de ferramentas (mostrada no Sobre)
     options.addOption([]const u8, "mdbtools_version", mdbtools_version);
+    // SQLite embutido no sqlite_scanner fixado abaixo (v2.0.0): a versao gravada no arquivo (teste em about.zig)
+    options.addOption([]const u8, "sqlite_version", "3.38.1");
     const build_options = options.createModule();
 
     // Arquivos que vao junto do programa, baixados por scripts/setup_tools.ps1 (Windows) ou
