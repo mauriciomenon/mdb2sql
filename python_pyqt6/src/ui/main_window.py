@@ -69,7 +69,7 @@ from backend.database_tasks import (
     load_table_payload,
     open_database,
 )
-from backend.db_manager import ACCESS_EXT, DBManager, sql_string
+from backend.db_manager import ACCESS_EXT, DBManager, sql_string, unique_names
 from backend.export import (
     Cancelled,
     Sheet,
@@ -2290,7 +2290,9 @@ class MainWindow(QMainWindow):
         if request_id != self._terms_request or self.terms_result is None:
             return
         table, rows = result  # type: ignore[misc]
-        self.terms_model.set_rows(rows, [tr("terms.column"), *self.terms_result["columns"][table]])
+        # os nomes que a consulta devolve: uma coluna da tabela com o nome da coluna Termo vem como Termo_2
+        columns = list(rows[0]) if rows else unique_names([tr("terms.column"), *self.terms_result["columns"][table]])
+        self.terms_model.set_rows(rows, columns)
         self.terms_table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
         self._fit_columns(self.terms_table)
         total = dict(self.terms_result["hits"])[table]

@@ -1043,6 +1043,31 @@ def test_terms_tab_lists_hits_in_list_order_copies_and_reports(qtbot, tmp_path: 
     assert not win.export_terms_actions[0].isEnabled()
 
 
+def test_terms_grid_and_copy_with_a_table_column_named_like_the_term_column(qtbot, tmp_path: Path) -> None:
+    # revisao B2: a coluna "Term" da tabela nao some nem troca o termo na grade e no copiar
+    import duckdb
+
+    db_file = tmp_path / "g.duckdb"
+    with duckdb.connect(str(db_file)) as conn:
+        conn.execute('CREATE TABLE g ("Term" VARCHAR, other VARCHAR)')
+        conn.execute("INSERT INTO g VALUES ('alpha', 'x'), ('beta', 'alpha')")
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.show()
+    win.open_database(db_file)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
+    win.terms_tab_action.trigger()
+    win.terms_edit.setPlainText("alpha")
+    win.run_terms_action.trigger()
+    qtbot.waitUntil(lambda: win._job is None and win._busy == 0 and win.terms_model.rowCount() == 2, timeout=30000)
+    assert win.terms_model.columns == ["Term", "Term_2", "other"]
+    proxy = win.terms_proxy
+    assert [[proxy.index(r, c).data() for c in range(3)] for r in range(2)] == [["alpha", "alpha", "x"],
+                                                                                ["alpha", "beta", "alpha"]]
+    win.copy_hits_action.trigger()
+    assert QApplication.clipboard().text() == "Term\tother\nalpha\tx\nbeta\talpha"
+
+
 def test_export_of_a_subset_asks_whole_table_or_found_rows(qtbot, window: MainWindow, people_db: Path,
                                                            monkeypatch) -> None:
     # igual nas 4 versoes: a grade mostra parte da tabela (pesquisa ou filtro por valor): "Tabela inteira" ou "So as N

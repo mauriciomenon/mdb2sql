@@ -11,7 +11,7 @@ import tempfile
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence
 
 import duckdb
 
@@ -86,6 +86,17 @@ def reads_only(query: str) -> bool:
         return True  # erro de sintaxe: a consulta roda e mostra o erro do motor
     except ValueError:
         return False  # tipo de comando que esta versao do duckdb nao sabe nomear (UPDATE EXTENSIONS)
+
+
+def unique_names(names: Iterable[str]) -> list[str]:
+    """Nomes de coluna sem repeticao (SELECT a, a: a, a_2): as linhas sao dicts por nome."""
+    columns: list[str] = []
+    for name in names:
+        unique, n = name, 2
+        while unique in columns:
+            unique, n = f"{name}_{n}", n + 1
+        columns.append(unique)
+    return columns
 
 
 Filters = Sequence[tuple[str, Any]]  # (coluna, valor) do clique direito "Filtrar por este valor"
@@ -376,7 +387,7 @@ class DBManager:
         # !T: Plain Python values, not pandas: DECIMAL(10,0) stays 1 (pandas would show 1.0) and NULL stays None
         with self.cursor() as cursor:
             cursor.execute(query if limit is None else f"{query} LIMIT {int(limit)}", list(params))
-            columns = [column[0] for column in cursor.description]
+            columns = unique_names(column[0] for column in cursor.description)
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     def query_table(
@@ -425,13 +436,7 @@ class DBManager:
                 raise PermissionError(tr("error.sql_read_only")) from exc
             if cursor.description is None:  # comando sem resultado (SET, CREATE ...)
                 return [], [], False
-            columns: list[str] = []
-            for name in (column[0] for column in cursor.description):
-                # nomes repetidos (SELECT a, a) viram a, a_2: as linhas sao dicts por nome
-                unique, n = name, 2
-                while unique in columns:
-                    unique, n = f"{name}_{n}", n + 1
-                columns.append(unique)
+            columns = unique_names(column[0] for column in cursor.description)
             rows = cursor.fetchmany(limit + 1)
         return columns, [dict(zip(columns, row)) for row in rows[:limit]], len(rows) > limit
 
