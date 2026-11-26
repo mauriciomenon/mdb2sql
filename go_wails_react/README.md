@@ -95,8 +95,9 @@ accents, own icon, excelize 2.11.1.
 
 ## How to use
 
-Open a file with the path bar on top (type the path, then Open or Enter; a long path shows its end; Browse...
-opens the file dialog; with the field empty, Open opens `MDB2SQL_DB_PATH` or the sample), File > Open... (Ctrl+O,
+Open a file with the path bar on top (Open... opens the file dialog; type the full path and press Enter, or File >
+Open the typed path; Enter with the field empty opens the file dialog; a long path shows its end; a file that does
+not exist, or a relative path, gives "File not found: {path}"), File > Open... (Ctrl+O,
 the dialog lists Access, SQLite and DuckDB files), by dropping the file on the window, on the command line
 (`mdb2sql.exe "C:\data\DB4.accdb"`, or drag the file onto the exe) or with `MDB2SQL_DB_PATH`. The status bar says
 "Loaded: DB4.accdb (287 tables)" (pt-BR "Aberto: ...") and the window title starts with the file name.

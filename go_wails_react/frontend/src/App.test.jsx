@@ -55,8 +55,9 @@ const sizers = (b) => [...b.querySelectorAll('.sized > .ghost')].map((g) => g.te
 const menuTree = (menuEl) =>
   [...menuEl.children].map((el) => (el.tagName === 'HR' ? '--' : el.classList.contains('menu-root') ? el.querySelector('button').textContent : el.textContent));
 
-// Open of the path bar with the field empty: the default database (MDB2SQL_DB_PATH or the sample)
-const openDefault = () => fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+// F5 (Reopen) with nothing open: the default database (MDB2SQL_DB_PATH or the sample); the Open... button of the path
+// bar is the file dialog since standard 14
+const openDefault = () => fireEvent.keyDown(window, { key: 'F5' });
 
 // File > Open... (the native file dialog)
 const OPEN_DIALOG = /^Open\.\.\./;
@@ -116,10 +117,10 @@ describe('App IPC flow', () => {
     expect(translate('es', 'export.dbSchema')).toBe('Schema de la base de datos');
   });
 
-  // standard item 1: the path bar of Zig (field + Browse... Open Export...); a file dropped on the window opens
-  it('opens the path typed in the top bar, the one picked by Browse... and a dropped file', async () => {
+  // standard items 1 and 14: the path bar (field, Open..., Export...): Enter opens the typed path, Open... and Enter on
+  // an empty field the file dialog (no Browse... any more); a file dropped on the window opens
+  it('opens the path typed in the top bar, the one picked by Open... and a dropped file', async () => {
     const SelectDatabase = vi.fn(async () => 'C:\\data\\picked.sqlite');
-    const DatabasePath = vi.fn(async () => 'C:\\resolved\\sample.duckdb');
     let drop;
     const OnFileDrop = vi.fn((cb, useDropTarget) => {
       drop = cb;
@@ -136,7 +137,9 @@ describe('App IPC flow', () => {
     await screen.findByText('Alpha');
     expect(field).toHaveValue('C:\\data\\typed.duckdb');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Browse...' }));
+    expect(screen.queryByRole('button', { name: 'Browse...' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open...' }));
+    await waitFor(() => expect(SelectDatabase).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('C:\\data\\picked.sqlite'));
     await waitFor(() => expect(field).toHaveValue('C:\\data\\picked.sqlite'));
 
@@ -146,12 +149,13 @@ describe('App IPC flow', () => {
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('C:\\data\\dropped.mdb'));
     await waitFor(() => expect(field).toHaveValue('C:\\data\\dropped.mdb'));
 
-    // an empty field opens the default database; the field then shows the file Go resolved
-    window.go.main.App.DatabasePath = DatabasePath;
-    fireEvent.change(field, { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
-    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith(''));
-    await waitFor(() => expect(field).toHaveValue('C:\\resolved\\sample.duckdb'));
+    // Enter on an empty field opens the file dialog, never an empty path
+    const calls = bridge.LoadDatabase.mock.calls.length;
+    fireEvent.change(field, { target: { value: '  ' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    await waitFor(() => expect(SelectDatabase).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenCalledTimes(calls + 1));
+    expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('C:\\data\\picked.sqlite');
 
     fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
     expect(within(screen.getByRole('menu', { name: 'Export' })).getByRole('menuitem', { name: /^Current table ▸/ })).toBeEnabled();
@@ -868,7 +872,7 @@ describe('App IPC flow', () => {
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, LoadDatabase, GetLanguage: vi.fn(async () => 'pt-BR') } } } });
     render(<App />);
     expect(await screen.findByText('Nenhum banco aberto')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Abrir' }));
+    openDefault();
     expect(await screen.findByText('Aberto: sample.duckdb (1 tabela)')).toBeInTheDocument();
     expect(translate('en', 'status.loaded', 'x.mdb', 2)).toBe('Loaded: x.mdb (2 tables)');
     expect(translateN('es', 'status.loaded', 1, 'x.mdb', 1)).toBe('Abierto: x.mdb (1 tabla)');

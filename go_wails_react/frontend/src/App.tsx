@@ -833,7 +833,7 @@ function App() {
     }
   }
 
-  // File > Open..., Browse... and Ctrl+O: the native file dialog, then the file chosen opens
+  // File > Open..., Open... of the path bar and Ctrl+O: the native file dialog, then the file chosen opens
   async function loadDatabase() {
     setError('');
     try {
@@ -847,8 +847,8 @@ function App() {
     }
   }
 
-  // the path of the top bar field: an empty field opens the default database (MDB2SQL_DB_PATH or the sample)
-  const openTyped = () => openPath(pathText.trim());
+  // the path of the top bar field (Enter, File > Open the typed path); an empty field opens the file dialog (standard 14)
+  const openTyped = () => (pathText.trim() ? openPath(pathText.trim()) : loadDatabase());
 
   // another file (or the same one again, F5): the open one is left without a question (Go deletes its unsaved SQLite)
   async function openPath(path: string) {
@@ -1385,7 +1385,7 @@ function App() {
             </div>
           ))}
         </nav>
-        {/* path bar as in Zig: the field takes the line, Browse... Open Export... on the right */}
+        {/* path bar: the field takes the line (Enter opens it), Open... (the file dialog) and Export... on the right */}
         <div className="pathbar">
           <div className={pathElided ? 'path elided' : 'path'}>
             <input
@@ -1403,9 +1403,6 @@ function App() {
             />
           </div>
           <button disabled={busy} onClick={() => loadDatabase()}>
-            {t('top.browse')}
-          </button>
-          <button disabled={busy} onClick={openTyped}>
             {t('top.open')}
           </button>
           <div className="menu-root">

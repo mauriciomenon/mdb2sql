@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"mdb2sql/backend"
 	"mdb2sql/i18n"
 	"os"
@@ -343,14 +344,20 @@ func (a *App) CloseDatabase() error {
 	return nil
 }
 
-// StartupPath: arquivo da linha de comando ou, sem ele, MDB2SQL_DB_PATH; "" = nada para abrir ao iniciar
+// StartupPath: arquivo da linha de comando ou, sem ele, MDB2SQL_DB_PATH; "" = nada para abrir ao iniciar. Relativo:
+// contra a pasta de onde o programa foi chamado, aqui (LoadDatabase nao resolve caminho relativo, padrao 14)
 func (a *App) StartupPath() string {
+	path := os.Getenv("MDB2SQL_DB_PATH")
 	for _, arg := range os.Args[1:] {
 		if !strings.HasPrefix(arg, "-") {
-			return arg
+			path = arg
+			break
 		}
 	}
-	return os.Getenv("MDB2SQL_DB_PATH")
+	if abs, err := filepath.Abs(path); path != "" && err == nil {
+		return abs
+	}
+	return path
 }
 
 // SelectDatabase abre o seletor de arquivo nativo; retorna "" se o usuario cancelar
@@ -389,8 +396,11 @@ func (a *App) validateDatabasePath(dbPath string) (string, error) {
 	// Resolve symlinks para prevenir path traversal
 	// !T: EvalSymlinks prevents attacks via malicious.db -> /etc/passwd
 	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", errors.New(i18n.T("err.notFound", dbPath)) // only the path, never the system text (standard 14)
+	}
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", i18n.T("err.notFound"), err)
+		return "", fmt.Errorf("%s: %w", i18n.T("err.badPath"), err)
 	}
 
 	// Valida extensao do arquivo no caminho final
@@ -401,8 +411,11 @@ func (a *App) validateDatabasePath(dbPath string) (string, error) {
 
 	// Garante que o caminho e um arquivo, nao diretorio
 	info, err := os.Stat(resolvedPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", errors.New(i18n.T("err.notFound", dbPath))
+	}
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", i18n.T("err.notFound"), err)
+		return "", fmt.Errorf("%s: %w", i18n.T("err.badPath"), err)
 	}
 	if info.IsDir() {
 		return "", errors.New(i18n.T("err.isDir", resolvedPath))
@@ -479,6 +492,7 @@ func (a *App) cancelReads() {
 // LoadDatabase abre o arquivo (Access e importado, com progresso) e retorna lista de tabelas
 // !T: Wails automatically exposes this to frontend via IPC
 func (a *App) LoadDatabase(dbPath string) ([]string, error) {
+	typed := dbPath // what the UI sent (path bar, file dialog, dropped file, StartupPath: absolute but the bar)
 	// Se path vazio, tenta env var ou usa default
 	if dbPath == "" {
 		if envPath := os.Getenv("MDB2SQL_DB_PATH"); envPath != "" {
@@ -498,6 +512,10 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 	// Valida caminho do banco
 	// !T: Prevent path traversal and validate file extension
 	validatedPath, err := a.validateDatabasePath(dbPath)
+	if typed != "" && !filepath.IsAbs(typed) {
+		// a relative path typed in the path bar would resolve against the folder of the exe (standard 14)
+		validatedPath, err = "", errors.New(i18n.T("err.notFound", typed))
+	}
 	// the file open until now is left either way (the UI has already dropped it, also for a wrong path typed in the
 	// path bar): its queries and searches stop, and the unsaved SQLite of an Access file is deleted, nobody asked
 	a.closeDatabase()

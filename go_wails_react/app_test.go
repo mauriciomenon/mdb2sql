@@ -284,6 +284,37 @@ func TestProgressAtMostFiveASecond(t *testing.T) {
 	}
 }
 
+// standard 14 (owner 26/11): a file that does not exist gives only "File not found: {path}", never the text of the
+// system (GetFileAttributesEx, errno); a relative path typed in the path bar is never resolved against the folder of
+// the exe; a relative file on the command line is, against the folder the program was called from
+func TestOpenMissingFileShortMessage(t *testing.T) {
+	app := NewApp()
+	t.Cleanup(func() { _ = app.dbManager.Close() })
+	dir := t.TempDir()
+	for _, path := range []string{
+		filepath.Join(dir, "missing.duckdb"),        // the file is missing
+		filepath.Join(dir, "no folder", "db.accdb"), // its folder too
+		"data",                                 // relative: what the owner hit (...\amd64\data)
+		filepath.Join("data", "sample.duckdb"), // relative, even where it exists
+	} {
+		_, err := app.LoadDatabase(path)
+		if want := "File not found: " + path; err == nil || err.Error() != want {
+			t.Errorf("LoadDatabase(%q) = %v, want %q", path, err, want)
+		}
+	}
+	args := os.Args
+	t.Cleanup(func() { os.Args = args })
+	os.Args = []string{"mdb2sql", "-flag", filepath.Join("sub", "db.accdb")}
+	if want, _ := filepath.Abs(filepath.Join("sub", "db.accdb")); app.StartupPath() != want {
+		t.Errorf("StartupPath = %q, want %q", app.StartupPath(), want)
+	}
+	os.Args = []string{"mdb2sql"}
+	t.Setenv("MDB2SQL_DB_PATH", "")
+	if got := app.StartupPath(); got != "" {
+		t.Errorf("StartupPath without a file = %q", got)
+	}
+}
+
 // the user's real settings (a saved language, for one) must not change what the tests see
 func TestMain(m *testing.M) {
 	dir, _ := os.MkdirTemp("", "mdb2sql-settings-")

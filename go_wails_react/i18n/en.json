@@ -81,7 +81,7 @@
   "err.loadCancelled": "Loading cancelled",
   "err.noAccessReader": "Cannot read Access files on this computer: install the 64-bit Microsoft Access Database Engine (ODBC driver \"{0}\") from {1}, or use the release build of mdb2sql, which embeds mdbtools",
   "err.noSqliteExtension": "This build has no embedded DuckDB sqlite extension (run the setup_tools script and build again)",
-  "err.notFound": "Database file not found",
+  "err.notFound": "File not found: {0}",
   "err.openFailed": "Could not open the file",
   "err.queryCancelled": "Query cancelled",
   "err.sqlReadOnly": "The SQL tab only reads the database: this command is not allowed",
@@ -266,8 +266,7 @@
   "theme.dark": "Dark",
   "theme.light": "Light",
   "theme.system": "System",
-  "top.browse": "Browse...",
   "top.export": "Export...",
-  "top.open": "Open",
+  "top.open": "Open...",
   "top.path": "Database file (.accdb, .mdb, .sqlite, .duckdb)"
 }

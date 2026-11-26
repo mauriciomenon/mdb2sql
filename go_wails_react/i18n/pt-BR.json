@@ -81,7 +81,7 @@
   "err.loadCancelled": "Carga cancelada",
   "err.noAccessReader": "Não é possível ler arquivos Access neste computador: instale o Microsoft Access Database Engine 64 bits (driver ODBC \"{0}\") de {1}, ou use o build de release do mdb2sql, que embute o mdbtools",
   "err.noSqliteExtension": "Este build não tem a extensão sqlite do DuckDB embutida (rode o script setup_tools e compile de novo)",
-  "err.notFound": "Arquivo de banco não encontrado",
+  "err.notFound": "Arquivo não encontrado: {0}",
   "err.openFailed": "Não foi possível abrir o arquivo",
   "err.queryCancelled": "Consulta cancelada",
   "err.sqlReadOnly": "A aba SQL só lê o banco: este comando não é permitido",
@@ -266,8 +266,7 @@
   "theme.dark": "Escuro",
   "theme.light": "Claro",
   "theme.system": "Sistema",
-  "top.browse": "Procurar...",
   "top.export": "Exportar...",
-  "top.open": "Abrir",
+  "top.open": "Abrir...",
   "top.path": "Arquivo do banco (.accdb, .mdb, .sqlite, .duckdb)"
 }
