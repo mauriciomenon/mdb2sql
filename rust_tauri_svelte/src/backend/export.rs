@@ -123,11 +123,10 @@ fn xlsx_err(e: XlsxError) -> String {
     format!("Excel: {e}")
 }
 
-// NIVEL BASICO: Escreve um valor do DuckDB numa celula com o tipo mais proximo
-// Numeros com mais de 15 digitos significativos vao como texto (o Excel arredondaria);
-// datas viram data do Excel (antes de 1900 o Excel nao tem data: vai texto); texto e cortado em 32.767.
+// NIVEL BASICO: Escreve um valor do DuckDB numa celula com o tipo mais proximo: todo numero e celula numerica (secao
+// 19 c e h; o Excel guarda ~15 digitos), datas viram data do Excel (antes de 1900 o Excel nao tem data: vai texto),
+// NULL fica vazio e o texto e cortado em 32.767.
 fn write_cell(ws: &mut Worksheet, row: u32, col: u16, value: ValueRef, date: &Format, datetime: &Format) -> Result<(), XlsxError> {
-    const EXACT: u128 = 1 << 53;
     let text = |v: ValueRef| json_text(&value_to_json(v));
     match value {
         ValueRef::Null => return Ok(()),
@@ -138,19 +137,16 @@ fn write_cell(ws: &mut Worksheet, row: u32, col: u16, value: ValueRef, date: &Fo
         ValueRef::UTinyInt(i) => ws.write_number(row, col, i),
         ValueRef::USmallInt(i) => ws.write_number(row, col, i),
         ValueRef::UInt(i) => ws.write_number(row, col, i),
-        ValueRef::BigInt(i) if u128::from(i.unsigned_abs()) <= EXACT => ws.write_number(row, col, i as f64),
-        ValueRef::UBigInt(i) if u128::from(i) <= EXACT => ws.write_number(row, col, i as f64),
-        ValueRef::HugeInt(i) if i.unsigned_abs() <= EXACT => ws.write_number(row, col, i as f64),
+        ValueRef::BigInt(i) => ws.write_number(row, col, i as f64),
+        ValueRef::UBigInt(i) => ws.write_number(row, col, i as f64),
+        ValueRef::HugeInt(i) => ws.write_number(row, col, i as f64),
+        ValueRef::UHugeInt(i) => ws.write_number(row, col, i as f64),
         ValueRef::Float(f) if f.is_finite() => ws.write_number(row, col, f),
         ValueRef::Double(f) if f.is_finite() => ws.write_number(row, col, f),
-        ValueRef::Decimal(d) => {
-            let s = d.to_string();
-            let digits = s.trim_start_matches(['-', '0', '.']).chars().filter(char::is_ascii_digit).count();
-            match s.parse::<f64>() {
-                Ok(f) if digits <= 15 => ws.write_number(row, col, f),
-                _ => ws.write_string(row, col, s),
-            }
-        }
+        ValueRef::Decimal(d) => match d.to_string().parse::<f64>() {
+            Ok(f) => ws.write_number(row, col, f),
+            Err(_) => ws.write_string(row, col, d.to_string()),
+        },
         ValueRef::Timestamp(..) | ValueRef::Date32(_) => {
             let s = text(value);
             let format = if matches!(value, ValueRef::Date32(_)) { date } else { datetime };

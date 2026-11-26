@@ -671,7 +671,7 @@ mod tests {
                 "tiny SMALLINT",
                 "small INTEGER",
                 "price REAL_DECIMAL(19,4)",
-                "exact TEXT_DECIMAL(18,4)",
+                "exact REAL_DECIMAL(18,4)",
                 "ratio DOUBLE",
                 "name VARCHAR",
                 "note VARCHAR",
@@ -680,15 +680,16 @@ mod tests {
                 "raw BLOB"
             ]
         );
-        // no arquivo: decimal exato como texto, NULL como NULL, binario como BLOB
-        let (exact, raw, null_name): (String, Vec<u8>, Option<String>) = lite
+        // no arquivo: decimal como numero (REAL, ~15 digitos), NULL como NULL, binario como BLOB
+        let (exact, raw, null_name): (f64, Vec<u8>, Option<String>) = lite
             .query_row(
                 "SELECT exact, raw, (SELECT name FROM \"Sample Types\" WHERE id = 2) FROM \"Sample Types\" WHERE id = 1",
                 [],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap();
-        assert_eq!((exact.as_str(), raw, null_name), ("12345678901234.5683", vec![0, 1, 254, 255], None));
+        assert!((exact - 12345678901234.5683).abs() < 0.01, "{exact}");
+        assert_eq!((raw, null_name), (vec![0, 1, 254, 255], None));
         // Moeda que cabe num DOUBLE vai como numero: o sqlite3 compara e soma como numero (nao como texto)
         let (price_type, over_20, total): (String, i64, f64) = lite
             .query_row(
@@ -698,9 +699,13 @@ mod tests {
             )
             .unwrap();
         assert_eq!((price_type.as_str(), over_20, total), ("real", 1, 1234567.8912));
-        // o decimal de 18 digitos nao cabe num DOUBLE: fica texto exato
-        let exact_type: String = lite.query_row("SELECT typeof(exact) FROM \"Sample Types\" WHERE id = 1", [], |r| r.get(0)).unwrap();
-        assert_eq!(exact_type, "text");
+        // secao 19 h: Moeda, Decimal com casas e Double sao numero no SQLite convertido (nunca texto), inteiros INTEGER
+        let kinds: Vec<String> = lite
+            .prepare("SELECT typeof(id), typeof(tiny), typeof(small), typeof(price), typeof(exact), typeof(ratio) FROM \"Sample Types\" WHERE id = 1")
+            .unwrap()
+            .query_row([], |r| (0..6).map(|i| r.get::<_, String>(i)).collect())
+            .unwrap();
+        assert_eq!(kinds, ["integer", "integer", "integer", "real", "real", "real"]);
         drop(lite);
 
         // o que o app mostra veio do SQLite e tem os tipos do Access
@@ -718,7 +723,8 @@ mod tests {
         assert_eq!(first["id"], json!(1));
         assert_eq!(first["tiny"], json!(255));
         assert_eq!(first["price"], json!("1234567.8912"));
-        assert_eq!(first["exact"], json!("12345678901234.5683"));
+        // o decimal de 18 digitos passou por REAL no SQLite (secao 19 h): ~15 digitos certos
+        assert!(first["exact"].as_str().unwrap().starts_with("12345678901234.56"), "{}", first["exact"]);
         assert_eq!(first["ratio"], json!(0.1));
         assert_eq!(first["name"], json!("Ação, \"aspas\""));
         assert_eq!(first["note"].as_str().unwrap().lines().collect::<Vec<_>>(), ["linha 1", "linha 2"]);
@@ -1130,19 +1136,20 @@ mod tests {
         }
     }
 
-    // auditoria externa 4: decimal longo, inteiros de 128 bits e UBIGINT acima do i64 voltam exatos do .sqlite
+    // secao 19 h (substitui a auditoria externa 4): no SQLite salvo nada numerico vai como texto. DECIMAL com casas e REAL
+    // (~15 digitos), DECIMAL sem casas e inteiro e INTEGER; o que passa do i64 vai REAL. Os tipos voltam iguais e, no
+    // DuckDB salvo, DECIMAL continua DECIMAL exato
     #[test]
-    fn sqlite_export_keeps_long_decimals_and_huge_integers_exact() {
+    fn sqlite_export_writes_every_number_as_a_number() {
         let dir = tempdir().unwrap();
         let src = dir.path().join("big.duckdb");
         duckdb::Connection::open(&src)
             .unwrap()
             .execute_batch(
-                "CREATE TABLE big (d DECIMAL(38,10), h HUGEINT, u UBIGINT, uh UHUGEINT, small DECIMAL(10,2));
+                "CREATE TABLE big (d DECIMAL(38,10), h HUGEINT, u UBIGINT, uh UHUGEINT, small DECIMAL(10,2), whole DECIMAL(12,0), money DECIMAL(19,4));
                  INSERT INTO big VALUES
-                   (1234567890123456789012345678.0123456789, 170141183460469231731687303715884105727,
-                    18446744073709551615, 340282366920938463463374607431768211455, 12.30),
-                   (-0.0000000001, -170141183460469231731687303715884105728, 1, 0, NULL);",
+                   (1234567890123456789012345678.0123456789, 1000000000000000000000000000000, 10000000000000000000, 7, 12.30, 123456789012, 922337203685477.5807),
+                   (-0.0000000001, -5, 1, 0, NULL, NULL, 1234567.8912);",
             )
             .unwrap();
         let manager = DBManager::new();
@@ -1150,19 +1157,40 @@ mod tests {
         let out = dir.path().join("big.sqlite");
         export::export_database(&manager.export_connection().unwrap(), "sqlite", &out, &mut ok_progress()).unwrap();
 
+        let lite = rusqlite::Connection::open(&out).unwrap();
+        let kinds = |id: &str| -> Vec<String> {
+            lite.query_row(
+                &format!("SELECT typeof(d), typeof(h), typeof(u), typeof(uh), typeof(small), typeof(whole), typeof(money) FROM big WHERE {id}"),
+                [],
+                |r| (0..7).map(|i| r.get::<_, String>(i)).collect(),
+            )
+            .unwrap()
+        };
+        assert_eq!(kinds("uh = 7"), ["real", "real", "real", "integer", "real", "integer", "real"]);
+        assert_eq!(kinds("uh = 0"), ["real", "integer", "integer", "integer", "null", "null", "real"]);
+        let (sum, over): (f64, i64) = lite.query_row("SELECT sum(money), count(*) FROM big WHERE money > 2000000", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(over, 1, "money compares as a number");
+        assert!(sum > 9.2e14, "{sum}");
+        drop(lite);
+
         let reopened = DBManager::new();
         reopened.connect(out.to_str().unwrap(), &mut no_progress()).unwrap();
         let types: Vec<String> = reopened.get_table_schema("big").unwrap().into_iter().map(|c| c.col_type).collect();
-        assert_eq!(types, ["DECIMAL(38,10)", "HUGEINT", "UBIGINT", "UHUGEINT", "DECIMAL(10,2)"]);
+        assert_eq!(types, ["DECIMAL(38,10)", "HUGEINT", "UBIGINT", "UHUGEINT", "DECIMAL(10,2)", "DECIMAL(12,0)", "DECIMAL(19,4)"]);
         let rows = reopened.query_table("big", 10, &[], "").unwrap();
-        assert_eq!(rows[0]["d"], "1234567890123456789012345678.0123456789");
-        assert_eq!(rows[0]["h"], "170141183460469231731687303715884105727");
-        assert_eq!(rows[0]["u"], "18446744073709551615");
-        assert_eq!(rows[0]["uh"], "340282366920938463463374607431768211455");
         assert_eq!(rows[0]["small"], "12.30");
-        assert_eq!(rows[1]["d"], "-0.0000000001");
-        assert_eq!(rows[1]["h"], "-170141183460469231731687303715884105728");
+        assert_eq!(rows[0]["whole"], "123456789012");
+        assert_eq!(rows[1]["money"], "1234567.8912");
         assert_eq!(rows[1]["u"], 1);
+
+        // DuckDB salvo: DECIMAL continua DECIMAL, exato
+        let saved = dir.path().join("big_saved.duckdb");
+        export::export_database(&manager.export_connection().unwrap(), "duckdb", &saved, &mut ok_progress()).unwrap();
+        let duck = duckdb::Connection::open(&saved).unwrap();
+        let (kind, d): (String, String) = duck
+            .query_row("SELECT typeof(d), CAST(d AS VARCHAR) FROM big WHERE uh = 7", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((kind.as_str(), d.as_str()), ("DECIMAL(38,10)", "1234567890123456789012345678.0123456789"));
     }
 
     // auditoria externa 12: inteiro fora de Number.MAX_SAFE_INTEGER vai como texto (o JavaScript perderia digitos)
