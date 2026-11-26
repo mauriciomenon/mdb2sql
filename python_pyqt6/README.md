@@ -74,7 +74,7 @@ Tabs:
 
 - **Data** (Ctrl+1): first rows of the selected table. Click a header to sort the loaded rows (numbers sort as
   numbers; third click returns to the original order). One line above the grid holds the search field (Ctrl+F),
-  "This table | All tables", "Rows" (rows loaded from the table and from the SQL result: 100 by default, 500,
+  "This table | All tables" (All tables by default), "Rows" (rows loaded from the table and from the SQL result: 100 by default, 500,
   1000) and Columns...; in a narrow window it wraps to a second line. The
   search runs 300 ms after the last key, or at once with Enter, over the **whole table in the database**, not only
   the loaded rows: a row stays when one of its cells has all the words typed, in any order, ignoring case and
@@ -163,8 +163,8 @@ Menus:
   opens the log. Right-click on the status bar: Copy (the whole message) and Log. Numeric columns and their headers
   are right-aligned.
 - **Settings**: Theme (System, Light or Dark; switching changes the whole window), Language (English by default,
-  Português (Brasil), Español; applies at once), Default search scope (This table or All tables; the Data tab
-  only), Term matching (Whole value or Contains) and Show NULL
+  Português (Brasil), Español; applies at once), Default search scope (All tables by default, or This table;
+  the Data tab only), Term matching (Whole value or Contains) and Show NULL
   (off by default: a NULL cell is empty). All are saved (Windows registry `HKCU\Software\MDB2SQL`,
   Linux `~/.config/MDB2SQL/MDB2SQL.conf`; with the environment variable `MDB2SQL_SETTINGS=<file.ini>`, in that file).
 - **Help > About mdb2sql**: name, version, Build (number and date), Stack (Python and PyQt6 versions), Window (Qt

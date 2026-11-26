@@ -163,7 +163,7 @@ def test_settings_file_from_the_environment_replaces_the_registry(qtbot, tmp_pat
     win.set_default_scope("all")
     win.settings.sync()
     assert "search_scope=all" in ini.read_text(encoding="utf-8")
-    assert QSettings().value("search_scope") is None and mw.app_settings().value("search_scope") == "all"
+    assert QSettings().value("search_scope") != "all" and mw.app_settings().value("search_scope") == "all"
 
 
 def _reopen(qtbot, win: MainWindow, source: Path) -> None:

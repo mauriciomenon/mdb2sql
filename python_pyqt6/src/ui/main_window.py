@@ -1198,8 +1198,9 @@ class MainWindow(QMainWindow):
         apply_theme(name)
 
     def default_scope(self) -> str:
-        scope = str(self.settings.value("search_scope", "table"))
-        return scope if scope in SCOPES else "table"
+        # padrao Todas as tabelas (BRIEF 18 a): com Esta tabela, a busca com a 1a tabela aberta nao achava nada
+        scope = str(self.settings.value("search_scope", "all"))
+        return scope if scope in SCOPES else "all"
 
     def set_default_scope(self, name: str) -> None:
         # grava o padrao e ja vale na aba Dados (a Pesquisa Avancada nao segue: BRIEF 17)

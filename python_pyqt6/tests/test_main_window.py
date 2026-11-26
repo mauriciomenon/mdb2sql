@@ -619,6 +619,30 @@ def test_search_all_tables_and_open_one(qtbot, window: MainWindow) -> None:
     assert again.scope_actions["all"].isChecked() and again.default_scope_actions["all"].isChecked()
 
 
+def test_data_search_starts_in_all_tables(qtbot, tmp_path: Path) -> None:
+    # BRIEF 18 a: sem nada gravado, a busca da aba Dados comeca em Todas as tabelas: o texto que so existe em outras
+    # tabelas aparece com a 1a tabela aberta, sem mexer em nada (com Esta tabela o dono nao achava nada)
+    import duckdb
+
+    QSettings().remove("search_scope")  # o padrao de fabrica
+    db_file = tmp_path / "plant.duckdb"
+    with duckdb.connect(str(db_file)) as conn:
+        conn.execute("CREATE TABLE accu AS SELECT 'MEDICION ENERGIA' AS pntnam")
+        conn.execute("CREATE TABLE soeqid AS SELECT * FROM (VALUES ('GENERADOR CGS 1'), ('GENERADOR CGS 1 B'))"
+                     " t(pntnam)")
+        conn.execute("CREATE TABLE sostat AS SELECT * FROM (VALUES (50, 'GENERADOR CGS 1'), (50, 'GENERADOR CGS 1'),"
+                     " (50, 'OTRO')) t(rtuno, pntnam)")
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.open_database(db_file)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
+    assert win.loaded_table[0] == "accu" and win.scope_actions["all"].isChecked()
+    assert win.default_scope_actions["all"].isChecked()
+    win.search_edit.setText("GENERADOR CGS 1")
+    qtbot.waitUntil(lambda: win.found_list.count() == 2 and win._busy == 0, timeout=30000)
+    assert [win.found_list.item(row).text() for row in range(2)] == ["soeqid (2)", "sostat (2)"]
+
+
 def test_search_all_tables_never_shows_an_old_result_and_reports_failure(qtbot, window: MainWindow, tmp_path: Path):
     # igual nas 4 versoes: apagar o termo descarta a busca que ainda roda (o resultado dela chegaria antes dos 300 ms)
     window.scope_actions["all"].trigger()
