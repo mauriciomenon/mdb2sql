@@ -1585,23 +1585,26 @@
              tabelas com acerto e a grade da escolhida; (e) os termos nao encontrados, copiaveis -->
         <div class="terms">
           <textarea bind:value={termsText} rows="8" aria-label={t('tabs.terms')} placeholder={t('terms.hint')} spellcheck="false"></textarea>
+          <!-- secao 18 c: [Pesquisar termos] | caixa com "N linhas de entrada" e o resumo (ou o progresso), o texto quebra e
+               nunca e cortado | a direita Valor inteiro | Contem, separador fino, Esta tabela | Todas as tabelas -->
           <div class="table-bar terms-bar">
-            {@render choice(MATCHES, match, (id) => (match = id), t('settings.match'), t('match.help'))}
-            {@render choice(SCOPES, termsScope, (id) => (termsScope = id), t('scope.label'))}
             {#if termsWork}
               <button type="button" class="secondary" onclick={() => invoke('cancel_terms')}>{t('common.cancel')}</button>
             {:else}
               <button type="button" title={t('sql.runTip')} onclick={runTerms} disabled={!canRunTerms}>{t('terms.run')}</button>
             {/if}
-            <span>{t('terms.count', { count: fmt(termList.terms.length) })}{termList.repeated ? t('terms.repeated', { count: fmt(termList.repeated) }) : ''}</span>
+            <p class="terms-info">
+              {t('terms.lines', { count: fmt(termList.terms.length + termList.repeated) })}
+              {#if termsWork}
+                {t('terms.progress', { done: termsWork.total ? termsWork.done + 1 : 0, total: termsWork.total, item: termsWork.item })}
+              {:else if termsResult}
+                {t(termsKey(termsResult), termsValues(termsResult))}
+              {/if}
+            </p>
+            {@render choice(MATCHES, match, (id) => (match = id), t('settings.match'), t('match.help'))}
+            <span class="separator" aria-hidden="true"></span>
+            {@render choice(SCOPES, termsScope, (id) => (termsScope = id), t('scope.label'))}
           </div>
-          <p class="table-info">
-            {#if termsWork}
-              {t('terms.progress', { done: termsWork.total ? termsWork.done + 1 : 0, total: termsWork.total, item: termsWork.item })}
-            {:else if termsResult}
-              {t(termsKey(termsResult), termsValues(termsResult))}
-            {/if}
-          </p>
         </div>
         {#if termsResult}
           <div class="terms-found">
@@ -2584,6 +2587,29 @@
     resize: vertical;
     font-family: Consolas, 'Cascadia Mono', monospace;
     font-size: 12px;
+  }
+
+  /* linha dos controles da Pesquisa Avancada (secao 18 c): a caixa do resumo ocupa o meio, com margem, e quebra a linha
+     em vez de cortar o texto; os seletores ficam encostados a direita, com um separador fino entre eles */
+  .terms-bar {
+    flex-wrap: nowrap;
+  }
+
+  .terms-info {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  .terms-bar .separator {
+    align-self: stretch;
+    width: 1px;
+    background: var(--border);
   }
 
   /* tabelas com acerto ao lado da grade da tabela escolhida */

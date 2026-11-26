@@ -124,8 +124,7 @@ export default {
 
   'terms.hint': 'Pegue los términos, uno por línea (por ejemplo, una columna de Excel). Ejemplo:\ntexto1\ntexto2\ntexto3\nbusca los 3 términos en todas las tablas o solo en la tabla seleccionada.',
   'terms.run': 'Buscar términos',
-  'terms.count': '{count} {count|término|términos}',
-  'terms.repeated': ', {count} {count|repetido|repetidos}',
+  'terms.lines': '{count} {count|línea|líneas} de entrada',
   'terms.summary':
     '{found} de {total} {total|término encontrado|términos encontrados}: {rows} {rows|fila|filas} en {tables} {tables|tabla|tablas}',
   'terms.summaryIn':

@@ -103,7 +103,8 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
   216 acha 216.0, "216,0" e "216"; 1234.5 acha "1.234,5"; 216 nao acha 2160) ou **Contains**, sem diferenciar maiusculas, e
   **All tables** (sempre ao abrir, qualquer que seja o escopo padrao da aba Data) ou **This table** (o resumo diz
   "(only in <tabela>)"); **Search terms** (ou `Ctrl+Enter`) procura no motor, em todas as colunas, com
-  progresso e **Cancel**. Mostra o resumo, as tabelas com acerto e a grade da escolhida (so as colunas da tabela, com
+  progresso e **Cancel**. Na mesma linha, depois do botao, uma caixa com "N input lines" e o resumo; os seletores ficam
+  a direita. Mostra as tabelas com acerto e a grade da escolhida (so as colunas da tabela, com
   os titulos e os tipos dela; cada linha achada uma vez, na ordem da lista colada) e os termos nao encontrados (texto
   copiavel). **Copy the rows found in this table** copia todas as linhas achadas com o cabecalho; o relatorio (Export >
   Advanced Search report) sai em Excel, CSV (pasta), SQLite ou DuckDB com uma aba (tabela, arquivo) por tabela com

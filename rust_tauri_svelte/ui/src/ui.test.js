@@ -558,11 +558,16 @@ test('Terms tab: box, selectors, summary, tables with hits and grid, terms not f
   const terms = ui.slice(ui.indexOf("{:else if tab === 'terms'}"), ui.indexOf('{:else if !selectedTable}'));
   const order = [
     '<textarea bind:value={termsText} rows="8"',
-    "{@render choice(MATCHES, match, (id) => (match = id), t('settings.match'), t('match.help'))}",
-    "{@render choice(SCOPES, termsScope, (id) => (termsScope = id), t('scope.label'))}",
+    // secao 18 c: [Pesquisar termos] | caixa com as linhas de entrada e o resumo | Valor inteiro | Contem, separador,
+    // Esta tabela | Todas as tabelas (sai "N termos" e a linha de resumo de baixo)
     "onclick={runTerms} disabled={!canRunTerms}>{t('terms.run')}",
-    "t('terms.count'",
+    '<p class="terms-info">',
+    "t('terms.lines', { count: fmt(termList.terms.length + termList.repeated) })",
     't(termsKey(termsResult), termsValues(termsResult))',
+    '</p>',
+    "{@render choice(MATCHES, match, (id) => (match = id), t('settings.match'), t('match.help'))}",
+    '<span class="separator" aria-hidden="true"></span>',
+    "{@render choice(SCOPES, termsScope, (id) => (termsScope = id), t('scope.label'))}",
     '<div class="terms-found">',
     "t('found.item'",
     '<Grid',
@@ -572,6 +577,12 @@ test('Terms tab: box, selectors, summary, tables with hits and grid, terms not f
   ].map((needle) => terms.indexOf(needle));
   assert.ok(order.every((v, i) => v >= 0 && (i === 0 || v > order[i - 1])), order.join(','));
   assert.match(terms, /placeholder=\{t\('terms\.hint'\)\}/);
+  // a caixa do resumo ocupa o meio, com borda e margem, e quebra o texto (nunca corta); separador de linha fina
+  const termsCss = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
+  const info = termsCss.match(/\n {2}\.terms-info \{[^}]*\}/)[0];
+  assert.match(info, /flex: 1 1 auto;[\s\S]*padding: 3px 10px;[\s\S]*border: 1px solid var\(--border\);[\s\S]*overflow-wrap: anywhere;/);
+  assert.doesNotMatch(info, /nowrap|ellipsis|overflow: hidden/);
+  assert.match(termsCss, /\n {2}\.terms-bar \.separator \{\s*align-self: stretch;\s*width: 1px;\s*background: var\(--border\);/);
   assert.match(terms, /\{#if termsWork\}\s*<button type="button" class="secondary" onclick=\{\(\) => invoke\('cancel_terms'\)\}>\{t\('common\.cancel'\)\}<\/button>/);
   assert.match(terms, /t\('terms\.progress', \{ done: termsWork\.total \? termsWork\.done \+ 1 : 0, total: termsWork\.total, item: termsWork\.item \}\)/);
   assert.match(terms, /onclick=\{copyNotFound\} disabled=\{!termsResult\.notFound\.length\}>\{t\('status\.copy'\)\}/);
