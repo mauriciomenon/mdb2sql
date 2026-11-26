@@ -122,11 +122,16 @@ def _create(lite: sqlite3.Connection, table: str, columns: list[tuple[str, str]]
     return f"INSERT INTO {quote(table)} VALUES ({', '.join('?' * len(columns))})"
 
 
+def number_value(value: Decimal) -> int | float:
+    """Decimal para o SQLite: inteiro como INTEGER, com casas como REAL (CAST para DOUBLE antes de gravar); nunca
+    texto (BRIEF 19 h: um texto com mais de 15 digitos ficaria TEXT mesmo numa coluna DECIMAL)."""
+    return int(value) if value.is_finite() and value == value.to_integral_value() else float(value)
+
+
 def _odbc_value(value: object) -> object:
-    # Decimal inteiro como int; com casas, texto (o SQLite guarda INTEGER ou REAL pela coluna DECIMAL); data no mesmo
-    # formato do mdbtools
+    # Decimal: number_value; data no mesmo formato do mdbtools
     if isinstance(value, Decimal):
-        return int(value) if value.is_finite() and value == value.to_integral_value() else str(value)
+        return number_value(value)
     if isinstance(value, datetime):
         return value.strftime(TIMESTAMP)
     if isinstance(value, date):
@@ -199,8 +204,10 @@ def mdb_columns(schema: str) -> list[tuple[str, str]]:
     return columns
 
 
-def _csv_rows(csv_path: Path, blobs: list[int], dates: list[int]) -> Iterator[list[object]]:
-    """Linhas do CSV do mdb-export (sem o cabecalho): NULL vira None, binario (hex) vira bytes.
+def _csv_rows(csv_path: Path, blobs: list[int], dates: list[int], decimals: list[int] | None = None
+              ) -> Iterator[list[object]]:
+    """Linhas do CSV do mdb-export (sem o cabecalho): NULL vira None, binario (hex) vira bytes, DECIMAL vira numero
+    (number_value).
 
     !T: mdbtools 1.0.1 cannot convert dates outside ~1900-9999: Windows prints them empty (NULL), Linux prints the
     !T: invalid 1900-01-00, which would make the whole table unreadable; it becomes NULL too (README: known limits)
@@ -216,6 +223,9 @@ def _csv_rows(csv_path: Path, blobs: list[int], dates: list[int]) -> Iterator[li
             for index in dates:
                 if isinstance(values[index], str) and values[index].startswith(INVALID_DATE):
                     values[index] = None
+            for index in decimals or ():
+                if values[index]:
+                    values[index] = number_value(Decimal(values[index]))
             yield values
 
 
@@ -258,7 +268,8 @@ def _load_mdbtools(path: Path, lite: sqlite3.Connection, work: Path, progress: P
                     csv_path = future.result()
                     blobs = [index for index, (_, kind) in enumerate(columns) if kind == "BLOB"]
                     dates = [index for index, (_, kind) in enumerate(columns) if kind == "DATETIME"]
-                    lite.executemany(insert, _csv_rows(csv_path, blobs, dates))
+                    decimals = [index for index, (_, kind) in enumerate(columns) if kind.startswith("DECIMAL")]
+                    lite.executemany(insert, _csv_rows(csv_path, blobs, dates, decimals))
                     csv_path.unlink()
             except BaseException:
                 for future in exports:

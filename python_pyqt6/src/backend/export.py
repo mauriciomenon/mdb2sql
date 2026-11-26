@@ -18,7 +18,7 @@ from typing import Any, Callable, Iterable, Iterator, Sequence
 
 import xlsxwriter
 
-from backend.access import quote
+from backend.access import number_value, quote
 from backend.db_manager import DBManager, sql_string
 from shared.i18n import num, tr
 
@@ -195,10 +195,10 @@ def _sqlite_type(kind: str) -> str:
 
 
 def _sqlite_value(value: object) -> object:
-    # Decimal inteiro como int, com casas como texto exato (a coluna DECIMAL tem afinidade numerica); data e hora no
+    # Decimal: inteiro como INTEGER, com casas como REAL, nunca texto (number_value, BRIEF 19 h); data e hora no
     # formato do Access convertido; o que o SQLite nao guarda (lista, intervalo, uuid...) como texto
     if isinstance(value, Decimal):
-        return int(value) if value.is_finite() and value == value.to_integral_value() else str(value)
+        return number_value(value)
     if isinstance(value, datetime):
         return value.strftime("%Y-%m-%d %H:%M:%S")
     if isinstance(value, (date, time)):
