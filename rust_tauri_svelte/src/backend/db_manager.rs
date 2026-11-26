@@ -3,13 +3,15 @@
 //
 // NIVEL TECNICO: every format ends up in one in-memory DuckDB connection: a DuckDB file is
 // ATTACHed READ_ONLY as "src" (and made current with USE), SQLite and Access tables are copied
-// into the in-memory database. The rest of the app only sees DuckDB.
+// into the in-memory database. The rest of the app only sees DuckDB. Nothing the user does changes that copy:
+// the SQL tab runs read commands only (see Probe).
 
 use super::converted::{self, Converted};
 use super::{access, sqlite_io};
 use duckdb::types::ValueRef;
-use duckdb::{Connection, Rows};
+use duckdb::{Connection, Rows, ffi};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -230,7 +232,7 @@ pub(crate) fn json_text(value: &serde_json::Value) -> String {
 }
 
 // NIVEL BASICO: Le ate `limit` linhas como objetos JSON; true no fim se ainda havia linhas
-fn rows_to_json(
+pub(crate) fn rows_to_json(
     rows: &mut Rows,
     names: &[String],
     limit: usize,
@@ -265,12 +267,116 @@ pub struct Connected {
     pub converted: Option<Converted>,
 }
 
+// NIVEL BASICO: Conexao crua do mesmo banco, so para perguntar ao DuckDB o tipo de um comando sem roda-lo (aba SQL)
+// NIVEL TECNICO: duckdb-rs keeps the statement type private, so the database is opened through the C API: the
+// Connection of Engine does all the work and this one only prepares. Dropped after it, it closes the database handle
+// (connections still alive, an export on its own thread, keep the instance until they finish).
+struct Probe {
+    db: ffi::duckdb_database,
+    con: ffi::duckdb_connection,
+}
+
+// a conexao crua so e usada com o banco aberto travado (Mutex de DBManager)
+unsafe impl Send for Probe {}
+
+impl Drop for Probe {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::duckdb_disconnect(&mut self.con);
+            ffi::duckdb_close(&mut self.db);
+        }
+    }
+}
+
+// comandos que a aba SQL roda: consulta (SELECT, WITH, VALUES, FROM, SHOW, DESCRIBE, SUMMARIZE e os PRAGMA de leitura,
+// que o DuckDB reescreve como SELECT) e EXPLAIN
+const READ_STATEMENTS: [ffi::duckdb_statement_type; 2] =
+    [ffi::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_SELECT, ffi::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_EXPLAIN];
+
+impl Probe {
+    fn run(&self, sql: &str) -> Result<(), String> {
+        let text = std::ffi::CString::new(sql).map_err(|e| e.to_string())?;
+        unsafe {
+            let mut out: ffi::duckdb_result = std::mem::zeroed();
+            let state = ffi::duckdb_query(self.con, text.as_ptr(), &mut out);
+            ffi::duckdb_destroy_result(&mut out);
+            if state == ffi::DuckDBSuccess { Ok(()) } else { Err(format!("Failed to run {sql}")) }
+        }
+    }
+
+    // NIVEL BASICO: Tipo (do DuckDB) de cada comando de `sql`, sem rodar nenhum. Err = o texto do DuckDB (erro de
+    // sintaxe, tabela que nao existe), o mesmo que rodar o comando daria
+    fn statement_types(&self, sql: &str) -> Result<Vec<ffi::duckdb_statement_type>, String> {
+        let text = std::ffi::CString::new(sql).map_err(|e| e.to_string())?;
+        let message = |text: *const std::os::raw::c_char| {
+            if text.is_null() { String::new() } else { unsafe { std::ffi::CStr::from_ptr(text) }.to_string_lossy().into_owned() }
+        };
+        unsafe {
+            let mut extracted: ffi::duckdb_extracted_statements = std::ptr::null_mut();
+            let count = ffi::duckdb_extract_statements(self.con, text.as_ptr(), &mut extracted);
+            let mut kinds = Ok(Vec::new());
+            if count == 0 {
+                // so comentario ou vazio: sem erro e sem comando (o DuckDB diz isso ao rodar)
+                let error = message(ffi::duckdb_extract_statements_error(extracted));
+                if !error.is_empty() {
+                    kinds = Err(error);
+                }
+            }
+            for i in 0..count {
+                let mut statement: ffi::duckdb_prepared_statement = std::ptr::null_mut();
+                let prepared = ffi::duckdb_prepare_extracted_statement(self.con, extracted, i, &mut statement);
+                if let Ok(list) = &mut kinds {
+                    if prepared == ffi::DuckDBSuccess {
+                        list.push(ffi::duckdb_prepared_statement_type(statement));
+                    } else {
+                        kinds = Err(message(ffi::duckdb_prepare_error(statement)));
+                    }
+                }
+                ffi::duckdb_destroy_prepare(&mut statement);
+            }
+            ffi::duckdb_destroy_extracted(&mut extracted);
+            kinds
+        }
+    }
+}
+
+// NIVEL BASICO: Motor da sessao: a conexao do DuckDB em memoria e a conexao crua que classifica os comandos
+pub(crate) struct Engine {
+    pub conn: Connection,
+    probe: Probe, // depois de conn: fecha o banco por ultimo
+}
+
 // DuckDB em memoria sem baixar extensao da internet sozinho (o build bundled vem com autoinstall ligado)
-fn new_duckdb() -> Result<Connection, String> {
-    let conn = Connection::open_in_memory().map_err(|e| format!("Failed to start DuckDB: {e}"))?;
+fn new_duckdb() -> Result<Engine, String> {
+    let fail = |what: &str| format!("Failed to start DuckDB: {what}");
+    let probe = unsafe {
+        let mut db: ffi::duckdb_database = std::ptr::null_mut();
+        if ffi::duckdb_open(std::ptr::null(), &mut db) != ffi::DuckDBSuccess {
+            return Err(fail("open"));
+        }
+        let mut con: ffi::duckdb_connection = std::ptr::null_mut();
+        let connected = ffi::duckdb_connect(db, &mut con) == ffi::DuckDBSuccess;
+        let probe = Probe { db, con };
+        if !connected {
+            return Err(fail("connect"));
+        }
+        probe
+    };
+    let conn = unsafe { Connection::open_from_raw(probe.db) }.map_err(|e| fail(&e.to_string()))?;
     conn.execute_batch("SET autoinstall_known_extensions = false; SET autoload_known_extensions = false;")
         .map_err(|e| format!("Failed to configure DuckDB: {e}"))?;
-    Ok(conn)
+    Ok(Engine { conn, probe })
+}
+
+// NIVEL BASICO: Roda `f` numa transacao desfeita no fim: o que a aba SQL (e a exportacao do resultado dela) roda nunca
+// muda o banco, a copia nem a memoria
+// NIVEL TECNICO: the statement type already refuses every write; EXPLAIN ANALYZE is allowed and runs the statement
+// it explains, so a write under it is undone here
+pub(crate) fn rolled_back<T>(conn: &Connection, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
+    conn.execute_batch("BEGIN TRANSACTION").map_err(|e| e.to_string())?;
+    let result = f(conn);
+    let _ = conn.execute_batch("ROLLBACK");
+    result
 }
 
 // NIVEL BASICO: Access -> SQLite temporario, uma vez: le com tipos (ODBC ou mdbtools) num DuckDB em memoria e
@@ -281,13 +387,13 @@ fn convert_access(
     path: &str,
     reader: Option<&str>,
     progress: &mut dyn FnMut(Step, usize, usize, &str),
-) -> Result<(Converted, String, Connection), String> {
+) -> Result<(Converted, String, Engine), String> {
     let scratch = new_duckdb()?;
-    let used = access::import(&scratch, path, reader, &mut |d, t, i| progress(Step::Read, d, t, i))?;
-    let tables = list_tables(&scratch)?;
+    let used = access::import(&scratch.conn, path, reader, &mut |d, t, i| progress(Step::Read, d, t, i))?;
+    let tables = list_tables(&scratch.conn)?;
     let name = Path::new(path).file_stem().map_or("access".into(), |s| s.to_string_lossy().into_owned());
-    let file = converted::new_temp_path(&format!("{name}.sqlite"))?;
-    let written = sqlite_io::export(&scratch, &tables, &file, &mut |d, t, i| {
+    let file = converted::new_temp_path(&format!("{name}.sqlite"), Path::new(path).parent())?;
+    let written = sqlite_io::export(&scratch.conn, &tables, &file, &mut |d, t, i| {
         progress(Step::Convert, d, t, i);
         Ok(())
     });
@@ -298,11 +404,91 @@ fn convert_access(
     Ok((Converted::new(file), used, scratch))
 }
 
-// NIVEL BASICO: Banco aberto: conexao, caminho e catalogo onde estao as tabelas
+// NIVEL BASICO: Banco aberto: motor, caminho e catalogo onde estao as tabelas
 struct OpenDb {
-    conn: Connection,
+    engine: Engine,
     path: String,
     catalog: &'static str,
+}
+
+// coluna da identidade da linha nas consultas da aba Dados (sai das linhas antes de irem para a tela)
+const ROW_ID: &str = "mdb2sql id";
+
+// NIVEL BASICO: Pagina da aba Dados: as linhas da pesquisa (ate o limite) e as linhas marcadas (todas, na ordem da
+// tabela), cada lista com a identidade de cada linha na mesma ordem (`ids`, `marked_ids`)
+#[derive(Debug, Serialize)]
+pub struct TablePage {
+    pub rows: Vec<serde_json::Value>,
+    pub ids: Vec<serde_json::Value>,
+    pub marked: Vec<serde_json::Value>,
+    pub marked_ids: Vec<serde_json::Value>,
+}
+
+// NIVEL BASICO: Tem rowid do DuckDB? View nao tem; tabela com coluna propria chamada rowid tambem nao serve (o nome
+// passa a ser o da coluna, que pode repetir)
+pub(crate) fn has_rowid(conn: &Connection, table: &str, columns: &[String]) -> bool {
+    !columns.iter().any(|c| c.eq_ignore_ascii_case("rowid")) && conn.prepare(&format!("SELECT rowid FROM {} LIMIT 0", ident(table))).is_ok()
+}
+
+// NIVEL BASICO: Identidade de uma linha (linhas marcadas): o rowid do DuckDB, que nao muda enquanto o arquivo esta
+// aberto; sem rowid, todos os valores da linha (linhas identicas contam como uma so)
+fn row_id(conn: &Connection, table: &str, columns: &[String]) -> String {
+    if has_rowid(conn, table, columns) {
+        "rowid".to_string()
+    } else {
+        let all: Vec<String> = columns.iter().map(|c| ident(c)).collect();
+        format!("md5(CAST(ROW({}) AS VARCHAR))", all.join(", "))
+    }
+}
+
+// condicao (sem WHERE) das linhas com estas identidades; cada uma vai como parametro
+fn marked_condition(id: &str, marked: &[serde_json::Value]) -> (String, Vec<duckdb::types::Value>) {
+    let params = marked
+        .iter()
+        .map(|value| match value.as_i64() {
+            Some(rowid) => duckdb::types::Value::BigInt(rowid),
+            None => duckdb::types::Value::Text(json_text(value)),
+        })
+        .collect();
+    (format!("{id} IN ({})", vec!["?"; marked.len()].join(", ")), params)
+}
+
+// NIVEL BASICO: Colunas de cada tabela do banco corrente, na ordem da tabela (uma consulta so, sem PRAGMA por tabela)
+pub(crate) fn all_columns(conn: &Connection) -> Result<HashMap<String, Vec<String>>, String> {
+    let failed = |e: duckdb::Error| format!("Failed to list columns: {e}");
+    let mut columns: HashMap<String, Vec<String>> = HashMap::new();
+    let mut stmt = conn
+        .prepare(
+            "SELECT table_name, column_name FROM information_schema.columns WHERE table_catalog = current_database() \
+             AND table_schema = current_schema() ORDER BY ordinal_position",
+        )
+        .map_err(failed)?;
+    let mut rows = stmt.query([]).map_err(failed)?;
+    while let Some(row) = rows.next().map_err(failed)? {
+        columns.entry(row.get(0).map_err(failed)?).or_default().push(row.get(1).map_err(failed)?);
+    }
+    Ok(columns)
+}
+
+// NIVEL BASICO: Esquema para exportar: da tabela (Coluna, Tipo, Aceita nulo) ou, sem tabela, do banco inteiro (com a
+// coluna Tabela na frente). labels = titulos Tabela, Coluna, Tipo, Aceita nulo e os valores Sim e Nao no idioma da tela
+pub(crate) fn schema_select(table: Option<&str>, labels: &[String]) -> Result<String, String> {
+    let [in_table, column, kind, nullable, yes, no] = labels else {
+        return Err("Schema export needs 6 labels".to_string());
+    };
+    let (first, only) = match table {
+        Some(table) => (String::new(), format!(" AND table_name = {}", literal(table))),
+        None => (format!("table_name AS {}, ", ident(in_table)), String::new()),
+    };
+    Ok(format!(
+        "SELECT {first}column_name AS {}, data_type AS {}, CASE WHEN is_nullable THEN {} ELSE {} END AS {} FROM duckdb_columns() \
+         WHERE database_name = current_database() AND schema_name = current_schema(){only} ORDER BY table_name, column_index",
+        ident(column),
+        ident(kind),
+        literal(yes),
+        literal(no),
+        ident(nullable)
+    ))
 }
 
 // NIVEL BASICO: Manager de banco DuckDB com conexao thread-safe
@@ -358,7 +544,7 @@ impl DBManager {
         progress: &mut dyn FnMut(Step, usize, usize, &str),
     ) -> Result<Connected, String> {
         let path = self.validate_database_path(db_path)?;
-        let mut conn = new_duckdb()?;
+        let mut engine = new_duckdb()?;
 
         let mut format = format_of(Path::new(&path)).expect("validated extension");
         // .db tambem e extensao comum de SQLite: decide pelo cabecalho do arquivo
@@ -369,23 +555,26 @@ impl DBManager {
         let (source, catalog) = match format {
             Format::DuckDb => {
                 // DuckDB nao entende "?access_mode=..." no caminho (isso e DSN do go-duckdb); read-only vai no ATTACH
-                conn.execute_batch(&format!("ATTACH {} AS src (READ_ONLY); USE src;", literal(&path)))
+                engine
+                    .conn
+                    .execute_batch(&format!("ATTACH {} AS src (READ_ONLY); USE src;", literal(&path)))
                     .map_err(|e| format!("Failed to connect: {e}"))?;
+                engine.probe.run("USE src")?; // USE vale por conexao: a que classifica ve as mesmas tabelas
                 ("DuckDB".to_string(), "src")
             }
             Format::Sqlite => {
-                sqlite_io::import(&conn, Path::new(&path), &mut |d, t, i| progress(Step::Load, d, t, i))?;
+                sqlite_io::import(&engine.conn, Path::new(&path), &mut |d, t, i| progress(Step::Load, d, t, i))?;
                 ("SQLite".to_string(), "memory")
             }
             Format::Access => {
-                let (lite, used, engine) = convert_access(&path, reader, progress)?;
-                conn = engine;
+                let (lite, used, scratch) = convert_access(&path, reader, progress)?;
+                engine = scratch;
                 converted = Some(lite);
                 // seta Unicode na tela (regra do dono), nunca ">" nem "->"
                 (format!("{used} → SQLite"), "memory")
             }
         };
-        *self.open.lock().unwrap() = Some(OpenDb { conn, path, catalog });
+        *self.open.lock().unwrap() = Some(OpenDb { engine, path, catalog });
         Ok(Connected { source, converted })
     }
 
@@ -394,11 +583,15 @@ impl DBManager {
         *self.open.lock().unwrap() = None;
     }
 
-    fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
+    fn with_open<T>(&self, f: impl FnOnce(&OpenDb) -> Result<T, String>) -> Result<T, String> {
         match self.open.lock().unwrap().as_ref() {
             None => Err("[[err.noDatabase]]".to_string()),
-            Some(open) => f(&open.conn),
+            Some(open) => f(open),
         }
+    }
+
+    fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
+        self.with_open(|open| f(&open.engine.conn))
     }
 
     // NIVEL BASICO: Caminho do banco aberto (pasta padrao dos dialogos de salvar)
@@ -410,8 +603,8 @@ impl DBManager {
     // NIVEL TECNICO: same database instance; USE makes the source tables resolve unqualified
     pub fn export_connection(&self) -> Result<Connection, String> {
         let guard = self.open.lock().unwrap();
-        let open = guard.as_ref().ok_or("No database connected")?;
-        let conn = open.conn.try_clone().map_err(|e| format!("Failed to clone connection: {e}"))?;
+        let open = guard.as_ref().ok_or("[[err.noDatabase]]")?;
+        let conn = open.engine.conn.try_clone().map_err(|e| format!("Failed to clone connection: {e}"))?;
         conn.execute_batch(&format!("USE {}", ident(open.catalog)))
             .map_err(|e| format!("Failed to select database: {e}"))?;
         Ok(conn)
@@ -454,106 +647,99 @@ impl DBManager {
     // NIVEL BASICO: Retorna schema (colunas e tipos) de uma tabela
     pub fn get_table_schema(&self, table_name: &str) -> Result<Vec<ColumnSchema>, String> {
         self.validate_table_name(table_name)?;
-        self.with_conn(|conn| {
-            // NIVEL TECNICO: PRAGMA returns: cid, name, type, notnull, dflt_value, pk
-            let mut stmt = conn
-                .prepare(&format!("PRAGMA table_info({})", ident(table_name)))
-                .map_err(|e| format!("Failed to get table info: {}", e))?;
-            let schema = stmt
-                .query_map([], |row| {
-                    let not_null: bool = row.get(3)?;
-                    Ok(ColumnSchema {
-                        name: row.get(1)?,
-                        col_type: row.get(2)?,
-                        null: if not_null { "NO" } else { "YES" }.to_string(),
-                    })
-                })
-                .map_err(|e| format!("Failed to query schema: {}", e))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("Failed to read column: {}", e))?;
-            Ok(schema)
-        })
+        self.with_conn(|conn| table_info(conn, table_name))
     }
 
-    // NIVEL BASICO: Executa SELECT na tabela e retorna ate `limit` linhas como JSON; filtros e pesquisa entram
-    // no WHERE da consulta (acham linhas na tabela inteira, alem das carregadas)
-    pub fn query_table(
+    // NIVEL BASICO: Pagina da aba Dados: ate `limit` linhas que passam pelos filtros e pela pesquisa (no WHERE da
+    // consulta: acham linhas na tabela inteira, alem das carregadas) e, a parte, todas as linhas marcadas (`marked` =
+    // identidades que a tela guarda), na ordem da tabela, qualquer que seja a pesquisa
+    pub fn table_page(
         &self,
         table_name: &str,
         limit: i32,
         filters: &[Filter],
         search: &str,
-    ) -> Result<Vec<serde_json::Value>, String> {
+        marked: &[serde_json::Value],
+    ) -> Result<TablePage, String> {
         self.validate_table_name(table_name)?;
-        let (filter_sql, params) = where_all(filters, &self.column_names(table_name)?, search)?;
+        let columns = self.column_names(table_name)?;
+        let (filter_sql, params) = where_all(filters, &columns, search)?;
         self.with_conn(|conn| {
-            let query = format!("SELECT * FROM {}{} LIMIT {}", ident(table_name), filter_sql, limit);
-            let mut stmt = conn
-                .prepare(&query)
-                .map_err(|e| format!("Failed to prepare query: {}", e))?;
-            // NIVEL TECNICO: duckdb-rs panics if column metadata is read before the
-            // statement runs, so execute first and take the names from the result
-            let mut rows = stmt
-                .query(duckdb::params_from_iter(params))
-                .map_err(|e| format!("Failed to query table: {}", e))?;
-            let names = rows.as_ref().map(|s| s.column_names()).unwrap_or_default();
-            Ok(rows_to_json(&mut rows, &names, usize::MAX)?.0)
+            let id = row_id(conn, table_name, &columns);
+            let select = format!("SELECT {id} AS {}, * FROM {}", ident(ROW_ID), ident(table_name));
+            let read = |query: String, params: Vec<duckdb::types::Value>| {
+                let mut stmt = conn.prepare(&query).map_err(|e| format!("Failed to prepare query: {e}"))?;
+                // NIVEL TECNICO: duckdb-rs panics if column metadata is read before the
+                // statement runs, so execute first and take the names from the result
+                let mut rows = stmt.query(duckdb::params_from_iter(params)).map_err(|e| format!("Failed to query table: {e}"))?;
+                let names = rows.as_ref().map(|s| s.column_names()).unwrap_or_default();
+                let mut rows = rows_to_json(&mut rows, &names, usize::MAX)?.0;
+                let ids: Vec<serde_json::Value> =
+                    rows.iter_mut().map(|row| row.as_object_mut().and_then(|r| r.remove(ROW_ID)).unwrap_or_default()).collect();
+                Ok::<_, String>((rows, ids))
+            };
+            let (rows, ids) = read(format!("{select}{filter_sql} LIMIT {limit}"), params)?;
+            let (marked, marked_ids) = if marked.is_empty() {
+                (Vec::new(), Vec::new())
+            } else {
+                let (cond, params) = marked_condition(&id, marked);
+                read(format!("{select} WHERE {cond}"), params)?
+            };
+            Ok(TablePage { rows, ids, marked, marked_ids })
         })
     }
 
-    // NIVEL BASICO: SQL livre digitado pelo usuario; devolve ate `limit` linhas
-    // NIVEL TECNICO: the source file is attached READ_ONLY, so a write to it fails in DuckDB
+    #[cfg(test)] // so as linhas da pagina
+    pub fn query_table(&self, table_name: &str, limit: i32, filters: &[Filter], search: &str) -> Result<Vec<serde_json::Value>, String> {
+        Ok(self.table_page(table_name, limit, filters, search, &[])?.rows)
+    }
+
+    // NIVEL BASICO: SQL da aba SQL: so comandos de leitura, ate `limit` linhas. Outro comando e recusado antes de
+    // rodar ([[err.sqlReadOnly]])
+    // NIVEL TECNICO: DuckDB itself says what each statement is (Probe::statement_types), never the text
     pub fn run_sql(&self, sql: &str, limit: usize) -> Result<SqlResult, String> {
-        self.with_conn(|conn| {
-            let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
-            let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
-            let (names, columns) = match rows.as_ref() {
-                Some(s) => {
-                    let names = s.column_names();
-                    let columns = (0..names.len())
-                        .map(|i| ColumnSchema {
-                            name: names[i].clone(),
-                            col_type: format!("{:?}", s.column_type(i)),
-                            null: "YES".to_string(),
-                        })
-                        .collect();
-                    (names, columns)
-                }
-                None => (Vec::new(), Vec::new()),
-            };
-            let (rows, truncated) = rows_to_json(&mut rows, &names, limit)?;
-            Ok(SqlResult { columns, rows, truncated })
+        self.with_open(|open| {
+            if open.engine.probe.statement_types(sql)?.iter().any(|kind| !READ_STATEMENTS.contains(kind)) {
+                return Err("[[err.sqlReadOnly]]".to_string());
+            }
+            rolled_back(&open.engine.conn, |conn| {
+                let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+                let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+                let (names, columns) = match rows.as_ref() {
+                    Some(s) => {
+                        let names = s.column_names();
+                        let columns = (0..names.len())
+                            .map(|i| ColumnSchema {
+                                name: names[i].clone(),
+                                col_type: format!("{:?}", s.column_type(i)),
+                                null: "YES".to_string(),
+                            })
+                            .collect();
+                        (names, columns)
+                    }
+                    None => (Vec::new(), Vec::new()),
+                };
+                let (rows, truncated) = rows_to_json(&mut rows, &names, limit)?;
+                Ok(SqlResult { columns, rows, truncated })
+            })
         })
     }
 
     // NIVEL BASICO: Pesquisa da aba Data em "Todas as tabelas": as tabelas (na ordem da lista) com linhas que tem o termo
-    // e quantas. Mesma regra da pesquisa de uma tabela (search_condition), so nas colunas de texto.
-    // NIVEL TECNICO: the text columns of every table come from one information_schema query (no PRAGMA per table),
-    // then one COUNT per table with text columns. DB4 (287 tables, 114 k rows): ~1 s per search word; the time is the
-    // lower(strip_accents()) of every text cell (one UNION ALL of all the COUNTs measured the same). All columns as text
-    // (the per-table rule) measured 7-8x slower on DB4 (18-21 s vs 2.2-2.4 s for 3 words), so text columns only
-    // shortcut: a term made of digits counts here only text cells; the opened table also matches numbers and dates
+    // e quantas. A mesma regra da pesquisa de uma tabela (search_condition), em todas as colunas: abrir a tabela achada
+    // com a mesma pesquisa mostra o mesmo numero.
+    // NIVEL TECNICO: the columns of every table come from one information_schema query (no PRAGMA per table), then
+    // one COUNT per table. The time is the CAST and lower(strip_accents()) of every cell (measured on DB3 in tests.rs)
     // stop() true (outra pesquisa comecou): para antes da proxima tabela com [[err.searchCancelled]]
     pub fn search_tables(&self, search: &str, stop: &dyn Fn() -> bool) -> Result<Vec<Found>, String> {
         self.with_conn(|conn| {
-            let mut text: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-            let mut stmt = conn
-                .prepare(
-                    "SELECT table_name, column_name FROM information_schema.columns WHERE table_catalog = current_database() \
-                     AND table_schema = current_schema() AND data_type = 'VARCHAR' ORDER BY ordinal_position",
-                )
-                .map_err(|e| format!("Failed to list text columns: {e}"))?;
-            let mut rows = stmt.query([]).map_err(|e| format!("Failed to list text columns: {e}"))?;
-            while let Some(row) = rows.next().map_err(|e| format!("Failed to read column: {e}"))? {
-                let table: String = row.get(0).map_err(|e| format!("Failed to read column: {e}"))?;
-                text.entry(table).or_default().push(row.get(1).map_err(|e| format!("Failed to read column: {e}"))?);
-            }
+            let columns = all_columns(conn)?;
             let mut found = Vec::new();
             for table in list_tables(conn)? {
                 if stop() {
                     return Err("[[err.searchCancelled]]".to_string());
                 }
-                let Some((cond, params)) = text.get(&table).and_then(|cols| search_condition(cols, search)) else {
+                let Some((cond, params)) = columns.get(&table).and_then(|cols| search_condition(cols, search)) else {
                     continue;
                 };
                 let query = format!("SELECT COUNT(*) FROM {} WHERE {cond}", ident(&table));
@@ -575,6 +761,19 @@ impl DBManager {
         where_all(filters, &self.column_names(table_name)?, search)
     }
 
+    // NIVEL BASICO: WHERE das linhas marcadas da tabela (as identidades que a tela guarda), para exportar so elas
+    pub fn marked_where(&self, table_name: &str, marked: &[serde_json::Value]) -> Result<(String, Vec<duckdb::types::Value>), String> {
+        self.validate_table_name(table_name)?;
+        let columns = self.column_names(table_name)?;
+        if marked.is_empty() {
+            return Err("No marked rows".to_string());
+        }
+        self.with_conn(|conn| {
+            let (cond, params) = marked_condition(&row_id(conn, table_name, &columns), marked);
+            Ok((format!(" WHERE {cond}"), params))
+        })
+    }
+
     // NIVEL BASICO: Retorna numero de linhas da tabela que passam pelos filtros e pela pesquisa (sem nada: todas)
     pub fn get_row_count(&self, table_name: &str, filters: &[Filter], search: &str) -> Result<i64, String> {
         self.validate_table_name(table_name)?;
@@ -585,6 +784,27 @@ impl DBManager {
                 .map_err(|e| format!("Failed to count rows: {}", e))
         })
     }
+}
+
+// NIVEL BASICO: Colunas (nome, tipo, aceita nulo) de uma tabela ou view da conexao
+pub(crate) fn table_info(conn: &Connection, table: &str) -> Result<Vec<ColumnSchema>, String> {
+    // NIVEL TECNICO: PRAGMA returns: cid, name, type, notnull, dflt_value, pk
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({})", ident(table)))
+        .map_err(|e| format!("Failed to get table info: {}", e))?;
+    let schema = stmt
+        .query_map([], |row| {
+            let not_null: bool = row.get(3)?;
+            Ok(ColumnSchema {
+                name: row.get(1)?,
+                col_type: row.get(2)?,
+                null: if not_null { "NO" } else { "YES" }.to_string(),
+            })
+        })
+        .map_err(|e| format!("Failed to query schema: {}", e))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Failed to read column: {}", e))?;
+    Ok(schema)
 }
 
 // NIVEL BASICO: Tabelas do banco corrente da conexao (SHOW TABLES), em ordem alfabetica

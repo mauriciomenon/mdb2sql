@@ -1,6 +1,7 @@
-// NIVEL BASICO: Exportacao: banco inteiro para .duckdb, .sqlite ou .xlsx (uma aba por tabela);
-// tabela atual ou resultado do SQL para .csv (UTF-8 com BOM) ou .xlsx.
-// .mdb/.accdb nao: nao ha biblioteca confiavel para gravar Access.
+// NIVEL BASICO: Gravacao: banco inteiro (Arquivo > Salvar) para .duckdb, .sqlite ou .xlsx (uma aba por tabela);
+// tabela, linhas, esquema ou resultado do SQL para .csv (UTF-8 com BOM) ou .xlsx; varias consultas num .xlsx so
+// (uma aba cada); todas as tabelas em CSV numa pasta (um arquivo por tabela).
+// .mdb/.accdb nao: o formato do Access e proprietario e nao ha biblioteca confiavel para grava-lo.
 //
 // NIVEL TECNICO: every writer goes to a unique "<file>.<pid>-<n>.partial" renamed at the end, so a cancel or
 // an error never leaves a half-written file under the chosen name. progress() returns Err to cancel.
@@ -31,13 +32,16 @@ pub struct Summary {
     pub sheets: Option<usize>,
 }
 
-// NIVEL BASICO: O que exportar na exportacao de uma fonte so: tabela atual, so as linhas dela que a pesquisa e os
-// filtros da aba Data acharam, ou resultado do SQL
+// NIVEL BASICO: O que exportar: tabela atual, so as linhas dela que a aba Data achou ou marcou, resultado do SQL, ou
+// uma consulta do proprio app com o nome da aba (esquema)
 pub enum Source {
     Table(String),
-    // tabela, " WHERE ..." (de DBManager::rows_where) e os parametros dele: valores e palavras nunca vao no texto do SQL
+    // tabela, " WHERE ..." (de DBManager::rows_where ou marked_where) e os parametros dele: valores e palavras nunca vao
+    // no texto do SQL
     Rows(String, String, Vec<duckdb::types::Value>),
     Sql(String),
+    // nome da aba e SELECT
+    Query(String, String),
 }
 
 impl Source {
@@ -46,6 +50,7 @@ impl Source {
             Source::Table(t) => format!("SELECT * FROM {}", ident(t)),
             Source::Rows(t, filter, _) => format!("SELECT * FROM {}{filter}", ident(t)),
             Source::Sql(s) => s.trim().trim_end_matches(';').to_string(),
+            Source::Query(_, select) => select.clone(),
         }
     }
 
@@ -58,7 +63,7 @@ impl Source {
 
     fn sheet_base(&self) -> &str {
         match self {
-            Source::Table(t) | Source::Rows(t, _, _) => t,
+            Source::Table(t) | Source::Rows(t, _, _) | Source::Query(t, _) => t,
             Source::Sql(_) => "Result",
         }
     }
@@ -260,7 +265,7 @@ fn write_csv(
 // NIVEL TECNICO: create_dir is atomic and fails if the folder exists, so the folder is ours alone (no
 // check-then-create race) and cleaning it up never touches a file of the user; the DuckDB .wal lands inside it
 // too. Same folder as the target, so the final rename stays on one disk and replaces the target in one step.
-fn via_partial<T>(path: &Path, write: impl FnOnce(&Path) -> Result<T, String>) -> Result<T, String> {
+pub(crate) fn via_partial<T>(path: &Path, write: impl FnOnce(&Path) -> Result<T, String>) -> Result<T, String> {
     let file_name = path.file_name().ok_or("Invalid file name")?.to_string_lossy().into_owned();
     let mut n = 0u32;
     let dir: PathBuf = loop {
@@ -280,10 +285,18 @@ fn via_partial<T>(path: &Path, write: impl FnOnce(&Path) -> Result<T, String>) -
     result
 }
 
-// NIVEL BASICO: Banco inteiro: format = "duckdb", "sqlite" ou "xlsx"
+// NIVEL BASICO: Banco inteiro (Arquivo > Salvar): format = "duckdb", "sqlite" ou "xlsx"
 pub fn export_database(conn: &Connection, format: &str, path: &Path, progress: Progress) -> Result<Summary, String> {
-    let tables = list_tables(conn)?;
+    write_tables(conn, &list_tables(conn)?, format, path, progress)
+}
+
+// NIVEL BASICO: Estas tabelas (ou views) da conexao num arquivo: format = "duckdb", "sqlite" ou "xlsx"
+pub fn write_tables(conn: &Connection, tables: &[String], format: &str, path: &Path, progress: Progress) -> Result<Summary, String> {
     let n = tables.len();
+    if format == "xlsx" {
+        let sources: Vec<Source> = tables.iter().map(|t| Source::Table(t.clone())).collect();
+        return export_workbook(conn, &sources, path, progress);
+    }
     via_partial(path, |partial| match format {
         "duckdb" => {
             conn.execute_batch(&format!("ATTACH {} AS mdb2sql_out", literal(&partial.to_string_lossy())))
@@ -297,22 +310,55 @@ pub fn export_database(conn: &Connection, format: &str, path: &Path, progress: P
             let detached = conn.execute_batch("DETACH mdb2sql_out").map_err(|e| e.to_string());
             copied.and(detached).map(|_| Summary { count: n, sheets: None })
         }
-        "sqlite" => sqlite_io::export(conn, &tables, partial, progress).map(|_| Summary { count: n, sheets: None }),
-        "xlsx" => {
-            let mut wb = Workbook::new();
-            let mut namer = SheetNamer::default();
-            let mut sheets = 0;
-            for (i, t) in tables.iter().enumerate() {
-                progress(i, n, t)?;
-                let select = format!("SELECT * FROM {}", ident(t));
-                sheets += write_sheets(&mut wb, &mut namer, conn, t, &select, &[], EXCEL_MAX_DATA_ROWS, &mut || progress(i, n, t))?.len();
-            }
-            progress(n, n, "[[progress.saving]]")?;
-            wb.save(partial).map_err(xlsx_err)?;
-            Ok(Summary { count: n, sheets: Some(sheets) })
-        }
+        "sqlite" => sqlite_io::export(conn, tables, partial, progress).map(|_| Summary { count: n, sheets: None }),
         other => Err(format!("Unknown export format: {other}")),
     })
+}
+
+// NIVEL BASICO: Varias fontes num .xlsx so, uma aba por fonte (banco inteiro, resultado da busca em todas as tabelas)
+pub fn export_workbook(conn: &Connection, sources: &[Source], path: &Path, progress: Progress) -> Result<Summary, String> {
+    let n = sources.len();
+    via_partial(path, |partial| {
+        let mut wb = Workbook::new();
+        let mut namer = SheetNamer::default();
+        let mut sheets = 0;
+        for (i, source) in sources.iter().enumerate() {
+            let base = source.sheet_base();
+            progress(i, n, base)?;
+            let mut tick = || progress(i, n, base);
+            sheets += write_sheets(&mut wb, &mut namer, conn, base, &source.select(), source.params(), EXCEL_MAX_DATA_ROWS, &mut tick)?.len();
+        }
+        progress(n, n, "[[progress.saving]]")?;
+        wb.save(partial).map_err(xlsx_err)?;
+        Ok(Summary { count: n, sheets: Some(sheets) })
+    })
+}
+
+// caracteres que o Windows nao aceita em nome de arquivo viram "_" (a mesma regra de safeFileName na interface)
+fn safe_file_name(name: &str) -> String {
+    let clean: String = name.chars().map(|c| if "<>:\"/\\|?*".contains(c) || c.is_control() { '_' } else { c }).collect();
+    match clean.trim() {
+        "" => "export".to_string(),
+        text => text.to_string(),
+    }
+}
+
+// NIVEL BASICO: O CSV de cada tabela dentro da pasta: "<tabela>.csv"
+// shortcut: two tables whose names differ only in characters a file name cannot have (or only in case, on Windows)
+// write the same file; give the second a suffix when a database has such names
+pub fn csv_files(dir: &Path, tables: &[String]) -> Vec<PathBuf> {
+    tables.iter().map(|table| dir.join(format!("{}.csv", safe_file_name(table)))).collect()
+}
+
+// NIVEL BASICO: Todas estas tabelas (ou views) em CSV na pasta, um arquivo por tabela; cada arquivo so aparece inteiro
+pub fn export_folder(conn: &Connection, tables: &[String], dir: &Path, progress: Progress) -> Result<Summary, String> {
+    let n = tables.len();
+    for (i, (table, file)) in tables.iter().zip(csv_files(dir, tables)).enumerate() {
+        progress(i, n, table)?;
+        let select = format!("SELECT * FROM {}", ident(table));
+        via_partial(&file, |partial| write_csv(conn, &select, &[], partial, &mut || progress(i, n, table)))?;
+    }
+    Ok(Summary { count: n, sheets: None })
 }
 
 // NIVEL BASICO: Tabela atual ou resultado do SQL: format = "csv" ou "xlsx"

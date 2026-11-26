@@ -53,9 +53,30 @@ export function withSaved(list, accessKey, dest, destKey, max) {
   return Object.fromEntries([...kept, [accessKey, { dest, destKey }]].slice(-max));
 }
 
-// "<base>.<ext>"; se esse for o proprio arquivo aberto, "<base> (export).<ext>" para nao sugerir sobrescreve-lo
-export function suggestedName(base, ext, openedPath) {
+// extensao em minusculas, sem o ponto ('' se nao tem)
+export function extOf(path) {
+  const name = baseName(path);
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+}
+
+// "<base>.<ext>"; se esse for o proprio arquivo aberto, o nome passa por copyName ("<base> (copia)" no idioma da tela)
+// para nao sugerir gravar por cima dele
+export function suggestedName(base, ext, openedPath, copyName = (name) => name) {
   const clean = safeFileName(base);
   const name = `${clean}.${ext}`;
-  return baseName(openedPath).toLowerCase() === name.toLowerCase() ? `${clean} (export).${ext}` : name;
+  return baseName(openedPath).toLowerCase() === name.toLowerCase() ? `${copyName(clean)}.${ext}` : name;
+}
+
+// NIVEL BASICO: Arquivo > Salvar: tipos na ordem do app; o do arquivo aberto ja vem marcado (Access e SQLite: SQLite;
+// DuckDB: DuckDB)
+export const SAVE_FORMATS = ['sqlite', 'duckdb', 'xlsx'];
+
+// tipo e caminho que a caixa de salvar devolveu: vale a extensao digitada se for de um dos tipos; senao o tipo marcado
+// na caixa, e o caminho ganha a extensao dele
+export function savedFormat(path, index) {
+  const typed = extOf(path);
+  if (SAVE_FORMATS.includes(typed)) return { path, format: typed };
+  const format = SAVE_FORMATS[index] ?? SAVE_FORMATS[0];
+  return { path: `${path}.${format}`, format };
 }

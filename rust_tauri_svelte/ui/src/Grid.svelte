@@ -1,24 +1,48 @@
 <script>
-  // NIVEL BASICO: Grade de dados (tabela aberta, esquema ou resultado do SQL) com menu de copia e de colunas
-  // Clique seleciona a celula; botao direito ou tecla de menu abre o menu; Ctrl+C copia o valor.
-  // Cabecalho: arrastar a borda direita muda a largura; botao direito > Ajustar coluna / Ajustar todas as colunas
+  // NIVEL BASICO: Grade de dados (tabela aberta, esquema, resultado do SQL ou da pesquisa de termos) com menu de copia
+  // e de colunas. Clique seleciona a celula; botao direito ou tecla de menu abre o menu; Ctrl+C copia o valor e
+  // Ctrl+Shift+C a linha. Cabecalho: arrastar a borda direita muda a largura; botao direito > Ajustar coluna / todas.
+  // Aba Dados: primeira coluna com a caixa de marcar a linha (Espaco marca a linha da celula escolhida)
+  import { untrack } from 'svelte';
   import { cellText, rowToTsv } from './grid.js';
 
   // actions (so a grade da aba Data): { hide(nome), columns(), showAll(), filter(nome, valor), clearFilters(),
   // all (todas as colunas da tabela), hidden (Set das ocultas), filtered }; sem ele o menu so copia e ajusta colunas
   // t: traducao do idioma escolhido (i18n.js); nullText: texto da celula NULL na grade (Settings > Exibir NULL)
-  let { columns, rows, label, emptyText, t, onstatus, onerror, actions = null, nullText = '' } = $props();
+  // selected ({ row, col }, celula escolhida): quem usa a grade le para os itens do menu Editar
+  // marks (so a aba Dados): { has(linha), toggle(linha) } das linhas marcadas
+  // extra: itens a mais no fim do menu da celula: { label, off, run(linha) } ou { label, off, items: [{ label, run }] }
+  // copySkip: quantas colunas do comeco ficam fora de Copiar linha (a coluna Termo da aba Termos)
+  let {
+    columns,
+    rows,
+    label,
+    emptyText,
+    t,
+    onstatus,
+    onerror,
+    actions = null,
+    nullText = '',
+    selected = $bindable(null),
+    marks = null,
+    extra = [],
+    copySkip = 0,
+  } = $props();
 
-  let selected = $state.raw(null); // { row, col }: celula escolhida para copiar
   let menu = $state.raw(null); // { x, y, header }: menu aberto; header = nome da coluna do cabecalho clicado
+  let openSub = $state(-1); // item de `extra` com o submenu aberto
   // largura (px) das colunas arrastadas pela borda do cabecalho; sem entrada, a coluna cabe o conteudo inteiro
   let widths = $state({});
   let last = $derived(columns.length === 1); // so uma coluna na tela: o menu nao deixa oculta-la
 
-  // outra tabela, outra busca ou outro resultado: a celula escolhida antes nao vale mais (copiaria dado velho)
+  // outra tabela, outra busca ou outro resultado: a celula escolhida antes nao vale mais (copiaria dado velho); marcar
+  // uma linha so muda a ordem, e a celula escolhida continua
   $effect(() => {
-    rows;
-    selected = null;
+    const shown = rows;
+    // untrack: escolher uma celula nao roda este efeito (ele fecharia o menu que acabou de abrir)
+    untrack(() => {
+      if (selected && !shown.includes(selected.row)) selected = null;
+    });
     menu = null;
   });
 
@@ -29,6 +53,10 @@
     const box = node.getBoundingClientRect();
     node.style.left = `${Math.max(4, Math.min(box.left, innerWidth - box.width - 4))}px`;
     node.style.top = `${Math.max(4, Math.min(box.top, innerHeight - box.height - 4))}px`;
+  };
+  // submenu ao lado do item; sem lugar a direita, abre para a esquerda
+  const beside = (node) => {
+    if (node.getBoundingClientRect().right > innerWidth - 4) node.classList.add('left');
   };
 
   // coluna arrastada: largura fixa e o que passa fica escondido (sem "..."); Ajustar coluna volta ao conteudo inteiro
@@ -72,6 +100,7 @@
       return;
     }
     selectCell(event);
+    openSub = -1;
     if (selected) menu = { ...at, header: null };
   }
 
@@ -81,11 +110,12 @@
     actions[name](...args);
   }
 
-  // NIVEL BASICO: kind = 'value' (celula), 'row' ou 'row-header' (linha separada por TAB)
-  async function copy(kind) {
+  // NIVEL BASICO: kind = 'value' (celula), 'row' ou 'row-header' (linha separada por TAB); tambem chamado pelo menu
+  // Editar da janela
+  export async function copy(kind) {
     menu = null;
     if (!selected) return;
-    const names = columns.map((col) => col.name);
+    const names = columns.slice(copySkip).map((col) => col.name);
     const text =
       kind === 'value'
         ? cellText(selected.row[selected.col])
@@ -104,7 +134,12 @@
     // com texto selecionado pelo mouse vale o Ctrl+C normal do navegador
     if (event.ctrlKey && event.key.toLowerCase() === 'c' && selected && !String(getSelection())) {
       event.preventDefault();
-      copy('value');
+      copy(event.shiftKey ? 'row' : 'value');
+    }
+    // Espaco marca ou desmarca a linha da celula escolhida (na propria caixa de marcar o Espaco ja e dela)
+    if (event.key === ' ' && marks && selected && event.target.tagName !== 'INPUT') {
+      event.preventDefault();
+      marks.toggle(selected.row);
     }
   }
 </script>
@@ -123,6 +158,8 @@
   <table>
     <thead>
       <tr>
+        <!-- coluna das caixas de marcar: estreita e sem titulo (a dica diz o que e) -->
+        {#if marks}<th class="mark" title={t('marks.tip')}></th>{/if}
         {#each columns as col, c (c)}
           <!-- coluna estreitada a mao: o nome inteiro fica na dica -->
           <th scope="col" data-c={c} class:num={isNumeric(col.type)} style={sized(col.name)} title={widths[col.name] ? col.name : undefined}>
@@ -137,6 +174,9 @@
     <tbody>
       {#each rows as row, r}
         <tr data-r={r}>
+          {#if marks}
+            <td class="mark"><input type="checkbox" aria-label={t('marks.tip')} checked={marks.has(row)} onchange={() => marks.toggle(row)} /></td>
+          {/if}
           {#each columns as col, c (c)}
             {@const value = row[col.name]}
             {@const isSelected = selected?.row === row && selected.col === col.name}
@@ -147,7 +187,7 @@
         </tr>
       {:else}
         <tr>
-          <td class="null" colspan={Math.max(columns.length, 1)}>{emptyText}</td>
+          <td class="null" colspan={Math.max(columns.length, 1) + (marks ? 1 : 0)}>{emptyText}</td>
         </tr>
       {/each}
     </tbody>
@@ -198,6 +238,50 @@
     </button>
     <button type="button" role="menuitem" onclick={() => copy('row')}>{t('grid.copyRow')}</button>
     <button type="button" role="menuitem" onclick={() => copy('row-header')}>{t('grid.copyRowHeader')}</button>
+    <!-- itens de quem usa a grade (aba Dados: linhas marcadas; aba Termos: copiar os acertos e o relatorio); item com
+         `items` abre um submenu ao lado -->
+    {#if extra.length}<div class="separator" role="separator"></div>{/if}
+    {#each extra as entry, i}
+      {#if entry.items}
+        <div class="sub-root" role="none" onmouseenter={() => (openSub = i)} onmouseleave={() => (openSub = -1)}>
+          <button
+            type="button"
+            role="menuitem"
+            aria-haspopup="menu"
+            aria-expanded={openSub === i}
+            disabled={entry.off}
+            onclick={(e) => {
+              e.stopPropagation(); // o clique abre o submenu, nao fecha o menu
+              openSub = i;
+            }}>{entry.label} <span class="arrow">▸</span></button
+          >
+          {#if openSub === i && !entry.off}
+            <div class="menu sub" role="menu" aria-label={entry.label} use:beside>
+              {#each entry.items as item}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onclick={() => {
+                    menu = null;
+                    item.run();
+                  }}>{item.label}</button
+                >
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {:else}
+        <button
+          type="button"
+          role="menuitem"
+          disabled={entry.off}
+          onclick={() => {
+            menu = null;
+            entry.run(selected.row);
+          }}>{entry.label}</button
+        >
+      {/if}
+    {/each}
   </div>
 {/if}
 
@@ -360,8 +444,40 @@
     color: var(--accent);
   }
 
-  .menu kbd {
+  .menu kbd,
+  .menu .arrow {
     color: var(--muted);
     font: inherit;
+  }
+
+  /* submenu de um item do menu da celula: ao lado do item (a esquerda quando nao cabe a direita) */
+  .sub-root {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .menu.sub {
+    position: absolute;
+    top: -5px;
+    left: 100%;
+    min-width: 160px;
+  }
+
+  .menu.sub:global(.left) {
+    right: 100%;
+    left: auto;
+  }
+
+  /* caixa de marcar a linha: coluna estreita, sem titulo */
+  .mark {
+    width: 1%;
+    padding-right: 0;
+    text-align: center;
+  }
+
+  .mark input {
+    margin: 0;
+    vertical-align: middle;
   }
 </style>

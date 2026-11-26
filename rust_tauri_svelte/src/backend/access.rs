@@ -428,7 +428,7 @@ fn import_mdbtools(
 // NIVEL BASICO: mdb-export de uma tabela para um CSV temporario novo (pasta dos temporarios do app: se o app cair,
 // a proxima abertura apaga)
 fn export_csv(dir: &Path, path: &str, table: &str) -> Result<PathBuf, String> {
-    let csv = super::converted::new_temp_path("mdbtools.csv")?;
+    let csv = super::converted::new_temp_path("mdbtools.csv", Path::new(path).parent())?;
     let written = (|| {
         let file = std::fs::File::create(&csv).map_err(|e| e.to_string())?;
         let mut export = mdb_tool(dir, "mdb-export");
