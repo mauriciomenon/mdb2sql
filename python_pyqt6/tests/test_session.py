@@ -437,7 +437,9 @@ def test_language_applies_at_once_and_is_saved(qtbot, people_db: Path) -> None:
 # nomes proprios e siglas que podem vir com maiuscula no meio da frase
 PROPER = {"SQLite", "DuckDB", "Excel", "CSV", "UTF-8", "Access", "ODBC", "SQL", "NULL", "X11", "Wayland", "DISPLAY",
           "WAYLAND_DISPLAY", "GPL", "Ctrl+O", "Ctrl+F", "Ctrl+L", "Ctrl+Enter", "Enter", "F5", "Windows", "Brasil",
-          "MDB2SQL_ACCESS_READER", "Log", "X", "Microsoft"}
+          "MDB2SQL_ACCESS_READER", "Log", "X", "Microsoft",
+          # nome da aba Pesquisa Avancada (13 d), como o dono escreveu
+          "Search", "Pesquisa", "Avançada", "Búsqueda", "Avanzada"}
 
 
 def test_texts_have_no_title_case() -> None:

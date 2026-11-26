@@ -370,7 +370,7 @@ def test_menu_tree_is_the_same_in_the_four_versions(window: MainWindow) -> None:
     export = [("Current table", formats), ("Marked rows", formats), ("Current table schema", formats),
               ("Database schema", formats), "All tables to CSV (one file per table)...", ("SQL result", formats),
               "All-tables search result (Excel)...",
-              ("Term search report", ["Excel (.xlsx)...", "CSV...", "SQLite (.sqlite)...", "DuckDB (.duckdb)..."])]
+              ("Advanced Search report", ["Excel (.xlsx)...", "CSV...", "SQLite (.sqlite)...", "DuckDB (.duckdb)..."])]
     assert _tree(_menu(window, "&File")) == [
         "Open... Ctrl+O", "Open the typed path", "Reopen F5", "-", "Save Ctrl+S", "Save as... Ctrl+Shift+S",
         ("Export", export), "-", "Close Ctrl+W", "-", "Exit Ctrl+Q"]
@@ -379,7 +379,7 @@ def test_menu_tree_is_the_same_in_the_four_versions(window: MainWindow) -> None:
         "Copy value Ctrl+C", "Copy row Ctrl+Shift+C", "Copy row with header", "Copy the whole log", "-",
         "Search Ctrl+F", "Filter by this value", "Clear filters", "-", "Mark or unmark row Space", "Unmark all rows"]
     assert _tree(_menu(window, "&View")) == [
-        "Data Ctrl+1", "Schema Ctrl+2", "SQL Ctrl+3", "Terms Ctrl+4", "-", ("Rows", ["100", "500", "1000"]),
+        "Data Ctrl+1", "Schema Ctrl+2", "SQL Ctrl+3", "Advanced Search Ctrl+4", "-", ("Rows", ["100", "500", "1000"]),
         "Columns...", ("Search in", ["This table", "All tables"]), "Only marked rows", "Go to the table list Ctrl+T",
         "Favorite or unfavorite table Ctrl+D", "-", "Run SQL Ctrl+Enter", "Search terms Ctrl+Enter", "-", "Log Ctrl+L"]
     assert _tree(_menu(window, "&Settings")) == [
@@ -407,6 +407,17 @@ def test_schema_tab_is_called_schema_in_every_language(window: MainWindow) -> No
         assert not [key for key, text in i18n.catalog(code).items() if "squema" in text.lower()]
 
 
+def test_terms_tab_is_called_advanced_search_in_every_language(window: MainWindow) -> None:
+    # 13 d): a aba, Exibir (Ctrl+4) e Exportar > Relatorio; o botao Pesquisar termos fica
+    for code, tab, report, button in (("pt_BR", "Pesquisa Avançada", "Relatório da Pesquisa Avançada", "Pesquisar termos"),
+                                      ("es", "Búsqueda Avanzada", "Informe de la Búsqueda Avanzada", "Buscar términos"),
+                                      ("en", "Advanced Search", "Advanced Search report", "Search terms")):
+        window.set_language(code)
+        assert window.tabs.tabText(3) == tab == window.terms_tab_action.text().replace("&", "")
+        assert window.terms_tab_action.shortcut().toString() == "Ctrl+4"
+        assert report in {a.text() for a in window.export_menu.actions()} and window.terms_run_button.text() == button
+
+
 def test_menu_items_are_disabled_like_their_buttons(qtbot, window: MainWindow) -> None:
     # Linhas do menu = lista Linhas da aba Dados; Pesquisar em = Esta tabela | Todas as tabelas
     window.rows_actions[2].trigger()
@@ -416,7 +427,7 @@ def test_menu_items_are_disabled_like_their_buttons(qtbot, window: MainWindow) -
     assert window.scope_actions["table"].isChecked()
     # sem consulta SQL, marcas, busca em todas as tabelas ou termos: os submenus e itens ficam desabilitados
     disabled = [a.text().replace("&", "") for a in window.export_menu.actions() if not a.isEnabled()]
-    assert disabled == ["Marked rows", "SQL result", "All-tables search result (Excel)...", "Term search report"]
+    assert disabled == ["Marked rows", "SQL result", "All-tables search result (Excel)...", "Advanced Search report"]
     window.scope_actions["all"].trigger()
     window.search_edit.setText("ana")
     qtbot.waitUntil(lambda: window.found_list.count() == 1 and window._busy == 0, timeout=30000)
@@ -977,7 +988,7 @@ def test_terms_tab_lists_hits_in_list_order_copies_and_reports(qtbot, tmp_path: 
     win.show()
     win.open_database(db_file)
     qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
-    assert win.tabs.tabText(3) == "Terms" and win.terms_tab_action.shortcut().toString() == "Ctrl+4"
+    assert win.tabs.tabText(3) == "Advanced Search" and win.terms_tab_action.shortcut().toString() == "Ctrl+4"
     win.terms_tab_action.trigger()
     assert win.tabs.currentWidget() is win.terms_page
     # Ctrl+Enter na aba Termos pesquisa os termos; o do SQL so vale fora dela
