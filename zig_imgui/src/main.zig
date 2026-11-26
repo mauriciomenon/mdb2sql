@@ -2429,10 +2429,11 @@ const App = struct {
             if (chord(ctrl | ig.ImGuiKey_2)) app.want_tab = .schema;
             if (chord(ctrl | ig.ImGuiKey_3)) app.want_tab = .sql;
             if (chord(ctrl | ig.ImGuiKey_4)) app.want_tab = .terms;
-            // Ctrl+Enter: na aba Termos pesquisa os termos; nas outras roda o SQL
+            // Ctrl+Enter: na aba Termos pesquisa os termos (menos dentro da caixa dos termos, onde Ctrl+Enter quebra a
+            // linha e o Enter pesquisa); nas outras roda o SQL
             if (chord(ctrl | ig.ImGuiKey_Enter) or chord(ctrl | ig.ImGuiKey_KeypadEnter)) {
                 if (app.tab == .terms) {
-                    app.want_terms = true;
+                    if (!ig.igIsAnyItemActive()) app.want_terms = true;
                 } else if (zstr(&app.sql).len > 0) {
                     app.want_tab = .sql;
                     app.want_run = true;
@@ -2930,9 +2931,11 @@ const App = struct {
     fn drawTerms(app: *App) void {
         const st = ig.igGetStyle();
         const box_h = ig.igGetTextLineHeight() * 8 + 2 * st.*.FramePadding.y;
-        // Ctrl+Enter na caixa pesquisa (Enter quebra a linha)
-        if (ig.igInputTextEx("##terms", tr("terms_hint"), app.terms_text.ptr, @intCast(app.terms_text.len), .{ .x = -1, .y = box_h }, ig.ImGuiInputTextFlags_Multiline | ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) app.want_terms = true;
+        // dono 26/11: Enter pesquisa; Ctrl+Enter quebra a linha (colar uma coluna do Excel ja traz as linhas)
+        if (ig.igInputTextEx("##terms", tr("terms_hint"), app.terms_text.ptr, @intCast(app.terms_text.len), .{ .x = -1, .y = box_h }, ig.ImGuiInputTextFlags_Multiline | ig.ImGuiInputTextFlags_EnterReturnsTrue | ig.ImGuiInputTextFlags_CtrlEnterForNewLine, null, null)) app.want_terms = true;
         if (ig.igIsItemEdited()) app.countTerms();
+        // respiro entre a entrada e a linha dos controles
+        ig.igDummy(.{ .x = 0, .y = st.*.ItemSpacing.y });
 
         // Linha dos controles (item 18 c), da esquerda para a direita: Pesquisar termos | caixa "N linhas de entrada"
         // + o resumo | encostados a direita: Valor inteiro | Contem, separador, Esta tabela | Todas as tabelas
@@ -2964,11 +2967,23 @@ const App = struct {
         const right_w = segmentedWidth(&match_l) + segmentedWidth(&scope_l) + 1 + 2 * gap;
         const info_min = rawWidth(info) + 2 * st.*.FramePadding.x;
         vline();
-        // a caixa ocupa o que sobra ate o grupo da direita, nunca menos que o texto; sem espaco, o grupo desce
+        // dono 26/11: tudo numa linha so. A caixa ocupa o que sobra ate o grupo da direita; se o texto nao cabe numa
+        // linha, "N linhas de entrada" e o resumo vao em duas linhas DENTRO da caixa (nada cortado, nada desce)
         const avail = ig.igGetContentRegionAvail().x;
-        const fits = avail - right_w - 2 * gap - 1 >= info_min;
-        frameText(info, if (fits) avail - right_w - 2 * gap - 1 else @max(info_min, avail));
-        if (fits) vline() else ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - right_w));
+        const box_w = avail - right_w - 2 * gap - 1;
+        const two = std.mem.replaceOwned(u8, app.gpa, info, "   ", "\n") catch null;
+        defer if (two) |t| app.gpa.free(t);
+        const two_lines: ?[]const u8 = two;
+        const fits = box_w >= info_min;
+        const fits_two = two_lines != null and box_w >= twoLineWidth(two_lines.?) + 2 * st.*.FramePadding.x;
+        if (fits or fits_two) {
+            frameTextLines(if (fits) info else two_lines.?, box_w, if (fits) 1 else 2);
+            vline();
+        } else {
+            // janela estreita demais ate para duas linhas: o grupo desce, como antes
+            frameText(info, @max(info_min, avail));
+            ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - right_w));
+        }
         var match_hover = false;
         if (segmented(1, &match_l, @intFromBool(app.terms_match == .contains), &match_hover)) |i| app.terms_match = if (i == 0) .whole else .contains;
         if (match_hover) tooltip(tr("match_tip"));
@@ -2976,6 +2991,8 @@ const App = struct {
         if (segmented(2, &scope_l, @intFromBool(app.terms_scope == .all), null)) |i| app.terms_scope = if (i == 0) .table else .all;
 
         const res = res_opt orelse return;
+        // respiro entre os controles e o resultado
+        ig.igDummy(.{ .x = 0, .y = st.*.ItemSpacing.y });
         // embaixo: o titulo dos nao encontrados com Copiar e a caixa deles (4 linhas)
         const nf_box_h = ig.igGetTextLineHeight() * 4 + 2 * st.*.FramePadding.y;
         const nf_h = ig.igGetFrameHeightWithSpacing() + nf_box_h + st.*.ItemSpacing.y;
@@ -3022,7 +3039,9 @@ const App = struct {
         // "Nao encontrados (2)" + Copiar; um termo por linha, na ordem colada
         ig.igAlignTextToFramePadding();
         textT("not_found_title", .{res.terms.len - res.found});
+        // Copiar encostado a direita, alinhado com a borda da caixa (como no Python)
         ig.igSameLine(0, -1);
+        ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - buttonWidth(tr("copy"))));
         if (button(tr("copy"))) setClipboard(res.not_found);
         _ = ig.igInputTextMultiline("##notfound", @constCast(res.not_found.ptr), res.not_found.len + 1, .{ .x = -1, .y = nf_box_h }, ig.ImGuiInputTextFlags_ReadOnly, null, null);
     }
@@ -3292,6 +3311,27 @@ fn frameText(s: []const u8, w: f32) void {
     ig.ImDrawList_AddRectFilled(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_FrameBg, 1), st.*.FrameRounding, 0);
     ig.ImDrawList_AddRect(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_Border, 1), st.*.FrameRounding, @max(1, st.*.FrameBorderSize), 0);
     ig.ImDrawList_AddText_Vec2(dl, .{ .x = min.x + st.*.FramePadding.x, .y = min.y + st.*.FramePadding.y }, ig.igGetColorU32_Col(ig.ImGuiCol_Text, 1), s.ptr, s.ptr + s.len);
+}
+
+// frameText com `lines` linhas de texto (o texto traz os "\n"): a altura cresce uma linha de texto por linha a mais
+fn frameTextLines(s: []const u8, w: f32, lines: u32) void {
+    const st = ig.igGetStyle();
+    const min = ig.igGetCursorScreenPos();
+    const h = ig.igGetFrameHeight() + @as(f32, @floatFromInt(lines -| 1)) * ig.igGetTextLineHeight();
+    ig.igDummy(.{ .x = w, .y = h });
+    const max: @TypeOf(min) = .{ .x = min.x + w, .y = min.y + h };
+    const dl = ig.igGetWindowDrawList();
+    ig.ImDrawList_AddRectFilled(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_FrameBg, 1), st.*.FrameRounding, 0);
+    ig.ImDrawList_AddRect(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_Border, 1), st.*.FrameRounding, @max(1, st.*.FrameBorderSize), 0);
+    ig.ImDrawList_AddText_Vec2(dl, .{ .x = min.x + st.*.FramePadding.x, .y = min.y + st.*.FramePadding.y }, ig.igGetColorU32_Col(ig.ImGuiCol_Text, 1), s.ptr, s.ptr + s.len);
+}
+
+// largura da linha mais longa de um texto com "\n"
+fn twoLineWidth(s: []const u8) f32 {
+    var w: f32 = 0;
+    var it = std.mem.splitScalar(u8, s, '\n');
+    while (it.next()) |line| w = @max(w, rawWidth(line));
+    return w;
 }
 
 fn segmentedWidth(labels: []const [:0]const u8) f32 {
