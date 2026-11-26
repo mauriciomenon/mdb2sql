@@ -1687,14 +1687,15 @@ mod tests {
             eprintln!("DB3 {}: opened in {:?}, {} tables", file.display(), started.elapsed(), tables.len());
             let conn = manager.export_connection().unwrap();
             if file_is_access {
-                // secao 19 a: o Access convertido com os tipos do mdb-schema (1.681 inteiras, 5.816 double, 2.867 texto)
+                // secao 19 a: o Access convertido com os tipos do mdb-schema do DB3: 1.681 Numeric(p,0) inteiras, 5.816 Double,
+                // 2.861 texto (2.858 VARCHAR + 3 memo) e 6 datas (o BRIEF diz 2.867 texto: e texto + datas)
                 let count = |kinds: &str| -> i64 {
                     let sql = format!("SELECT count(*) FROM duckdb_columns() WHERE database_name = current_database() AND data_type IN ({kinds})");
                     conn.query_row(&sql, [], |r| r.get(0)).unwrap()
                 };
-                let counts = [count("'TINYINT', 'SMALLINT', 'INTEGER', 'BIGINT'"), count("'DOUBLE', 'FLOAT'"), count("'VARCHAR'")];
-                eprintln!("DB3 accdb column types (integer, double, text): {counts:?}");
-                assert_eq!(counts, [1681, 5816, 2867]);
+                let counts = [count("'TINYINT', 'SMALLINT', 'INTEGER', 'BIGINT'"), count("'DOUBLE', 'FLOAT'"), count("'VARCHAR'"), count("'TIMESTAMP'")];
+                eprintln!("DB3 accdb column types (integer, double, text, timestamp): {counts:?}");
+                assert_eq!(counts, [1681, 5816, 2861, 6]);
                 let sostat: Vec<String> = ["RTUNO", "PNTNO"].iter().map(|c| manager.get_table_schema("RANGER_SOSTAT").unwrap().into_iter().find(|s| s.name == *c).unwrap().col_type).collect();
                 assert_eq!(sostat, ["BIGINT", "BIGINT"]);
             }
