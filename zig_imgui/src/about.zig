@@ -144,6 +144,14 @@ test "item 13 f: every button has the height of its line (none taller to show hi
     try std.testing.expectEqual(1, std.mem.count(u8, ui, "ImGuiStyleVar_FramePadding"));
 }
 
+test "item 17: Advanced Search starts in All tables, never the Data tab default scope; This table says where it searched" {
+    const ui = @embedFile("main.zig");
+    try std.testing.expect(std.mem.indexOf(u8, ui, "terms_scope: settings.SearchScope = .all,") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ui, "terms_scope = app.prefs.search_scope") == null);
+    try std.testing.expect(std.mem.indexOf(u8, ui, "app.terms_scope = s;") == null);
+    try expectOrder("fn drawTerms(", &.{ "\"terms_summary\"", "if (res.only) |ti|", "\"terms_only_in\"" });
+}
+
 test "item 14: top bar path | Open... | Export...: Open... opens the file dialog, Enter goes by the typed path rule; no Browse" {
     try expectOrder("// Barra superior (item 14)", &.{ "\"##path\"", "app.openTyped();", "if (button(tr(\"open\"))) app.want_browse = true;", "tr(\"export_button\")" });
     try expectOrder("fn openTyped(", &.{ ".pick => app.want_browse = true", ".not_found => app.status.set(true, \"err_file_not_found\"", ".open => app.want_open = true" });

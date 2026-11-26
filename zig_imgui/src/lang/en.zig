@@ -85,6 +85,7 @@ pub const terms_count_one = "{d} term";
 pub const terms_repeated = ", {d} repeated";
 pub const terms_repeated_one = ", {d} repeated";
 pub const terms_summary = "{s}: {s} in {s}";
+pub const terms_only_in = " (only in {s})";
 pub const terms_found = "{d} of {d} terms found";
 pub const terms_found_one = "{d} of {d} term found";
 pub const terms_rows = "{d} rows";

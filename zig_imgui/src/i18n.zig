@@ -150,6 +150,8 @@ test "texts as in the Go catalog (the reference wording), in the three languages
         // item 14: o botao Abrir... escolhe o arquivo; arquivo que nao existe, so a mensagem curta com o caminho
         .{ "open", "Open...", "Abrir...", "Abrir..." },
         .{ "err_file_not_found", "File not found: {s}", "Arquivo não encontrado: {s}", "Archivo no encontrado: {s}" },
+        // item 17: com Esta tabela o resumo diz onde pesquisou
+        .{ "terms_only_in", " (only in {s})", " (só em {s})", " (solo en {s})" },
         .{ "menu_save_as", "Save as...", "Salvar como...", "Guardar como..." },
         // itens 31 e 32
         .{ "only_marked", "Only marked", "Só as marcadas", "Solo las marcadas" },

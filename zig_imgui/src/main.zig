@@ -361,7 +361,7 @@ const Capture = struct {
                     c.skip(app.gpa, "no term list (MDB2SQL_CAPTURE_TERMS=<file>)");
                     return false;
                 }
-                // a lista colada, Todas as tabelas, a comparacao do passo
+                // a lista colada e a comparacao do passo; o escopo fica o de abertura da aba (Todas as tabelas, item 17)
                 const text = std.Io.Dir.cwd().readFile(app.io, c.terms_file, app.terms_text[0 .. app.terms_text.len - 1]) catch {
                     c.skip(app.gpa, "the term list could not be read");
                     return false;
@@ -369,7 +369,6 @@ const Capture = struct {
                 app.terms_text[text.len] = 0;
                 app.countTerms();
                 app.terms_match = if (std.mem.eql(u8, cap.plan[c.step].arg, "contains")) .contains else .whole;
-                app.terms_scope = .all;
                 app.want_terms = true;
                 c.terms_phase = 1;
             },
@@ -629,6 +628,7 @@ const Capture = struct {
                 const shown = if (app.terms_grid) |g| g.rows.len else 0;
                 if (app.terms_hit < res.tables.len and shown != @min(res.tables[app.terms_hit].rows, app.limit))
                     c.note(app.gpa, "the grid of the chosen table does not show the rows counted");
+                if (res.only != null) c.note(app.gpa, "the Advanced Search did not start in All tables");
             },
             // Fechar nao pergunta: o convertido nao salvo e descartado com a linha do Log
             .prompt_delete => {
@@ -1116,7 +1116,8 @@ const App = struct {
     terms_text: []u8 = &.{}, // a caixa (terms_box_size + 1 bytes do gpa, terminada em 0)
     terms_counted: [2]usize = .{ 0, 0 }, // termos sem os repetidos e os repetidos da caixa (refeito ao editar)
     terms_match: settings.TermMatch = .whole, // Valor inteiro | Contem (padrao em Configuracoes)
-    terms_scope: settings.SearchScope = .table, // Esta tabela | Todas as tabelas (padrao: Escopo padrao da busca)
+    // Esta tabela | Todas as tabelas: comeca SEMPRE em Todas as tabelas (item 17), nunca o escopo padrao da aba Dados
+    terms_scope: settings.SearchScope = .all,
     terms_res: ?dbm.terms.Result = null, // resultado mostrado
     terms_hit: usize = 0, // tabela escolhida na lista (indice em terms_res.tables)
     terms_grid: ?dbm.Grid = null, // as linhas achadas da tabela escolhida (coluna Termo + as da tabela)
@@ -2378,7 +2379,6 @@ const App = struct {
                     app.prefs.search_scope = s;
                     app.savePrefs();
                     app.setScope(s);
-                    app.terms_scope = s;
                 }
             }
             // padrao da aba Termos: Valor inteiro ou Contem
@@ -2992,6 +2992,12 @@ const App = struct {
             i18n.fmtCount(&sb[1], "terms_rows", res.rows, .{res.rows}),
             i18n.fmtCount(&sb[2], "terms_tables", res.tables.len, .{res.tables.len}),
         }));
+        // "Esta tabela" (item 17): diz onde pesquisou, para nunca parecer que o termo nao existe no banco
+        if (res.only) |ti| if (ti < app.db.table_names.len) {
+            ig.igSameLine(0, 0);
+            var ob: [600]u8 = undefined;
+            textSlice(i18n.fmt(&ob, "terms_only_in", .{app.db.table_names[ti]}));
+        };
         // embaixo: o titulo dos nao encontrados com Copiar e a caixa deles (4 linhas)
         const nf_box_h = ig.igGetTextLineHeight() * 4 + 2 * st.*.FramePadding.y;
         const nf_h = ig.igGetFrameHeightWithSpacing() + nf_box_h + st.*.ItemSpacing.y;
@@ -3817,9 +3823,8 @@ fn run(init: std.process.Init) !void {
     };
     i18n.lang = app.prefs.lang;
     app.scope = app.prefs.search_scope;
-    // aba Termos: comparacao e escopo padrao das configuracoes; a caixa vazia
+    // aba Pesquisa Avançada: a comparacao padrao das configuracoes; o escopo comeca em Todas as tabelas; a caixa vazia
     app.terms_match = app.prefs.term_match;
-    app.terms_scope = app.prefs.search_scope;
     app.terms_text = try init.gpa.alloc(u8, terms_box_size + 1);
     @memset(app.terms_text, 0);
     var theme = app.prefs.theme;

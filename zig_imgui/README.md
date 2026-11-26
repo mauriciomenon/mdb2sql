@@ -162,8 +162,9 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   `SELECT * FROM ...`; **Run** (Ctrl+Enter), first 10,000 rows shown; a run that works clears the previous error next
   to the button and in the status bar, an error clears the old grid.
 - **Advanced Search** tab (Ctrl+4): paste a list (one term per line, for example an Excel column) in the box; **Whole value** |
-  **Contains** (default in **Settings > Term matching**: whole value), **This table** | **All tables** (default: the
-  default search scope), **Search terms** (Ctrl+Enter) and the count `<n> terms, <n> repeated` (empty lines and the
+  **Contains** (default in **Settings > Term matching**: whole value), **This table** | **All tables** (always starts
+  in All tables, whatever the Data tab's default scope; with This table the summary ends in `(only in <table>)`),
+  **Search terms** (Ctrl+Enter) and the count `<n> terms, <n> repeated` (empty lines and the
   spaces at the ends do not count; a repeated term is searched once). Whole value: the cell as text, without the spaces
   at the ends, equals the term ignoring case; when a term reads as a number it also matches by value, with a loose
   rule for US and BR/European formats: a text has up to two readings, "." decimal with "," thousands and "," decimal
