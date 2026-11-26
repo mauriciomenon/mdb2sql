@@ -23,25 +23,6 @@ pub(crate) fn is_sqlite_file(path: &Path) -> bool {
 // arquivos antigos usa (hoje nada numerico vai como texto, secao 19 h)
 const EXACT_AS_TEXT: [(&str, &str); 3] = [("TEXT_HUGE128", "HUGEINT"), ("TEXT_UHUGE128", "UHUGEINT"), ("TEXT_UBIG64", "UBIGINT")];
 
-// (precisao, casas) de um DECIMAL(p,s) do DuckDB
-fn decimal_parts(duck: &str) -> Option<(u32, u32)> {
-    let args = duck.trim().to_ascii_uppercase().strip_prefix("DECIMAL(")?.strip_suffix(')')?.to_string();
-    let (p, s) = args.split_once(',')?;
-    Some((p.trim().parse().ok()?, s.trim().parse().ok()?))
-}
-
-// NIVEL BASICO: Tipo declarado no SQLite para uma coluna DuckDB e o que se le dela (secao 19 h: nada numerico chega ao
-// SQLite como texto). DECIMAL com casas: declarado REAL_DECIMAL(p,s) (afinidade REAL; volta DECIMAL(p,s) na leitura) e
-// gravado como REAL (CAST para DOUBLE); DECIMAL sem casas: INTEGER (ate 18 digitos) ou REAL; o resto com o nome do
-// DuckDB (afinidade INTEGER, REAL ou NUMERIC)
-fn lite_column(name: &str, duck: &str) -> (String, String) {
-    match decimal_parts(duck) {
-        Some((_, s)) if s > 0 => (format!("REAL_{}", duck.trim().to_ascii_uppercase()), format!("CAST({} AS DOUBLE)", ident(name))),
-        Some((p, _)) if p <= 18 => (duck.to_string(), format!("CAST({} AS BIGINT)", ident(name))),
-        Some(_) => (duck.to_string(), format!("CAST({} AS DOUBLE)", ident(name))),
-        None => (duck.to_string(), ident(name)),
-    }
-}
 
 // NIVEL BASICO: Tipo declarado no SQLite vira tipo do DuckDB (regras de afinidade do SQLite)
 // NIVEL TECNICO: the exporter below declares DuckDB type names, so a round trip keeps them
@@ -147,8 +128,8 @@ fn import_table(duck: &duckdb::Connection, lite: &rusqlite::Connection, table: &
     appender.flush().map_err(|e| e.to_string())
 }
 
-// NIVEL BASICO: Valor do DuckDB para gravar no SQLite: numero como INTEGER ou REAL, nunca texto (secao 19 h); datas e
-// horas como texto ISO. Os DECIMAL ja chegam como BIGINT ou DOUBLE (lite_column)
+// NIVEL BASICO: Valor do DuckDB para gravar no SQLite: numero como numero (INTEGER ou REAL; o SQLite nao tem decimal:
+// o DECIMAL vai como REAL e a coluna continua declarada DECIMAL(p,s)), nunca texto; datas e horas como texto ISO
 // shortcut: an integer beyond i64 goes as REAL (about 16 digits kept); store such ids as text only if a database ever
 // needs them exact
 fn duck_to_lite(value: DuckRef) -> LiteValue {
@@ -168,6 +149,7 @@ fn duck_to_lite(value: DuckRef) -> LiteValue {
         DuckRef::Float(f) => LiteValue::Real(f.into()),
         DuckRef::Double(f) => LiteValue::Real(f),
         DuckRef::Blob(b) => LiteValue::Blob(b.to_vec()),
+        DuckRef::Decimal(d) => d.to_string().parse().map_or_else(|_| LiteValue::Text(d.to_string()), LiteValue::Real),
         // data, hora e outros nao numericos: o texto mostrado
         other => LiteValue::Text(json_text(&value_to_json(other))),
     }
@@ -197,10 +179,11 @@ pub fn export(
         // tipo declarado e expressao lida do DuckDB, por coluna
         let mut defs = Vec::new();
         let mut reads = Vec::new();
+        // secao 20: o tipo e da coluna (o schema): o SQLite declara o tipo do DuckDB (DECIMAL(19,4), DOUBLE, BIGINT...)
+        // e cada valor vai com a sua natureza (numero como numero), sem CAST
         for (name, duck_type) in &columns {
-            let (lite, read) = lite_column(name, duck_type);
-            defs.push(format!("{} {lite}", ident(name)));
-            reads.push(read);
+            defs.push(format!("{} {duck_type}", ident(name)));
+            reads.push(ident(name));
         }
         let marks = vec!["?"; columns.len()].join(", ");
 

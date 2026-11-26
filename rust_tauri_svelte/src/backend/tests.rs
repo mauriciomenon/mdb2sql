@@ -670,8 +670,8 @@ mod tests {
                 "id INTEGER",
                 "tiny SMALLINT",
                 "small INTEGER",
-                "price REAL_DECIMAL(19,4)",
-                "exact REAL_DECIMAL(18,4)",
+                "price DECIMAL(19,4)",
+                "exact DECIMAL(18,4)",
                 "ratio DOUBLE",
                 "name VARCHAR",
                 "note VARCHAR",
@@ -699,13 +699,16 @@ mod tests {
             )
             .unwrap();
         assert_eq!((price_type.as_str(), over_20, total), ("real", 1, 1234567.8912));
-        // secao 19 h: Moeda, Decimal com casas e Double sao numero no SQLite convertido (nunca texto), inteiros INTEGER
-        let kinds: Vec<String> = lite
-            .prepare("SELECT typeof(id), typeof(tiny), typeof(small), typeof(price), typeof(exact), typeof(ratio) FROM \"Sample Types\" WHERE id = 1")
-            .unwrap()
-            .query_row([], |r| (0..6).map(|i| r.get::<_, String>(i)).collect())
+        // secoes 19 h e 20: o tipo e da coluna (o schema acima: DECIMAL(19,4), DECIMAL(18,4), DOUBLE...) e coluna numerica
+        // tem numero: nenhum texto nas colunas numericas do SQLite convertido
+        let text_in_numbers: i64 = lite
+            .query_row(
+                "SELECT count(*) FILTER (WHERE 'text' IN (typeof(id), typeof(tiny), typeof(small), typeof(price), typeof(exact), typeof(ratio))) FROM \"Sample Types\"",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(kinds, ["integer", "integer", "integer", "real", "real", "real"]);
+        assert_eq!(text_in_numbers, 0);
         drop(lite);
 
         // o que o app mostra veio do SQLite e tem os tipos do Access
@@ -1136,9 +1139,9 @@ mod tests {
         }
     }
 
-    // secao 19 h (substitui a auditoria externa 4): no SQLite salvo nada numerico vai como texto. DECIMAL com casas e REAL
-    // (~15 digitos), DECIMAL sem casas e inteiro e INTEGER; o que passa do i64 vai REAL. Os tipos voltam iguais e, no
-    // DuckDB salvo, DECIMAL continua DECIMAL exato
+    // secoes 19 h e 20 (substituem a auditoria externa 4): no SQLite salvo cada coluna tem o tipo do DuckDB no schema
+    // (DECIMAL(p,s) continua DECIMAL(p,s)) e nada numerico vai como texto (o SQLite guarda o numero, ~15 digitos); os
+    // tipos voltam iguais e, no DuckDB salvo, DECIMAL continua DECIMAL exato
     #[test]
     fn sqlite_export_writes_every_number_as_a_number() {
         let dir = tempdir().unwrap();
@@ -1158,16 +1161,23 @@ mod tests {
         export::export_database(&manager.export_connection().unwrap(), "sqlite", &out, &mut ok_progress()).unwrap();
 
         let lite = rusqlite::Connection::open(&out).unwrap();
-        let kinds = |id: &str| -> Vec<String> {
-            lite.query_row(
-                &format!("SELECT typeof(d), typeof(h), typeof(u), typeof(uh), typeof(small), typeof(whole), typeof(money) FROM big WHERE {id}"),
-                [],
-                |r| (0..7).map(|i| r.get::<_, String>(i)).collect(),
-            )
+        // secao 20: o schema do SQLite tem o tipo de cada coluna; coluna numerica tem numero (nenhum texto)
+        let schema: Vec<String> = lite
+            .prepare("SELECT type FROM pragma_table_info('big')")
             .unwrap()
-        };
-        assert_eq!(kinds("uh = 7"), ["real", "real", "real", "integer", "real", "integer", "real"]);
-        assert_eq!(kinds("uh = 0"), ["real", "integer", "integer", "integer", "null", "null", "real"]);
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(schema, ["DECIMAL(38,10)", "HUGEINT", "UBIGINT", "UHUGEINT", "DECIMAL(10,2)", "DECIMAL(12,0)", "DECIMAL(19,4)"]);
+        let text: i64 = lite
+            .query_row(
+                "SELECT count(*) FILTER (WHERE 'text' IN (typeof(d), typeof(h), typeof(u), typeof(uh), typeof(small), typeof(whole), typeof(money))) FROM big",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(text, 0);
         let (sum, over): (f64, i64) = lite.query_row("SELECT sum(money), count(*) FROM big WHERE money > 2000000", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!(over, 1, "money compares as a number");
         assert!(sum > 9.2e14, "{sum}");
@@ -1494,9 +1504,9 @@ mod tests {
         assert_eq!(manager.get_table_schema("a_pts").unwrap().len(), 3);
     }
 
-    // BRIEF secao 13 a: Valor inteiro com numeros, regra frouxa (dados em formato EUA e BR/Europa): termo e celula casam
-    // quando alguma leitura de um e igual a alguma do outro. Casam: 216 com 216.0, "216,0" e "216"; 0,1 com 0.1; 1234.5
-    // com "1.234,5"; 1,234 com 1234 e com 1.234. Nao casam: 216 com 2160 nem com 216.5. Texto que nao e numero: como antes
+    // BRIEF secoes 13 a e 20: Valor inteiro com numeros, regra frouxa SO no termo (formato EUA ou BR/Europa), comparado
+    // com as colunas NUMERICAS do schema pelo valor: 216 acha 216.0; 0,1 acha 0.1; 1,234 acha 1234. Coluna de texto e
+    // texto: "216" acha a celula "216", mas "216,0" e "1.234,5" numa coluna de texto nao sao lidos como numero
     #[test]
     fn term_whole_value_reads_numbers_loosely() {
         use crate::backend::terms::{self, TermHit};
@@ -1518,13 +1528,13 @@ mod tests {
             let terms: Vec<String> = terms.iter().map(|t| t.to_string()).collect();
             terms::search(&manager.export_connection().unwrap(), &terms, true, &["n".to_string()], &mut ok_progress()).unwrap()
         };
-        // "216": linha 1 (i 216 e o texto "216,0") e linha 5 ("216"); nunca 2160 nem 216.5 (linha 2)
-        // "0,1": d 0.1; "1234.5": m 1234.50 e o texto "1.234,5"; "1,234": i 1234 (linha 4) e m 1.23 nao; "1234567": "1,234.567"
-        // nao: e 1234.567, e "12,34,567" (milhar so em grupos de 3: nao e numero) e "1234,567" (1234.567) tambem nao, como no
-        // Python; "abc": texto; "216.50": d 216.5; "1": nunca "0,1" (0.1) nem 1.23
+        // "216": linha 1 (i 216) e linha 5 (o texto "216"); nunca 2160 nem 216.5 (linha 2) nem o texto "216,0"
+        // "0,1": d 0.1 (linha 1); "1234.5": m 1234.50 (linha 1; o texto "1.234,5" da linha 2 nao); "1,234": i 1234 (linha
+        // 4) e m 1.23 nao; "1234567": nada (os textos nao sao lidos); "abc": texto; "216.50": d 216.5 (linha 2); "2.160":
+        // i 2160 (linha 2); "1": nunca 0.1 nem 1.23
         let hits = search(&["216", "0,1", "1234.5", "1,234", "1234567", "abc", "216.50", "2.160", "1"]);
         // secao 19 d: cada linha conta uma vez, no primeiro termo que a achou (0 = achou so linhas ja contadas)
-        assert_eq!(hits, [hit(0, 2), hit(1, 0), hit(2, 1), hit(3, 1), hit(5, 1), hit(6, 0), hit(7, 0)]);
+        assert_eq!(hits, [hit(0, 2), hit(1, 0), hit(2, 0), hit(3, 1), hit(5, 1), hit(6, 1), hit(7, 0)]);
         // sem termo numerico, so o texto (o caminho de antes)
         assert_eq!(search(&["ABC", "zzz"]), [hit(0, 1)]);
     }

@@ -108,28 +108,30 @@ fn import_odbc(_: &duckdb::Connection, _: &str, _: &mut dyn FnMut(usize, usize, 
 
 #[cfg(windows)]
 enum Fetch {
+    Int,
     Float,
     Binary,
     Text,
 }
 
 // NIVEL BASICO: Tipo ODBC da coluna vira tipo do DuckDB e o jeito de buscar o valor
-// NIVEL TECNICO: numbers that must stay exact (DECIMAL, integers, dates) travel as text and
-// DuckDB casts them on append; floating point goes as f64 to keep every digit
+// NIVEL TECNICO: integers come as i64 and floating point as f64 (native values, secao 20); DECIMAL and dates travel as
+// text and DuckDB parses them exactly into the typed column on append
 #[cfg(windows)]
 fn odbc_column(data_type: DataType) -> (String, Fetch) {
     let text = |t: &str| (t.to_string(), Fetch::Text);
+    let int = |t: &str| (t.to_string(), Fetch::Int);
     match data_type {
         DataType::Bit => text("BOOLEAN"),
         // o Byte do Access vai de 0 a 255
-        DataType::TinyInt | DataType::SmallInt => text("SMALLINT"),
-        DataType::Integer => text("INTEGER"),
-        DataType::BigInt => text("BIGINT"),
+        DataType::TinyInt | DataType::SmallInt => int("SMALLINT"),
+        DataType::Integer => int("INTEGER"),
+        DataType::BigInt => int("BIGINT"),
         DataType::Real => ("FLOAT".into(), Fetch::Float),
         DataType::Float { .. } | DataType::Double => ("DOUBLE".into(), Fetch::Float),
         // Numeric(p,0) do Access e inteiro (secao 19 a: RTUNO, PNTNO); acima de 18 digitos fica DECIMAL (exato)
         DataType::Numeric { precision, scale: 0 } | DataType::Decimal { precision, scale: 0 } if (1..=18).contains(&precision) => {
-            text("BIGINT")
+            int("BIGINT")
         }
         DataType::Numeric { precision, scale } | DataType::Decimal { precision, scale }
             if (1..=38).contains(&precision) && (0..=precision as i16).contains(&scale) =>
@@ -191,6 +193,11 @@ fn import_odbc(duck: &duckdb::Connection, path: &str, progress: &mut dyn FnMut(u
             for (c, how) in fetch.iter().enumerate() {
                 let col = c as u16 + 1;
                 values.push(match how {
+                    Fetch::Int => {
+                        let mut v = Nullable::<i64>::null();
+                        row.get_data(col, &mut v).map_err(err)?;
+                        v.into_opt().map_or(DuckValue::Null, DuckValue::BigInt)
+                    }
                     Fetch::Float => {
                         let mut v = Nullable::<f64>::null();
                         row.get_data(col, &mut v).map_err(err)?;
