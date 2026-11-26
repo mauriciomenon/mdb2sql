@@ -132,11 +132,11 @@ test('found rows are copied with the header and no extra line', () => {
   assert.equal(rowsToTsv(['id', 'name'], rows), 'id\tname\r\n1\t"x\ty"\r\n2\t');
   assert.equal(rowsToTsv(['id'], []), 'id');
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
-  // todas as linhas achadas (limit 0), sem a coluna Termo (a primeira)
-  assert.match(app, /invoke\('terms_rows', \{ table: termsTable, limit: 0, label: t\('terms\.col'\) \}\);\s*const names = all\.columns\.slice\(1\)\.map\(\(col\) => col\.name\);/);
-  assert.match(app, /extra=\{termsExtra\}\s*copySkip=\{1\}/);
+  // todas as linhas achadas (limit 0), so com as colunas da tabela (secao 19 d: nao ha coluna Termo)
+  assert.match(app, /invoke\('terms_rows', \{ table: termsTable, limit: 0 \}\);\s*const names = all\.columns\.map\(\(col\) => col\.name\);/);
+  assert.doesNotMatch(app, /copySkip|terms\.col/);
   const grid = readFileSync(new URL('./Grid.svelte', import.meta.url), 'utf8');
-  assert.match(grid, /const names = columns\.slice\(copySkip\)\.map\(\(col\) => col\.name\);/);
+  assert.match(grid, /const names = columns\.map\(\(col\) => col\.name\);/);
 });
 
 // padrao item 16: SQL que roda sem erro tira o erro de SQL anterior da barra de baixo e do contador (outros erros ficam)

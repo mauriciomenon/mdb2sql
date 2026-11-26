@@ -713,7 +713,6 @@
     openMenu = null;
     lang = code;
     saveSetting(LANG_KEY, code);
-    if (termsTable) openTermsTable(termsTable); // o titulo da coluna Termo vem com as linhas
   }
 
   // Settings > Escopo padrao da busca: gravado, e passa a valer tambem na pesquisa aberta (a Pesquisa Avancada nao muda)
@@ -1016,7 +1015,7 @@
     termsTable = table;
     const run = termsRun;
     try {
-      const page = await invoke('terms_rows', { table, limit, label: t('terms.col') });
+      const page = await invoke('terms_rows', { table, limit });
       if (run === termsRun && table === termsTable) termsPage = page;
     } catch (err) {
       if (run === termsRun) showError(err);
@@ -1027,8 +1026,8 @@
   // e sem a coluna Termo; colar no Excel da exatamente as linhas achadas
   async function copyTermHits() {
     try {
-      const all = await invoke('terms_rows', { table: termsTable, limit: 0, label: t('terms.col') });
-      const names = all.columns.slice(1).map((col) => col.name);
+      const all = await invoke('terms_rows', { table: termsTable, limit: 0 });
+      const names = all.columns.map((col) => col.name);
       if (await copyText(rowsToTsv(names, all.rows))) showStatus('terms.copied', { count: fmt(all.rows.length) });
     } catch (err) {
       showError(err);
@@ -1057,7 +1056,7 @@
       name: `${stem(openedPath)}_termos`,
       folder: format === 'csv',
       unit: 'Tables',
-      request: { scope: 'terms', labels: ['terms.col', 'terms.status', 'tables.name', 'tables.rows', 'terms.found', 'terms.missing', 'terms.sheetResult'].map((key) => t(key)) },
+      request: { scope: 'terms', labels: [] },
     }),
   };
   // titulos Tabela, Coluna, Tipo, Aceita nulo e os valores Sim e Nao do esquema exportado, no idioma da tela
@@ -1629,7 +1628,6 @@
                   onstatus={showStatus}
                   onerror={showError}
                   extra={termsExtra}
-                  copySkip={1}
                 />
               {/key}
             {/if}

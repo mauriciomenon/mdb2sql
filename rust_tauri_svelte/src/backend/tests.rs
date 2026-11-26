@@ -1283,8 +1283,8 @@ mod tests {
 
     // item 32: pesquisa de termos em todas as colunas (numeros e datas como texto). Valor inteiro: celula sem espacos nas
     // pontas igual ao termo, sem maiusculas; Contem: a celula contem o termo. Acertos na ordem da lista colada, depois da
-    // tabela; linha achada por 2 termos aparece 2 vezes; nao encontrados ficam de fora. Relatorio em xlsx, SQLite,
-    // DuckDB e CSV com Resumo, uma tabela por tabela com acerto e Nao encontrados
+    // tabela; linha achada por 2 termos aparece 1 vez (secao 19 d); nao encontrados ficam de fora. Relatorio em xlsx,
+    // SQLite, DuckDB e CSV: uma aba por tabela com acerto, com as colunas da tabela
     #[test]
     fn term_search_finds_whole_values_and_contained_text() {
         use crate::backend::terms::{self, TermHit};
@@ -1309,76 +1309,68 @@ mod tests {
 
         let conn = manager.export_connection().unwrap();
         let whole = terms::search(&conn, &terms, true, &tables, &mut ok_progress()).unwrap();
-        assert_eq!(whole, [hit(1, "a_pts", 2), hit(2, "a_pts", 1), hit(3, "a_pts", 1), hit(2, "b_other", 1), hit(4, "b_other", 1)]);
-        let rows = terms::rows(&conn, "a_pts", "Termo", usize::MAX).unwrap();
-        let names: Vec<&str> = rows.columns.iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(names, ["Termo", "rtu", "pnt", "name"]);
-        // ordem: o termo na ordem colada, depois a ordem da tabela; o termo como foi colado
-        let found: Vec<(String, i64)> = rows.rows.iter().map(|r| (r["Termo"].as_str().unwrap().to_string(), r["pnt"].as_i64().unwrap())).collect();
-        assert_eq!(found, [("generador x".into(), 300), ("generador x".into(), 238), ("GENERADOR Y".into(), 242), ("238".into(), 238)]);
-        assert_eq!(terms::rows(&conn, "a_pts", "Termo", 2).unwrap().rows.len(), 2, "the grid limit");
+        // secao 19 d: cada linha conta uma vez, no primeiro termo que a achou; "238" so achou a linha de "generador x" (0)
+        // e "2024-01-02" a de "GENERADOR Y" (0): os dois foram encontrados
+        assert_eq!(whole, [hit(1, "a_pts", 2), hit(2, "a_pts", 1), hit(3, "a_pts", 0), hit(2, "b_other", 1), hit(4, "b_other", 0)]);
+        let rows = terms::rows(&conn, "a_pts", usize::MAX).unwrap();
+        // so as colunas da tabela, com os titulos e os tipos dela (sem coluna Termo)
+        let names: Vec<(&str, &str)> = rows.columns.iter().map(|c| (c.name.as_str(), c.col_type.as_str())).collect();
+        assert_eq!(names, [("rtu", "INTEGER"), ("pnt", "INTEGER"), ("name", "VARCHAR")]);
+        // ordem: o primeiro termo que achou a linha (na ordem colada), depois a ordem da tabela; cada linha uma vez
+        let found: Vec<i64> = rows.rows.iter().map(|r| r["pnt"].as_i64().unwrap()).collect();
+        assert_eq!(found, [300, 238, 242]);
+        assert_eq!(terms::rows(&conn, "a_pts", 2).unwrap().rows.len(), 2, "the grid limit");
 
-        // Contem: "Y" acha as duas linhas de GENERADOR Y (que tambem achou por inteiro): cada uma aparece 2 vezes
+        // Contem: "Y" acha as linhas de GENERADOR Y, ja contadas pelo termo dele (0)
         let conn = manager.export_connection().unwrap();
         let contains = terms::search(&conn, &terms, false, &tables, &mut ok_progress()).unwrap();
         assert_eq!(
             contains,
-            [hit(1, "a_pts", 2), hit(2, "a_pts", 1), hit(3, "a_pts", 1), hit(5, "a_pts", 1), hit(2, "b_other", 1), hit(4, "b_other", 1), hit(5, "b_other", 1)]
+            [hit(1, "a_pts", 2), hit(2, "a_pts", 1), hit(3, "a_pts", 0), hit(5, "a_pts", 0), hit(2, "b_other", 1), hit(4, "b_other", 0), hit(5, "b_other", 0)]
         );
         // so esta tabela
         let conn = manager.export_connection().unwrap();
-        assert_eq!(terms::search(&conn, &terms, true, &["b_other".to_string()], &mut ok_progress()).unwrap(), [hit(2, "b_other", 1), hit(4, "b_other", 1)]);
+        assert_eq!(terms::search(&conn, &terms, true, &["b_other".to_string()], &mut ok_progress()).unwrap(), [hit(2, "b_other", 1), hit(4, "b_other", 0)]);
         // Cancelar (o progresso devolve erro) para a pesquisa
         let conn = manager.export_connection().unwrap();
         assert!(terms::search(&conn, &terms, true, &tables, &mut |_, _, _| Err("[[err.searchCancelled]]".into())).is_err());
 
-        // relatorio da pesquisa por inteiro
+        // relatorio da pesquisa por inteiro (secao 19 d): so uma aba (tabela, arquivo CSV) por tabela com acerto, com o nome
+        // dela, as linhas achadas uma vez e as colunas originais; sem "Resultado Filtro" nem coluna Termo
         let conn = manager.export_connection().unwrap();
         terms::search(&conn, &terms, true, &tables, &mut ok_progress()).unwrap();
-        // BRIEF secao 13 i: uma aba "Resultado Filtro" com tudo (encontrados e nao encontrados) e uma por tabela, sem sufixo
-        let labels: Vec<String> = ["Termo", "Situação", "Tabela", "Linhas", "Encontrado", "Não encontrado", "Resultado Filtro"].map(String::from).to_vec();
         let with_hits = ["a_pts".to_string(), "b_other".to_string()];
-        let names = terms::report(&conn, &with_hits, &labels).unwrap();
-        assert_eq!(names, ["Resultado Filtro", "a_pts", "b_other"]);
+        let names = terms::report(&conn, &with_hits).unwrap();
+        assert_eq!(names, with_hits);
         let out = dir.path().join("rel.sqlite");
         export::write_tables(&conn, &names, "sqlite", &out, &mut ok_progress()).unwrap();
         let rel = rusqlite::Connection::open(&out).unwrap();
-        let summary: Vec<(String, String, String, i64)> = rel
-            .prepare("SELECT \"Termo\", \"Situação\", \"Tabela\", \"Linhas\" FROM \"Resultado Filtro\"")
+        let cols: Vec<(String, String)> = rel
+            .prepare("SELECT name, type FROM pragma_table_info('a_pts')")
             .unwrap()
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        let line = |t: &str, s: &str, tb: &str, n: i64| (t.to_string(), s.to_string(), tb.to_string(), n);
-        assert_eq!(
-            summary,
-            [
-                line("PNTNAM", "Não encontrado", "", 0),
-                line("generador x", "Encontrado", "a_pts", 2),
-                line("GENERADOR Y", "Encontrado", "a_pts", 1),
-                line("GENERADOR Y", "Encontrado", "b_other", 1),
-                line("238", "Encontrado", "a_pts", 1),
-                line("2024-01-02", "Encontrado", "b_other", 1),
-                line("Y", "Não encontrado", "", 0),
-            ]
-        );
-        let cols: Vec<String> = rel.prepare("SELECT name FROM pragma_table_info('a_pts')").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
-        assert_eq!(cols, ["Termo", "rtu", "pnt", "name"]);
-        assert_eq!(rel.query_row("SELECT count(*) FROM a_pts", [], |r| r.get::<_, i64>(0)).unwrap(), 4);
+        let col = |n: &str, t: &str| (n.to_string(), t.to_string());
+        assert_eq!(cols, [col("rtu", "INTEGER"), col("pnt", "INTEGER"), col("name", "VARCHAR")]);
+        assert_eq!(rel.query_row("SELECT count(*) FROM a_pts", [], |r| r.get::<_, i64>(0)).unwrap(), 3);
+        assert_eq!(rel.query_row("SELECT count(*) FROM b_other", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        let tables_out: i64 = rel.query_row("SELECT count(*) FROM sqlite_master WHERE type = 'table'", [], |r| r.get(0)).unwrap();
+        assert_eq!(tables_out, 2);
         drop(rel);
         for format in ["duckdb", "xlsx"] {
             let file = dir.path().join(format!("rel.{format}"));
             let done = export::write_tables(&conn, &names, format, &file, &mut ok_progress()).unwrap();
-            assert_eq!(done.count, 3);
+            assert_eq!(done.count, 2);
             assert!(file.is_file());
         }
         let folder = dir.path().join("csv");
         std::fs::create_dir(&folder).unwrap();
         export::export_folder(&conn, &names, &folder, &mut ok_progress()).unwrap();
-        let result = std::fs::read_to_string(folder.join("Resultado Filtro.csv")).unwrap();
-        assert!(result.starts_with("\u{FEFF}Termo,Situação,Tabela,Linhas\r\nPNTNAM,Não encontrado,,0\r\n"), "{result}");
-        assert_eq!(export::csv_files(&folder, &terms::report_names(&with_hits, "Resultado Filtro")).iter().filter(|f| f.exists()).count(), 3);
+        let a_csv = std::fs::read_to_string(folder.join("a_pts.csv")).unwrap();
+        assert_eq!(a_csv, "\u{FEFF}rtu,pnt,name\r\n50,300,GENERADOR X\r\n50,238,Generador X\r\n50,242,  generador y  \r\n");
+        assert_eq!(export::csv_files(&folder, &with_hits).iter().filter(|f| f.exists()).count(), 2);
         // a tabela de verdade nao mudou (as views do relatorio sao temporarias da conexao da pesquisa)
         assert_eq!(manager.get_row_count("a_pts", &[], "").unwrap(), 4);
         assert_eq!(manager.get_table_schema("a_pts").unwrap().len(), 3);
@@ -1413,7 +1405,8 @@ mod tests {
         // nao: e 1234.567, e "12,34,567" (milhar so em grupos de 3: nao e numero) e "1234,567" (1234.567) tambem nao, como no
         // Python; "abc": texto; "216.50": d 216.5; "1": nunca "0,1" (0.1) nem 1.23
         let hits = search(&["216", "0,1", "1234.5", "1,234", "1234567", "abc", "216.50", "2.160", "1"]);
-        assert_eq!(hits, [hit(0, 2), hit(1, 1), hit(2, 2), hit(3, 1), hit(5, 1), hit(6, 1), hit(7, 1)]);
+        // secao 19 d: cada linha conta uma vez, no primeiro termo que a achou (0 = achou so linhas ja contadas)
+        assert_eq!(hits, [hit(0, 2), hit(1, 0), hit(2, 1), hit(3, 1), hit(5, 1), hit(6, 0), hit(7, 0)]);
         // sem termo numerico, so o texto (o caminho de antes)
         assert_eq!(search(&["ABC", "zzz"]), [hit(0, 1)]);
     }
@@ -1442,8 +1435,8 @@ mod tests {
         assert_eq!(attached.rows, [json!({ "database_name": "memory" }), json!({ "database_name": "src" })]);
     }
 
-    // revisao do Python (B2): tabela com uma coluna chamada como a coluna do termo (Termo, term, TÉRMINO) nao quebra a
-    // grade nem a copia: a coluna do termo ganha "_" e as da tabela ficam inteiras
+    // revisao do Python (B2) e secao 19 d: a grade e a copia da Pesquisa Avancada tem so as colunas da tabela, com os
+    // titulos dela (uma tabela com colunas "Termo" e "Termo_" fica igual; nada de coluna a mais)
     #[test]
     fn term_column_never_collides_with_a_table_column() {
         use crate::backend::terms;
@@ -1457,13 +1450,10 @@ mod tests {
         manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
         let conn = manager.export_connection().unwrap();
         terms::search(&conn, &["A".to_string()], true, &["t".to_string()], &mut ok_progress()).unwrap();
-        for label in ["Termo", "termo"] {
-            let rows = terms::rows(&conn, "t", label, usize::MAX).unwrap();
-            let names: Vec<&str> = rows.columns.iter().map(|c| c.name.as_str()).collect();
-            let term = format!("{label}__");
-            assert_eq!(names, [term.as_str(), "Termo", "Termo_", "v"], "{label}");
-            assert_eq!(rows.rows, [json!({ term: "A", "Termo": "a", "Termo_": "b", "v": 1 })]);
-        }
+        let rows = terms::rows(&conn, "t", usize::MAX).unwrap();
+        let names: Vec<&str> = rows.columns.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["Termo", "Termo_", "v"]);
+        assert_eq!(rows.rows, [json!({ "Termo": "a", "Termo_": "b", "v": 1 })]);
     }
 
     // revisao do Python (P1): as marcadas voltam na ordem da tabela (ORDER BY rowid) tambem numa tabela grande, lida em
@@ -1631,7 +1621,7 @@ mod tests {
                 with_hits.dedup();
                 let missing: Vec<&String> = terms.iter().enumerate().filter(|(i, _)| !hits.iter().any(|h| h.ord == *i)).map(|(_, t)| t).collect();
                 eprintln!("DB3 terms whole={whole}: {} terms, all tables in {time:?}; tables {with_hits:?}; not found {missing:?}", terms.len());
-                let sostat = terms::rows(&conn, "RANGER_SOSTAT", "Termo", usize::MAX).unwrap();
+                let sostat = terms::rows(&conn, "RANGER_SOSTAT", usize::MAX).unwrap();
                 // RTUNO e PNTNO sao texto num banco e numero em outro: compara o texto da grade
                 let text = |v: &serde_json::Value| crate::backend::db_manager::json_text(v);
                 let points: Vec<(String, String, String)> = sostat.rows.iter().map(|r| (text(&r["RTUNO"]), text(&r["PNTNO"]), text(&r["SUBNAM"]))).collect();

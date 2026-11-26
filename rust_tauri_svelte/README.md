@@ -102,11 +102,11 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
   216 acha 216.0, "216,0" e "216"; 1234.5 acha "1.234,5"; 216 nao acha 2160) ou **Contains**, sem diferenciar maiusculas, e
   **All tables** (sempre ao abrir, qualquer que seja o escopo padrao da aba Data) ou **This table** (o resumo diz
   "(only in <tabela>)"); **Search terms** (ou `Ctrl+Enter`) procura no motor, em todas as colunas, com
-  progresso e **Cancel**. Mostra o resumo, as tabelas com acerto e a grade da escolhida (coluna **Term** + as colunas
-  da tabela, na ordem da lista colada) e os termos nao encontrados (texto copiavel). **Copy the rows found in this
-  table** copia todas as linhas achadas com o cabecalho e sem a coluna Term; o relatorio (Export > Term search report)
-  sai em Excel, CSV (pasta), SQLite ou DuckDB com a aba **Filter Result** (cada termo, onde achou e quantas linhas,
-  tambem os nao encontrados) e uma aba por tabela com acerto.
+  progresso e **Cancel**. Mostra o resumo, as tabelas com acerto e a grade da escolhida (so as colunas da tabela, com
+  os titulos e os tipos dela; cada linha achada uma vez, na ordem da lista colada) e os termos nao encontrados (texto
+  copiavel). **Copy the rows found in this table** copia todas as linhas achadas com o cabecalho; o relatorio (Export >
+  Advanced Search report) sai em Excel, CSV (pasta), SQLite ou DuckDB com uma aba (tabela, arquivo) por tabela com
+  acerto, as mesmas colunas e tipos da tabela.
 - **Columns...**: marque e desmarque colunas (busca por nome no topo, caixas em grade que acompanha a janela).
   **Show all** e **Hide all** agem nas colunas listadas (com busca, so nelas). A barra de status mostra "N hidden
   columns". A pesquisa olha todas as colunas e a exportacao sai com todas.

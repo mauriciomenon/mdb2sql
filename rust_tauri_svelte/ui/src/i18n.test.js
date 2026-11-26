@@ -198,14 +198,8 @@ test('new texts of Save, exit, marked rows and Terms are the agreed ones', () =>
     // secao 17: com Esta tabela o resumo diz onde pesquisou
     ['terms.summaryIn', { found: 0, total: 8, rows: 0, tables: 0, table: 'T' }, '0 de 8 termos encontrados: 0 linhas em 0 tabelas (só em T)', '0 of 8 terms found: 0 rows in 0 tables (only in T)', '0 de 8 términos encontrados: 0 filas en 0 tablas (solo en T)'],
     ['terms.progress', { done: 2, total: 287, item: 'T' }, 'Pesquisando termos: tabela 2 de 287 (T)', 'Searching terms: table 2 of 287 (T)', 'Buscando términos: tabla 2 de 287 (T)'],
-    ['terms.col', {}, 'Termo', 'Term', 'Término'],
     ['terms.notFound', { count: 1 }, 'Não encontrados (1)', 'Not found (1)', 'No encontrados (1)'],
     ['terms.copyHits', {}, 'Copiar as linhas encontradas desta tabela', 'Copy the rows found in this table', 'Copiar las filas encontradas en esta tabla'],
-    // BRIEF secao 13 i: uma aba so com o resultado (encontrados e nao encontrados) e uma por tabela
-    ['terms.sheetResult', {}, 'Resultado Filtro', 'Filter Result', 'Resultado Filtro'],
-    ['terms.status', {}, 'Situação', 'Status', 'Situación'],
-    ['terms.found', {}, 'Encontrado', 'Found', 'Encontrado'],
-    ['terms.missing', {}, 'Não encontrado', 'Not found', 'No encontrado'],
     // item 34 (BRIEF secao 11)
     // BRIEF secao 13 b: o Log diz o formato real do arquivo salvo
     ['status.reused', { name: 'DB3.accdb', format: 'DuckDB', path: 'P' }, 'DB3.accdb: aberto o DuckDB salvo dele (P)', 'DB3.accdb: opened the DuckDB saved from it (P)', 'DB3.accdb: abierto el DuckDB guardado de él (P)'],

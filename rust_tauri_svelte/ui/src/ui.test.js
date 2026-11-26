@@ -91,7 +91,8 @@ test('each export sends its request and suggests its name', () => {
   assert.match(exports, /tables: \(\) => \(\{ folder: true, unit: 'Tables', request: \{ scope: 'tables' \} \}\),/);
   assert.match(exports, /name: `\$\{stem\(openedPath\)\}_termos`,\s*folder: format === 'csv',/);
   assert.match(app, /const schemaLabels = \(\) => \['tables\.name', 'schema\.column', 'schema\.type', 'schema\.nullable', 'schema\.yes', 'schema\.no'\]\.map\(\(key\) => t\(key\)\);/);
-  assert.match(exports, /\['terms\.col', 'terms\.status', 'tables\.name', 'tables\.rows', 'terms\.found', 'terms\.missing', 'terms\.sheetResult'\]\.map\(\(key\) => t\(key\)\)/);
+  // secao 19 d: o relatorio e so uma aba por tabela com acerto, com as colunas da tabela (sem titulos a mandar)
+  assert.match(exports, /request: \{ scope: 'terms', labels: \[\] \},/);
   const start = appFunction('startExport');
   assert.match(start, /\? await invoke\('plugin:dialog\|open', \{ options: \{ title, directory: true, defaultPath: dir \|\| undefined \} \}\)/);
   assert.match(start, /const existing = await invoke\('export_existing', \{ request \}\);\s*const message = t\('ask\.overwriteMany', \{ count: fmt\(existing\) \}\);\s*if \(existing && \(await invoke\('plugin:dialog\|message', \{ title, message, kind: 'warning', buttons: 'YesNo' \}\)\) !== 'Yes'\) return;/);
@@ -589,7 +590,7 @@ test('Terms tab: box, selectors, summary, tables with hits and grid, terms not f
   assert.match(appFunction('dropTerms'), /termsRun\+\+;\s*termsWork = null;\s*termsResult = null;/);
   assert.match(appFunction('resetTable'), /dropTerms\(\);/);
   // a grade: limite de linhas como em Dados (Linhas 100/500/1000)
-  assert.match(appFunction('openTermsTable'), /const page = await invoke\('terms_rows', \{ table, limit, label: t\('terms\.col'\) \}\);\s*if \(run === termsRun && table === termsTable\) termsPage = page;/);
+  assert.match(appFunction('openTermsTable'), /const page = await invoke\('terms_rows', \{ table, limit \}\);\s*if \(run === termsRun && table === termsTable\) termsPage = page;/);
   assert.match(appFunction('setLimit'), /limit = next;\s*offset = 0;\s*openTable\(selectedTable\);\s*if \(termsTable\) openTermsTable\(termsTable\);/);
 });
 

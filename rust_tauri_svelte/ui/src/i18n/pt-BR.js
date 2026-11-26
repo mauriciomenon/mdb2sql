@@ -131,14 +131,9 @@ export default {
   'terms.summaryIn':
     '{found} de {total} {total|termo encontrado|termos encontrados}: {rows} {rows|linha|linhas} em {tables} {tables|tabela|tabelas} (só em {table})',
   'terms.progress': 'Pesquisando termos: tabela {done} de {total} ({item})',
-  'terms.col': 'Termo',
   'terms.notFound': 'Não encontrados ({count})',
   'terms.copyHits': 'Copiar as linhas encontradas desta tabela',
   'terms.copied': '{count} {count|linha copiada|linhas copiadas}',
-  'terms.sheetResult': 'Resultado Filtro',
-  'terms.status': 'Situação',
-  'terms.found': 'Encontrado',
-  'terms.missing': 'Não encontrado',
 
   'marks.tip': 'Marcar linhas',
   'marks.count': ', {count} {count|marcada|marcadas}',

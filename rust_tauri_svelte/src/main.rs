@@ -366,7 +366,7 @@ fn export(app: AppHandle, state: State<'_, AppState>, request: ExportRequest) ->
         "terms" => {
             let slot = state.terms.lock().unwrap();
             let run = slot.as_ref().ok_or("[[err.searchCancelled]]")?;
-            let names = terms::report(&run.conn, &run.tables, &request.labels)?;
+            let names = terms::report(&run.conn, &run.tables)?;
             match format {
                 "csv" => export::export_folder(&run.conn, &names, target, &mut progress),
                 _ => export::write_tables(&run.conn, &names, format, target, &mut progress),
@@ -381,13 +381,8 @@ fn export(app: AppHandle, state: State<'_, AppState>, request: ExportRequest) ->
 #[tauri::command(async)]
 fn export_existing(state: State<'_, AppState>, request: ExportRequest) -> Result<usize, String> {
     let names = match request.scope.as_str() {
-        "terms" => {
-            let [.., result] = request.labels.as_slice() else {
-                return Err("Term report needs 7 labels".to_string());
-            };
-            let slot = state.terms.lock().unwrap();
-            terms::report_names(&slot.as_ref().ok_or("[[err.searchCancelled]]")?.tables, result)
-        }
+        // relatorio: um arquivo por tabela com acerto, com o nome dela
+        "terms" => state.terms.lock().unwrap().as_ref().ok_or("[[err.searchCancelled]]")?.tables.clone(),
         _ => state.db_manager.lock().unwrap().list_tables()?,
     };
     Ok(export::csv_files(Path::new(&request.path), &names).iter().filter(|file| file.exists()).count())
@@ -452,13 +447,13 @@ fn cancel_terms(state: State<'_, AppState>) {
     state.drop_terms();
 }
 
-// NIVEL BASICO: Linhas achadas de uma tabela na ultima pesquisa de termos: o termo (titulo `label`) e as colunas da
-// tabela; ate `limit` linhas (0 = todas, para copiar)
+// NIVEL BASICO: Linhas achadas de uma tabela na ultima pesquisa de termos: so as colunas da tabela, cada linha uma vez;
+// ate `limit` linhas (0 = todas, para copiar)
 #[tauri::command(async)]
-fn terms_rows(table: String, limit: usize, label: String, state: State<'_, AppState>) -> Result<SqlResult, String> {
+fn terms_rows(table: String, limit: usize, state: State<'_, AppState>) -> Result<SqlResult, String> {
     let slot = state.terms.lock().unwrap();
     let run = slot.as_ref().ok_or("[[err.searchCancelled]]")?;
-    terms::rows(&run.conn, &table, &label, if limit == 0 { usize::MAX } else { limit })
+    terms::rows(&run.conn, &table, if limit == 0 { usize::MAX } else { limit })
 }
 
 // Barra de titulo da janela; a versao vem do Cargo.toml (fonte unica). tauri.conf.json repete o texto para a janela

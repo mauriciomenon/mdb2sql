@@ -130,14 +130,9 @@ export default {
   'terms.summaryIn':
     '{found} of {total} {total|term|terms} found: {rows} {rows|row|rows} in {tables} {tables|table|tables} (only in {table})',
   'terms.progress': 'Searching terms: table {done} of {total} ({item})',
-  'terms.col': 'Term',
   'terms.notFound': 'Not found ({count})',
   'terms.copyHits': 'Copy the rows found in this table',
   'terms.copied': '{count} {count|row|rows} copied',
-  'terms.sheetResult': 'Filter Result',
-  'terms.status': 'Status',
-  'terms.found': 'Found',
-  'terms.missing': 'Not found',
 
   'marks.tip': 'Mark rows',
   'marks.count': ', {count} marked',
