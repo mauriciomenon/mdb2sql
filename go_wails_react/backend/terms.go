@@ -188,20 +188,20 @@ func (m *DBManager) TermRows(ctx context.Context, table string, terms []string, 
 	return queryResult(ctx, m.conn, query, limit)
 }
 
-// TermsSheets names the sheets of the term search report (also its tables and CSV files), in order: the summary, one per
-// table with rows found, the terms not found
+// TermsSheets names the sheets of the Advanced Search report (also its tables and CSV files), in order: the result
+// (owner 26/11, 13i: one sheet with every term), then one per table with rows found, named as the table
 func TermsSheets(res TermsResult) []string {
-	names := []string{i18n.T("terms.sheetSummary")}
+	names := []string{i18n.T("terms.sheetResult")}
 	for _, t := range res.Tables {
 		names = append(names, t.Table)
 	}
-	return append(names, i18n.T("terms.sheetNotFound"))
+	return names
 }
 
-// ExportTerms writes the report of a term search (res, as SearchTerms returned it). Excel: the summary sheet (Term,
-// Status, Table, Rows: one line per term and table; a term not found has no table and 0 rows), one sheet per table
-// with the rows found (the term, then the columns of the table) and the sheet of the terms not found. SQLite and
-// DuckDB: the same, as tables with those names. CSV: out is a folder, one file per sheet.
+// ExportTerms writes the report of a term search (res, as SearchTerms returned it). Excel: the result sheet (Term,
+// Status, Table, Rows: one line per term and table; a term not found has no table and 0 rows), then one sheet per
+// table with the rows found (the term, then the columns of the table). SQLite and DuckDB: the same, as tables with
+// those names. CSV: out is a folder, one file per sheet.
 func (m *DBManager) ExportTerms(ctx context.Context, res TermsResult, contains bool, format, out string, progress Progress) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -213,19 +213,18 @@ func (m *DBManager) ExportTerms(ctx context.Context, res TermsResult, contains b
 	for _, h := range res.Hits {
 		hits[h.Term] = append(hits[h.Term], h)
 	}
-	var summary, notFound [][]any
+	var summary [][]any
 	for _, t := range res.Terms {
 		for _, h := range hits[t] {
 			summary = append(summary, []any{t, i18n.T("terms.statusFound"), h.Table, h.Rows})
 		}
 		if len(hits[t]) == 0 {
 			summary = append(summary, []any{t, i18n.T("terms.statusNotFound"), "", 0})
-			notFound = append(notFound, []any{t})
 		}
 	}
 	sheets := TermsSheets(res)
 	if format == "sqlite" || format == "duckdb" {
-		sheets = uniqueFold(sheets) // a table of the database may be called as the summary
+		sheets = uniqueFold(sheets) // a table of the database may be called as the result
 	}
 	header := []string{term, i18n.T("terms.colStatus"), i18n.T("terms.colTable"), i18n.T("terms.colRows")}
 	items := []exportItem{{name: sheets[0], query: valuesQuery(header, summary)}}
@@ -236,7 +235,6 @@ func (m *DBManager) ExportTerms(ctx context.Context, res TermsResult, contains b
 		}
 		items = append(items, exportItem{name: sheets[i+1], query: query})
 	}
-	items = append(items, exportItem{name: sheets[len(sheets)-1], query: valuesQuery([]string{term}, notFound)})
 	switch format {
 	case "csv":
 		return m.writeCSVFolder(ctx, out, items, progress)

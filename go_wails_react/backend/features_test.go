@@ -343,17 +343,14 @@ func TestSearchTerms(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer f.Close()
-		if want := []string{"Summary", "outra", "pontos", "termos", "Not found"}; !reflect.DeepEqual(f.GetSheetList(), want) {
+		if want := []string{"Filter Result", "outra", "pontos", "termos"}; !reflect.DeepEqual(f.GetSheetList(), want) {
 			t.Errorf("sheets %v", f.GetSheetList())
 		}
-		summary, _ := f.GetRows("Summary")
+		summary, _ := f.GetRows("Filter Result") // owner 26/11 (13i): one sheet with every term, those not found too
 		wantSummary := [][]string{{"Term", "Status", "Table", "Rows"}, {"gerador a", "Found", "pontos", "4"}, {"gerador a", "Found", "termos", "1"},
 			{"238", "Found", "outra", "1"}, {"238", "Found", "pontos", "1"}, {"PNTNAM", "Not found", "", "0"}, {"turbina b", "Found", "pontos", "1"}}
 		if !reflect.DeepEqual(summary, wantSummary) {
 			t.Errorf("summary sheet %v\nwant %v", summary, wantSummary)
-		}
-		if nf, _ := f.GetRows("Not found"); !reflect.DeepEqual(nf, [][]string{{"Term"}, {"PNTNAM"}}) {
-			t.Errorf("not found sheet %v", nf)
 		}
 		if sheet, _ := f.GetRows("pontos"); len(sheet) != 7 || !reflect.DeepEqual(sheet[0], []string{"Term", "id", "nome", "sub", "num", "valor"}) {
 			t.Errorf("pontos sheet %v", sheet)
@@ -370,11 +367,11 @@ func TestSearchTerms(t *testing.T) {
 			files = append(files, e.Name())
 		}
 		sort.Strings(files)
-		if want := []string{"Not found.csv", "Summary.csv", "outra.csv", "pontos.csv", "termos.csv"}; !reflect.DeepEqual(files, want) || !reflect.DeepEqual(CSVNames(TermsSheets(res)), []string{"Summary.csv", "outra.csv", "pontos.csv", "termos.csv", "Not found.csv"}) {
+		if want := []string{"Filter Result.csv", "outra.csv", "pontos.csv", "termos.csv"}; !reflect.DeepEqual(files, want) || !reflect.DeepEqual(CSVNames(TermsSheets(res)), want) {
 			t.Errorf("csv files %v", files)
 		}
-		if data, _ := os.ReadFile(filepath.Join(csvDir, "Not found.csv")); string(data) != "\xEF\xBB\xBFTerm\r\nPNTNAM\r\n" {
-			t.Errorf("Not found.csv %q", data)
+		if data, _ := os.ReadFile(filepath.Join(csvDir, "Filter Result.csv")); !strings.Contains(string(data), "PNTNAM,Not found,,0") {
+			t.Errorf("Filter Result.csv %q", data)
 		}
 		// SQLite and DuckDB: the same sheets as tables
 		for _, format := range []string{"duckdb", "sqlite"} {
@@ -391,14 +388,14 @@ func TestSearchTerms(t *testing.T) {
 			}
 			tables, _ := back.ListTables()
 			sort.Strings(tables)
-			if want := []string{"Not found", "Summary", "outra", "pontos", "termos"}; !reflect.DeepEqual(tables, want) {
+			if want := []string{"Filter Result", "outra", "pontos", "termos"}; !reflect.DeepEqual(tables, want) {
 				t.Errorf("%s tables %v", format, tables)
 			}
 			if n, _ := back.GetRowCount("pontos", ""); n != 6 {
 				t.Errorf("%s: pontos has %d rows", format, n)
 			}
-			if n, _ := back.GetRowCount("Summary", ""); n != 6 {
-				t.Errorf("%s: Summary has %d rows", format, n)
+			if n, _ := back.GetRowCount("Filter Result", ""); n != 6 {
+				t.Errorf("%s: Filter Result has %d rows", format, n)
 			}
 			back.Close()
 		}
@@ -617,6 +614,18 @@ func TestQueryTablePages(t *testing.T) {
 		found, err := m.QueryTablePage(table, 50, 50, "ten")
 		if got := ids(found, "i"); err != nil || len(got) != 50 || got[0] != int64(500) {
 			t.Errorf("%s: second page of the search: %v (%v)", table, got, err)
+		}
+	}
+}
+
+// owner 26/11 (13i): the Advanced Search report has one result sheet, named in the language of the screen, then one
+// sheet per table with the name of the table, no number and no suffix
+func TestTermsReportResultSheet(t *testing.T) {
+	defer i18n.SetLang("en")
+	for lang, want := range map[string]string{"en": "Filter Result", "pt-BR": "Resultado Filtro", "es": "Resultado Filtro"} {
+		i18n.SetLang(lang)
+		if got := TermsSheets(TermsResult{Tables: []TableHits{{"RANGER_SOSTAT", 8}, {"RANGER_SOEQID", 8}}}); !reflect.DeepEqual(got, []string{want, "RANGER_SOSTAT", "RANGER_SOEQID"}) {
+			t.Errorf("%s: sheets %q", lang, got)
 		}
 	}
 }
