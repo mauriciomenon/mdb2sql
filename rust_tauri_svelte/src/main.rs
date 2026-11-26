@@ -204,12 +204,13 @@ fn display_warning(state: State<'_, AppState>) -> Option<DisplayWarning> {
     state.display_warning.clone()
 }
 
-// NIVEL BASICO: GetTableData retorna ate `limit` linhas (default 100) que passam pelos filtros e pela pesquisa e, a
+// NIVEL BASICO: GetTableData retorna ate `limit` linhas (default 100) a partir da `offset` (paginas) que passam pelos filtros e pela pesquisa e, a
 // parte, as linhas marcadas (`marked` = identidades que a tela guarda), com a identidade de cada linha
 #[tauri::command(async)]
 fn get_table_data(
     table_name: String,
     limit: i32,
+    offset: i64,
     filters: Vec<Filter>,
     search: String,
     marked: Vec<serde_json::Value>,
@@ -217,7 +218,7 @@ fn get_table_data(
 ) -> Result<TablePage, String> {
     let manager = state.db_manager.lock().unwrap();
     let limit = if limit <= 0 { 100 } else { limit };
-    manager.table_page(&table_name, limit, &filters, &search, &marked)
+    manager.table_page(&table_name, limit, offset.max(0), &filters, &search, &marked)
 }
 
 // NIVEL BASICO: GetRowCount retorna quantas linhas passam pelos filtros e pela pesquisa (sem nada: o total)

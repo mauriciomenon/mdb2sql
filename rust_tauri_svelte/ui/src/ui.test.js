@@ -317,8 +317,8 @@ test('All tables search: stale answers are dropped and a failure ends the search
   assert.match(all, /dropFound\(\);\s*const run = searchRun;/);
   assert.equal(count(all, 'if (run === searchRun)'), 2); // resposta e erro
   assert.match(all, /found = \{ tables: null \};\s*showError\(err\);/);
-  assert.match(appFunction('onSearch'), /search = event\.currentTarget\.value;\s*dropFound\(\);/);
-  assert.match(appFunction('setScope'), /scope = next;\s*dropFound\(\);/);
+  assert.match(appFunction('onSearch'), /search = event\.currentTarget\.value;\s*offset = 0;[^\n]*\n\s*dropFound\(\);/);
+  assert.match(appFunction('setScope'), /scope = next;\s*offset = 0;\s*dropFound\(\);/);
   assert.match(appFunction('openTable'), /if \(tableName !== selectedTable\) \{[^}]*dropFound\(\);\s*\}/);
   assert.match(appFunction('resetTable'), /dropFound\(\);/);
   const ui = markup('./App.svelte');
@@ -427,6 +427,23 @@ test('Data tab layout: search line, filters, grid, count line', () => {
 
 // padrao item 8 (= Go): a 720 px a barra da aba Data quebra a linha (nada cortado, sem rolagem horizontal); a busca estica
 // sem largura maxima (base 160 px, como o Go)
+// BRIEF secao 13 h: paginas ◀ ▶ na aba Dados, do tamanho de Linhas: "{tabela}: linhas 1 a 100 de N" (com busca, "de N
+// encontradas"); desabilitadas na ponta; outra pesquisa, filtro, tabela ou Linhas volta a pagina 1
+test('Data pages: range line, previous and next, back to page 1', () => {
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  assert.match(appFunction('openTable'), /invoke\('get_table_data', \{ tableName, limit, offset: at, filters: asked,/);
+  assert.match(appFunction('openTable'), /\|\| at !== offset\) return;/);
+  assert.match(appFunction('goPage'), /offset = Math\.max\(0, offset \+ step \* limit\);\s*openTable\(selectedTable\);/);
+  for (const name of ['onSearch', 'setFilters', 'setLimit', 'setScope', 'resetTable']) assert.match(appFunction(name), /offset = 0;/, name);
+  assert.match(appFunction('openTable'), /onlyMarked = false;\s*offset = 0;/); // outra tabela
+  assert.match(app, /disabled=\{busy \|\| offset === 0\} onclick=\{\(\) => goPage\(-1\)\}>◀<\/button>/);
+  assert.match(app, /disabled=\{busy \|\| offset \+ rows\.length >= matchCount\} onclick=\{\(\) => goPage\(1\)\}>▶<\/button>/);
+  assert.match(app, /\n {2}\.pages button \{\s*padding: 3px 10px;\s*\}/);
+  const pt = (key, values) => CATALOG_PT[key].replace(/\{(\w+)\|([^|}]+)\|([^}]+)\}/g, (_, n, one, many) => (values[n] === '1' ? one : many)).replace(/\{(\w+)\}/g, (_, n) => values[n]);
+  assert.equal(pt('data.range', { table: 'T', from: '1', to: '100', total: '36.804' }), 'T: linhas 1 a 100 de 36.804');
+  assert.equal(pt('data.rangeMatches', { table: 'T', from: '101', to: '123', matching: '123' }), 'T: linhas 101 a 123 de 123 encontradas');
+});
+
 // BRIEF secao 13 f (dono 26/11): nenhum botao maior que os outros numa linha das abas (Dados, SQL, Pesquisa Avancada):
 // o mesmo preenchimento dos seletores e campos, centrados na linha (nada encosta na caixa de cima ou de baixo)
 test('buttons in a tab row all have the same height', () => {
@@ -541,7 +558,7 @@ test('Terms tab: box, selectors, summary, tables with hits and grid, terms not f
   assert.match(appFunction('resetTable'), /dropTerms\(\);/);
   // a grade: limite de linhas como em Dados (Linhas 100/500/1000)
   assert.match(appFunction('openTermsTable'), /const page = await invoke\('terms_rows', \{ table, limit, label: t\('terms\.col'\) \}\);\s*if \(run === termsRun && table === termsTable\) termsPage = page;/);
-  assert.match(appFunction('setLimit'), /limit = next;\s*openTable\(selectedTable\);\s*if \(termsTable\) openTermsTable\(termsTable\);/);
+  assert.match(appFunction('setLimit'), /limit = next;\s*offset = 0;\s*openTable\(selectedTable\);\s*if \(termsTable\) openTermsTable\(termsTable\);/);
 });
 
 // item 11 do dono, como o menu do cabecalho do ImGui: Ajustar coluna/todas em toda grade (a borda do cabecalho

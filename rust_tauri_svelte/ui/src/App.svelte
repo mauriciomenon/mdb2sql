@@ -154,6 +154,9 @@
   let searchRun = 0; // numero da pesquisa em todas as tabelas que vale; a resposta de uma anterior e descartada
   let everywhere = $derived(scope === 'all' && search.trim() !== '');
   let limit = $state(LIMITS[0]);
+  let offset = $state(0); // primeira linha da pagina da aba Dados (paginas ◀ ▶ do tamanho de Linhas)
+  // "linhas 1 a 100": a primeira e a ultima linha da pagina na tela
+  let range = $derived({ table: selectedTable, from: fmt(offset + 1), to: fmt(offset + rows.length) });
   let busy = $state(false);
 
   // linhas marcadas de cada tabela (Map tabela -> linhas, cada uma com a identidade em ROW_ID), enquanto o arquivo
@@ -593,6 +596,7 @@
     rows = [];
     rowCount = 0;
     matchCount = 0;
+    offset = 0;
     marks = new Map();
     onlyMarked = false;
     dropTerms();
@@ -734,6 +738,7 @@
   // Linhas (100, 500, 1000): vale para a aba Dados, o resultado do SQL e a grade da aba Termos
   function setLimit(next) {
     limit = next;
+    offset = 0;
     openTable(selectedTable);
     if (termsTable) openTermsTable(termsTable);
   }
@@ -768,6 +773,7 @@
       hidden = new Set();
       filters = [];
       onlyMarked = false;
+      offset = 0;
       dropFound();
     }
     selectedTable = tableName;
@@ -775,17 +781,18 @@
     error = null;
     try {
       const asked = filters;
+      const at = offset;
       const words = search.trim();
       const narrowed = asked.length > 0 || words !== '';
       const marked = marks.get(tableName);
       const [schema, page, total, matching] = await Promise.all([
         invoke('get_table_schema', { tableName }),
-        invoke('get_table_data', { tableName, limit, filters: asked, search: words, marked: (marked ?? []).map((row) => row[ROW_ID]) }),
+        invoke('get_table_data', { tableName, limit, offset: at, filters: asked, search: words, marked: (marked ?? []).map((row) => row[ROW_ID]) }),
         invoke('get_row_count', { tableName, filters: [], search: '' }),
         narrowed ? invoke('get_row_count', { tableName, filters: asked, search: words }) : null,
       ]);
       // Ignora resposta atrasada se o usuario ja trocou de tabela, filtro ou pesquisa
-      if (tableName !== selectedTable || asked !== filters || words !== search.trim()) return;
+      if (tableName !== selectedTable || asked !== filters || words !== search.trim() || at !== offset) return;
       columns = schema;
       rows = withIds(page.rows, page.ids);
       // as marcadas, relidas na ordem da tabela (se o usuario nao marcou outra enquanto a consulta rodava)
@@ -839,6 +846,7 @@
 
   function onSearch(event) {
     search = event.currentTarget.value;
+    offset = 0; // outra pesquisa: volta a pagina 1
     dropFound();
     clearTimeout(searchTimer);
     searchTimer = setTimeout(runSearch, delayOf(event));
@@ -880,6 +888,7 @@
 
   function setScope(next) {
     scope = next;
+    offset = 0;
     dropFound();
     // campo vazio: o recarregamento que a digitacao agendou continua (senao a grade ficava filtrada sob o campo vazio)
     if (!search.trim()) return;
@@ -901,8 +910,15 @@
   async function setFilters(next) {
     const before = filters;
     filters = next;
+    offset = 0;
     await openTable(selectedTable);
     if (error && filters === next) filters = before;
+  }
+
+  // paginas da aba Dados (◀ ▶): a pagina anterior ou a seguinte, do tamanho de Linhas, com a mesma pesquisa e filtros
+  function goPage(step) {
+    offset = Math.max(0, offset + step * limit);
+    openTable(selectedTable);
   }
 
   // acoes do menu de clique direito da grade da aba Data (cabecalho e celula); o menu nao oculta a ultima visivel
@@ -1713,8 +1729,9 @@
         />
         {/key}
         {/if}
-        <!-- (d) "{tabela}: mostrando X de Y linhas" (com busca ou filtro, das encontradas) e ", N marcadas"; em Todas as
-             tabelas, o resumo. A direita, so com marcas, a caixa "So as marcadas" (= Exibir > So as linhas marcadas) -->
+        <!-- (d) "{tabela}: linhas 1 a 100 de 36.804" (com busca ou filtro, "de N encontradas"; pagina vazia: "mostrando 0
+             de Y") e ", N marcadas", com as paginas ◀ ▶; em Todas as tabelas, o resumo. A direita, so com marcas, a caixa
+             "So as marcadas" (= Exibir > So as linhas marcadas) -->
         <p class="table-info">
           <span>
             {#if showOnly}
@@ -1722,10 +1739,19 @@
             {:else if everywhere}
               {!found ? t('found.searching') : found.tables ? t('found.summary', { count: fmt(found.tables.length) }) : ''}
             {:else if search.trim() || filters.length}
-              {t('data.showingMatches', { table: selectedTable, shown: fmt(rows.length), matching: fmt(matchCount) })}
+              {rows.length
+                ? t('data.rangeMatches', { ...range, matching: fmt(matchCount) })
+                : t('data.showingMatches', { table: selectedTable, shown: fmt(rows.length), matching: fmt(matchCount) })}
             {:else}
-              {t('data.showing', { table: selectedTable, shown: fmt(rows.length), total: fmt(rowCount) })}
+              {rows.length ? t('data.range', { ...range, total: fmt(rowCount) }) : t('data.showing', { table: selectedTable, shown: fmt(rows.length), total: fmt(rowCount) })}
             {/if}{markedRows.length ? t('marks.count', { count: fmt(markedRows.length) }) : ''}
+            {#if !showOnly && !everywhere}
+              <!-- paginas do tamanho de Linhas; desabilitadas na ponta -->
+              <span class="pages">
+                <button type="button" class="secondary" title={t('page.previous')} aria-label={t('page.previous')} disabled={busy || offset === 0} onclick={() => goPage(-1)}>◀</button>
+                <button type="button" class="secondary" title={t('page.next')} aria-label={t('page.next')} disabled={busy || offset + rows.length >= matchCount} onclick={() => goPage(1)}>▶</button>
+              </span>
+            {/if}
           </span>
           {#if markedRows.length}
             <label class="only-marked"><input type="checkbox" checked={showOnly} onchange={(e) => (onlyMarked = e.currentTarget.checked)} />{t('marks.only')}</label>
@@ -2511,6 +2537,18 @@
     margin: 0;
     color: var(--muted);
     font-size: 12px;
+  }
+
+  /* paginas ◀ ▶ logo depois da contagem, do tamanho dos botoes das linhas das abas */
+  .pages {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: 10px;
+    vertical-align: middle;
+  }
+
+  .pages button {
+    padding: 3px 10px;
   }
 
   /* caixa discreta: no tamanho e na cor da contagem */

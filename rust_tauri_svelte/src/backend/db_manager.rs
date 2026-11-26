@@ -728,13 +728,15 @@ impl DBManager {
         self.with_conn(|conn| table_info(conn, table_name))
     }
 
-    // NIVEL BASICO: Pagina da aba Dados: ate `limit` linhas que passam pelos filtros e pela pesquisa (no WHERE da
+    // NIVEL BASICO: Pagina da aba Dados: ate `limit` linhas a partir da `offset` (paginas ◀ ▶) que passam pelos filtros e
+    // pela pesquisa (no WHERE da
     // consulta: acham linhas na tabela inteira, alem das carregadas) e, a parte, todas as linhas marcadas (`marked` =
     // identidades que a tela guarda), na ordem da tabela, qualquer que seja a pesquisa
     pub fn table_page(
         &self,
         table_name: &str,
         limit: i32,
+        offset: i64,
         filters: &[Filter],
         search: &str,
         marked: &[serde_json::Value],
@@ -757,7 +759,9 @@ impl DBManager {
                     rows.iter_mut().map(|row| row.as_object_mut().and_then(|r| r.remove(ROW_ID)).unwrap_or_default()).collect();
                 Ok::<_, String>((rows, ids))
             };
-            let (rows, ids) = read(format!("{select}{filter_sql} LIMIT {limit}"), params)?;
+            // a ordem da tabela em toda pagina (ORDER BY rowid; sem rowid, a ordem de leitura)
+            let order = if id == "rowid" { " ORDER BY rowid" } else { "" };
+            let (rows, ids) = read(format!("{select}{filter_sql}{order} LIMIT {limit} OFFSET {offset}"), params)?;
             let (marked, marked_ids) = if marked.is_empty() {
                 (Vec::new(), Vec::new())
             } else {
@@ -770,7 +774,7 @@ impl DBManager {
 
     #[cfg(test)] // so as linhas da pagina
     pub fn query_table(&self, table_name: &str, limit: i32, filters: &[Filter], search: &str) -> Result<Vec<serde_json::Value>, String> {
-        Ok(self.table_page(table_name, limit, filters, search, &[])?.rows)
+        Ok(self.table_page(table_name, limit, 0, filters, search, &[])?.rows)
     }
 
     // NIVEL BASICO: SQL da aba SQL (e da exportacao do resultado dele): algum comando que nao e de leitura recusa tudo

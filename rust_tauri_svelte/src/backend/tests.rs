@@ -1230,12 +1230,12 @@ mod tests {
         for file in [&path, &lite] {
             let manager = DBManager::new();
             manager.connect(file.to_str().unwrap(), &mut no_progress()).unwrap();
-            let page = manager.table_page("p", 2, &[], "", &[]).unwrap();
+            let page = manager.table_page("p", 2, 0, &[], "", &[]).unwrap();
             assert_eq!(page.ids, [json!(0), json!(1)], "rowid");
             assert!(page.rows[0].get("mdb2sql id").is_none(), "the id is not a column");
             // marca as linhas 4 e 2 (fora da pagina); outra pesquisa: elas voltam na ordem da tabela, alem da pagina
             let marked = [json!(4), json!(2)];
-            let page = manager.table_page("p", 2, &[], "kkk1", &marked).unwrap();
+            let page = manager.table_page("p", 2, 0, &[], "kkk1", &marked).unwrap();
             assert_eq!(page.rows, [json!({ "id": 1, "s": "kkk1" })]);
             assert_eq!(page.marked_ids, [json!(2), json!(4)]);
             assert_eq!(page.marked, [json!({ "id": 2, "s": "kkk2" }), json!({ "id": 4, "s": "kkk4" })]);
@@ -1250,11 +1250,11 @@ mod tests {
         // view: identidade = todos os valores; as duas linhas ('x', 1) marcam juntas
         let manager = DBManager::new();
         manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
-        let page = manager.table_page("dv", 10, &[], "", &[]).unwrap();
+        let page = manager.table_page("dv", 10, 0, &[], "", &[]).unwrap();
         assert!(page.ids.iter().all(|id| id.is_string()));
         assert_eq!(page.ids[0], page.ids[1]);
         assert_ne!(page.ids[0], page.ids[2]);
-        let page = manager.table_page("dv", 10, &[], "y", &[page.ids[0].clone()]).unwrap();
+        let page = manager.table_page("dv", 10, 0, &[], "y", &[page.ids[0].clone()]).unwrap();
         assert_eq!(page.rows.len(), 1);
         assert_eq!(page.marked, [json!({ "s": "x", "n": 1 }), json!({ "s": "x", "n": 1 })]);
     }
@@ -1420,10 +1420,37 @@ mod tests {
         let manager = DBManager::new();
         manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
         let marked = [json!(999_000), json!(5), json!(500_000), json!(130_000)];
-        let page = manager.table_page("b", 1, &[], "", &marked).unwrap();
+        let page = manager.table_page("b", 1, 0, &[], "", &marked).unwrap();
         assert_eq!(page.marked_ids, [json!(5), json!(130_000), json!(500_000), json!(999_000)]);
         let (filter, _) = manager.marked_where("b", &marked).unwrap();
         assert!(filter.ends_with(" ORDER BY rowid"), "{filter}");
+    }
+
+    // BRIEF secao 13 h: paginas da aba Dados (o tamanho e a lista Linhas): tabela com mais de 1000 linhas, a ultima
+    // pagina incompleta; a pesquisa vale para todas as paginas; as marcadas vem em toda pagina
+    #[test]
+    fn data_pages_walk_the_whole_table_and_the_search() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("pages.duckdb");
+        duckdb::Connection::open(&path)
+            .unwrap()
+            .execute_batch("CREATE TABLE p AS SELECT range AS id, CASE WHEN range % 2 = 0 THEN 'even' ELSE 'odd' END AS s FROM range(2500)")
+            .unwrap();
+        let manager = DBManager::new();
+        manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+        let ids = |rows: &[serde_json::Value]| rows.iter().map(|r| r["id"].as_i64().unwrap()).collect::<Vec<_>>();
+        let first = manager.table_page("p", 1000, 0, &[], "", &[]).unwrap();
+        assert_eq!((first.rows.len(), ids(&first.rows)[0]), (1000, 0));
+        let last = manager.table_page("p", 1000, 2000, &[], "", &[json!(7)]).unwrap();
+        assert_eq!(last.rows.len(), 500, "the last page is incomplete");
+        assert_eq!((ids(&last.rows)[0], ids(&last.rows)[499]), (2000, 2499));
+        assert_eq!(last.marked_ids, [json!(7)]);
+        // "even": 1250 linhas encontradas; a 2a pagina de 1000 tem as 250 ultimas, todas pares
+        let found = manager.table_page("p", 1000, 1000, &[], "even", &[]).unwrap();
+        assert_eq!(found.rows.len(), 250);
+        assert!(ids(&found.rows).iter().all(|id| id % 2 == 0) && ids(&found.rows)[0] == 2000);
+        assert_eq!(manager.get_row_count("p", &[], "even").unwrap(), 1250);
+        assert!(manager.table_page("p", 100, 2500, &[], "", &[]).unwrap().rows.is_empty());
     }
 
     // Exportar > Esquema da tabela atual / do banco: Coluna, Tipo, Aceita nulo traduzidos (e Tabela na frente no do banco);
