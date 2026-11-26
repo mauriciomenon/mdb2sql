@@ -32,8 +32,9 @@ pub fn parse(args: []const []const u8) error{Usage}!?Options {
 }
 
 // Roteiro das capturas: cada passo leva a interface a um estado e grava <nome>.png no tamanho dado
-// prompt: pergunta do SQLite convertido (fechar o arquivo); prompt_delete: responde Apagar e confere que o
-// temporario sumiu. Os passos de idioma trocam o idioma da tela (a captura comeca em ingles).
+// prompt: pergunta ao sair com o Access convertido e nao salvo; prompt_delete: Fechar (sem pergunta) e confere que o
+// temporario sumiu e o Log diz que foi descartado (com MDB2SQL_CAPTURE_SAVE=sqlite|duckdb|xlsx salva antes, sem a
+// caixa, e confere o arquivo). Os passos de idioma trocam o idioma da tela (a captura comeca em ingles).
 // display_warning: aviso do Linux sem X11 na abertura (pulado quando nao ha aviso).
 // click_cell, global*, open_hit, reopen: estados conferidos (a conferencia que falha vai para capture_error.txt e a
 // captura segue): clique numa celula com colunas ocultas, busca em todas as tabelas (global_late: tabela depois da
@@ -42,8 +43,8 @@ pub fn parse(args: []const []const u8) error{Usage}!?Options {
 // Estados do padrao das 4 versoes: export_ask (pergunta tabela inteira / so as encontradas, com a busca do acerto),
 // header_menu e cell_menu (os menus da grade), file_menu e export_menu, sql_tab (dica do campo vazio), sql_error e
 // key_ctrl_enter (erro e depois SQL certo pelo Ctrl+Enter: o erro sai da barra), key_* (atalhos teclados de verdade:
-// Ctrl+1/2/F, F5) e reopen_saved (Access salvo aberto de novo: o SQLite salvo, sem converter; so com
-// MDB2SQL_CAPTURE_SAVE=1). exit_esc sai pelo Ctrl+Q.
+// Ctrl+1/2/F, F5) e reopen_saved (Access salvo aberto de novo: o arquivo salvo, sem converter; so com
+// MDB2SQL_CAPTURE_SAVE=sqlite ou duckdb). exit_esc sai pelo Ctrl+Q.
 pub const Action = enum { display_warning, log_error, log_error_open, exit_esc, show, filter, columns, close_columns, other_table, about, log, settings_menu, lang_en, lang_pt_br, lang_es, prompt, prompt_delete, click_cell, global_late, global_clear, global, open_hit, reopen, export_ask, header_menu, cell_menu, file_menu, export_menu, sql_tab, sql_error, key_ctrl_enter, key_ctrl_1, key_ctrl_2, key_ctrl_f, key_f5, reopen_saved };
 pub const Step = struct { name: []const u8, action: Action, w: u32, h: u32 };
 pub const default_size = [2]u32{ 1280, 800 }; // tamanho em que o programa abre
@@ -103,9 +104,9 @@ pub const plan = [_]Step{
     .{ .name = "l_log_collapsed_error", .action = .log_error, .w = default_size[0], .h = default_size[1] },
     .{ .name = "l_log_open_error", .action = .log_error_open, .w = default_size[0], .h = default_size[1] },
     .{ .name = "o_reopened", .action = .reopen, .w = default_size[0], .h = default_size[1] },
-    // Apagar; com MDB2SQL_CAPTURE_SAVE=1, Salvar (na pasta das capturas, <origem>.sqlite)
+    // Fechar sem pergunta; com MDB2SQL_CAPTURE_SAVE=sqlite|duckdb|xlsx, Salvar antes (na pasta das capturas)
     .{ .name = "k_closed", .action = .prompt_delete, .w = default_size[0], .h = default_size[1] },
-    // o mesmo Access aberto de novo depois do Salvar: abre o SQLite salvo, sem converter nem perguntar
+    // o mesmo Access aberto de novo depois do Salvar: abre o arquivo salvo, sem converter
     .{ .name = "k_reopened_saved", .action = .reopen_saved, .w = default_size[0], .h = default_size[1] },
 };
 

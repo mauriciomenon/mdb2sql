@@ -63,6 +63,10 @@ pub const columns_shown = "{d} de {d} visibles";
 // menus
 pub const menu_file = "Archivo";
 pub const menu_open = "Abrir...";
+pub const menu_open_typed = "Abrir la ruta escrita";
+pub const menu_reopen = "Reabrir";
+pub const menu_save = "Guardar";
+pub const menu_save_as = "Guardar como...";
 pub const menu_export = "Exportar";
 pub const menu_close = "Cerrar";
 pub const menu_exit = "Salir";
@@ -78,9 +82,6 @@ pub const menu_search_scope = "Alcance predeterminado de la búsqueda";
 pub const menu_show_null = "Mostrar NULL";
 pub const menu_help = "Ayuda";
 pub const menu_about = "Acerca de mdb2sql";
-pub const export_db_sqlite = "Base de datos a SQLite (.sqlite)...";
-pub const export_db_xlsx = "Base de datos a Excel (.xlsx, una hoja por tabla)...";
-pub const export_db_duckdb = "Base de datos a DuckDB (.duckdb)...";
 pub const export_table_csv = "Tabla actual a CSV...";
 pub const export_table_xlsx = "Tabla actual a Excel (.xlsx)...";
 pub const export_schema_csv = "Esquema de la tabla actual a CSV...";
@@ -102,6 +103,8 @@ pub const about_database = "Bases de datos";
 pub const about_access = "Lectura de Access";
 pub const about_access_win = "mdbtools {s} (incluido) o el controlador ODBC de Access, convertido una vez a SQLite";
 pub const about_access_unix = "mdbtools {s} (incluido), convertido una vez a SQLite";
+pub const about_write = "Escritura";
+pub const about_write_value = "SQLite, DuckDB, Excel y CSV. Los archivos .mdb y .accdb no se pueden escribir: el formato de Access es propiedad de Microsoft.";
 pub const about_author = "Autor";
 pub const about_license = "Licencia";
 pub const about_license_text = "GPL v2 o posterior (GPL-2.0-or-later)";
@@ -110,19 +113,23 @@ pub const about_open_browser = "Abrir en el navegador";
 // botones comunes
 pub const close = "Cerrar";
 pub const cancel = "Cancelar";
-pub const save = "Guardar...";
-pub const delete = "Eliminar";
 pub const copy = "Copiar";
 pub const copy_all = "Copiar todo";
 pub const clear = "Borrar";
 
-// SQLite convertido
+// SQLite convertido, Guardar y Salir
 pub const converted_title = "SQLite convertido";
-pub const converted_text = "¿Guardar el archivo SQLite convertido desde Access ({s})?";
-pub const converted_remember = "Recordar en esta sesión";
+pub const exit_text = "La base de datos convertida de {s} no se guardó. ¿Guardar antes de salir?";
+pub const btn_save = "Guardar";
+pub const btn_back = "Volver";
+pub const btn_exit = "Salir";
+pub const log_discarded = "SQLite convertido de {s} descartado";
+pub const export_run_title = "Exportación en curso";
+pub const export_run_text = "Salir cancela la exportación de {s}.";
+pub const save_title = "Guardar como SQLite, DuckDB o Excel (los archivos .mdb y .accdb no se pueden escribir)";
+pub const copy_name = "{s} (copia)";
 pub const converted_reused = "{s}: abierto el SQLite guardado de él ({s})";
 pub const converted_saved = "SQLite guardado: {s}";
-pub const converted_deleted = "SQLite convertido eliminado";
 pub const log_stale_removed = "{d} archivos convertidos de una sesión anterior eliminados";
 pub const log_stale_removed_one = "{d} archivo convertido de una sesión anterior eliminado";
 

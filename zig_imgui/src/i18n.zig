@@ -139,7 +139,15 @@ test "texts as in the Go catalog (the reference wording), in the three languages
         .{ "clear_filters", "Clear filters", "Limpar filtros", "Quitar filtros" },
         .{ "menu_search_scope", "Default search scope", "Escopo padrão da busca", "Alcance predeterminado de la búsqueda" },
         .{ "menu_log", "Log", "Log", "Log" },
-        .{ "converted_remember", "Remember for this session", "Lembrar nesta sessão", "Recordar en esta sesión" },
+        // itens 27 e 28 (BRIEF de 25/11, secao 8)
+        .{ "exit_text", "The database converted from {s} was not saved. Save before exiting?", "O banco convertido de {s} não foi salvo. Salvar antes de sair?", "La base de datos convertida de {s} no se guardó. ¿Guardar antes de salir?" },
+        .{ "btn_back", "Back", "Voltar", "Volver" },
+        .{ "log_discarded", "SQLite converted from {s} discarded", "SQLite convertido de {s} descartado", "SQLite convertido de {s} descartado" },
+        .{ "export_run_text", "Exiting cancels the export of {s}.", "Sair cancela a exportação de {s}.", "Salir cancela la exportación de {s}." },
+        .{ "copy_name", "{s} (copy)", "{s} (cópia)", "{s} (copia)" },
+        .{ "about_write", "Writing", "Gravação", "Escritura" },
+        .{ "menu_open_typed", "Open the typed path", "Abrir o caminho digitado", "Abrir la ruta escrita" },
+        .{ "menu_save_as", "Save as...", "Salvar como...", "Guardar como..." },
     };
     inline for (want) |w| {
         inline for (0..3) |l| try t.expectEqualStrings(w[l + 1], @field(catalogs[l], w[0]));
@@ -167,7 +175,7 @@ test "translations differ from English where words are involved" {
 // sem espaco). Excecoes: SQL, nomes de produto, atalhos, variaveis de ambiente e mensagens do --capture.
 fn uiTextOutsideCatalog(src: []const u8) ?[]const u8 {
     const allowed_lines = [_][]const u8{ "c.failed", "c.skip(", "c.note(","sql.appendSlice(", "@import(", "extern ", "\\x00*.", "--file-filter=", "segoeui", "consola.ttf", "copyZ(&app.sql", "SQLite format 3", "env.get(" };
-    const allowed = [_][]const u8{ "GLFW {d}.{d}.{d} + OpenGL 3.3", "DuckDB {s}", "#version 330", "X11 (DISPLAY={s}: {t})", "Ctrl+O", "Ctrl+L", "Ctrl+C", "Ctrl+Q" };
+    const allowed = [_][]const u8{ "GLFW {d}.{d}.{d} + OpenGL 3.3", "DuckDB {s}", "#version 330", "X11 (DISPLAY={s}: {t})", "Ctrl+O", "Ctrl+L", "Ctrl+C", "Ctrl+Q", "Ctrl+S", "Ctrl+Shift+S", "Ctrl+W", "F5" };
     var lines = std.mem.splitScalar(u8, src, '\n');
     while (lines.next()) |full| {
         // sem o comentario do fim da linha (// fora de string)
@@ -251,7 +259,7 @@ test "no lecturing hints and no copyright line in any catalog" {
             try t.expect(std.mem.indexOf(u8, s, "->") == null and !std.mem.startsWith(u8, s, "< ") and !std.mem.endsWith(u8, s, " >"));
         }
         // mensagens do app sem "..." (o log e a barra de status mostram estas)
-        inline for (.{ "busy_converting", "busy_opening", "busy_loading", "busy_running", "busy_exporting", "converted_deleted", "status_loaded", "status_closed" }) |k|
+        inline for (.{ "busy_converting", "busy_opening", "busy_loading", "busy_running", "busy_exporting", "log_discarded", "status_loaded", "status_closed" }) |k|
             try t.expect(std.mem.indexOf(u8, @field(C, k), "...") == null);
     }
 }

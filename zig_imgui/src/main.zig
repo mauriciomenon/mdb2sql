@@ -120,7 +120,8 @@ const Capture = struct {
     failed: ?[]const u8 = null,
     skipped: std.ArrayList(u8) = .empty,
     deleted_tmp: ?access.TempPath = null, // passo final: o temporario que tem de sumir
-    save_end: bool = false, // MDB2SQL_CAPTURE_SAVE=1: o passo final responde Salvar em vez de Apagar
+    // MDB2SQL_CAPTURE_SAVE=sqlite|duckdb|xlsx: o passo final salva (sem a caixa, na pasta das capturas) antes de fechar
+    save_type: ?dialog.SaveType = null,
     saved_path: ?[]const u8 = null, // Salvar: o arquivo que tem de existir (do gpa)
     esc_frames: u32 = 0, // passo exit_esc: quadros desde o pedido de saida; Esc solto aos 12
     wrong: std.ArrayList(u8) = .empty, // conferencias que falharam (a captura segue; saida 2 no fim)
@@ -139,18 +140,19 @@ const Capture = struct {
     fn ready(app: *const App) bool {
         if (app.slot.busy() or app.want_open or app.want_reload or app.want_run or app.want_select != null or app.want_global or
             app.search_wait.due != null or app.want_filter != null or app.want_unfilter != null or app.want_clear_filters or
-            app.choice != null) return false;
+            app.want_close or app.want_save != null or app.exit_ask != null) return false;
         return app.db.isOpen() and app.selected != null;
     }
 
-    // O estado pedido pelo passo ja esta na tela (o passo Apagar termina sem banco aberto)
+    // O estado pedido pelo passo ja esta na tela (o passo Fechar termina sem banco aberto)
     fn settled(c: *const Capture, app: *const App) bool {
-        // saida pedida, pergunta aberta, Esc: a pergunta fecha e o programa continua aberto
-        if (dbm.capture.plan[c.step].action == .exit_esc)
-            return c.esc_frames > 14 and app.leave == null and !app.quit and ready(app);
-        if (dbm.capture.plan[c.step].action == .prompt_delete)
-            return !app.slot.busy() and app.choice == null and app.leave == null and !app.db.isOpen() and app.converted == null;
-        return ready(app);
+        switch (dbm.capture.plan[c.step].action) {
+            // saida pedida, pergunta aberta, Esc: a pergunta fecha e o programa continua aberto
+            .exit_esc => return c.esc_frames > 14 and app.exit_ask == null and !app.quit and ready(app),
+            .prompt => return app.exit_ask == .unsaved and !app.slot.busy(),
+            .prompt_delete => return !app.slot.busy() and !app.want_close and !app.db.isOpen() and app.converted == null,
+            else => return ready(app),
+        }
     }
 
     fn skip(c: *Capture, gpa: std.mem.Allocator, why: []const u8) void {
@@ -179,7 +181,7 @@ const Capture = struct {
             if (c.step == dbm.capture.plan.len or c.applied) return;
             // reopen_saved comeca com o arquivo fechado (depois do Salvar)
             if (dbm.capture.plan[c.step].action == .reopen_saved) {
-                if (app.slot.busy() or app.choice != null or app.leave != null) return;
+                if (app.slot.busy() or app.exit_ask != null) return;
                 if (c.apply(app)) return;
                 continue;
             }
@@ -216,7 +218,7 @@ const Capture = struct {
         // so os passos de Log abrem o painel (a captura nao le nem grava as configuracoes)
         app.prefs.log_open = action == .log or action == .log_error_open;
         if (app.prefs.log_open) markLogRead();
-        if (action != .prompt and action != .prompt_delete) app.leave = null;
+        if (action != .prompt) app.exit_ask = null;
         if (action != .display_warning) app.display_dismiss = true;
         switch (action) {
             .exit_esc => {
@@ -267,8 +269,8 @@ const Capture = struct {
             .key_ctrl_f => c.press(true, ig.ImGuiKey_F),
             .key_f5 => c.press(false, ig.ImGuiKey_F5),
             .reopen_saved => {
-                if (!c.save_end or c.source_path[0] == 0) {
-                    c.skip(app.gpa, "the converted SQLite was not saved (MDB2SQL_CAPTURE_SAVE=1 saves it)");
+                if (c.save_type == null or c.save_type == .xlsx or c.source_path[0] == 0) {
+                    c.skip(app.gpa, "the converted SQLite was not saved as SQLite or DuckDB (MDB2SQL_CAPTURE_SAVE=sqlite|duckdb)");
                     return false;
                 }
                 app.setPath(zstr(&c.source_path));
@@ -361,24 +363,24 @@ const Capture = struct {
                 app.want_open = true;
             },
             .prompt, .prompt_delete => {
-                if (app.converted == null) {
+                const cv = app.converted orelse {
                     c.skip(app.gpa, "not an Access file (nothing was converted)");
                     return false;
-                }
-                const tmp = app.converted.?.tmp;
-                c.source_path = app.converted.?.source;
-                if (action == .prompt) app.requestLeave(.close) else {
-                    app.requestLeave(.close);
-                    c.deleted_tmp = tmp;
-                    if (c.save_end) {
-                        // resposta "Salvar" lembrada, com a pasta das capturas: grava <origem>.sqlite sem dialogo
+                };
+                c.source_path = cv.source;
+                if (action == .prompt) {
+                    // a pergunta ao sair (Ctrl+Q, X): Access convertido e nao salvo
+                    app.requestExit();
+                } else {
+                    // Fechar: sem pergunta; o temporario some (descartado, ou salvo antes como na caixa de Salvar)
+                    c.deleted_tmp = cv.tmp;
+                    if (c.save_type) |ty| {
                         var nb: [600]u8 = undefined;
-                        const file = settings.fileName(&nb, std.fs.path.stem(zstr(&app.converted.?.source)), ".sqlite");
+                        const file = settings.fileName(&nb, std.fs.path.stem(zstr(&cv.source)), ty.ext());
                         c.saved_path = std.fs.path.join(app.gpa, &.{ c.out_dir, file }) catch null;
-                        app.session_choice = .save;
-                        copyZ(&app.save_dir, c.out_dir);
-                        app.choice = .save;
-                    } else app.choice = .delete;
+                        if (c.saved_path) |p| app.saveTo(p, ty);
+                    }
+                    app.want_close = true;
                 }
             },
         }
@@ -393,11 +395,11 @@ const Capture = struct {
         if (c.applied and dbm.capture.plan[c.step].action == .exit_esc) {
             c.esc_frames += 1;
             if (c.esc_frames == 12) {
-                if (app.leave == null) c.failed = "the exit prompt did not open";
+                if (app.exit_ask == null) c.failed = "the exit prompt did not open";
                 shim_key(ig.ImGuiKey_Escape, true);
             }
             if (c.esc_frames == 13) shim_key(ig.ImGuiKey_Escape, false);
-            if (c.esc_frames == 200 and app.leave != null) c.failed = "Esc did not close the exit prompt";
+            if (c.esc_frames == 200 and app.exit_ask != null) c.failed = "Esc did not close the exit prompt";
             if (app.quit) c.failed = "Esc on the exit prompt closed the program";
         }
         if (!c.applied or !c.settled(app)) {
@@ -408,21 +410,27 @@ const Capture = struct {
         if (c.settle == 1) c.since = ig.igGetTime();
         // popups, auto-ajuste das colunas e o escurecimento do fundo do modal levam alguns quadros e ~0,3 s
         if (c.settle < 8 or ig.igGetTime() - c.since < 0.5) return false;
-        // Apagar ou Salvar: o temporario tem de ter sumido do disco; Salvar: o arquivo salvo e um SQLite
+        // Fechar: o temporario tem de ter sumido do disco; Salvar: o arquivo salvo e do tipo pedido
         if (c.deleted_tmp) |tmp| {
             if (std.Io.Dir.cwd().access(io, tmp.slice(), .{})) |_| {
-                c.failed = "the temporary SQLite still exists after the answer";
+                c.failed = "the temporary SQLite still exists after closing";
                 return true;
             } else |_| {}
+            c.deleted_tmp = null;
         }
-        if (c.saved_path) |p| {
+        if (c.saved_path) |p| if (c.save_type) |ty| {
             var hb: [16]u8 = undefined;
             const head = std.Io.Dir.cwd().readFile(io, p, &hb) catch "";
-            if (!std.mem.eql(u8, head, "SQLite format 3\x00")) {
-                c.failed = "the saved SQLite file is missing or is not a SQLite file";
+            const ok = switch (ty) {
+                .sqlite => std.mem.eql(u8, head, "SQLite format 3\x00"),
+                .duckdb => head.len >= 12 and std.mem.eql(u8, head[8..12], "DUCK"),
+                .xlsx => std.mem.startsWith(u8, head, "PK\x03\x04"),
+            };
+            if (!ok) {
+                c.failed = "the saved file is missing or is not of the type saved";
                 return true;
             }
-        }
+        };
         c.check(app);
         c.save(app.gpa, io) catch |e| {
             c.failed = @errorName(e);
@@ -455,7 +463,14 @@ const Capture = struct {
             .sql_error => if (alert.len == 0 or !app.sql_msg.is_err) c.note(app.gpa, "the SQL error is not on the status bar"),
             .key_ctrl_enter => if (app.result == null or alert.len > 0 or app.sql_msg.is_err) c.note(app.gpa, "Ctrl+Enter with a SQL that works did not clear the previous error"),
             .key_f5 => if (!app.db.isOpen() or !app.status.loaded) c.note(app.gpa, "F5 did not open the file again"),
-            .reopen_saved => if (app.converted != null or app.source != .sqlite) c.note(app.gpa, "the saved SQLite was not reused (the Access file was converted again)"),
+            .reopen_saved => if (app.converted != null or (app.source != .sqlite and app.source != .duckdb)) c.note(app.gpa, "the saved file was not reused (the Access file was converted again)"),
+            // Fechar nao pergunta: o convertido nao salvo e descartado com a linha do Log
+            .prompt_delete => {
+                var lb: [1200]u8 = undefined;
+                const line = i18n.fmt(&lb, "log_discarded", .{std.fs.path.basename(zstr(&c.source_path))});
+                const logged = std.mem.indexOf(u8, session_log.slice(), line) != null;
+                if (logged == (c.save_type != null)) c.note(app.gpa, "closing logged the discard wrongly (missing, or after saving)");
+            },
             else => {},
         }
     }
@@ -827,9 +842,11 @@ const Tab = enum { data, schema, sql };
 // Busca em todas as tabelas: o termo buscado e as tabelas com linhas (hits do gpa)
 const Global = struct { term: [256:0]u8, hits: []worker.Hit };
 
-// O que fazer depois de responder sobre o SQLite convertido
-const Leave = enum { open, close, exit };
-const Choice = enum { save, delete };
+// Pergunta aberta ao sair do programa: exportacao em andamento (Voltar / Sair) ou Access convertido e nao salvo
+// (Salvar / Voltar / Sair)
+const ExitAsk = enum { export_running, unsaved };
+// Arquivo > Salvar (pasta do original) e Salvar como... (ultima pasta em que o usuario salvou ou exportou)
+const SaveMode = enum { save, save_as };
 // Exportar a tabela com busca ou filtro: a tabela inteira ou so as linhas encontradas
 const ExportScope = enum { whole, found };
 
@@ -857,16 +874,17 @@ const App = struct {
     tables_w: f32 = 0, // largura inicial do painel das tabelas (0 = calcular)
     opened: u32 = 0, // arquivos abertos na sessao (ID do painel das tabelas)
 
-    // Access aberto = SQLite temporario; ao fechar, abrir outro ou sair a UI pergunta se salva ou apaga
-    converted: ?struct { tmp: access.TempPath, source: [1024:0]u8 } = null,
-    leave: ?Leave = null, // acao esperando a resposta (o dialogo fica aberto enquanto isto existir)
-    choice: ?Choice = null, // resposta, executada em update() quando nenhum trabalho roda
-    session_choice: ?Choice = null, // resposta com "Lembrar nesta sessao": vale ate o programa fechar
-    remember_box: bool = false, // a caixa "Lembrar nesta sessao" do dialogo (desmarcada a cada pergunta)
-    choice_remember: bool = false, // a resposta em `choice` veio com a caixa marcada
+    // Access aberto = SQLite temporario. Fechar, abrir outro e Reabrir o apagam sem perguntar; so ao sair do programa,
+    // e so se ele nao foi salvo (Arquivo > Salvar), a UI pergunta
+    converted: ?struct { tmp: access.TempPath, source: [1024:0]u8, saved: bool = false } = null,
+    exit_ask: ?ExitAsk = null, // pergunta de saida aberta
+    exit_save: bool = false, // "Salvar" na pergunta de saida: o programa fecha quando o arquivo estiver salvo
+    saving: bool = false, // a exportacao em andamento e um Salvar (no fim o Access conta como salvo)
+    want_save: ?SaveMode = null, // abre a caixa de salvar quando nenhum trabalho roda
+    want_close: bool = false, // Arquivo > Fechar
     open_request: [1024:0]u8 = @splat(0), // arquivo pedido no open em andamento (o Access, mesmo abrindo o SQLite salvo)
     opened_file: [1024:0]u8 = @splat(0), // arquivo que o banco tem aberto (o SQLite salvo, quando reaproveitado)
-    save_dir: [1024:0]u8 = @splat(0), // pasta escolhida no primeiro "Salvar" da sessao
+    save_dir: [1024:0]u8 = @splat(0), // ultima pasta em que o usuario salvou ou exportou nesta sessao
     quit: bool = false,
     capture_mode: bool = false, // --capture (auxiliar de teste)
     // Linux sem X11: aviso da abertura (texto copiavel, terminado em 0); null = sem aviso
@@ -1206,6 +1224,12 @@ const App = struct {
             },
             .export_ => if (out.err == null) {
                 const r = &app.slot.req;
+                // Salvar em DuckDB, Excel (ou SQLite de um banco que nao e Access): o arquivo aberto conta como salvo
+                if (app.saving) app.saved(r.destPath(), switch (r.export_kind) {
+                    .db_sqlite => .sqlite,
+                    .db_duckdb => .duckdb,
+                    else => .xlsx,
+                });
                 // .xlsx: o que o Excel nao comporta aparece na mesma linha, em destaque (nada some calado)
                 const p = &app.slot.progress;
                 var cells_buf: [96]u8 = undefined;
@@ -1215,6 +1239,10 @@ const App = struct {
                 const unit = if (r.export_kind.countsTables()) i18n.trCount("unit_tables", out.exported) else i18n.trCount("unit_rows", out.exported);
                 app.status.setText(cells_s.len + cols_s.len > 0, i18n.fmtCount(&app.status.buf, "status_exported", out.exported, .{ out.exported, unit, std.fs.path.basename(r.destPath()), cells_s, cols_s }));
             },
+        }
+        if (out.kind == .export_) {
+            app.saving = false;
+            if (out.err != null) app.exit_save = false; // nao salvou: o programa fica aberto
         }
         if (out.err) |e| return app.fail(if (out.kind == .sql) &app.sql_msg else &app.status, e);
 
@@ -1306,22 +1334,112 @@ const App = struct {
         app.prefs.save(app.io, app.prefs_path) catch |e| app.status.set(true, "err_settings", .{e});
     }
 
-    // Fechar o arquivo, abrir outro ou sair. update() executa quando nenhum trabalho roda; com SQLite convertido,
-    // antes pergunta (ou usa a resposta da sessao)
-    fn requestLeave(app: *App, action: Leave) void {
-        if (action == .exit) app.slot.cancel(); // um trabalho longo nao segura a saida
-        if (app.leave == null or action == .exit) app.leave = action;
-    }
-
-    fn finishLeave(app: *App, action: Leave) void {
-        switch (action) {
-            .open => app.want_open = true,
-            .close => app.closeFile(),
-            .exit => app.quit = true,
+    // Sair do programa (X da janela, Arquivo > Sair, Ctrl+Q, Alt+F4). Antes de tudo, com uma exportacao em andamento,
+    // pergunta (Voltar / Sair); busca ou outro trabalho e cancelado sem perguntar. So com Access convertido e nao salvo
+    // vem a pergunta Salvar / Voltar / Sair.
+    fn requestExit(app: *App) void {
+        if (app.exit_ask != null) return;
+        if (app.slot.busyWith(.export_)) {
+            app.exit_ask = .export_running;
+            return;
         }
+        app.slot.cancel();
+        app.exitUnlessUnsaved();
     }
 
-    // Solta o arquivo aberto (so sem trabalho rodando) e apaga o SQLite temporario, se houver
+    fn exitUnlessUnsaved(app: *App) void {
+        const unsaved = if (app.converted) |cv| !cv.saved else false;
+        if (unsaved) app.exit_ask = .unsaved else app.quit = true;
+    }
+
+    // O arquivo aberto e `path`: o original, o SQLite salvo que o substitui ou o SQLite temporario do Access
+    fn isOpenFile(app: *const App, path: []const u8) bool {
+        if (std.ascii.eqlIgnoreCase(path, zstr(&app.loaded_path)) or std.ascii.eqlIgnoreCase(path, zstr(&app.opened_file))) return true;
+        return if (app.converted) |cv| std.ascii.eqlIgnoreCase(path, cv.tmp.slice()) else false;
+    }
+
+    // Caixa de salvar de Arquivo > Salvar e Salvar como...: nome do original, tipos SQLite, DuckDB e Excel, ja marcado
+    // o tipo do arquivo aberto (Access e SQLite: SQLite; DuckDB: DuckDB). Salvar abre na pasta do original; Salvar
+    // como, na ultima pasta em que o usuario salvou ou exportou (sem ela, a do original).
+    fn startSave(app: *App, mode: SaveMode) void {
+        if (!app.db.isOpen()) return;
+        const loaded = zstr(&app.loaded_path);
+        const first: dialog.SaveType = if (app.source == .duckdb) .duckdb else .sqlite;
+        var dir = std.fs.path.dirname(loaded) orelse "";
+        if (mode == .save_as and app.save_dir[0] != 0) dir = zstr(&app.save_dir);
+        if (dir.len > 0) std.Io.Dir.cwd().access(app.io, dir, .{}) catch {
+            dir = "";
+        };
+        const stem = std.fs.path.stem(loaded);
+        var name_buf: [600]u8 = undefined;
+        var sugg_buf: [4096]u8 = undefined;
+        var initial = settings.suggest(&sugg_buf, dir, settings.fileName(&name_buf, stem, first.ext()));
+        // o nome sugerido e o do proprio arquivo aberto: "<nome> (copia)"
+        if (app.isOpenFile(initial)) {
+            var cb: [400]u8 = undefined;
+            initial = settings.suggest(&sugg_buf, dir, settings.fileName(&name_buf, i18n.fmt(&cb, "copy_name", .{stem}), first.ext()));
+        }
+        var path_buf: dialog.PathBuf = undefined;
+        const picked = dialog.pickSave(app.io, app.hwnd, tr("save_title"), initial, first, &path_buf) orelse {
+            if (dialog.unavailable) app.status.set(true, "err_no_dialog", .{});
+            // caixa cancelada: veio da pergunta de saida, ela volta
+            if (app.exit_save) app.exit_ask = .unsaved;
+            app.exit_save = false;
+            return;
+        };
+        app.saveTo(picked.path, picked.type);
+    }
+
+    // Grava o banco aberto em `dest`. Access convertido para SQLite: o temporario e copiado. O resto usa a exportacao
+    // do banco inteiro (gravacao segura em .part, progresso, Cancelar).
+    fn saveTo(app: *App, dest: []const u8, ty: dialog.SaveType) void {
+        if (app.isOpenFile(dest)) {
+            app.exit_save = false;
+            return app.status.set(true, "err_choose_other", .{});
+        }
+        copyZ(&app.save_dir, std.fs.path.dirname(dest) orelse "");
+        if (app.converted) |cv| if (ty == .sqlite) {
+            std.Io.Dir.cwd().copyFile(cv.tmp.slice(), std.Io.Dir.cwd(), dest, app.io, .{}) catch |e| {
+                app.exit_save = false;
+                return app.status.set(true, "err_save_sqlite", .{e});
+            };
+            // so o nome do arquivo na linha de status (o caminho inteiro quebraria a linha); a pasta vai para o log
+            logLine(dest);
+            app.status.set(false, "converted_saved", .{std.fs.path.basename(dest)});
+            return app.saved(dest, ty);
+        };
+        const r = &app.slot.req;
+        r.setDest(dest);
+        r.total_hint = 0;
+        if (ty == .xlsx) for (app.counts) |n| {
+            r.total_hint += n;
+        };
+        r.export_kind = switch (ty) {
+            .sqlite => .db_sqlite,
+            .duckdb => .db_duckdb,
+            .xlsx => .db_xlsx,
+        };
+        app.saving = true;
+        app.start(.export_);
+    }
+
+    // O banco aberto foi salvo em `dest`. Access: a pergunta ao sair some e, salvo em SQLite ou DuckDB, a conversao
+    // fica lembrada (o mesmo Access, sem mudanca, abre o arquivo salvo, tambem em outra execucao). Veio da pergunta
+    // de saida: o programa fecha.
+    fn saved(app: *App, dest: []const u8, ty: dialog.SaveType) void {
+        if (app.converted) |*cv| {
+            cv.saved = true;
+            if (ty != .xlsx) {
+                app.prefs.rememberSaved(app.io, zstr(&cv.source), dest);
+                app.savePrefs();
+            }
+        }
+        if (app.exit_save) app.quit = true;
+        app.exit_save = false;
+    }
+
+    // Solta o arquivo aberto (so sem trabalho rodando) e apaga o SQLite temporario, se houver. Fechar, abrir outro e
+    // Reabrir passam por aqui sem perguntar: o convertido que nao foi salvo e descartado e o Log diz
     fn closeFile(app: *App) void {
         if (!app.db.isOpen() and app.converted == null) return;
         const name = std.fs.path.basename(zstr(&app.loaded_path));
@@ -1340,67 +1458,14 @@ const App = struct {
         app.opened_file = @splat(0);
         if (app.converted) |cv| {
             access.deleteTemp(app.io, cv.tmp.slice(), zstr(&cv.source));
+            if (!cv.saved) {
+                var lb: [1200]u8 = undefined;
+                logLine(i18n.fmt(&lb, "log_discarded", .{std.fs.path.basename(zstr(&cv.source))}));
+            }
             app.converted = null;
         }
         app.updateTitle();
         if (shown.len > 0) app.status.set(false, "status_closed", .{shown});
-    }
-
-    // Executa a resposta do dialogo do SQLite convertido (na thread da UI, sem trabalho rodando)
-    // from_prompt: respondida no dialogo (cancelar o dialogo de arquivo volta para a pergunta); senao e a resposta
-    // lembrada da sessao (cancelar desiste da acao)
-    fn resolve(app: *App, ch: Choice, from_prompt: bool) void {
-        const cv = app.converted orelse {
-            app.leave = null;
-            return;
-        };
-        var saved: ?[]const u8 = null;
-        var sugg_buf: [4096]u8 = undefined;
-        var path_buf: dialog.PathBuf = undefined;
-        if (ch == .save) {
-            const stem = std.fs.path.stem(zstr(&cv.source));
-            var name_buf: [600]u8 = undefined;
-            const file = settings.fileName(&name_buf, stem, ".sqlite");
-            var dest: ?[]const u8 = null;
-            // resposta lembrada: grava direto na pasta escolhida da primeira vez, se o nome estiver livre
-            if (app.session_choice == .save and app.save_dir[0] != 0) {
-                const p = settings.suggest(&sugg_buf, zstr(&app.save_dir), file);
-                if (std.Io.Dir.cwd().access(app.io, p, .{})) |_| {} else |_| dest = p;
-            }
-            if (dest == null) {
-                // padrao: ao lado do arquivo de origem, <origem>.sqlite
-                const initial = settings.suggest(&sugg_buf, std.fs.path.dirname(zstr(&cv.source)) orelse "", file);
-                dest = dialog.pick(app.io, .save_sqlite, app.hwnd, initial, &path_buf);
-                if (dest == null) {
-                    if (dialog.unavailable) app.status.set(true, "err_no_dialog", .{});
-                    // cancelou o dialogo de salvar: nada fecha; veio da pergunta, ela volta (Esc continua valendo)
-                    if (!from_prompt) app.leave = null;
-                    return;
-                }
-            }
-            std.Io.Dir.cwd().copyFile(cv.tmp.slice(), std.Io.Dir.cwd(), dest.?, app.io, .{}) catch |e| {
-                app.status.set(true, "err_save_sqlite", .{e});
-                app.leave = null; // nada fecha: o usuario tenta de novo
-                return;
-            };
-            copyZ(&app.save_dir, std.fs.path.dirname(dest.?) orelse "");
-            saved = dest;
-            // o mesmo Access, sem mudanca, abre este SQLite da proxima vez (tambem em outra execucao)
-            app.prefs.rememberSaved(app.io, zstr(&cv.source), dest.?);
-            app.savePrefs();
-        }
-        // so com "Lembrar nesta sessao" marcado a resposta vale para as proximas perguntas
-        if (from_prompt and app.choice_remember) app.session_choice = ch;
-        const action = app.leave orelse .close;
-        app.leave = null;
-        app.closeFile();
-        // a ultima linha de status diz o que aconteceu com o SQLite (o "Fechado" fica no log)
-        // so o nome do arquivo na linha de status (o caminho inteiro quebraria a linha); a pasta vai para o log
-        if (saved) |d| {
-            logLine(d);
-            app.status.set(false, "converted_saved", .{std.fs.path.basename(d)});
-        } else app.status.set(false, "converted_deleted", .{});
-        app.finishLeave(action);
     }
 
     fn update(app: *App) void {
@@ -1437,17 +1502,17 @@ const App = struct {
         // busca nova ou a outra acao nao esperarem por ela
         if (app.slot.busyWith(.search_all) and !app.slot.progress.cancel.load(.monotonic) and !app.wantsGlobal(&app.slot.req.search))
             app.slot.cancel();
-        if (app.slot.busy()) return; // um trabalho por vez; os pedidos abaixo ficam para depois
-        if (app.choice) |ch| {
-            app.choice = null;
-            app.resolve(ch, true);
-        } else if (app.leave) |action| {
-            if (app.converted == null) {
-                app.leave = null;
-                app.finishLeave(action);
-            } else if (app.session_choice) |ch| app.resolve(ch, false);
+        // a exportacao acabou com a pergunta "Sair cancela a exportacao" aberta: a saida continua
+        if (app.exit_ask == .export_running and !app.slot.busyWith(.export_)) {
+            app.exit_ask = null;
+            app.exitUnlessUnsaved();
         }
-        if (app.leave != null) return; // esperando a resposta sobre o SQLite convertido
+        if (app.slot.busy()) return; // um trabalho por vez; os pedidos abaixo ficam para depois
+        if (app.exit_ask != null or app.quit) return; // esperando a resposta da pergunta de saida
+        if (app.want_close) {
+            app.want_close = false;
+            app.closeFile();
+        }
         // F5 (o do Python): abre de novo o arquivo aberto; o SQLite convertido dele e trocado pelo novo, sem pergunta
         if (app.want_refresh) {
             app.want_refresh = false;
@@ -1466,12 +1531,17 @@ const App = struct {
             app.want_export = app.start_export;
             app.start_export = null;
         }
-        if (app.want_export) |kind| {
+        if (app.want_save) |mode| {
+            app.want_save = null;
+            app.startSave(mode);
+        } else if (app.want_export) |kind| {
             app.want_export = null;
             app.startExport(kind);
         } else if (app.want_open) {
             app.want_open = false;
-            if (app.converted != null) app.requestLeave(.open) else app.start(.open);
+            // abrir outro arquivo nao pergunta: o convertido do anterior, se nao foi salvo, e descartado
+            if (app.converted != null) app.closeFile();
+            app.start(.open);
         } else if (app.want_select != null) {
             app.start(.select);
             app.want_select = null;
@@ -1551,6 +1621,7 @@ const App = struct {
         if (std.ascii.eqlIgnoreCase(dest, loaded) or std.ascii.eqlIgnoreCase(dest, zstr(&app.opened_file))) return app.status.set(true, "err_choose_other", .{});
         if (app.converted) |cv| if (std.ascii.eqlIgnoreCase(dest, cv.tmp.slice())) return app.status.set(true, "err_choose_other", .{});
         app.rememberDir(dest);
+        copyZ(&app.save_dir, std.fs.path.dirname(dest) orelse ""); // onde "Salvar como..." comeca
 
         r.setDest(dest);
         r.total_hint = 0;
@@ -1599,7 +1670,7 @@ const App = struct {
             ig.ImGuiWindowFlags_NoSavedSettings | ig.ImGuiWindowFlags_NoBringToFrontOnFocus);
         defer ig.igEnd();
         app.drawAbout();
-        app.drawConverted();
+        app.drawExit();
         app.drawExportScope();
         app.drawDisplayWarning();
 
@@ -1686,12 +1757,7 @@ const App = struct {
 
     // Itens de exportacao (menu Arquivo > Exportar e botao Exportar...)
     fn exportItems(app: *App) void {
-        const can_db = !app.opening() and app.db.isOpen();
-        // ordem do padrao: SQLite, DuckDB, Excel; depois CSV e Excel da tabela, do esquema ou do resultado
-        if (ig.igMenuItem_Bool(tr("export_db_sqlite"), null, false, can_db)) app.want_export = .db_sqlite;
-        if (ig.igMenuItem_Bool(tr("export_db_duckdb"), null, false, can_db)) app.want_export = .db_duckdb;
-        if (ig.igMenuItem_Bool(tr("export_db_xlsx"), null, false, can_db)) app.want_export = .db_xlsx;
-        ig.igSeparator();
+        // o banco inteiro para SQLite, DuckDB ou Excel e Arquivo > Salvar e Salvar como...
         const cur = app.canExportCurrent();
         const csv_key, const xlsx_key = switch (app.tab) {
             .data => .{ tr("export_table_csv"), tr("export_table_xlsx") },
@@ -1723,14 +1789,20 @@ const App = struct {
         if (ig.igBeginMenu(file_l, true)) {
             defer ig.igEndMenu();
             if (ig.igMenuItem_Bool(tr("menu_open"), "Ctrl+O", false, true)) app.want_browse = true;
+            if (ig.igMenuItem_Bool(tr("menu_open_typed"), null, false, true)) app.want_open = true;
+            if (ig.igMenuItem_Bool(tr("menu_reopen"), "F5", false, has_db)) app.want_refresh = true;
+            ig.igSeparator();
+            if (ig.igMenuItem_Bool(tr("menu_save"), "Ctrl+S", false, has_db)) app.want_save = .save;
+            if (ig.igMenuItem_Bool(tr("menu_save_as"), "Ctrl+Shift+S", false, has_db)) app.want_save = .save_as;
             if (open_file) _ = ig.igOpenPopup_Str(export_l, 0);
             if (ig.igBeginMenu(export_l, has_db)) {
                 defer ig.igEndMenu();
                 app.exportItems();
             }
-            if (ig.igMenuItem_Bool(tr("menu_close"), null, false, has_db)) app.requestLeave(.close);
             ig.igSeparator();
-            if (ig.igMenuItem_Bool(tr("menu_exit"), "Ctrl+Q", false, true)) app.requestLeave(.exit);
+            if (ig.igMenuItem_Bool(tr("menu_close"), "Ctrl+W", false, has_db)) app.want_close = true;
+            ig.igSeparator();
+            if (ig.igMenuItem_Bool(tr("menu_exit"), "Ctrl+Q", false, true)) app.requestExit();
         }
         if (ig.igBeginMenu(view_l, true)) {
             defer ig.igEndMenu();
@@ -1785,8 +1857,11 @@ const App = struct {
         const ctrl = ig.ImGuiMod_Ctrl;
         if (chord(ctrl | ig.ImGuiKey_O)) app.want_browse = true;
         if (chord(ctrl | ig.ImGuiKey_L)) app.setLogOpen(!app.prefs.log_open);
-        if (chord(ctrl | ig.ImGuiKey_Q)) app.requestLeave(.exit);
+        if (chord(ctrl | ig.ImGuiKey_Q)) app.requestExit();
         if (has_db) {
+            if (chord(ctrl | ig.ImGuiKey_S)) app.want_save = .save;
+            if (chord(ctrl | ig.ImGuiMod_Shift | ig.ImGuiKey_S)) app.want_save = .save_as;
+            if (chord(ctrl | ig.ImGuiKey_W)) app.want_close = true;
             if (chord(ctrl | ig.ImGuiKey_F)) {
                 app.want_tab = .data;
                 app.focus_search = true;
@@ -1840,17 +1915,22 @@ const App = struct {
             .{ tr("about_window"), std.fmt.bufPrint(&bufs[2], "GLFW {d}.{d}.{d} + OpenGL 3.3", .{ glfw_ver[0], glfw_ver[1], glfw_ver[2] }) catch "" },
             .{ tr("about_database"), std.fmt.bufPrint(&bufs[3], "DuckDB {s}", .{std.mem.trimStart(u8, dbm.libraryVersion(), "v")}) catch "" },
             .{ tr("about_access"), if (platform.is_windows) i18n.fmt(&bufs[4], "about_access_win", .{about.mdbtools_version}) else i18n.fmt(&bufs[4], "about_access_unix", .{about.mdbtools_version}) },
+            .{ tr("about_write"), tr("about_write_value") },
             .{ tr("about_author"), about.author },
             .{ tr("about_license"), tr("about_license_text") },
         };
         if (ig.igBeginTable("##about_rows", 2, ig.ImGuiTableFlags_SizingFixedFit, .{ .x = 0, .y = 0 }, 0)) {
             defer ig.igEndTable();
+            // a linha de Gravacao (mais longa) quebra na largura da de Leitura do Access: o dialogo fica do mesmo tamanho
+            const wrap_w = rawWidth(rows[4][1]) + 1;
             for (rows) |row| {
                 ig.igTableNextRow(0, 0);
                 _ = ig.igTableNextColumn();
                 ig.igTextDisabled("%s", row[0].ptr);
                 _ = ig.igTableNextColumn();
+                ig.igPushTextWrapPos(ig.igGetCursorPosX() + wrap_w);
                 textSlice(row[1]);
+                ig.igPopTextWrapPos();
             }
             for (about.links) |link| {
                 ig.igTableNextRow(0, 0);
@@ -1918,59 +1998,70 @@ const App = struct {
         }
     }
 
-    // Pergunta sobre o SQLite convertido do Access, a do Go: texto, "Lembrar nesta sessao" e Salvar... / Apagar /
-    // Cancelar (o X e o Esc cancelam)
-    fn drawConverted(app: *App) void {
-        var tb: [96]u8 = undefined;
-        const title = idLabel(&tb, "converted_title", "converted");
-        const want = app.leave != null and app.choice == null and app.converted != null;
-        if (want and !ig.igIsPopupOpen_Str(title, 0)) _ = ig.igOpenPopup_Str(title, 0);
-        centerNext();
-        // X do dialogo, Esc ou Cancelar fecham a pergunta (inclusive na saida do programa); Enter = Salvar...
-        var open = true;
-        if (!ig.igBeginPopupModal(title, &open, ig.ImGuiWindowFlags_AlwaysAutoResize | ig.ImGuiWindowFlags_NoSavedSettings)) {
-            if (!open) app.leave = null; // o X fecha o popup antes de chegar aqui
-            return;
-        }
-        defer ig.igEndPopup();
-        if (!want) return ig.igCloseCurrentPopup();
-        if (!open or ig.igIsKeyPressed_Bool(ig.ImGuiKey_Escape, false)) {
-            app.leave = null;
-            return ig.igCloseCurrentPopup();
-        }
-        const cv = app.converted.?;
-        if (ig.igIsWindowAppearing()) app.remember_box = false;
-        var mb: [600]u8 = undefined;
-        var nb: [600]u8 = undefined;
-        // "<origem>.sqlite", o nome que o Salvar... sugere; largura controlada: o nome longo quebra a linha
-        const file = settings.fileName(&nb, std.fs.path.stem(zstr(&cv.source)), ".sqlite");
-        ig.igPushTextWrapPos(ig.igGetFontSize() * 30);
-        textSlice(i18n.fmt(&mb, "converted_text", .{file}));
-        ig.igPopTextWrapPos();
-        ig.igSpacing();
-        _ = ig.igCheckbox(tr("converted_remember"), &app.remember_box);
-        ig.igSpacing();
-        const save_l = tr("save");
-        const delete_l = tr("delete");
-        const cancel_l = tr("cancel");
-        const bw = dialogButtonWidth(&.{ save_l, delete_l, cancel_l });
-        const st = ig.igGetStyle();
-        const row_w = 3 * bw + 2 * st.*.ItemSpacing.x;
-        ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - row_w));
-        if (ig.igButton(save_l, .{ .x = bw, .y = 0 })) app.choice = .save;
-        // foco inicial visivel no botao padrao; Enter (com o foco nele) salva
-        if (ig.igIsWindowAppearing()) {
-            ig.igSetItemDefaultFocus();
-            ig.igSetKeyboardFocusHere(-1);
-            ig.igSetNavCursorVisible(true);
-        }
-        ig.igSameLine(0, -1);
-        if (ig.igButton(delete_l, .{ .x = bw, .y = 0 })) app.choice = .delete;
-        app.choice_remember = app.remember_box;
-        ig.igSameLine(0, -1);
-        if (ig.igButton(cancel_l, .{ .x = bw, .y = 0 })) {
-            app.leave = null;
-            ig.igCloseCurrentPopup();
+    // Perguntas ao sair do programa. Access convertido e nao salvo: "Salvar" a esquerda; "Voltar" e "Sair" a direita,
+    // lado a lado. Exportacao em andamento: "Voltar" e "Sair" (Sair cancela a exportacao; o arquivo pela metade e
+    // apagado). Esc e o X da caixa = Voltar.
+    fn drawExit(app: *App) void {
+        var tb: [2][96]u8 = undefined;
+        const titles = [_][:0]const u8{ idLabel(&tb[0], "export_run_title", "exit_export"), idLabel(&tb[1], "converted_title", "exit_unsaved") };
+        for (titles, [_]ExitAsk{ .export_running, .unsaved }) |title, kind| {
+            const want = app.exit_ask == kind;
+            if (want and !ig.igIsPopupOpen_Str(title, 0)) _ = ig.igOpenPopup_Str(title, 0);
+            centerNext();
+            var open = true;
+            if (!ig.igBeginPopupModal(title, &open, ig.ImGuiWindowFlags_AlwaysAutoResize | ig.ImGuiWindowFlags_NoSavedSettings)) {
+                if (!open and want) app.exit_ask = null; // o X fecha o popup antes de chegar aqui
+                continue;
+            }
+            defer ig.igEndPopup();
+            if (!want or !open or ig.igIsKeyPressed_Bool(ig.ImGuiKey_Escape, false)) {
+                if (want) app.exit_ask = null;
+                ig.igCloseCurrentPopup();
+                continue;
+            }
+            var mb: [1300]u8 = undefined;
+            const source = if (app.converted) |*cv| zstr(&cv.source) else "";
+            ig.igPushTextWrapPos(ig.igGetFontSize() * 30);
+            textSlice(if (kind == .unsaved)
+                i18n.fmt(&mb, "exit_text", .{std.fs.path.basename(source)})
+            else
+                i18n.fmt(&mb, "export_run_text", .{std.fs.path.basename(app.slot.req.destPath())}));
+            ig.igPopTextWrapPos();
+            ig.igSpacing();
+            const save_l = tr("btn_save");
+            const back_l = tr("btn_back");
+            const exit_l = tr("btn_exit");
+            const bw = dialogButtonWidth(&.{ save_l, back_l, exit_l });
+            if (kind == .unsaved) {
+                // Salvar abre a caixa de Arquivo > Salvar; cancelada, esta pergunta volta
+                if (ig.igButton(save_l, .{ .x = bw, .y = 0 })) {
+                    app.exit_ask = null;
+                    app.exit_save = true;
+                    app.want_save = .save;
+                    ig.igCloseCurrentPopup();
+                }
+                ig.igSameLine(0, -1);
+            }
+            ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - 2 * bw - ig.igGetStyle().*.ItemSpacing.x));
+            if (ig.igButton(back_l, .{ .x = bw, .y = 0 })) {
+                app.exit_ask = null;
+                ig.igCloseCurrentPopup();
+            }
+            // foco inicial visivel: Salvar (Access nao salvo) ou Voltar (exportacao em andamento)
+            if (ig.igIsWindowAppearing()) {
+                ig.igSetItemDefaultFocus();
+                ig.igSetKeyboardFocusHere(if (kind == .unsaved) -2 else -1);
+                ig.igSetNavCursorVisible(true);
+            }
+            ig.igSameLine(0, -1);
+            if (ig.igButton(exit_l, .{ .x = bw, .y = 0 })) {
+                app.exit_ask = null;
+                ig.igCloseCurrentPopup();
+                if (kind == .export_running) {
+                    app.slot.cancel();
+                    app.exitUnlessUnsaved();
+                } else app.quit = true;
+            }
         }
     }
 
@@ -2985,8 +3076,8 @@ fn run(init: std.process.Init) !void {
     if (capture_opts) |o| {
         shim_capture_setup();
         try std.Io.Dir.cwd().createDirPath(init.io, o.out_dir);
-        const save_end = if (init.environ_map.get("MDB2SQL_CAPTURE_SAVE")) |v| std.mem.eql(u8, v, "1") else false;
-        capture = .{ .out_dir = o.out_dir, .fbo = try Fbo.load(), .save_end = save_end };
+        const save_type = if (init.environ_map.get("MDB2SQL_CAPTURE_SAVE")) |v| std.meta.stringToEnum(dialog.SaveType, v) else null;
+        capture = .{ .out_dir = o.out_dir, .fbo = try Fbo.load(), .save_type = save_type };
     }
     defer if (capture) |*c| {
         if (c.failed != null or c.wrong.items.len > 0) capture_failed = true;
@@ -2995,10 +3086,10 @@ fn run(init: std.process.Init) !void {
 
     while (!app.quit) {
         glfw.pollEvents();
-        // fechar a janela passa pela pergunta do SQLite convertido (Cancelar mantem o programa aberto)
+        // X da janela e Alt+F4: a mesma saida de Arquivo > Sair (Voltar mantem o programa aberto)
         if (window.shouldClose()) {
             window.setShouldClose(false);
-            app.requestLeave(.exit);
+            app.requestExit();
         }
         if (dropped[0] != 0) {
             app.setPath(zstr(&dropped));
