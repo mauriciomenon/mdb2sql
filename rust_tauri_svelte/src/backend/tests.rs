@@ -865,10 +865,13 @@ mod tests {
 
     #[test]
     fn search_matches_all_words_in_one_cell_ignoring_case_and_accents() {
-        assert!(search_condition(&["a".into()], "   ").is_none());
-        let (sql, params) = search_condition(&["co\"l".into(), "b".into()], "x y").unwrap();
+        let col = |name: &str, kind: &str| (name.to_string(), kind.to_string());
+        assert!(search_condition(&[col("a", "VARCHAR")], "   ").is_none());
+        let (sql, params) = search_condition(&[col("co\"l", "VARCHAR"), col("b", "INTEGER")], "x y").unwrap();
         assert_eq!(params.len(), 4);
         assert!(sql.contains("CAST(\"co\"\"l\" AS VARCHAR)") && sql.contains(" OR ") && sql.contains(" AND "), "{sql}");
+        // numero ja sai em minusculas e sem acento: sem lower(strip_accents()) na celula (so nas palavras)
+        assert!(sql.contains("contains(lower(strip_accents(CAST(\"co\"\"l\" AS VARCHAR)))") && sql.contains("contains(CAST(\"b\" AS VARCHAR)"), "{sql}");
         let dir = tempdir().unwrap();
         let path = dir.path().join("s.duckdb");
         duckdb::Connection::open(&path)
@@ -890,7 +893,8 @@ mod tests {
     }
 
     // "Todas as tabelas": mesma regra da pesquisa de uma tabela (todas as palavras numa celula, sem maiusculas nem
-    // acentos), so nas colunas de texto, na ordem da lista; DuckDB anexado e SQLite copiado para a memoria
+    // acentos), em todas as colunas (numeros como texto, como nas outras 3 versoes), na ordem da lista; DuckDB anexado e
+    // SQLite copiado para a memoria
     #[test]
     fn search_in_all_tables_counts_matching_rows_per_table() {
         let dir = tempdir().unwrap();
@@ -903,7 +907,9 @@ mod tests {
                  CREATE TABLE a_codes (code INTEGER, name VARCHAR);
                  INSERT INTO a_codes VALUES (7, 'Tensão'), (8, 'x');
                  CREATE TABLE c_numbers (tensao INTEGER, n INTEGER);
-                 INSERT INTO c_numbers VALUES (1, 7);",
+                 INSERT INTO c_numbers VALUES (1, 7);
+                 CREATE TABLE d_kinds (x DOUBLE, b BOOLEAN, d DATE, ts TIMESTAMP);
+                 INSERT INTO d_kinds VALUES (1e20, true, DATE '2024-01-02', TIMESTAMP '2024-03-04 05:06:08');",
             )
             .unwrap();
         let manager = DBManager::new();
@@ -915,9 +921,15 @@ mod tests {
         assert_eq!(found("TENSAO"), [("a_codes".to_string(), 1), ("b_points".to_string(), 2)]);
         assert_eq!(found("campo tensão"), [("b_points".to_string(), 1)]);
         assert_eq!(found("  "), []);
-        assert_eq!(found("7"), [], "numbers are not text columns");
+        // numeros tambem: a_codes.code 7 e c_numbers.n 7 (b_points.id nao tem 7)
+        assert_eq!(found("7"), [("a_codes".to_string(), 1), ("c_numbers".to_string(), 1)]);
         // abrir a tabela achada com a mesma pesquisa da a mesma contagem
         assert_eq!(manager.get_row_count("b_points", &[], "TENSAO").unwrap(), 2);
+        assert_eq!(manager.get_row_count("c_numbers", &[], "7").unwrap(), 1);
+        // tipos que nao passam por lower(strip_accents()): o texto deles ja e o dobrado (maiusculas da busca valem)
+        for search in ["E+20", "TRUE", "2024-01-02", "05:06:08", "2024-03-04 05:06"] {
+            assert_eq!(found(search), [("d_kinds".to_string(), 1)], "{search}");
+        }
 
         let lite = dir.path().join("all.sqlite");
         let conn = rusqlite::Connection::open(&lite).unwrap();

@@ -115,7 +115,9 @@ pub(crate) fn where_clause(filters: &[Filter]) -> Result<(String, Vec<duckdb::ty
 // palavras (qualquer ordem, sem diferenciar maiusculas nem acentos). Devolve a condicao (sem WHERE) e os parametros.
 // NIVEL TECNICO: every column is compared as text (CAST AS VARCHAR) after lower(strip_accents()); the words go as
 // bound parameters folded the same way, so "tensao" finds "TENSÃO". NULL never matches. Empty search = None.
-pub(crate) fn search_condition(columns: &[String], search: &str) -> Option<(String, Vec<duckdb::types::Value>)> {
+// columns = (nome, tipo): numbers, dates, times and booleans already print in lowercase without accents, so they skip
+// the fold (same result; on DB3 the fold of every cell was most of the time of the all-tables search, tests.rs)
+pub(crate) fn search_condition(columns: &[(String, String)], search: &str) -> Option<(String, Vec<duckdb::types::Value>)> {
     let words: Vec<&str> = search.split_whitespace().collect();
     if words.is_empty() || columns.is_empty() {
         return None;
@@ -124,8 +126,9 @@ pub(crate) fn search_condition(columns: &[String], search: &str) -> Option<(Stri
     let mut params = Vec::new();
     let cells: Vec<String> = columns
         .iter()
-        .map(|col| {
-            let cell = fold(&format!("CAST({} AS VARCHAR)", ident(col)));
+        .map(|(col, kind)| {
+            let text = format!("CAST({} AS VARCHAR)", ident(col));
+            let cell = if prints_folded(kind) { text } else { fold(&text) };
             let all: Vec<String> = words
                 .iter()
                 .map(|w| {
@@ -139,8 +142,19 @@ pub(crate) fn search_condition(columns: &[String], search: &str) -> Option<(Stri
     Some((format!("({})", cells.join(" OR ")), params))
 }
 
+// tipo do DuckDB cujo texto (CAST AS VARCHAR) so tem digitos, pontuacao e minusculas sem acento (1e+20, inf, true,
+// 2024-01-02 10:00:00): lower(strip_accents()) nao muda nada nele
+fn prints_folded(kind: &str) -> bool {
+    const PLAIN: [&str; 15] = [
+        "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT", "UHUGEINT",
+        "FLOAT", "DOUBLE", "DATE", "TIME", "BOOLEAN",
+    ];
+    let kind = kind.to_ascii_uppercase();
+    kind.starts_with("DECIMAL(") || kind.starts_with("TIMESTAMP") || PLAIN.contains(&kind.as_str())
+}
+
 // filtros (AND) e pesquisa juntos num WHERE so
-fn where_all(filters: &[Filter], columns: &[String], search: &str) -> Result<(String, Vec<duckdb::types::Value>), String> {
+fn where_all(filters: &[Filter], columns: &[(String, String)], search: &str) -> Result<(String, Vec<duckdb::types::Value>), String> {
     let (mut sql, mut params) = where_clause(filters)?;
     if let Some((cond, more)) = search_condition(columns, search) {
         sql = if sql.is_empty() { format!(" WHERE {cond}") } else { format!("{sql} AND {cond}") };
@@ -505,19 +519,21 @@ fn marked_condition(id: &str, marked: &[serde_json::Value]) -> (String, Vec<duck
     (format!("{id} IN ({})", vec!["?"; marked.len()].join(", ")), params)
 }
 
-// NIVEL BASICO: Colunas de cada tabela do banco corrente, na ordem da tabela (uma consulta so, sem PRAGMA por tabela)
-pub(crate) fn all_columns(conn: &Connection) -> Result<HashMap<String, Vec<String>>, String> {
+// NIVEL BASICO: Colunas (nome, tipo) de cada tabela do banco corrente, na ordem da tabela (uma consulta so, sem PRAGMA
+// por tabela)
+pub(crate) fn all_columns(conn: &Connection) -> Result<HashMap<String, Vec<(String, String)>>, String> {
     let failed = |e: duckdb::Error| format!("Failed to list columns: {e}");
-    let mut columns: HashMap<String, Vec<String>> = HashMap::new();
+    let mut columns: HashMap<String, Vec<(String, String)>> = HashMap::new();
     let mut stmt = conn
         .prepare(
-            "SELECT table_name, column_name FROM information_schema.columns WHERE table_catalog = current_database() \
+            "SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_catalog = current_database() \
              AND table_schema = current_schema() ORDER BY ordinal_position",
         )
         .map_err(failed)?;
     let mut rows = stmt.query([]).map_err(failed)?;
     while let Some(row) = rows.next().map_err(failed)? {
-        columns.entry(row.get(0).map_err(failed)?).or_default().push(row.get(1).map_err(failed)?);
+        let column = (row.get(1).map_err(failed)?, row.get(2).map_err(failed)?);
+        columns.entry(row.get(0).map_err(failed)?).or_default().push(column);
     }
     Ok(columns)
 }
@@ -691,9 +707,9 @@ impl DBManager {
         }
     }
 
-    // nomes das colunas na ordem da tabela (a pesquisa olha todas)
-    fn column_names(&self, table_name: &str) -> Result<Vec<String>, String> {
-        Ok(self.get_table_schema(table_name)?.into_iter().map(|c| c.name).collect())
+    // nomes e tipos das colunas na ordem da tabela (a pesquisa olha todas)
+    fn columns(&self, table_name: &str) -> Result<Vec<(String, String)>, String> {
+        Ok(self.get_table_schema(table_name)?.into_iter().map(|c| (c.name, c.col_type)).collect())
     }
 
     // NIVEL BASICO: Retorna schema (colunas e tipos) de uma tabela
@@ -714,10 +730,11 @@ impl DBManager {
         marked: &[serde_json::Value],
     ) -> Result<TablePage, String> {
         self.validate_table_name(table_name)?;
-        let columns = self.column_names(table_name)?;
+        let columns = self.columns(table_name)?;
         let (filter_sql, params) = where_all(filters, &columns, search)?;
+        let names: Vec<String> = columns.into_iter().map(|(name, _)| name).collect();
         self.with_conn(|conn| {
-            let id = row_id(conn, table_name, &columns);
+            let id = row_id(conn, table_name, &names);
             let select = format!("SELECT {id} AS {}, * FROM {}", ident(ROW_ID), ident(table_name));
             let read = |query: String, params: Vec<duckdb::types::Value>| {
                 let mut stmt = conn.prepare(&query).map_err(|e| format!("Failed to prepare query: {e}"))?;
@@ -816,18 +833,18 @@ impl DBManager {
     // contagem), para exportar so elas
     pub fn rows_where(&self, table_name: &str, filters: &[Filter], search: &str) -> Result<(String, Vec<duckdb::types::Value>), String> {
         self.validate_table_name(table_name)?;
-        where_all(filters, &self.column_names(table_name)?, search)
+        where_all(filters, &self.columns(table_name)?, search)
     }
 
     // NIVEL BASICO: WHERE das linhas marcadas da tabela (as identidades que a tela guarda), para exportar so elas
     pub fn marked_where(&self, table_name: &str, marked: &[serde_json::Value]) -> Result<(String, Vec<duckdb::types::Value>), String> {
         self.validate_table_name(table_name)?;
-        let columns = self.column_names(table_name)?;
+        let names: Vec<String> = self.columns(table_name)?.into_iter().map(|(name, _)| name).collect();
         if marked.is_empty() {
             return Err("No marked rows".to_string());
         }
         self.with_conn(|conn| {
-            let (cond, params) = marked_condition(&row_id(conn, table_name, &columns), marked);
+            let (cond, params) = marked_condition(&row_id(conn, table_name, &names), marked);
             Ok((format!(" WHERE {cond}"), params))
         })
     }
@@ -835,7 +852,7 @@ impl DBManager {
     // NIVEL BASICO: Retorna numero de linhas da tabela que passam pelos filtros e pela pesquisa (sem nada: todas)
     pub fn get_row_count(&self, table_name: &str, filters: &[Filter], search: &str) -> Result<i64, String> {
         self.validate_table_name(table_name)?;
-        let (filter_sql, params) = where_all(filters, &self.column_names(table_name)?, search)?;
+        let (filter_sql, params) = where_all(filters, &self.columns(table_name)?, search)?;
         self.with_conn(|conn| {
             let query = format!("SELECT COUNT(*) FROM {}{}", ident(table_name), filter_sql);
             conn.query_row(&query, duckdb::params_from_iter(params), |row| row.get(0))

@@ -65,6 +65,8 @@ pub fn search(
         let Some(cols) = columns.get(table).filter(|cols| !cols.is_empty()) else {
             continue;
         };
+        let cols: Vec<String> = cols.iter().map(|(name, _)| name.clone()).collect();
+        let cols = &cols;
         let text = |column: &String| format!("CAST({} AS VARCHAR)", ident(column));
         // identidade da linha so dentro deste comando: o rowid; sem ele (view), a ordem de leitura, guardada
         // (MATERIALIZED) para as duas leituras verem a mesma
