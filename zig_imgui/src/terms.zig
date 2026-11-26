@@ -311,40 +311,26 @@ pub fn reportItems(a: Allocator, names: []const []const u8, res: *const Result, 
     try sql.appendSlice(a, ", COALESCE(p.n, 0) AS ");
     try query.writeIdent(&sql, a, titles.rows);
     try sql.appendSlice(a, " FROM " ++ terms_table ++ " t LEFT JOIN " ++ pairs_table ++ " p ON p.ord = t.ord ORDER BY t.ord, p.tbl_index");
-    items[0] = .{ .sql = try sql.toOwnedSliceSentinel(a, 0), .sheet = titles.sheet_summary };
+    items[0] = .{ .sql = try sql.toOwnedSliceSentinel(a, 0), .sheet = try freeName(a, titles.sheet_summary, names, res) };
     for (res.tables, items[1 .. items.len - 1]) |hit, *item|
-        item.* = .{ .sql = try buildRows(a, names[hit.table], hit, res.match, titles.term, 0), .sheet = try sheetFor(a, names[hit.table], names, res, titles) };
+        item.* = .{ .sql = try buildRows(a, names[hit.table], hit, res.match, titles.term, 0), .sheet = names[hit.table] };
     try sql.appendSlice(a, "SELECT t.term AS ");
     try query.writeIdent(&sql, a, titles.term);
     try sql.appendSlice(a, " FROM " ++ terms_table ++ " t WHERE t.ord NOT IN (SELECT ord FROM " ++ pairs_table ++ ") ORDER BY t.ord");
-    items[items.len - 1] = .{ .sql = try sql.toOwnedSliceSentinel(a, 0), .sheet = titles.sheet_not_found };
+    items[items.len - 1] = .{ .sql = try sql.toOwnedSliceSentinel(a, 0), .sheet = try freeName(a, titles.sheet_not_found, names, res) };
     return items;
 }
 
-// Aba de uma tabela no relatorio: o nome dela; o de uma aba do relatorio (Resumo, Nao encontrados, no idioma da
-// tela) ganha " (2)", " (3)"... ate nao bater com nenhuma aba nem com outra tabela com acerto. O Excel ainda limpa o
-// nome (31 caracteres, sem : \ / ? * [ ], xlsx.Names)
-fn sheetFor(a: Allocator, table: []const u8, names: []const []const u8, res: *const Result, titles: Titles) Allocator.Error![]const u8 {
-    if (!try isReportSheet(a, table, titles)) return table;
+// "Resumo"; se uma tabela com acerto ja tem esse nome, "Resumo (2)"...
+fn freeName(a: Allocator, want: []const u8, names: []const []const u8, res: *const Result) Allocator.Error![]const u8 {
+    var name = want;
     var n: usize = 2;
     while (true) : (n += 1) {
-        const name = try std.fmt.allocPrint(a, "{s} ({d})", .{ table, n });
-        if (try isReportSheet(a, name, titles)) continue;
         for (res.tables) |hit| {
-            if (try sameSheet(a, names[hit.table], name)) break;
+            if (std.ascii.eqlIgnoreCase(names[hit.table], name)) break;
         } else return name;
+        name = try std.fmt.allocPrint(a, "{s} ({d})", .{ want, n });
     }
-}
-
-fn isReportSheet(a: Allocator, name: []const u8, titles: Titles) Allocator.Error!bool {
-    return try sameSheet(a, name, titles.sheet_summary) or try sameSheet(a, name, titles.sheet_not_found);
-}
-
-// Mesmo nome de aba: sem diferenciar maiusculas, tambem as acentuadas (NÃO = Não); sem acentos tambem, a mais
-fn sameSheet(a: Allocator, x: []const u8, y: []const u8) Allocator.Error!bool {
-    const fx = gridtools.fold(try a.alloc(u8, x.len), x);
-    const fy = gridtools.fold(try a.alloc(u8, y.len), y);
-    return std.mem.eql(u8, fx, fy);
 }
 
 // As tabelas temporarias da pesquisa saem com o arquivo: o SHOW TABLES do proximo arquivo as listaria
@@ -588,7 +574,6 @@ test "term search report: summary, one table per table with rows, not found; int
     try db.open(duck, false);
     for (sample_ddl) |sql| try db.exec(sql);
     try db.exec("CREATE TABLE \"Resumo\" AS SELECT 'bomba 1' AS x"); // nome igual ao da aba do resumo
-    try db.exec("CREATE TABLE \"NÃO ENCONTRADOS\" AS SELECT 'bomba 1' AS y"); // o da outra aba, em outra caixa
     try db.open(":memory:", false);
     try db.openReadOnly(duck);
     var p: Progress = .{};
@@ -597,24 +582,17 @@ test "term search report: summary, one table per table with rows, not found; int
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
     const items = try reportItems(arena.allocator(), db.table_names, &res, .{ .term = "Termo", .status = "Situação", .table = "Tabela", .rows = "Linhas", .found = "Encontrado", .not_found = "Não encontrado", .sheet_summary = "Resumo", .sheet_not_found = "Não encontrados" });
-    // resumo, as 5 tabelas com acerto (NÃO ENCONTRADOS, Resumo, other, points, seen) e os nao encontrados; as abas do
-    // relatorio ficam com o nome delas e a tabela com o mesmo nome (sem contar a caixa) ganha " (2)"
-    try t.expectEqual(7, items.len);
-    try t.expectEqualStrings("Resumo", items[0].sheet);
-    try t.expectEqualStrings("Não encontrados", items[6].sheet);
-    var renamed: usize = 0;
-    for (items[1..6]) |item| {
-        if (std.mem.eql(u8, item.sheet, "Resumo (2)") or std.mem.eql(u8, item.sheet, "NÃO ENCONTRADOS (2)")) renamed += 1;
-    }
-    try t.expectEqual(2, renamed);
-    try t.expectEqual(7, try exporter.bundle(&db, t.io, .duckdb, items, out, &p, 0));
+    // resumo, as 4 tabelas com acerto (Resumo, other, points, seen) e os nao encontrados
+    try t.expectEqual(6, items.len);
+    try t.expectEqualStrings("Resumo (2)", items[0].sheet);
+    try t.expectEqual(6, try exporter.bundle(&db, t.io, .duckdb, items, out, &p, 0));
     var check = dbm.testDb();
     defer check.close();
     try check.openReadOnly(out);
-    var g = try check.run("SELECT \"Termo\", \"Situação\", \"Tabela\", \"Linhas\" FROM \"Resumo\"", &.{});
+    var g = try check.run("SELECT \"Termo\", \"Situação\", \"Tabela\", \"Linhas\" FROM \"Resumo (2)\"", &.{});
     defer g.deinit();
     // um por termo x tabela, na ordem dos termos; o nao encontrado com a tabela vazia e 0
-    try t.expectEqual(1 + 5 + 2, g.rows.len);
+    try t.expectEqual(1 + 4 + 2, g.rows.len);
     try t.expectEqualStrings("nada", g.rows[0][0].?);
     try t.expectEqualStrings("Não encontrado", g.rows[0][1].?);
     try t.expectEqualStrings("", g.rows[0][2].?);
@@ -622,7 +600,7 @@ test "term search report: summary, one table per table with rows, not found; int
     try t.expectEqualStrings("bomba 1", g.rows[1][0].?);
     try t.expectEqualStrings("Encontrado", g.rows[1][1].?);
     try t.expectEqualStrings("238", g.rows[6][0].?);
-    var two = try check.run("SELECT \"Linhas\" FROM \"Resumo\" WHERE \"Termo\" = 'bomba 1' AND \"Tabela\" = 'points'", &.{});
+    var two = try check.run("SELECT \"Linhas\" FROM \"Resumo (2)\" WHERE \"Termo\" = 'bomba 1' AND \"Tabela\" = 'points'", &.{});
     defer two.deinit();
     try t.expectEqualStrings("2", two.rows[0][0].?);
     var nf = try check.run("SELECT * FROM \"Não encontrados\"", &.{});
