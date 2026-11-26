@@ -553,7 +553,7 @@ mod tests {
         assert_eq!(manager.get_row_count("Empty", &[], "").unwrap(), 0);
 
         let lite_path = opened.converted.as_ref().unwrap().path().to_path_buf();
-        assert!(lite_path.starts_with(converted::temp_dir()));
+        assert!(lite_path.starts_with(&converted::temp_dirs(None)[0]));
         let lite = rusqlite::Connection::open_with_flags(&lite_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
         let declared: Vec<(String, String)> = lite
             .prepare("SELECT name, type FROM pragma_table_info('Sample Types')")
@@ -794,27 +794,25 @@ mod tests {
         assert_eq!(run(&[("DISPLAY", ":0")], debian, false), Decision::NoDisplay);
     }
 
-    // salvar move o SQLite para onde o usuario escolheu; erro mantem o temporario; restos de processos mortos somem
+    // Salvar copia o SQLite convertido (gravacao segura de main.rs save_converted); erro deixa o temporario; o
+    // temporario some quando o Converted vai embora (salvo, fechar, abrir outro, sair); restos de processos mortos somem
     #[test]
     fn converted_sqlite_is_saved_discarded_and_cleaned() {
         let dir = tempdir().unwrap();
-        let make = || {
-            let path = converted::new_temp_path("t.sqlite").unwrap();
-            rusqlite::Connection::open(&path).unwrap().execute_batch("CREATE TABLE t (x)").unwrap();
-            converted::Converted::new(path)
-        };
-        let lite = make();
+        let path = converted::new_temp_path("t.sqlite", None).unwrap();
+        rusqlite::Connection::open(&path).unwrap().execute_batch("CREATE TABLE t (x)").unwrap();
+        let lite = converted::Converted::new(path);
         let temp = lite.path().to_path_buf();
+        let copy = |target: &Path| export::via_partial(target, |partial| std::fs::copy(lite.path(), partial).map(|_| ()).map_err(|e| e.to_string()));
         let target = dir.path().join("saved.sqlite");
-        assert!(lite.save(&target).is_ok());
-        assert!(target.is_file() && !temp.exists());
-
-        let lite = make();
-        let temp = lite.path().to_path_buf();
-        let (lite, _) = lite.save(&dir.path().join("missing folder").join("x.sqlite")).err().unwrap();
+        copy(&target).unwrap();
+        assert!(target.is_file() && temp.is_file());
+        assert!(copy(&dir.path().join("missing folder").join("x.sqlite")).is_err());
         assert!(temp.is_file(), "a failed save keeps the temporary");
         drop(lite);
         assert!(!temp.exists());
+        let saved = rusqlite::Connection::open(&target).unwrap();
+        assert_eq!(saved.query_row("SELECT count(*) FROM t", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
 
         // limpeza da proxima abertura: so arquivos "<pid>-..." de processo que nao existe mais; os deste ficam
         let stale = dir.path().join("4294967294-1-old.sqlite");
@@ -855,8 +853,8 @@ mod tests {
     // nomes de temporario reservados de forma exclusiva: chamadas seguidas nunca repetem nem reaproveitam arquivo
     #[test]
     fn temporary_names_are_reserved_exclusively() {
-        let a = converted::new_temp_path("x.csv").unwrap();
-        let b = converted::new_temp_path("x.csv").unwrap();
+        let a = converted::new_temp_path("x.csv", None).unwrap();
+        let b = converted::new_temp_path("x.csv", None).unwrap();
         assert_ne!(a, b);
         assert!(a.is_file() && b.is_file());
         let _ = std::fs::remove_file(a);
@@ -1075,6 +1073,44 @@ mod tests {
         manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
         let rows = manager.query_table("t", 10, &[filter("id", json!("9007199254740993"))], "").unwrap();
         assert_eq!(rows, [json!({ "id": "9007199254740993" })]);
+    }
+
+    // item 29: o SQLite convertido vai para a primeira pasta em que der para criar arquivo: a temporaria do usuario, a
+    // do sistema, a do original (subpasta propria em todas); sobras de processos mortos somem ao iniciar, tambem ao
+    // lado de originais (so a subpasta do app)
+    #[test]
+    fn temp_folder_falls_back_to_the_next_one() {
+        let dir = tempdir().unwrap();
+        let blocked = dir.path().join("a file");
+        std::fs::write(&blocked, "x").unwrap();
+        // pasta "dentro" de um arquivo nao da para criar: vai para a seguinte
+        let dirs = [blocked.join("sub"), dir.path().join("second"), dir.path().join("third")];
+        let file = converted::new_temp_in(&dirs, "x.sqlite").unwrap();
+        assert_eq!(file.parent().unwrap(), dirs[1]);
+        assert!(file.file_name().unwrap().to_string_lossy().starts_with(&format!("{}-", std::process::id())));
+        assert!(converted::new_temp_in(&dirs[..1], "x.sqlite").is_err(), "no folder left");
+        let beside = dir.path().join("orig");
+        let all = converted::temp_dirs(Some(&beside));
+        assert_eq!(all[0], std::env::temp_dir().join("mdb2sql-rust-tauri-svelte"));
+        assert_eq!(all.last().unwrap(), &beside.join("mdb2sql-rust-tauri-svelte"));
+        if cfg!(windows) {
+            let system = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("Temp").join("mdb2sql-rust-tauri-svelte");
+            assert_eq!(all, [all[0].clone(), system, beside.join("mdb2sql-rust-tauri-svelte")]);
+        }
+        // ao lado do original: Converted::beside diz a pasta (a interface guarda para a limpeza)
+        let lite = converted::Converted::new(converted::new_temp_in(&all[2..], "y.sqlite").unwrap());
+        assert_eq!(lite.beside(), Some(all[2].as_path()));
+        drop(lite);
+        assert!(!all[2].exists(), "the empty subfolder beside the original goes too");
+        // limpeza ao iniciar: a sobra ao lado do original (pasta guardada pela interface) some com a subpasta; pasta que
+        // nao e a subpasta do app nao e tocada
+        std::fs::create_dir_all(&all[2]).unwrap();
+        let stale = all[2].join("4294967294-1-old.sqlite");
+        let other = dir.path().join("second").join("4294967294-1-other.sqlite");
+        File::create(&stale).unwrap();
+        File::create(&other).unwrap();
+        let removed = converted::clean_all(&[all[2].to_string_lossy().into_owned(), dirs[1].to_string_lossy().into_owned()]);
+        assert!(removed >= 1 && !stale.exists() && !all[2].exists() && other.exists(), "{removed}");
     }
 
     // item 33: a aba SQL roda so comandos de leitura (tipo do comando pelo DuckDB); os outros sao recusados antes de
