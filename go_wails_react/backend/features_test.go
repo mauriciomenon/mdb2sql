@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -96,6 +97,10 @@ func TestSQLTabIsReadOnly(t *testing.T) {
 			`USE memory`, `ATTACH ':memory:' AS zm`, `DETACH src`, `BEGIN`, `COMMIT`, `CALL pragma_table_info('pontos')`, `CHECKPOINT`,
 			`VACUUM`, `SELECT 1; CREATE TABLE memory.main.zz (a INTEGER)`, `CREATE TABLE memory.main.zz (a INTEGER); SELECT 1`,
 			`COMMIT; CREATE TABLE memory.main.zz (a INTEGER); SELECT 1`,
+			// review 26/11 (B1): a SELECT whose table function attaches or writes
+			`SELECT * FROM sqlite_attach(` + quoteLiteral(filepath.Join(t.TempDir(), "outro.sqlite")) + `, overwrite=true)`,
+			`FROM SQLITE_ATTACH('x.sqlite')`, `SELECT * FROM checkpoint()`, `SELECT 1; SELECT * FROM force_checkpoint()`,
+			`SELECT * FROM (SELECT * FROM postgres_attach('dbname=x')) s`,
 		} {
 			if _, err := m.RunQuery(ctx, q, 10); err == nil || err.Error() != refused {
 				t.Errorf("write not refused: %s: %v", q, err)

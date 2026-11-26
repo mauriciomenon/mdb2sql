@@ -8,8 +8,10 @@ package backend
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"unsafe"
 
 	"github.com/duckdb/duckdb-go/v2"
@@ -63,14 +65,61 @@ func checkReadOnly(conn *sql.Conn, query string) error {
 	})
 }
 
-// readOnlyConn gives the connection that runs a SQL tab query: the query was checked (checkReadOnly) and the
-// connection is inside a READ ONLY transaction; done rolls it back and frees the connection
+// writingFunction: a table function that attaches a database or writes a file inside a SELECT (review 26/11:
+// sqlite_attach('x.sqlite', overwrite=true) replaces views; checkpoint writes the database file)
+func writingFunction(name string) bool {
+	name = strings.ToLower(name)
+	return strings.HasSuffix(name, "_attach") || name == "checkpoint" || name == "force_checkpoint"
+}
+
+// hasWritingFunction walks the parse tree of json_serialize_sql (the parser's own tree, never the text) for a
+// function_name that writes
+func hasWritingFunction(v any) bool {
+	switch x := v.(type) {
+	case map[string]any:
+		if name, ok := x["function_name"].(string); ok && writingFunction(name) {
+			return true
+		}
+		for _, e := range x {
+			if hasWritingFunction(e) {
+				return true
+			}
+		}
+	case []any:
+		for _, e := range x {
+			if hasWritingFunction(e) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// checkFunctions refuses (err.sqlReadOnly) a SELECT that calls a writing table function. A query the serializer does
+// not take (a statement other than SELECT, a syntax error) is left to checkReadOnly, which refuses or explains it.
+func checkFunctions(ctx context.Context, conn *sql.Conn, query string) error {
+	var tree string
+	var v any
+	if conn.QueryRowContext(ctx, "SELECT json_serialize_sql(?)", query).Scan(&tree) != nil || json.Unmarshal([]byte(tree), &v) != nil {
+		return nil
+	}
+	if hasWritingFunction(v) {
+		return errors.New(i18n.T("err.sqlReadOnly"))
+	}
+	return nil
+}
+
+// readOnlyConn gives the connection that runs a SQL tab query: the query was checked (checkFunctions, checkReadOnly)
+// and the connection is inside a READ ONLY transaction; done rolls it back and frees the connection
 func (m *DBManager) readOnlyConn(ctx context.Context, query string) (*sql.Conn, func(), error) {
 	conn, err := m.conn.Conn(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	if err = checkReadOnly(conn, query); err == nil {
+	if err = checkFunctions(ctx, conn, query); err == nil {
+		err = checkReadOnly(conn, query)
+	}
+	if err == nil {
 		_, err = conn.ExecContext(ctx, "BEGIN TRANSACTION READ ONLY")
 	}
 	if err != nil {
