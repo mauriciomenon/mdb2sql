@@ -3,8 +3,6 @@ package backend
 import (
 	"context"
 	"database/sql"
-	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -694,116 +692,5 @@ func TestTermsFindNumbersLoosely(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, wantGrid) {
 		t.Errorf("view grid rows %v", got)
-	}
-}
-
-// owner 26/11: the Advanced Search counts the tables in fixed groups of 32 (as the Zig version), the last group with
-// what is left. With 0, 1, 31, 32 and 33 tables and with "This table" the result is the one of a query per table
-// (hits, order, counts), progress goes table by table, a cancel stops it and a table that fails is named
-func TestSearchTermsInGroupsOf32(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "g.duckdb")
-	db, err := sql.Open("duckdb", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// table tNN: NN % 3 + 1 rows "alfa" (k = 0, 1, 2); the even ones also a row "beta" with k = 100 + NN; and a view
-	// that fails when read (its column is computed from text that is no number)
-	var create strings.Builder
-	for i := 0; i < 33; i++ {
-		fmt.Fprintf(&create, "CREATE TABLE t%02d AS SELECT 'alfa' AS s, r::INTEGER AS k FROM range(%d) x(r);", i, i%3+1)
-		if i%2 == 0 {
-			fmt.Fprintf(&create, "INSERT INTO t%02d VALUES ('beta', %d);", i, 100+i)
-		}
-	}
-	create.WriteString("CREATE TABLE src AS SELECT 'x' AS v; CREATE VIEW zbad AS SELECT CAST(v AS INTEGER) AS v FROM src;")
-	_, err = db.Exec(create.String())
-	db.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := NewDBManager()
-	if err := m.Connect(path); err != nil {
-		t.Fatal(err)
-	}
-	defer m.Close()
-	var all []string
-	for _, tb := range m.tableList {
-		if strings.HasPrefix(tb, "t") {
-			all = append(all, tb)
-		}
-	}
-	if len(all) != 33 || all[0] != "t00" || all[32] != "t32" {
-		t.Fatalf("tables %v", all)
-	}
-	defer func(list []string) { m.tableList = list }(m.tableList)
-	lines := []string{"alfa", "beta", "102", "zzz"}
-	// what a query per table finds, from the data: rows per term (lines order) and table
-	expect := func(tables []string) TermsResult {
-		res := TermsResult{Terms: lines, Hits: []TermHit{}, Tables: []TableHits{}, NotFound: []string{}}
-		rows := func(o int, tb string) int {
-			i, _ := strconv.Atoi(tb[1:])
-			switch {
-			case o == 0:
-				return i%3 + 1
-			case o == 1 && i%2 == 0, o == 2 && i == 2:
-				return 1
-			}
-			return 0
-		}
-		for _, tb := range tables {
-			if total := rows(0, tb) + rows(1, tb) + rows(2, tb); total > 0 {
-				res.Tables = append(res.Tables, TableHits{tb, total})
-			}
-		}
-		for o, term := range lines {
-			found := false
-			for _, tb := range tables {
-				if n := rows(o, tb); n > 0 {
-					res.Hits = append(res.Hits, TermHit{term, tb, n})
-					found = true
-				}
-			}
-			if !found {
-				res.NotFound = append(res.NotFound, term)
-			}
-		}
-		return res
-	}
-	ctx := context.Background()
-	search := func(tables []string, table string) (TermsResult, []string, error) {
-		m.tableList = tables
-		var seen []string
-		res, err := m.SearchTerms(ctx, lines, false, table, func(done, total int, label string) {
-			seen = append(seen, fmt.Sprintf("%d/%d %s", done, total, label))
-		})
-		return res, seen, err
-	}
-	for _, n := range []int{0, 1, 31, 32, 33} {
-		res, seen, err := search(all[:n], "")
-		if err != nil {
-			t.Fatalf("%d tables: %v", n, err)
-		}
-		if want := expect(all[:n]); !reflect.DeepEqual(res, want) {
-			t.Errorf("%d tables:\n got %+v\nwant %+v", n, res, want)
-		}
-		if len(seen) != n || (n > 0 && (seen[0] != fmt.Sprintf("1/%d t00", n) || seen[n-1] != fmt.Sprintf("%d/%d t%02d", n, n, n-1))) {
-			t.Errorf("%d tables: progress %v", n, seen)
-		}
-	}
-	// "This table": one table, one group
-	res, seen, err := search(all, "t05")
-	if want := expect([]string{"t05"}); err != nil || !reflect.DeepEqual(res, want) || !reflect.DeepEqual(seen, []string{"1/1 t05"}) {
-		t.Errorf("this table: %+v %v (%v)", res, seen, err)
-	}
-	// a cancel before the search stops it
-	m.tableList = all
-	stopped, cancel := context.WithCancel(ctx)
-	cancel()
-	if _, err := m.SearchTerms(stopped, lines, false, "", noProgress); !errors.Is(err, context.Canceled) {
-		t.Errorf("cancelled search: %v", err)
-	}
-	// a table that fails in the second group is named, as with a query per table
-	if _, _, err := search(append(all[:33:33], "zbad"), ""); err == nil || !strings.HasPrefix(err.Error(), "zbad: ") {
-		t.Errorf("failing table: %v", err)
 	}
 }

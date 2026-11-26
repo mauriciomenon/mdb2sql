@@ -175,31 +175,8 @@ func (m *DBManager) termsSelect(table string, terms []string, contains bool) (st
 		" FROM hits h JOIN base c ON c.mdb2sql_rn = h.rn ORDER BY h.ord, h.rn", nil
 }
 
-// termsBatch: tables per query of SearchTerms (UNION ALL), a fixed group as in the Zig version (owner 26/11). Here it
-// takes the time of a query per table (DB3, 287 tables, 26/11: SQLite 23.3 s against 22.3 s, Access converted 20.3 s
-// both): reading the cells costs, not the number of queries
-const termsBatch = 32
-
-// termCounts runs a count query of SearchTerms (rows: position of the table, position of the term, rows) into counts
-func (m *DBManager) termCounts(ctx context.Context, query string, counts []map[int]int) error {
-	rows, err := m.conn.QueryContext(ctx, query)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var tb, ord, n int
-		if err := rows.Scan(&tb, &ord, &n); err != nil {
-			return err
-		}
-		counts[tb][ord] = n
-	}
-	return rows.Err()
-}
-
 // SearchTerms looks for the terms of lines (see CleanTerms) in every column of table, or with table "" of every
-// table: per term and table, how many rows have it. Tables go in groups of termsBatch, one query each; progress gets
-// each table as its group is prepared; ctx stops it.
+// table: per term and table, how many rows have it. progress gets each table as its search starts; ctx stops it.
 func (m *DBManager) SearchTerms(ctx context.Context, lines []string, contains bool, table string, progress Progress) (TermsResult, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -217,41 +194,37 @@ func (m *DBManager) SearchTerms(ctx context.Context, lines []string, contains bo
 		tables = []string{table}
 	}
 	counts := make([]map[int]int, len(tables)) // per table: position of the term -> rows
-	for start := 0; start < len(tables); start += termsBatch {
-		group := tables[start:min(start+termsBatch, len(tables))] // the last group takes what is left
-		parts := make([]string, len(group))
-		for j, tb := range group {
-			if err := ctx.Err(); err != nil {
-				return TermsResult{}, err
-			}
-			progress(start+j+1, len(tables), tb)
-			schema, err := m.tableSchema(tb)
-			if err != nil {
-				return TermsResult{}, err
-			}
-			rowID, err := m.hasRowID(tb)
-			if err != nil {
-				return TermsResult{}, err
-			}
-			counts[start+j] = map[int]int{}
-			parts[j] = fmt.Sprintf("SELECT %d AS mdb2sql_tb, ord, n FROM (%s SELECT ord, count(*) AS n FROM hits GROUP BY ord)",
-				start+j, termsWith(tb, schema, rowID, terms, contains))
-		}
-		if err := m.termCounts(ctx, strings.Join(parts, " UNION ALL "), counts); err != nil {
-			if ctx.Err() != nil {
-				return TermsResult{}, err
-			}
-			for j, part := range parts { // one table at a time, to name the one that fails (as before the groups)
-				if err := m.termCounts(ctx, part, counts); err != nil {
-					return TermsResult{}, fmt.Errorf("%s: %w", group[j], err)
-				}
-			}
-		}
-	}
 	for i, tb := range tables {
+		if err := ctx.Err(); err != nil {
+			return TermsResult{}, err
+		}
+		progress(i+1, len(tables), tb)
+		schema, err := m.tableSchema(tb)
+		if err != nil {
+			return TermsResult{}, err
+		}
+		rowID, err := m.hasRowID(tb)
+		if err != nil {
+			return TermsResult{}, err
+		}
+		rows, err := m.conn.QueryContext(ctx, termsWith(tb, schema, rowID, terms, contains)+" SELECT ord, count(*) FROM hits GROUP BY ord")
+		if err != nil {
+			return TermsResult{}, fmt.Errorf("%s: %w", tb, err)
+		}
+		counts[i] = map[int]int{}
 		total := 0
-		for _, n := range counts[i] {
+		for rows.Next() {
+			var ord, n int
+			if err := rows.Scan(&ord, &n); err != nil {
+				rows.Close()
+				return TermsResult{}, err
+			}
+			counts[i][ord] = n
 			total += n
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return TermsResult{}, fmt.Errorf("%s: %w", tb, err)
 		}
 		if total > 0 {
 			res.Tables = append(res.Tables, TableHits{tb, total})
