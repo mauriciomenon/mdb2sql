@@ -1209,6 +1209,36 @@ def test_terms_grid_and_copy_with_a_table_column_named_like_the_term_column(qtbo
     assert QApplication.clipboard().text() == "Term\tother\nalpha\tx\nbeta\talpha"
 
 
+def test_advanced_search_starts_in_all_tables_whatever_the_data_tab_scope(qtbot, tmp_path: Path) -> None:
+    # BRIEF 17: o dono colou do Excel (CRLF) termos que estao em 2 tabelas, com a 1a tabela aberta e a aba Dados em
+    # Esta tabela (o padrao), e Pesquisar termos sem mexer em nada nao achava nada (so a 1a tabela era pesquisada)
+    import duckdb
+
+    db_file = tmp_path / "plant.duckdb"
+    with duckdb.connect(str(db_file)) as conn:
+        conn.execute("CREATE TABLE accu AS SELECT 'MEDICION ENERGIA' AS pntnam")
+        conn.execute("CREATE TABLE soeqid AS SELECT * FROM (VALUES ('GENERADOR CGS 1'), ('TURBINA CGI 2')) t(pntnam)")
+        conn.execute("CREATE TABLE sostat AS SELECT * FROM (VALUES (50, 'GENERADOR CGS 1'), (50, 'TURBINA CGI 2'),"
+                     " (50, 'OTRO')) t(rtuno, pntnam)")
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.default_scope_actions["table"].trigger()  # Configuracoes > Escopo padrao da busca: nao vale para ela
+    win.open_database(db_file)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
+    assert win.loaded_table[0] == "accu" and win.scope_actions["table"].isChecked()
+    assert win.terms_scope_actions["all"].isChecked()
+    win.terms_edit.setPlainText("GENERADOR CGS 1\r\nTURBINA CGI 2\r\n")
+    win.terms_run_button.click()
+    qtbot.waitUntil(lambda: win._job is None and win._busy == 0 and win.terms_result is not None, timeout=30000)
+    assert [(t, sum(c.values())) for t, c in win.terms_result["hits"]] == [("soeqid", 2), ("sostat", 2)]
+    assert win.terms_summary.text() == "2 of 2 terms found: 4 rows in 2 tables"
+    # Esta tabela: o resumo diz onde pesquisou
+    win.terms_scope_actions["table"].trigger()
+    win.terms_run_button.click()
+    qtbot.waitUntil(lambda: win._job is None and win._busy == 0 and win.terms_result is not None, timeout=30000)
+    assert win.terms_summary.text() == "0 of 2 terms found: 0 rows in 0 tables (only in accu)"
+
+
 def test_export_of_a_subset_asks_whole_table_or_found_rows(qtbot, window: MainWindow, people_db: Path,
                                                            monkeypatch) -> None:
     # igual nas 4 versoes: a grade mostra parte da tabela (pesquisa ou filtro por valor): "Tabela inteira" ou "So as N

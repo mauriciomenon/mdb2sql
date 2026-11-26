@@ -211,6 +211,7 @@
   "terms.tables": "{count} tablas",
   "terms.tables_one": "{count} tabla",
   "terms.summary": "{found}: {rows} en {tables}",
+  "terms.summary_only": "{summary} (solo en {table})",
   "terms.progress": "Buscando términos: tabla {done} de {total} ({table})",
   "terms.not_found": "No encontrados ({count})",
   "terms.copy_hits": "Copiar las filas encontradas en esta tabla",

@@ -461,7 +461,9 @@ class MainWindow(QMainWindow):
         self.scope_actions: dict[str, QAction] = {}
         self.default_scope_group = QActionGroup(self)
         self.default_scope_actions: dict[str, QAction] = {}
-        self.terms_scope_group = QActionGroup(self)  # o mesmo par na aba Termos, com o mesmo padrao
+        # o mesmo par na Pesquisa Avancada, sempre comecando em Todas as tabelas (BRIEF 17: o padrao da aba Dados,
+        # Esta tabela, fazia a lista colada procurar so na tabela aberta e parecer que os termos nao existiam)
+        self.terms_scope_group = QActionGroup(self)
         self.terms_scope_actions: dict[str, QAction] = {}
         for name, key in SCOPES.items():
             action = self._action(key, lambda _checked=False: self._search_now(), checkable=True)
@@ -469,7 +471,7 @@ class MainWindow(QMainWindow):
             self.scope_group.addAction(action)
             self.scope_actions[name] = action
             terms = self._action(key, lambda _checked=False: None, checkable=True)
-            terms.setChecked(name == scope)
+            terms.setChecked(name == "all")
             self.terms_scope_group.addAction(terms)
             self.terms_scope_actions[name] = terms
             default = self._action(key, lambda _checked=False, n=name: self.set_default_scope(n), checkable=True)
@@ -1200,11 +1202,10 @@ class MainWindow(QMainWindow):
         return scope if scope in SCOPES else "table"
 
     def set_default_scope(self, name: str) -> None:
-        # grava o padrao e ja vale na tela (aba Dados e aba Termos)
+        # grava o padrao e ja vale na aba Dados (a Pesquisa Avancada nao segue: BRIEF 17)
         self.settings.setValue("search_scope", name)
         self.default_scope_actions[name].setChecked(True)
         self.scope_actions[name].setChecked(True)
-        self.terms_scope_actions[name].setChecked(True)
         self._search_now()
 
     def default_match(self) -> str:
@@ -2253,10 +2254,11 @@ class MainWindow(QMainWindow):
         terms, _repeated = parse_terms(self.terms_edit.toPlainText())
         if self.manager is None or not terms or self._job is not None:
             return
-        if self.terms_scope_actions["all"].isChecked():
+        only = None if self.terms_scope_actions["all"].isChecked() else self.loaded_table[0] if self.loaded_table else ""
+        if only is None:
             tables = [table for table in self.table_names() if self.table_counts.get(table) != 0]  # vazias: nada
         else:
-            tables = [self.loaded_table[0]] if self.loaded_table else []
+            tables = [only] if only else []
         self._clear_terms()
         self._update_export_actions()  # sem resultado (cancelada ou com erro): relatorio e copiar desabilitados
         if not tables:
@@ -2268,7 +2270,8 @@ class MainWindow(QMainWindow):
                 "terms.progress", done=num(done + 1), total=num(total), table=table) if table else "")
 
         self._start_job(tr("terms.run"), tr("terms.progress", done=num(1), total=num(len(tables)), table=tables[0]),
-                        lambda report, cancel: search_terms(manager, terms, contains, tables, progress(report), cancel),
+                        lambda report, cancel: {**search_terms(manager, terms, contains, tables, progress(report), cancel),
+                                                "only": only},
                         self._on_terms_done, "")
 
     def _on_terms_done(self, result: object) -> None:
@@ -2291,8 +2294,11 @@ class MainWindow(QMainWindow):
         missing = not_found(result)
         rows = sum(sum(counts.values()) for _table, counts in result["hits"])
         found = counted("terms.found", len(result["terms"]), found=num(len(result["terms"]) - len(missing)))
-        self.terms_summary.setText(tr("terms.summary", found=found, rows=counted("terms.rows", rows),
-                                      tables=counted("terms.tables", len(result["hits"]))))
+        summary = tr("terms.summary", found=found, rows=counted("terms.rows", rows),
+                     tables=counted("terms.tables", len(result["hits"])))
+        if result.get("only"):  # Esta tabela: diz onde pesquisou, para o termo nunca parecer ausente do banco
+            summary = tr("terms.summary_only", summary=summary, table=result["only"])
+        self.terms_summary.setText(summary)
         self.not_found_title.setText(tr("terms.not_found", count=num(len(missing))))
         self.not_found_edit.setPlainText("\n".join(missing))
 
