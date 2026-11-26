@@ -1541,7 +1541,7 @@ function App() {
                 {querying ? (
                   <button onClick={() => bridge?.CancelJob?.()}>{t('sql.cancel')}</button>
                 ) : (
-                  <button className="primary" onClick={() => runSql()} title="Ctrl+Enter">
+                  <button onClick={() => runSql()} title="Ctrl+Enter">
                     {t('sql.run')}
                   </button>
                 )}
@@ -1583,7 +1583,7 @@ function App() {
                       </button>
                     ))}
                   </div>
-                  <button className="primary" disabled={termsInfo.terms.length === 0} onClick={runTerms} title="Ctrl+Enter">
+                  <button disabled={termsInfo.terms.length === 0} onClick={runTerms} title="Ctrl+Enter">
                     {t('terms.run')}
                   </button>
                   <span className="info">

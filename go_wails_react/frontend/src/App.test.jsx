@@ -1458,6 +1458,22 @@ describe('App IPC flow', () => {
     }
   });
 
+  // owner 26/11 (13f): no button larger than the others to show rank: the Run button of the SQL tab keeps its height
+  // (not stretched to the SQL field), the default button is not bold, Run and Search terms look as the rest
+  it('makes no button larger than the others', async () => {
+    const css = readFileSync('src/App.css', 'utf8').replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = (sel) => css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*]/g, '\\$&')} \\{([^}]*)\\}`))?.[1] ?? '';
+    expect(rule('.sql-bar')).toMatch(/align-items: flex-start/);
+    expect(rule('button.primary') + rule('.sized > .ghost')).not.toMatch(/font-weight|padding|font-size/);
+    render(<App />);
+    openDefault();
+    await screen.findByText('Alpha');
+    fireEvent.click(screen.getByRole('tab', { name: 'SQL' }));
+    expect(screen.getByRole('button', { name: 'Run' }).className).toBe('');
+    fireEvent.click(screen.getByRole('tab', { name: 'Advanced Search' }));
+    expect(screen.getByRole('button', { name: 'Search terms' }).className).toBe('');
+  });
+
   // audit items 3 and 16: late answers of an older table, query or file must not show, and Export must not
   // keep the SQL of the previous file
   it('drops late answers and forgets the previous file', async () => {
@@ -1632,6 +1648,7 @@ describe('App IPC flow', () => {
 
 // one catalog per language with the same keys; every text of the screen comes from them
 describe('language catalogs', () => {
+
   const source = readFileSync('src/App.tsx', 'utf8');
 
   it('have the same keys in the three languages, none empty', () => {

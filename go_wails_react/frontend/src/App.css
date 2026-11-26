@@ -230,7 +230,7 @@ body {
 .sql-bar {
   display: flex;
   gap: 8px;
-  align-items: stretch;
+  align-items: flex-start; /* the Run button keeps its own height, as every button (owner 26/11) */
 }
 
 .sql-bar textarea {
@@ -292,7 +292,6 @@ button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-text);
-  font-weight: 600;
 }
 
 :focus-visible {
@@ -797,7 +796,7 @@ td[aria-selected='true'] {
 }
 
 /* the text of a dialog button (Sized in App.tsx): every text of the row in the 3 languages in one grid cell, only its
-   own visible, so all the buttons of the row have one width and height; the hidden ones bold as the default button */
+   own visible, so all the buttons of the row have one width and height */
 .sized {
   display: inline-grid;
   justify-items: center;
@@ -810,7 +809,6 @@ td[aria-selected='true'] {
 
 .sized > .ghost {
   visibility: hidden;
-  font-weight: 600;
 }
 
 /* questions (exit, export running, whole table or rows found) and the display warning */
