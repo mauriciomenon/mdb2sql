@@ -278,7 +278,8 @@ func TestSearchTerms(t *testing.T) {
 		if want := []string{"gerador a/pontos/iiii", "gerador a/termos/i", "238/outra/i", "238/pontos/i", "turbina b/pontos/i"}; !reflect.DeepEqual(hitsOf(res), want) {
 			t.Errorf("whole value hits %v\nwant %v", hitsOf(res), want)
 		}
-		if want := []TableHits{{"outra", 1}, {"pontos", 6}, {"termos", 1}}; !reflect.DeepEqual(res.Tables, want) {
+		// per table, each row once: pontos row 3 (found by "gerador a" and "turbina b") counts once (standard 19d)
+		if want := []TableHits{{"outra", 1}, {"pontos", 5}, {"termos", 1}}; !reflect.DeepEqual(res.Tables, want) {
 			t.Errorf("tables %v, want %v", res.Tables, want)
 		}
 		if !reflect.DeepEqual(res.NotFound, []string{"PNTNAM"}) || !reflect.DeepEqual(res.Terms, terms) || res.Repeated != 2 {
@@ -309,26 +310,27 @@ func TestSearchTerms(t *testing.T) {
 			t.Error("cancelled search must fail")
 		}
 
-		// the grid of a table: the term first, then its columns; term order, then table order; row 3 is there twice
+		// the grid of a table (standard 19d): its own columns, no Term column; each row once, in the order of the first
+		// term that finds it, then of the table (row 3, found by "gerador a" and "turbina b", once)
 		grid, err := m.TermRows(ctx, "pontos", res.Terms, false, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := []string{"Term", "id", "nome", "sub", "num", "valor"}; !reflect.DeepEqual(grid.Columns, want) {
+		if want := []string{"id", "nome", "sub", "num", "valor"}; !reflect.DeepEqual(grid.Columns, want) {
 			t.Errorf("grid columns %v", grid.Columns)
 		}
 		var got []string
 		for _, r := range grid.Rows {
-			got = append(got, cellString(r["Term"])+":"+cellString(r["id"]))
+			got = append(got, cellString(r["id"]))
 		}
-		if want := []string{"gerador a:1", "gerador a:2", "gerador a:3", "gerador a:5", "238:4", "turbina b:3"}; !reflect.DeepEqual(got, want) {
+		if want := []string{"1", "2", "3", "5", "4"}; !reflect.DeepEqual(got, want) {
 			t.Errorf("grid rows %v\nwant %v", got, want)
 		}
 		if first, err := m.TermRows(ctx, "pontos", res.Terms, false, 2); err != nil || len(first.Rows) != 2 || !first.More {
 			t.Errorf("limited grid: %d rows, more %v (%v)", len(first.Rows), first.More, err)
 		}
-		// a column called as the term column keeps its values under another name
-		if same, err := m.TermRows(ctx, "termos", res.Terms, false, 0); err != nil || !reflect.DeepEqual(same.Columns, []string{"Term", "Term (2)", "x"}) || len(same.Rows) != 1 {
+		// a column of the table called Term keeps its name and values
+		if same, err := m.TermRows(ctx, "termos", res.Terms, false, 0); err != nil || !reflect.DeepEqual(same.Columns, []string{"Term", "x"}) || len(same.Rows) != 1 {
 			t.Errorf("table with a Term column: %v (%v)", same, err)
 		}
 
@@ -343,17 +345,17 @@ func TestSearchTerms(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer f.Close()
-		if want := []string{"Filter Result", "outra", "pontos", "termos"}; !reflect.DeepEqual(f.GetSheetList(), want) {
+		// standard 19d: one sheet per table found, no result sheet; the columns of the table, numbers as numbers
+		if want := []string{"outra", "pontos", "termos"}; !reflect.DeepEqual(f.GetSheetList(), want) {
 			t.Errorf("sheets %v", f.GetSheetList())
 		}
-		summary, _ := f.GetRows("Filter Result") // owner 26/11 (13i): one sheet with every term, those not found too
-		wantSummary := [][]string{{"Term", "Status", "Table", "Rows"}, {"gerador a", "Found", "pontos", "4"}, {"gerador a", "Found", "termos", "1"},
-			{"238", "Found", "outra", "1"}, {"238", "Found", "pontos", "1"}, {"PNTNAM", "Not found", "", "0"}, {"turbina b", "Found", "pontos", "1"}}
-		if !reflect.DeepEqual(summary, wantSummary) {
-			t.Errorf("summary sheet %v\nwant %v", summary, wantSummary)
-		}
-		if sheet, _ := f.GetRows("pontos"); len(sheet) != 7 || !reflect.DeepEqual(sheet[0], []string{"Term", "id", "nome", "sub", "num", "valor"}) {
+		if sheet, _ := f.GetRows("pontos"); len(sheet) != 6 || !reflect.DeepEqual(sheet[0], []string{"id", "nome", "sub", "num", "valor"}) {
 			t.Errorf("pontos sheet %v", sheet)
+		}
+		for cell, want := range map[string]excelize.CellType{"A2": excelize.CellTypeNumber, "B2": excelize.CellTypeSharedString, "D2": excelize.CellTypeNumber, "E2": excelize.CellTypeNumber} {
+			if got, _ := f.GetCellType("pontos", cell); got != want && !(want == excelize.CellTypeSharedString && got == excelize.CellTypeInlineString) {
+				t.Errorf("pontos %s: cell type %v, want %v", cell, got, want)
+			}
 		}
 		// CSV: a folder, one file per sheet
 		csvDir := filepath.Join(dir, "csv")
@@ -367,11 +369,11 @@ func TestSearchTerms(t *testing.T) {
 			files = append(files, e.Name())
 		}
 		sort.Strings(files)
-		if want := []string{"Filter Result.csv", "outra.csv", "pontos.csv", "termos.csv"}; !reflect.DeepEqual(files, want) || !reflect.DeepEqual(CSVNames(TermsSheets(res)), want) {
+		if want := []string{"outra.csv", "pontos.csv", "termos.csv"}; !reflect.DeepEqual(files, want) || !reflect.DeepEqual(CSVNames(TermsSheets(res)), want) {
 			t.Errorf("csv files %v", files)
 		}
-		if data, _ := os.ReadFile(filepath.Join(csvDir, "Filter Result.csv")); !strings.Contains(string(data), "PNTNAM,Not found,,0") {
-			t.Errorf("Filter Result.csv %q", data)
+		if data, _ := os.ReadFile(filepath.Join(csvDir, "termos.csv")); string(data) != "\xEF\xBB\xBFTerm,x\r\ngerador a,1\r\n" {
+			t.Errorf("termos.csv %q", data)
 		}
 		// SQLite and DuckDB: the same sheets as tables
 		for _, format := range []string{"duckdb", "sqlite"} {
@@ -388,14 +390,14 @@ func TestSearchTerms(t *testing.T) {
 			}
 			tables, _ := back.ListTables()
 			sort.Strings(tables)
-			if want := []string{"Filter Result", "outra", "pontos", "termos"}; !reflect.DeepEqual(tables, want) {
+			if want := []string{"outra", "pontos", "termos"}; !reflect.DeepEqual(tables, want) {
 				t.Errorf("%s tables %v", format, tables)
 			}
-			if n, _ := back.GetRowCount("pontos", ""); n != 6 {
+			if n, _ := back.GetRowCount("pontos", ""); n != 5 {
 				t.Errorf("%s: pontos has %d rows", format, n)
 			}
-			if n, _ := back.GetRowCount("Filter Result", ""); n != 6 {
-				t.Errorf("%s: Filter Result has %d rows", format, n)
+			if schema, _ := back.GetTableSchema("pontos"); len(schema) != 5 || schema[0].Name != "id" || !strings.Contains(schema[0].Type, "INT") {
+				t.Errorf("%s: pontos columns %+v", format, schema)
 			}
 			back.Close()
 		}
@@ -545,8 +547,8 @@ func TestMarkedRowsOfABigTableInTableOrder(t *testing.T) {
 	}
 }
 
-// review 26/11 (B2): a column of the table called as the term column (Term, Termo, Término) keeps its values under
-// "<name> (2)" in the grid of the Terms tab, in the 3 languages
+// standard 19d (owner 26/11): the grid of the Advanced Search has the columns of the table, with their own titles, in
+// every language: no Term column added, no title changed (it had "Term", then "Term (2)" for a table column Term)
 func TestTermColumnNameOfTheTable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "t.duckdb")
 	db, err := sql.Open("duckdb", path)
@@ -564,15 +566,14 @@ func TestTermColumnNameOfTheTable(t *testing.T) {
 	}
 	defer m.Close()
 	defer i18n.SetLang("en")
-	for lang, own := range map[string]string{"en": "en", "pt-BR": "pt", "es": "es"} {
+	for _, lang := range []string{"en", "pt-BR", "es"} {
 		i18n.SetLang(lang)
-		label := i18n.T("terms.col")
 		res, err := m.TermRows(context.Background(), "t", []string{"abc"}, false, 0)
-		if err != nil || len(res.Rows) != 1 || res.Columns[0] != label || len(res.Columns) != 5 {
+		if err != nil || len(res.Rows) != 1 || !reflect.DeepEqual(res.Columns, []string{"Term", "Termo", "Término", "x"}) {
 			t.Fatalf("%s: %v (%v)", lang, res, err)
 		}
-		if res.Rows[0][label] != "abc" || res.Rows[0][label+" (2)"] != own {
-			t.Errorf("%s: row %v", lang, res.Rows[0])
+		if r := res.Rows[0]; r["Term"] != "en" || r["Termo"] != "pt" || r["Término"] != "es" || r["x"] != "abc" {
+			t.Errorf("%s: row %v", lang, r)
 		}
 	}
 }
@@ -618,15 +619,24 @@ func TestQueryTablePages(t *testing.T) {
 	}
 }
 
-// owner 26/11 (13i): the Advanced Search report has one result sheet, named in the language of the screen, then one
-// sheet per table with the name of the table, no number and no suffix
+// standard 19d (owner 26/11, replaces 13i): the Advanced Search report has only one sheet per table found, named as
+// the table, in any language; nothing found: nothing to export
 func TestTermsReportResultSheet(t *testing.T) {
 	defer i18n.SetLang("en")
-	for lang, want := range map[string]string{"en": "Filter Result", "pt-BR": "Resultado Filtro", "es": "Resultado Filtro"} {
+	for _, lang := range []string{"en", "pt-BR", "es"} {
 		i18n.SetLang(lang)
-		if got := TermsSheets(TermsResult{Tables: []TableHits{{"RANGER_SOSTAT", 8}, {"RANGER_SOEQID", 8}}}); !reflect.DeepEqual(got, []string{want, "RANGER_SOSTAT", "RANGER_SOEQID"}) {
+		if got := TermsSheets(TermsResult{Tables: []TableHits{{"RANGER_SOSTAT", 8}, {"RANGER_SOEQID", 8}}}); !reflect.DeepEqual(got, []string{"RANGER_SOSTAT", "RANGER_SOEQID"}) {
 			t.Errorf("%s: sheets %q", lang, got)
 		}
+	}
+	m := NewDBManager()
+	if err := m.Connect(featureDBs(t)[SourceDuckDB]); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	err := m.ExportTerms(context.Background(), TermsResult{Terms: []string{"zzz"}}, false, "xlsx", filepath.Join(t.TempDir(), "n.xlsx"), noProgress)
+	if err == nil || err.Error() != "No row found to export." {
+		t.Errorf("empty report: %v", err)
 	}
 }
 
@@ -666,11 +676,13 @@ func TestTermsFindNumbersLoosely(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// each row once (standard 19d), in the order of the first term that finds it: 216 (i 7, 216), 0,1 (11),
+	// 1234.5 (2160), 1.234 (9)
 	var got []string
 	for _, r := range grid.Rows {
-		got = append(got, cellString(r["Term"])+":"+cellString(r["i"]))
+		got = append(got, cellString(r["i"]))
 	}
-	wantGrid := []string{"216:7", "216:216", "216,0:7", "216,0:216", "0,1:7", "0,1:11", "0.1:7", "0.1:11", "1234.5:2160", "1234.5:216", "1.234:9", "216.5:216", "abc:2160", "2160:2160", "1:9"}
+	wantGrid := []string{"7", "216", "11", "2160", "9"}
 	if !reflect.DeepEqual(got, wantGrid) {
 		t.Errorf("grid rows %v\nwant %v", got, wantGrid)
 	}
@@ -688,7 +700,7 @@ func TestTermsFindNumbersLoosely(t *testing.T) {
 	}
 	got = nil
 	for _, r := range gridView.Rows {
-		got = append(got, cellString(r["Term"])+":"+cellString(r["i"]))
+		got = append(got, cellString(r["i"]))
 	}
 	if !reflect.DeepEqual(got, wantGrid) {
 		t.Errorf("view grid rows %v", got)

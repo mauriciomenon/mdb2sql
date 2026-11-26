@@ -176,9 +176,9 @@ spaces at the ends. In Whole value a term and a cell that read as numbers meet w
 reading of the other. A text reads as a number with a decimal point and commas of thousands, or with a decimal
 comma and points of thousands; a thousands mark only stands between groups of 3 digits. So "216" finds 216.0,
 "216,0" and 216 (never 2160), "0,1" finds 0.1 (and "1" does not find "0,1"), "1234.5" finds "1.234,5" and "1,234"
-reads 1.234 or 1234. The tables found, their rows with the term first, and the terms not
-found (copiable). Its report: a first sheet "Filter Result" with every term, where it was found and how many rows,
-then one sheet per table.
+reads 1.234 or 1234. The tables found, their rows (the columns of the table as they are, each row once, in the
+order of the first term that finds it) and the terms not found (copiable). Its report: one sheet (or table, or CSV
+file) per table found, with those rows.
 
 Opening Access: the progress window counts the tables; Cancel (or Esc) stops it. The 287-table NMR5 test file
 (115 MB) takes about 10 s with the ODBC driver and about 33 s with mdbtools on Windows (Intel Core Ultra 7 258V, 8

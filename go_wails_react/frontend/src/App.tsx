@@ -1071,8 +1071,7 @@ function App() {
     }
   }
 
-  // the rows of the table chosen in the Terms list, limited as in the Data tab (Rows); asked again in another language
-  // (Go names the Term column)
+  // the rows of the table chosen in the Terms list (its own columns, each row once), limited as in the Data tab (Rows)
   useEffect(() => {
     const req = ++termGridReq.current;
     setTermGrid(null);
@@ -1080,16 +1079,16 @@ function App() {
     Promise.resolve(window.go?.main?.App?.TermRows?.(termsTable, termsRes.res.terms, termsRes.contains, limit))
       .then((r) => req === termGridReq.current && r && setTermGrid({ columns: r.columns ?? [], rows: r.rows ?? [], more: r.more }))
       .catch((err) => req === termGridReq.current && fail(err));
-  }, [termsRes, termsTable, limit, lang]);
+  }, [termsRes, termsTable, limit]);
   const termsHits = termsRes?.res.tables?.find((h) => h.table === termsTable)?.rows ?? 0;
 
-  // "Copy the rows found in this table": every row found, not only the ones on screen, with the header and without the
-  // Term column, so a paste in Excel gives exactly those rows
+  // "Copy the rows found in this table": every row found, not only the ones on screen, with the header (the columns of
+  // the table, standard 19d), so a paste in Excel gives exactly those rows
   async function copyHits() {
     try {
       const found = termsRes && (await window.go?.main?.App?.TermRows?.(termsTable, termsRes.res.terms, termsRes.contains, 0));
       if (!found) return;
-      const cols = (found.columns ?? []).slice(1);
+      const cols = found.columns ?? [];
       const list = found.rows ?? [];
       await copyText([cols.map(tsvField).join('\t'), ...list.map((r) => rowToTsv(cols, r, false))].join('\r\n'), tn('copied.hits', list.length, list.length));
     } catch (err) {
@@ -1110,7 +1109,7 @@ function App() {
     { label: t('export.allCsv'), on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportAllCSV?.()) },
     { label: t('export.sql'), on: !!resultSql, items: formats(TABLE_FORMATS, (f) => runExport(sqlResultName, () => bridge?.ExportQuery?.(resultSql, f))) },
     { label: t('export.searchAll'), on: !!shownHits?.length, run: () => runExport(dbName, () => bridge?.ExportSearch?.(tableSearch, (shownHits ?? []).map((h) => h.table))) },
-    { label: t('export.terms'), on: !!termsRes, items: formats(REPORT_FORMATS, exportTerms) },
+    { label: t('export.terms'), on: !!termsRes?.res.tables.length, items: formats(REPORT_FORMATS, exportTerms) },
   ];
 
   const visibleTables = useMemo(() => {
@@ -1161,9 +1160,8 @@ function App() {
       ? tn(narrowed ? 'info.found' : 'info.showing', 0, shownTable, 0, 0)
       : tn(narrowed ? 'info.pageFound' : 'info.page', rowCount, shownTable, num(page * limit + 1), num(page * limit + rows.length), num(rowCount));
   const copyCell = () => sel && copyText(cellText(sel.row[sel.col]), t('copied.value'));
-  const copyColumns = view === 'terms' ? gridColumns.slice(1) : gridColumns; // Terms: without the Term column
   const copyRow = (withHeader: boolean) =>
-    sel && copyText(rowToTsv(copyColumns, sel.row, withHeader), t(withHeader ? 'copied.rowHeader' : 'copied.row'));
+    sel && copyText(rowToTsv(gridColumns, sel.row, withHeader), t(withHeader ? 'copied.rowHeader' : 'copied.row'));
   const copyLog = () => copyText(logLines.map((e) => e.line).join('\r\n'), t('copied.log'));
   const filterBySel = () => sel && applyFilters(withFilter(filters, { column: sel.col, value: sel.row[sel.col] ?? null }));
   const busy = job !== null;

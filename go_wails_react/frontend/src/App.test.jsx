@@ -1361,8 +1361,8 @@ describe('App IPC flow', () => {
   });
 
   // standard item 32: the pasted terms (count, repeats), Whole value | Contains and This table | All tables (defaults of
-  // Settings), progress, the summary, the tables found, the rows of the chosen one (Term first), the terms not found
-  // with Copy, the copies without the Term column and the report
+  // Settings), progress, the summary, the tables found, the rows of the chosen one (its own columns, each row once:
+  // standard 19d), the terms not found with Copy, the copies and the report
   it('searches the pasted terms and shows the tables found, their rows and the terms not found', async () => {
     const res = {
       terms: ['TENSAO', 'PNTNAM', 'U9A'],
@@ -1374,18 +1374,17 @@ describe('App IPC flow', () => {
       ],
       tables: [
         { table: 'RANGER_SOGEN', rows: 1 },
-        { table: 'RANGER_SOSTAT', rows: 3 },
+        { table: 'RANGER_SOSTAT', rows: 2 }, // row 2, found by TENSAO and U9A, once
       ],
       notFound: ['PNTNAM'],
     };
     let answer;
     const SearchTerms = vi.fn(() => new Promise((resolve) => (answer = resolve)));
     const stat = [
-      { Term: 'TENSAO', ID: 1, NAME: 'a' },
-      { Term: 'TENSAO', ID: 2, NAME: 'b' },
-      { Term: 'U9A', ID: 2, NAME: 'b' },
+      { ID: 1, NAME: 'a' },
+      { ID: 2, NAME: 'b' },
     ];
-    const TermRows = vi.fn(async (table) => ({ columns: ['Term', 'ID', 'NAME'], rows: table === 'RANGER_SOGEN' ? [{ Term: 'U9A', ID: 7, NAME: 'g' }] : stat, more: false }));
+    const TermRows = vi.fn(async (table) => ({ columns: ['ID', 'NAME'], rows: table === 'RANGER_SOGEN' ? [{ ID: 7, NAME: 'g' }] : stat, more: false }));
     const ExportTerms = vi.fn(async () => 'C:\\out\\sample_termos.xlsx');
     const SetTermMatch = vi.fn(async () => {});
     const ClipboardSetText = vi.fn(async () => true);
@@ -1419,16 +1418,16 @@ describe('App IPC flow', () => {
     act(() => goProgress({ done: 1, total: 2, label: 'RANGER_SOGEN' }));
     expect(screen.getByText('Searching terms: table 1 of 2 (RANGER_SOGEN)')).toBeInTheDocument();
     await act(async () => answer(res));
-    expect(await screen.findByText('2 of 3 terms found: 4 rows in 2 tables')).toBeInTheDocument();
+    expect(await screen.findByText('2 of 3 terms found: 3 rows in 2 tables')).toBeInTheDocument();
 
-    // the first table found is chosen; its rows, the Term first, limited as in Data (Rows)
+    // the first table found is chosen; its rows, its own columns, limited as in Data (Rows)
     await waitFor(() => expect(TermRows).toHaveBeenLastCalledWith('RANGER_SOGEN', res.terms, true, 100));
     expect(screen.getByRole('button', { name: 'RANGER_SOGEN (1)' })).toHaveAttribute('aria-current', 'true');
-    fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOSTAT (3)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOSTAT (2)' }));
     await waitFor(() => expect(TermRows).toHaveBeenLastCalledWith('RANGER_SOSTAT', res.terms, true, 100));
-    await waitFor(() => expect([...document.querySelectorAll('.terms-hits th')].map((th) => th.textContent)).toEqual(['Term', 'ID', 'NAME']));
-    expect(document.querySelectorAll('.terms-hits tbody tr')).toHaveLength(3);
-    expect(screen.getByText('RANGER_SOSTAT: showing 3 of 3 rows')).toBeInTheDocument();
+    await waitFor(() => expect([...document.querySelectorAll('.terms-hits th')].map((th) => th.textContent)).toEqual(['ID', 'NAME']));
+    expect(document.querySelectorAll('.terms-hits tbody tr')).toHaveLength(2);
+    expect(screen.getByText('RANGER_SOSTAT: showing 2 of 2 rows')).toBeInTheDocument();
 
     // not found: one per line, in pasted order, with Copy
     expect(screen.getByRole('heading', { name: 'Not found (1)' })).toBeInTheDocument();
@@ -1436,7 +1435,7 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
     await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('PNTNAM'));
 
-    // the copies leave the Term column out; "Copy the rows found" copies every row found, with the header
+    // the copies have the columns of the table; "Copy the rows found" copies every row found, with the header
     fireEvent.contextMenu(screen.getByText('a'));
     expect(menuTree(screen.getByRole('menu', { name: 'Cell' }))).toEqual([
       'Copy value Ctrl+C', 'Copy row Ctrl+Shift+C', 'Copy row with header', '--', 'Copy the rows found in this table', 'Advanced Search report ▸',
@@ -1445,9 +1444,9 @@ describe('App IPC flow', () => {
     await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('ID\tNAME\r\n1\ta'));
     fireEvent.contextMenu(screen.getByText('a'));
     fireEvent.click(item('Copy the rows found in this table'));
-    await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('ID\tNAME\r\n1\ta\r\n2\tb\r\n2\tb'));
+    await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('ID\tNAME\r\n1\ta\r\n2\tb'));
     expect(TermRows).toHaveBeenLastCalledWith('RANGER_SOSTAT', res.terms, true, 0);
-    expect(screen.getByRole('status').textContent).toBe('Copied 3 rows');
+    expect(screen.getByRole('status').textContent).toBe('Copied 2 rows');
 
     // the report: cell menu and Export
     fireEvent.contextMenu(screen.getByText('a'));
@@ -1466,7 +1465,7 @@ describe('App IPC flow', () => {
     expect(screen.getByRole('radio', { name: 'Whole value' })).toHaveAttribute('aria-checked', 'true');
     // a new search: the old answer leaves at once
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
-    expect(screen.queryByText('2 of 3 terms found: 4 rows in 2 tables')).not.toBeInTheDocument();
+    expect(screen.queryByText('2 of 3 terms found: 3 rows in 2 tables')).not.toBeInTheDocument();
     await waitFor(() => expect(SearchTerms).toHaveBeenLastCalledWith(expect.any(Array), false, ''));
 
     // terms: one per line, trimmed, empty lines dropped, a repeat (ignoring case) searched once; the right plural

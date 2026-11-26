@@ -8,6 +8,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -27,7 +28,7 @@ type TermsResult struct {
 	Terms    []string    `json:"terms"`    // the terms searched (no repeats), in pasted order
 	Repeated int         `json:"repeated"` // pasted lines that repeat an earlier term
 	Hits     []TermHit   `json:"hits"`     // term x table with rows, in term order and then table list order
-	Tables   []TableHits `json:"tables"`   // tables with rows found, in table list order (a row found by 2 terms counts twice)
+	Tables   []TableHits `json:"tables"`   // tables with rows found, in table list order (a row found by 2 terms counts once)
 	NotFound []string    `json:"notFound"` // terms that found nothing, in pasted order
 }
 
@@ -148,8 +149,9 @@ func termsWith(table string, schema []ColumnSchema, rowID bool, terms []string, 
 		"hits AS (SELECT DISTINCT k.rn, t.ord, t.term FROM keys k JOIN t ON k.key = t.key)"
 }
 
-// termsSelect is the SELECT of the rows the terms find in table: the term first (column named by the catalog), then
-// every column of the table; in the order of the terms and, inside a term, of the table; one line per row and term
+// termsSelect is the SELECT of the rows the terms find in table: the columns of the table as they are (names, order
+// and types; no Term column, standard 19d), each row once, in the order of the first term that finds it and then of
+// the table
 func (m *DBManager) termsSelect(table string, terms []string, contains bool) (string, error) {
 	rowID, err := m.hasRowID(table) // also validates the table name
 	if err != nil {
@@ -162,17 +164,12 @@ func (m *DBManager) termsSelect(table string, terms []string, contains bool) (st
 	if err != nil {
 		return "", err
 	}
-	label := i18n.T("terms.col")
-	cols := []string{"h.term AS " + quoteIdent(label)}
-	for _, c := range schema {
-		col := "c." + quoteIdent(c.Name)
-		if strings.EqualFold(c.Name, label) { // a column with the name of the term column keeps its values under another
-			col += " AS " + quoteIdent(c.Name+" (2)")
-		}
-		cols = append(cols, col)
+	cols := make([]string, len(schema))
+	for i, c := range schema {
+		cols[i] = "c." + quoteIdent(c.Name)
 	}
 	return termsWith(table, schema, rowID, terms, contains) + " SELECT " + strings.Join(cols, ", ") +
-		" FROM hits h JOIN base c ON c.mdb2sql_rn = h.rn ORDER BY h.ord, h.rn", nil
+		" FROM (SELECT rn, min(ord) AS ord FROM hits GROUP BY rn) h JOIN base c ON c.mdb2sql_rn = h.rn ORDER BY h.ord, h.rn", nil
 }
 
 // SearchTerms looks for the terms of lines (see CleanTerms) in every column of table, or with table "" of every
@@ -207,7 +204,9 @@ func (m *DBManager) SearchTerms(ctx context.Context, lines []string, contains bo
 		if err != nil {
 			return TermsResult{}, err
 		}
-		rows, err := m.conn.QueryContext(ctx, termsWith(tb, schema, rowID, terms, contains)+" SELECT ord, count(*) FROM hits GROUP BY ord")
+		// per term, its rows; per table, its rows found by any term, each once (the grid and the report show each row once)
+		rows, err := m.conn.QueryContext(ctx, termsWith(tb, schema, rowID, terms, contains)+
+			" SELECT ord, count(*), (SELECT count(DISTINCT rn) FROM hits) FROM hits GROUP BY ord")
 		if err != nil {
 			return TermsResult{}, fmt.Errorf("%s: %w", tb, err)
 		}
@@ -215,12 +214,11 @@ func (m *DBManager) SearchTerms(ctx context.Context, lines []string, contains bo
 		total := 0
 		for rows.Next() {
 			var ord, n int
-			if err := rows.Scan(&ord, &n); err != nil {
+			if err := rows.Scan(&ord, &n, &total); err != nil {
 				rows.Close()
 				return TermsResult{}, err
 			}
 			counts[i][ord] = n
-			total += n
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -259,52 +257,39 @@ func (m *DBManager) TermRows(ctx context.Context, table string, terms []string, 
 	return queryResult(ctx, m.conn, query, limit)
 }
 
-// TermsSheets names the sheets of the Advanced Search report (also its tables and CSV files), in order: the result
-// (owner 26/11, 13i: one sheet with every term), then one per table with rows found, named as the table
+// TermsSheets names the sheets of the Advanced Search report (also its tables and CSV files): one per table with rows
+// found, named as the table (standard 19d: no result sheet)
 func TermsSheets(res TermsResult) []string {
-	names := []string{i18n.T("terms.sheetResult")}
+	names := []string{}
 	for _, t := range res.Tables {
 		names = append(names, t.Table)
 	}
 	return names
 }
 
-// ExportTerms writes the report of a term search (res, as SearchTerms returned it). Excel: the result sheet (Term,
-// Status, Table, Rows: one line per term and table; a term not found has no table and 0 rows), then one sheet per
-// table with the rows found (the term, then the columns of the table). SQLite and DuckDB: the same, as tables with
-// those names. CSV: out is a folder, one file per sheet.
+// ExportTerms writes the report of a term search (res, as SearchTerms returned it): one sheet per table with rows
+// found, the rows as termsSelect gives them (the columns of the table, each row once; standard 19d). SQLite and
+// DuckDB: the same, as tables with those names. CSV: out is a folder, one file per sheet.
 func (m *DBManager) ExportTerms(ctx context.Context, res TermsResult, contains bool, format, out string, progress Progress) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.conn == nil {
 		return fmt.Errorf("no database connected")
 	}
-	term := i18n.T("terms.col")
-	hits := map[string][]TermHit{}
-	for _, h := range res.Hits {
-		hits[h.Term] = append(hits[h.Term], h)
-	}
-	var summary [][]any
-	for _, t := range res.Terms {
-		for _, h := range hits[t] {
-			summary = append(summary, []any{t, i18n.T("terms.statusFound"), h.Table, h.Rows})
-		}
-		if len(hits[t]) == 0 {
-			summary = append(summary, []any{t, i18n.T("terms.statusNotFound"), "", 0})
-		}
+	if len(res.Tables) == 0 {
+		return errors.New(i18n.T("terms.nothingToExport"))
 	}
 	sheets := TermsSheets(res)
 	if format == "sqlite" || format == "duckdb" {
-		sheets = uniqueFold(sheets) // a table of the database may be called as the result
+		sheets = uniqueFold(sheets) // two table names may differ only in case
 	}
-	header := []string{term, i18n.T("terms.colStatus"), i18n.T("terms.colTable"), i18n.T("terms.colRows")}
-	items := []exportItem{{name: sheets[0], query: valuesQuery(header, summary)}}
+	var items []exportItem
 	for i, t := range res.Tables {
 		query, err := m.termsSelect(t.Table, res.Terms, contains)
 		if err != nil {
 			return err
 		}
-		items = append(items, exportItem{name: sheets[i+1], query: query})
+		items = append(items, exportItem{name: sheets[i], query: query})
 	}
 	switch format {
 	case "csv":
