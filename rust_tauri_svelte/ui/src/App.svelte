@@ -323,7 +323,7 @@
     const list = {
       open: { run: browse, off: busy },
       openPath: { run: () => openDatabase(), off: busy || !dbPath.trim() },
-      reopen: { run: reload, off: busy || !(openedPath || dbPath.trim()) },
+      reopen: { run: reload, off: busy },
       save: { run: () => save(false), off: busy || !open },
       saveAs: { run: () => save(true), off: busy || !open },
       export: { off: busy || !open },
@@ -1208,11 +1208,13 @@
     run(ids[key]);
   }
 
-  // F5 e Arquivo > Reabrir: abre de novo o banco aberto (rele a lista de tabelas); sem banco aberto, o caminho do campo
+  // F5 e Arquivo > Reabrir: abre de novo o banco aberto (rele a lista de tabelas); sem banco aberto, a caixa de escolher
+  // arquivo (secao 14: nunca um banco padrao relativo)
   function reload() {
     if (busy) return;
-    if (openedPath) dbPath = openedPath;
-    if (dbPath.trim()) openDatabase();
+    if (!openedPath) return browse();
+    dbPath = openedPath;
+    openDatabase();
   }
 
   // Ctrl+F: aba Data com o campo de pesquisa em foco e o texto selecionado (sem tabela aberta nao ha campo)

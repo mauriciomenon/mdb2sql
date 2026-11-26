@@ -167,7 +167,7 @@ NULL** (desligado por padrao: a celula NULL fica vazia; ligado, mostra
 DuckDB, leitor do Access, gravacao (SQLite, DuckDB, Excel e CSV; .mdb/.accdb nao), autor, licenca e os links do codigo no GitHub e no GitLab (o app so pode abrir esses dois
 enderecos).
 
-**Atalhos** (os dos itens de menu; valem quando o item vale): `Ctrl+O` abrir, `F5` abrir de novo o banco, `Ctrl+S`
+**Atalhos** (os dos itens de menu; valem quando o item vale): `Ctrl+O` abrir, `F5` abrir de novo o banco (sem banco aberto: o dialogo), `Ctrl+S`
 salvar, `Ctrl+Shift+S` salvar como, `Ctrl+W` fechar, `Ctrl+Q` sair, `Ctrl+F` pesquisar na aba Data, `Ctrl+T` lista de
 tabelas, `Ctrl+D` favoritar a tabela aberta, `Ctrl+1`/`2`/`3`/`4` abas Data/Schema/SQL/Terms, `Ctrl+L` log, `Ctrl+Enter` rodar o SQL ou pesquisar os termos
 (na aba de cada um), `Ctrl+C` copiar a celula escolhida, `Ctrl+Shift+C` a linha, `Espaco` marcar a linha.

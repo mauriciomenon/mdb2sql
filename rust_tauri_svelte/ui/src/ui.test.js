@@ -213,8 +213,9 @@ test('keyboard shortcuts are those of the menu items', () => {
   // Ctrl+Enter e os outros valem como o botao de cada um: nada durante uma abertura ou consulta
   assert.match(app, /\n {6}runSql: \{ run: \(\) => \(\(tab = 'sql'\), runSql\(\)\), off: busy \|\| !open \|\| !sql\.trim\(\) \},/);
   assert.match(app, /\n {6}runTerms: \{ run: \(\) => \(\(tab = 'terms'\), runTerms\(\)\), off: !canRunTerms \},/);
-  assert.match(app, /\n {6}reopen: \{ run: reload, off: busy \|\| !\(openedPath \|\| dbPath\.trim\(\)\) \},/);
-  assert.match(appFunction('reload'), /if \(openedPath\) dbPath = openedPath;\s*if \(dbPath\.trim\(\)\) openDatabase\(\);/);
+  // secao 14: F5 / Arquivo > Reabrir sem arquivo aberto = a caixa de escolher arquivo (nunca um banco padrao relativo)
+  assert.match(app, /\n {6}reopen: \{ run: reload, off: busy \},/);
+  assert.match(appFunction('reload'), /if \(busy\) return;\s*if \(!openedPath\) return browse\(\);\s*dbPath = openedPath;\s*openDatabase\(\);/);
   assert.match(markup('./App.svelte'), /<svelte:window onclick=\{[^}]*\} onkeydown=\{shortcut\} \/>/);
   // Ctrl+Enter so pela janela (o editor tinha o seu e rodaria duas vezes)
   assert.doesNotMatch(markup('./App.svelte').match(/<textarea\s+bind:value=\{sql\}[\s\S]*?<\/textarea>/)[0], /onkeydown/);
