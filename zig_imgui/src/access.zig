@@ -774,8 +774,7 @@ test "a file that is not Access fails with a message, through every reader avail
         var it = dir.iterate();
         try t.expect(try it.next(t.io) == null);
     } else |_| {}
-    try t.expectError(error.Failed, open(&db, t.io, "nao/existe.accdb", .{ .tools_dir = tools }, &p, &out));
-    try t.expectEqualStrings("File not found", db.lastError());
+    try t.expectError(error.FileNotFound, open(&db, t.io, "nao/existe.accdb", .{ .tools_dir = tools }, &p, &out));
 }
 
 test "Access types from mdb-schema" {

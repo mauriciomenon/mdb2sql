@@ -194,7 +194,8 @@ While a file opens, the status line shows the time, a progress bar (tables conve
 ### Menus
 
 - **File**: **Open...** (Ctrl+O, the **Open...** button), **Open the typed path** (Enter in the path box), **Reopen**
-  (F5), **Save** (Ctrl+S), **Save as...** (Ctrl+Shift+S), **Export**, **Close** (Ctrl+W), **Exit** (Ctrl+Q).
+  (F5; with no file open it opens the file dialog, never a default relative database), **Save** (Ctrl+S), **Save
+  as...** (Ctrl+Shift+S), **Export**, **Close** (Ctrl+W), **Exit** (Ctrl+Q).
 - **Export** (also the **Export...** button), a fixed list where what does not apply is disabled: **Current table** >
   CSV / Excel (the Data table; with a search or value filter it asks first: **Whole table** or **Only the <n> rows
   found**), **Marked rows** > CSV / Excel, **Current table schema** > CSV / Excel, **Database schema** > CSV / Excel

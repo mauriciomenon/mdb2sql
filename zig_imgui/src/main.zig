@@ -1889,7 +1889,8 @@ const App = struct {
             app.want_close = false;
             app.closeFile();
         }
-        // F5 (o do Python): abre de novo o arquivo aberto; o SQLite convertido dele e trocado pelo novo, sem pergunta
+        // F5 (o do Python): abre de novo o arquivo aberto; o SQLite convertido dele e trocado pelo novo, sem pergunta.
+        // Sem arquivo aberto (item 14): a caixa de escolher arquivo, nunca um banco padrao relativo
         if (app.want_refresh) {
             app.want_refresh = false;
             if (app.loaded_path[0] != 0) {
@@ -1897,7 +1898,7 @@ const App = struct {
                 app.closeFile();
                 app.setPath(zstr(&again));
                 app.want_open = true;
-            }
+            } else app.want_browse = true;
         }
         if (app.want_filter != null or app.want_unfilter != null or app.want_clear_filters) {
             app.editFilters();
@@ -2252,7 +2253,7 @@ const App = struct {
             defer ig.igEndMenu();
             if (ig.igMenuItem_Bool(tr("menu_open"), "Ctrl+O", false, true)) app.want_browse = true;
             if (ig.igMenuItem_Bool(tr("menu_open_typed"), null, false, true)) app.openTyped();
-            if (ig.igMenuItem_Bool(tr("menu_reopen"), "F5", false, has_db)) app.want_refresh = true;
+            if (ig.igMenuItem_Bool(tr("menu_reopen"), "F5", false, !app.opening())) app.want_refresh = true;
             ig.igSeparator();
             if (ig.igMenuItem_Bool(tr("menu_save"), "Ctrl+S", false, has_db)) app.want_save = .save;
             if (ig.igMenuItem_Bool(tr("menu_save_as"), "Ctrl+Shift+S", false, has_db)) app.want_save = .save_as;

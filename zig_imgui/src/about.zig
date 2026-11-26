@@ -148,6 +148,9 @@ test "item 14: top bar path | Open... | Export...: Open... opens the file dialog
     try expectOrder("// Barra superior (item 14)", &.{ "\"##path\"", "app.openTyped();", "if (button(tr(\"open\"))) app.want_browse = true;", "tr(\"export_button\")" });
     try expectOrder("fn openTyped(", &.{ ".pick => app.want_browse = true", ".not_found => app.status.set(true, \"err_file_not_found\"", ".open => app.want_open = true" });
     try std.testing.expect(std.mem.indexOf(u8, @embedFile("main.zig"), "tr(\"browse\")") == null);
+    // F5 e Arquivo > Reabrir sem arquivo aberto: a caixa de escolher arquivo (o item do menu fica habilitado)
+    try expectOrder("if (app.want_refresh) {", &.{ "app.want_open = true;", "} else app.want_browse = true;" });
+    try expectOrder("tr(\"menu_reopen\"), \"F5\", false, !app.opening())", &.{"app.want_refresh = true;"});
 }
 
 test "File menu (item 28: Open..., Open the typed path, Reopen, Save, Save as..., Export, Close, Exit) and the shortcuts" {
