@@ -56,7 +56,7 @@ def test_mdb_schema_tables_maps_access_types() -> None:
 
     assert list(tables) == ["RANGER_SOSTAT", "OTHER"]
     assert tables["RANGER_SOSTAT"] == [
-        ("RTUNO", "DECIMAL(10,0)"),
+        ("RTUNO", "BIGINT"),  # Numeric(p,0) e inteiro (BRIEF 19 a: nunca texto)
         ("SUBNAM", "TEXT"),
         ("VALUE", "DOUBLE"),
         ("WHEN", "DATETIME"),
@@ -70,10 +70,15 @@ def test_mdb_schema_tables_maps_access_types() -> None:
 
 
 def test_odbc_types() -> None:
-    assert access._odbc_type("DECIMAL", 10, 0) == "DECIMAL(10,0)"
+    # Numeric(p,0) e inteiro: INTEGER ate 9 digitos, BIGINT ate 18, acima DECIMAL(p,0); com casas, DECIMAL(p,s)
+    assert access._odbc_type("DECIMAL", 10, 0) == "BIGINT"
+    assert access._odbc_type("NUMERIC", 5, 0) == "INTEGER"
+    assert access._odbc_type("NUMERIC", 30, 0) == "DECIMAL(30,0)"
     assert access._odbc_type("COUNTER", 10, 0) == "INTEGER"
     assert access._odbc_type("LONGCHAR", 1073741823, None) == "TEXT"
     assert access._odbc_type("NUMERIC", 60, 2) == "DECIMAL(38,2)"
+    # o valor Decimal inteiro vai como int (a coluna INTEGER/BIGINT guarda inteiro); com casas, texto exato
+    assert access._odbc_value(Decimal("50")) == 50 and access._odbc_value(Decimal("12.50")) == "12.50"
 
 
 @pytest.mark.parametrize(

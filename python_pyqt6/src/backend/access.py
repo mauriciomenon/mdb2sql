@@ -50,8 +50,12 @@ def quote(name: str) -> str:
 
 
 def decimal_type(precision: int | None, scale: int | None) -> str:
-    # DuckDB (que le o SQLite) guarda ate 38 digitos
-    return f"DECIMAL({min(precision or 18, 38)},{min(scale or 0, 38)})"
+    # Numeric(p,0) do Access e inteiro (RTUNO, PNTNO): INTEGER ate 9 digitos, BIGINT ate 18 (BRIEF 19 a); com casas
+    # decimais, DECIMAL(p,s). O DuckDB (que le o SQLite) guarda ate 38 digitos
+    precision, scale = min(precision or 18, 38), min(scale or 0, 38)
+    if scale == 0 and precision <= 18:
+        return "INTEGER" if precision <= 9 else "BIGINT"
+    return f"DECIMAL({precision},{scale})"
 
 
 def mdbtools_dir() -> Path | None:
@@ -116,9 +120,10 @@ def _create(lite: sqlite3.Connection, table: str, columns: list[tuple[str, str]]
 
 
 def _odbc_value(value: object) -> object:
-    # Decimal como texto (o SQLite guarda INTEGER ou REAL pela coluna DECIMAL); data no mesmo formato do mdbtools
+    # Decimal inteiro como int; com casas, texto (o SQLite guarda INTEGER ou REAL pela coluna DECIMAL); data no mesmo
+    # formato do mdbtools
     if isinstance(value, Decimal):
-        return str(value)
+        return int(value) if value.is_finite() and value == value.to_integral_value() else str(value)
     if isinstance(value, datetime):
         return value.strftime(TIMESTAMP)
     if isinstance(value, date):
