@@ -1463,7 +1463,12 @@ mod tests {
                 assert_eq!(points.iter().map(|p| p.1.as_str()).collect::<Vec<_>>(), ["238", "242", "254", "256", "260", "304", "308", "2190"]);
                 assert!(points.iter().all(|p| p.0 == "50"));
                 assert_eq!(points[7].2, "U9A");
-                assert_eq!(missing, [&"PNTNAM".to_string()]);
+                // Contem acha PNTNAM tambem nas mensagens de RANGER_SOTEXT ("SOSTAT.SUBNAM+PNTNAM"); por inteiro, nao
+                if whole {
+                    assert_eq!(missing, [&"PNTNAM".to_string()]);
+                } else {
+                    assert!(missing.is_empty() && with_hits.contains(&"RANGER_SOTEXT".to_string()), "{missing:?}");
+                }
             }
         }
     }
