@@ -12,7 +12,6 @@
   // selected ({ row, col }, celula escolhida): quem usa a grade le para os itens do menu Editar
   // marks (so a aba Dados): { has(linha), toggle(linha) } das linhas marcadas
   // extra: itens a mais no fim do menu da celula: { label, off, run(linha) } ou { label, off, items: [{ label, run }] }
-  // copySkip: quantas colunas do comeco ficam fora de Copiar linha (a coluna Termo da aba Termos)
   let {
     columns,
     rows,
@@ -26,7 +25,6 @@
     selected = $bindable(null),
     marks = null,
     extra = [],
-    copySkip = 0,
   } = $props();
 
   let menu = $state.raw(null); // { x, y, header }: menu aberto; header = nome da coluna do cabecalho clicado
@@ -115,7 +113,7 @@
   export async function copy(kind) {
     menu = null;
     if (!selected) return;
-    const names = columns.slice(copySkip).map((col) => col.name);
+    const names = columns.map((col) => col.name);
     const text =
       kind === 'value'
         ? cellText(selected.row[selected.col])

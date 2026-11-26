@@ -66,14 +66,19 @@ pub(crate) fn new_temp_in(dirs: &[PathBuf], name: &str) -> Result<PathBuf, Strin
 // arquivo nao existe ou nao da para ler. A interface guarda a chave do Access e a do SQLite salvo dele: enquanto as duas
 // forem as mesmas, abrir o Access abre o SQLite salvo, sem converter de novo (como o Go)
 // NIVEL TECNICO: Windows paths compare case-insensitively, so the path is lowercased there (same as Go's fileKey)
+// Termina com a versao do conversor: o convertido lembrado de uma versao antiga (que lia Numeric como texto) nao vale
+// mais e o Access e convertido de novo (secao 19 b)
 pub fn file_key(path: &Path) -> Option<String> {
     let meta = std::fs::metadata(path).ok().filter(|m| m.is_file())?;
     let modified = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
     let full = path.canonicalize().ok()?.to_string_lossy().into_owned();
     let full = full.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(full);
     let full = if cfg!(windows) { full.to_lowercase() } else { full };
-    Some(format!("{full}|{}|{modified}", meta.len()))
+    Some(format!("{full}|{}|{modified}|converter {CONVERTER_VERSION}", meta.len()))
 }
+
+// sobe quando a conversao do Access muda (2: os tipos do Access, secao 19 a)
+pub const CONVERTER_VERSION: u32 = 2;
 
 // NIVEL BASICO: SQLite convertido ainda nao salvo; sumir com ele (drop) apaga o arquivo
 pub struct Converted {

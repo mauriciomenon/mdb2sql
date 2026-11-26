@@ -74,7 +74,8 @@ pub fn odbc_installed() -> bool {
     false
 }
 
-// o mdbtools vai dentro do exe deste build? (senao e o do PATH)
+// o mdbtools vai dentro do exe deste build? (senao e o do PATH); so o teste do build oficial pergunta
+#[cfg(test)]
 pub fn mdbtools_embedded() -> bool {
     cfg!(mdbtools_embedded)
 }
@@ -107,25 +108,31 @@ fn import_odbc(_: &duckdb::Connection, _: &str, _: &mut dyn FnMut(usize, usize, 
 
 #[cfg(windows)]
 enum Fetch {
+    Int,
     Float,
     Binary,
     Text,
 }
 
 // NIVEL BASICO: Tipo ODBC da coluna vira tipo do DuckDB e o jeito de buscar o valor
-// NIVEL TECNICO: numbers that must stay exact (DECIMAL, integers, dates) travel as text and
-// DuckDB casts them on append; floating point goes as f64 to keep every digit
+// NIVEL TECNICO: integers come as i64 and floating point as f64 (native values, secao 20); DECIMAL and dates travel as
+// text and DuckDB parses them exactly into the typed column on append
 #[cfg(windows)]
 fn odbc_column(data_type: DataType) -> (String, Fetch) {
     let text = |t: &str| (t.to_string(), Fetch::Text);
+    let int = |t: &str| (t.to_string(), Fetch::Int);
     match data_type {
         DataType::Bit => text("BOOLEAN"),
         // o Byte do Access vai de 0 a 255
-        DataType::TinyInt | DataType::SmallInt => text("SMALLINT"),
-        DataType::Integer => text("INTEGER"),
-        DataType::BigInt => text("BIGINT"),
+        DataType::TinyInt | DataType::SmallInt => int("SMALLINT"),
+        DataType::Integer => int("INTEGER"),
+        DataType::BigInt => int("BIGINT"),
         DataType::Real => ("FLOAT".into(), Fetch::Float),
         DataType::Float { .. } | DataType::Double => ("DOUBLE".into(), Fetch::Float),
+        // Numeric(p,0) do Access e inteiro (secao 19 a: RTUNO, PNTNO); acima de 18 digitos fica DECIMAL (exato)
+        DataType::Numeric { precision, scale: 0 } | DataType::Decimal { precision, scale: 0 } if (1..=18).contains(&precision) => {
+            int("BIGINT")
+        }
         DataType::Numeric { precision, scale } | DataType::Decimal { precision, scale }
             if (1..=38).contains(&precision) && (0..=precision as i16).contains(&scale) =>
         {
@@ -186,6 +193,11 @@ fn import_odbc(duck: &duckdb::Connection, path: &str, progress: &mut dyn FnMut(u
             for (c, how) in fetch.iter().enumerate() {
                 let col = c as u16 + 1;
                 values.push(match how {
+                    Fetch::Int => {
+                        let mut v = Nullable::<i64>::null();
+                        row.get_data(col, &mut v).map_err(err)?;
+                        v.into_opt().map_or(DuckValue::Null, DuckValue::BigInt)
+                    }
                     Fetch::Float => {
                         let mut v = Nullable::<f64>::null();
                         row.get_data(col, &mut v).map_err(err)?;
@@ -324,6 +336,8 @@ pub(crate) fn pg_to_duck(pg: &str) -> String {
     if let Some(args) = t.strip_prefix("NUMERIC").map(|a| a.trim().trim_start_matches('(').trim_end_matches(')')) {
         let nums: Vec<u32> = args.split(',').filter_map(|a| a.trim().parse().ok()).collect();
         return match nums.as_slice() {
+            // Numeric(p,0) e inteiro (secao 19 a); acima de 18 digitos fica DECIMAL (exato)
+            [p, 0] if (1..=18).contains(p) => "BIGINT".into(),
             [p, s] if (1..=38).contains(p) && s <= p => format!("DECIMAL({p},{s})"),
             _ => "DOUBLE".into(),
         };
@@ -451,15 +465,11 @@ fn export_csv(dir: &Path, path: &str, table: &str) -> Result<PathBuf, String> {
 }
 
 // NIVEL BASICO: CSV do mdb-export vira tabela do DuckDB com os tipos do mdb-schema (por posicao); BLOB chega em hex
-// e e convertido depois. Sem tipos no esquema: tudo texto
+// e e convertido depois. Sem os tipos da tabela no esquema: erro (nunca tudo como texto, secao 19 a)
 fn load_csv(duck: &duckdb::Connection, csv: &Path, table: &str, types: Option<&Vec<String>>) -> Result<(), String> {
-    let typing = match types {
-        Some(t) => {
-            let list: Vec<String> = t.iter().map(|t| literal(if t == "BLOB" { "VARCHAR" } else { t })).collect();
-            format!("types = [{}]", list.join(", "))
-        }
-        None => "all_varchar = true".to_string(),
-    };
+    let types = types.ok_or_else(|| format!("{table}: mdb-schema did not list the columns of this table"))?;
+    let list: Vec<String> = types.iter().map(|t| literal(if t == "BLOB" { "VARCHAR" } else { t })).collect();
+    let typing = format!("types = [{}]", list.join(", "));
     // allow_quoted_nulls = false: "" e texto vazio; so o campo sem nada e NULL
     duck.execute_batch(&format!(
         "CREATE TABLE {} AS SELECT * FROM read_csv({}, header = true, delim = ',', quote = '\"', escape = '\"', \
@@ -469,7 +479,7 @@ fn load_csv(duck: &duckdb::Connection, csv: &Path, table: &str, types: Option<&V
     ))
     .map_err(|e| format!("{table}: {e}"))?;
 
-    for (c, t) in types.into_iter().flatten().enumerate() {
+    for (c, t) in types.iter().enumerate() {
         if t == "BLOB" {
             let name: String = duck
                 .query_row(&format!("SELECT name FROM pragma_table_info({}) WHERE cid = {c}", literal(table)), [], |r| r.get(0))

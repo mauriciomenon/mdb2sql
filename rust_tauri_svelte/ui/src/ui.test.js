@@ -89,9 +89,12 @@ test('each export sends its request and suggests its name', () => {
   assert.match(exports, /tableSchema: \(\) => \(\{ name: `\$\{selectedTable\}_schema`, unit: 'Rows', request: \{ scope: 'schema', table: selectedTable, labels: schemaLabels\(\) \} \}\),/);
   assert.match(exports, /dbSchema: \(\) => \(\{ name: `\$\{stem\(openedPath\)\}_schema`, unit: 'Rows', request: \{ scope: 'schema', labels: schemaLabels\(\) \} \}\),/);
   assert.match(exports, /tables: \(\) => \(\{ folder: true, unit: 'Tables', request: \{ scope: 'tables' \} \}\),/);
-  assert.match(exports, /name: `\$\{stem\(openedPath\)\}_termos`,\s*folder: format === 'csv',/);
+  // secao 19 e: "<banco> - Pesquisa Avançada.xlsx" (a extensao vem do tipo), nunca "_termos"
+  assert.match(exports, /name: `\$\{stem\(openedPath\)\} - \$\{t\('tabs\.terms'\)\}`,[^\n]*\n\s*folder: format === 'csv',/);
+  assert.doesNotMatch(app, /_termos/);
   assert.match(app, /const schemaLabels = \(\) => \['tables\.name', 'schema\.column', 'schema\.type', 'schema\.nullable', 'schema\.yes', 'schema\.no'\]\.map\(\(key\) => t\(key\)\);/);
-  assert.match(exports, /\['terms\.col', 'terms\.status', 'tables\.name', 'tables\.rows', 'terms\.found', 'terms\.missing', 'terms\.sheetResult'\]\.map\(\(key\) => t\(key\)\)/);
+  // secao 19 d: o relatorio e so uma aba por tabela com acerto, com as colunas da tabela (sem titulos a mandar)
+  assert.match(exports, /request: \{ scope: 'terms', labels: \[\] \},/);
   const start = appFunction('startExport');
   assert.match(start, /\? await invoke\('plugin:dialog\|open', \{ options: \{ title, directory: true, defaultPath: dir \|\| undefined \} \}\)/);
   assert.match(start, /const existing = await invoke\('export_existing', \{ request \}\);\s*const message = t\('ask\.overwriteMany', \{ count: fmt\(existing\) \}\);\s*if \(existing && \(await invoke\('plugin:dialog\|message', \{ title, message, kind: 'warning', buttons: 'YesNo' \}\)\) !== 'Yes'\) return;/);
@@ -118,23 +121,29 @@ test('table list shows the row count of each table', () => {
   assert.match(main, /let tables = manager\.list_tables\(\)\?;\s*let rows = manager\.table_rows\(&tables\)\?;\s*show_title\(&app, Some\(&opened\)\);/);
 });
 
-// padrao item 21: Sobre = conteudo desta versao (Build, Stack, Janela, Bancos, Leitura do Access, Autor, Licenca, links)
-// com o titulo do Zig, "Sobre o mdb2sql" (o mesmo do menu Ajuda), nas 3 linguas
-test('About: title About mdb2sql and the rows of this stack', () => {
+// secao 18 b: Sobre igual nas 4, so estas linhas, nesta ordem: MDB2SQL (Rust) / Versao 1.3.0 - commit <hash> - <data> /
+// runtime / Ferramentas / Suporte ao driver ODBC / Autor / Licenca: GPLv2 / GitHub / GitLab; nada de Build, Stack,
+// Janela, Bancos, Leitura do Access, Gravacao nem frase explicativa
+test('About: the same lines in the 4 versions', () => {
   const ui = markup('./App.svelte');
   const about = ui.match(/<dialog bind:this=\{aboutDialog\}[\s\S]*?<\/dialog>/)[0];
-  assert.match(about, /<h2 id="about-title">\{t\('help\.about'\)\} <span class="version">\{aboutInfo\.version\}<\/span><\/h2>/);
-  const pt = (key) => (key in en ? (CATALOG_PT[key] ?? '') : '');
-  assert.deepEqual([pt('help.about'), en['help.about'], CATALOG_ES['help.about']], ['Sobre o mdb2sql', 'About mdb2sql', 'Acerca de mdb2sql']);
+  assert.match(about, /<h2 id="about-title">\{t\('about\.title'\)\}<\/h2>\s*\{#each aboutLines as line\}\s*<p>\{line\}<\/p>\s*\{\/each\}\s*<p class="links">/);
+  assert.deepEqual([CATALOG_PT, en, CATALOG_ES].map((c) => c['about.title']), ['MDB2SQL (Rust)', 'MDB2SQL (Rust)', 'MDB2SQL (Rust)']);
+  assert.match(about, /\{#if i\}\/\{\/if\}\s*<a href=\{url\}[\s\S]*?>\{label\}<\/a>/);
+  assert.doesNotMatch(about, /<dl|tagline|class="version"/);
   const code = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
   assert.match(code, /\n {6}about: \{ run: showAbout \},/); // Ajuda > Sobre o mdb2sql (menus.js)
-  const rows = [...code.match(/let aboutRows = \$derived\.by\(\(\) => \{[\s\S]*?\n {2}\}\);/)[0].matchAll(/\[t\('(about\.\w+)'\)/g)].map((m) => m[1]);
-  // item 28: a linha Gravacao logo depois de Leitura do Access (nao se grava em .mdb/.accdb)
-  assert.deepEqual(rows, ['about.build', 'about.stack', 'about.window', 'about.engines', 'about.access', 'about.write', 'about.author', 'about.license']);
-  assert.match(code, /\[t\('about\.write'\), t\('about\.writeValue'\)\],/);
-  // rotulos traduzidos como no Sobre do Zig (Stack = Tecnologia / Tecnologia; Build fica, como no Go e no Zig)
-  assert.deepEqual(rows.map(pt), ['Build', 'Tecnologia', 'Janela', 'Bancos', 'Leitura do Access', 'Gravação', 'Autor', 'Licença']);
-  assert.deepEqual([en['about.stack'], CATALOG_ES['about.stack'], CATALOG_ES['about.build']], ['Stack', 'Tecnología', 'Compilación']);
+  const lines = [...code.match(/let aboutLines = \$derived\([\s\S]*?\n {2}\);/)[0].matchAll(/(t\('about\.\w+'|aboutInfo\.runtime)/g)].map((m) => m[1]);
+  assert.deepEqual(lines, ["t('about.version'", 'aboutInfo.runtime', "t('about.tools'", "t('about.odbc'", "t('about.author'", "t('about.license'"]);
+  const say = (key, values) => [CATALOG_PT, en, CATALOG_ES].map((c) => c[key].replace(/\{(\w+)\}/g, (_, k) => values[k]));
+  const build = 'commit 0123456789abcdef0123456789abcdef01234567 - 2026-11-26';
+  assert.deepEqual(say('about.version', { version: '1.3.0', build }), [`Versão 1.3.0 - ${build}`, `Version 1.3.0 - ${build}`, `Versión 1.3.0 - ${build}`]);
+  const tools = 'SQLite 3.50.4, DuckDB 1.4.2, mdbtools 1.0.1';
+  assert.deepEqual(say('about.tools', { tools }), [`Ferramentas: ${tools}`, `Tools: ${tools}`, `Herramientas: ${tools}`]);
+  assert.deepEqual(say('about.odbc', {}), ['Suporte ao driver ODBC, caso instalado.', 'ODBC driver support, if installed.', 'Soporte del controlador ODBC, si está instalado.']);
+  assert.deepEqual(say('about.author', { name: 'Mauricio Menon' }), ['Autor: Mauricio Menon', 'Author: Mauricio Menon', 'Autor: Mauricio Menon']);
+  assert.deepEqual(say('about.license', {}), ['Licença: GPLv2', 'License: GPLv2', 'Licencia: GPLv2']);
+  for (const gone of ['about.description', 'about.build', 'about.stack', 'about.write', 'about.licenseValue']) assert.ok(!(gone in en), gone);
 });
 
 // item 27: a pergunta do banco convertido so ao sair do programa (Arquivo > Sair, Ctrl+Q, X da janela, Alt+F4): Salvar a
@@ -273,7 +282,6 @@ test('Access comes first, then SQLite, then DuckDB', () => {
   const paths = readFileSync(new URL('./paths.js', import.meta.url), 'utf8');
   assert.match(paths, /export const SAVE_FORMATS = \['sqlite', 'duckdb', 'xlsx'\];/); // tipos da caixa de salvar
   assert.ok(isSorted(order(en['header.placeholder'], ['.accdb', '.sqlite', '.duckdb'])));
-  assert.ok(isSorted(order(en['about.description'], ['Access', 'SQLite', 'DuckDB'])));
 });
 
 // colunas quase so de NULL pareciam transparentes: celula de dado nao pode ter opacity nem cor apagada
@@ -312,8 +320,9 @@ test('Data search scope: two-option selector next to the field and its default i
   // Configuracoes > Escopo padrao da busca: os mesmos dois (menus.js), gravado
   assert.match(menus, /\['defaultScope', 'settings\.searchScope', SCOPES\.map\(\(\[id, key\]\) => \[`defaultScope\.\$\{id\}`, key\]\)\],/);
   assert.match(app, /radio\(`defaultScope\.\$\{id\}`, \(\) => setDefaultScope\(id\), defaultScope === id\);/);
-  assert.match(app, /let defaultScope = \$state\(loadSetting\(SCOPE_KEY\) === 'all' \? 'all' : 'table'\);/);
-  assert.match(app, /saveSetting\(SCOPE_KEY, next === 'all' \? 'all' : null\);/);
+  // secao 18 a: o padrao e Todas as tabelas (com Esta tabela o dono buscou na primeira tabela e nao achou nada)
+  assert.match(app, /let defaultScope = \$state\(loadSetting\(SCOPE_KEY\) === 'table' \? 'table' : 'all'\);/);
+  assert.match(app, /saveSetting\(SCOPE_KEY, next === 'table' \? 'table' : null\);/);
   assert.match(app, /invoke\('search_all_tables', \{ search: words \}\)/);
   assert.match(ui, /onclick=\{\(\) => openFound\(f\.table\)\}>\{t\('found\.item', \{ table: f\.table, count: fmt\(f\.count\) \}\)\}/);
   // decisao 1: a tabela achada abre sem os filtros por valor (a grade mostra o numero da lista)
@@ -554,11 +563,16 @@ test('Terms tab: box, selectors, summary, tables with hits and grid, terms not f
   const terms = ui.slice(ui.indexOf("{:else if tab === 'terms'}"), ui.indexOf('{:else if !selectedTable}'));
   const order = [
     '<textarea bind:value={termsText} rows="8"',
-    "{@render choice(MATCHES, match, (id) => (match = id), t('settings.match'), t('match.help'))}",
-    "{@render choice(SCOPES, termsScope, (id) => (termsScope = id), t('scope.label'))}",
+    // secao 18 c: [Pesquisar termos] | caixa com as linhas de entrada e o resumo | Valor inteiro | Contem, separador,
+    // Esta tabela | Todas as tabelas (sai "N termos" e a linha de resumo de baixo)
     "onclick={runTerms} disabled={!canRunTerms}>{t('terms.run')}",
-    "t('terms.count'",
-    "t('terms.summary'",
+    '<p class="terms-info">',
+    "t('terms.lines', { count: fmt(termList.terms.length + termList.repeated) })",
+    't(termsKey(termsResult), termsValues(termsResult))',
+    '</p>',
+    "{@render choice(MATCHES, match, (id) => (match = id), t('settings.match'), t('match.help'))}",
+    '<span class="separator" aria-hidden="true"></span>',
+    "{@render choice(SCOPES, termsScope, (id) => (termsScope = id), t('scope.label'))}",
     '<div class="terms-found">',
     "t('found.item'",
     '<Grid',
@@ -568,13 +582,26 @@ test('Terms tab: box, selectors, summary, tables with hits and grid, terms not f
   ].map((needle) => terms.indexOf(needle));
   assert.ok(order.every((v, i) => v >= 0 && (i === 0 || v > order[i - 1])), order.join(','));
   assert.match(terms, /placeholder=\{t\('terms\.hint'\)\}/);
+  // a caixa do resumo ocupa o meio, com borda e margem, e quebra o texto (nunca corta); separador de linha fina
+  const termsCss = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
+  const info = termsCss.match(/\n {2}\.terms-info \{[^}]*\}/)[0];
+  assert.match(info, /flex: 1 1 auto;[\s\S]*padding: 3px 10px;[\s\S]*border: 1px solid var\(--border\);[\s\S]*overflow-wrap: anywhere;/);
+  assert.doesNotMatch(info, /nowrap|ellipsis|overflow: hidden/);
+  assert.match(termsCss, /\n {2}\.terms-bar \.separator \{\s*align-self: stretch;\s*width: 1px;\s*background: var\(--border\);/);
   assert.match(terms, /\{#if termsWork\}\s*<button type="button" class="secondary" onclick=\{\(\) => invoke\('cancel_terms'\)\}>\{t\('common\.cancel'\)\}<\/button>/);
   assert.match(terms, /t\('terms\.progress', \{ done: termsWork\.total \? termsWork\.done \+ 1 : 0, total: termsWork\.total, item: termsWork\.item \}\)/);
   assert.match(terms, /onclick=\{copyNotFound\} disabled=\{!termsResult\.notFound\.length\}>\{t\('status\.copy'\)\}/);
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
   assert.match(app, /\['terms', 'tabs\.terms'\],\s*\];/); // a aba depois de SQL
   // o padrao dos seletores vem de Configuracoes: Comparacao dos termos (inicial Valor inteiro) e Escopo padrao da busca
-  assert.match(app, /let defaultMatch = \$state\(loadSetting\(MATCH_KEY\) === 'contains' \? 'contains' : 'whole'\);\s*let match = \$state\(defaultMatch\);[^\n]*\n\s*let termsScope = \$state\(defaultScope\);/);
+  assert.match(app, /let defaultMatch = \$state\(loadSetting\(MATCH_KEY\) === 'contains' \? 'contains' : 'whole'\);\s*let match = \$state\(defaultMatch\);/);
+  // secao 17 (defeito achado pelo dono): a Pesquisa Avancada abre sempre em Todas as tabelas, nunca no escopo padrao
+  // da aba Dados (que comeca em Esta tabela); com Esta tabela o resumo diz "(so em {tabela})"
+  assert.match(app, /\n {2}let termsScope = \$state\('all'\);/);
+  assert.doesNotMatch(appFunction('setDefaultScope'), /termsScope/);
+  assert.match(appFunction('runTerms'), /const table = termsScope === 'table' \? selectedTable : null;[\s\S]*termsResult = \{ terms, only: table, \.\.\.termsOutcome\(terms, hits\) \};\s*showStatus\(termsKey\(termsResult\), termsValues\(termsResult\)\);/);
+  assert.match(app, /const termsKey = \(r\) => \(r\.only \? 'terms\.summaryIn' : 'terms\.summary'\);/);
+  assert.match(app, /const termsValues = \(r\) => \(\{[^\n]*table: r\.only \}\);/);
   const run = appFunction('runTerms');
   assert.match(run, /dropTerms\(\);\s*const run = termsRun;/);
   assert.match(run, /const hits = await invoke\('search_terms', \{ terms, whole: match === 'whole', table \}\);\s*if \(run !== termsRun\) return;/);
@@ -582,7 +609,7 @@ test('Terms tab: box, selectors, summary, tables with hits and grid, terms not f
   assert.match(appFunction('dropTerms'), /termsRun\+\+;\s*termsWork = null;\s*termsResult = null;/);
   assert.match(appFunction('resetTable'), /dropTerms\(\);/);
   // a grade: limite de linhas como em Dados (Linhas 100/500/1000)
-  assert.match(appFunction('openTermsTable'), /const page = await invoke\('terms_rows', \{ table, limit, label: t\('terms\.col'\) \}\);\s*if \(run === termsRun && table === termsTable\) termsPage = page;/);
+  assert.match(appFunction('openTermsTable'), /const page = await invoke\('terms_rows', \{ table, limit \}\);\s*if \(run === termsRun && table === termsTable\) termsPage = page;/);
   assert.match(appFunction('setLimit'), /limit = next;\s*offset = 0;\s*openTable\(selectedTable\);\s*if \(termsTable\) openTermsTable\(termsTable\);/);
 });
 
@@ -643,19 +670,20 @@ test('X11 warning is short, with a clickable Help link and a Copy command button
   }
 });
 
-// REGRA_VISUAL "Painel de Log": recolhido por padrao e lembrado, seta no log e na barra, View > Log, Ctrl+L,
-// ~10% da altura (3 linhas a 25%), fonte de codigo menor (11 px, o minimo do app), linhas sem "..."
-test('log panel collapses and expands in one click and remembers the choice', () => {
+// REGRA_VISUAL "Painel de Log": recolhido ao abrir, seta no log e na barra, View > Log, Ctrl+L, ~10% da altura (3
+// linhas a 25%), a letra unica do app (secao 18 e), linhas sem "..."
+test('log panel collapses and expands in one click and always starts closed', () => {
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
-  assert.match(app, /let logOpen = \$state\(loadSetting\(LOG_KEY\) === 'open'\);/);
-  assert.match(app, /saveSetting\(LOG_KEY, open \? 'open' : 'closed'\)/);
+  // secao 18 d: o Log sempre comeca FECHADO (nada gravado: o dono viu o Log aberto ao abrir)
+  assert.match(app, /let logOpen = \$state\(false\);/);
+  assert.doesNotMatch(app, /LOG_KEY/);
   assert.equal(count(app, 'onclick={() => setLog(false)}'), 1); // seta do cabecalho do log
   assert.equal(count(app, 'onclick={() => setLog(!logOpen)}'), 1); // seta da barra de status
   assert.match(app, /\n {6}log: \{ run: \(\) => setLog\(!logOpen\), on: logOpen \},/); // Exibir > Log e Ctrl+L
   assert.match(appFunction('shortcut'), /\n\s*l: 'log',/);
   assert.match(app, /onclick=\{\(\) => setLog\(true\)\}>\{headline\.text\}/);
   const css = app.match(/<style>([\s\S]*)<\/style>/)[1];
-  assert.match(css, /\.log textarea \{[^}]*height: 10vh;[^}]*min-height: calc\(3 \* 1\.4em \+ 10px\);[^}]*max-height: 25vh;[^}]*font-size: 11px;/);
+  assert.match(css, /\.log textarea \{[^}]*height: 10vh;[^}]*min-height: calc\(3 \* 1\.4em \+ 10px\);[^}]*max-height: 25vh;[^}]*font-size: inherit;/);
   for (const [key, text] of Object.entries(en)) if (key.startsWith('status.')) assert.doesNotMatch(text, /\.\.\./, key);
 });
 
@@ -674,4 +702,17 @@ test('every dialog has a visible default button, Enter and Esc', () => {
   }
   assert.match(code, /onkeydown=\{\(e\) => e\.key === 'Enter' && columnsDialog\.close\(\)\}/);
   assert.match(code, /oncancel=\{\(e\) => \{\s*e\.preventDefault\(\);\s*invoke\('cancel_export'\);/);
+});
+
+// secao 18 e (o dono viu tamanhos diferentes na Pesquisa Avancada): uma letra so, Segoe UI 14 px, em todas as abas,
+// caixas, grades e rotulos: o tamanho e a familia so no body; o resto herda (nada de 11/12/15 px nem de monospace)
+test('one font: Segoe UI 14 px everywhere', () => {
+  for (const file of ['./App.svelte', './Grid.svelte']) {
+    const css = readFileSync(new URL(file, import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
+    assert.doesNotMatch(css, /font-size: (?!inherit)/, file);
+    assert.doesNotMatch(css, /monospace|Consolas|font-family: (?!inherit)/, file);
+  }
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  assert.match(app, /:global\(body\) \{[^}]*font: 14px\/1\.4 'Segoe UI'/);
+  assert.equal(count(app, 'font: 14px'), 1);
 });

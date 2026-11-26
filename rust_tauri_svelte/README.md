@@ -89,7 +89,8 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
   "<tabela>: rows 1 to 100 of Y found". A pesquisa roda 300 ms depois da ultima tecla (Enter: na hora).
 - Ao lado da pesquisa, **This table | All tables**: em **All tables** o termo e procurado em todas as tabelas (mesma
   regra, em todas as colunas: numeros e datas como texto, como nas outras 3 versoes) e aparece a lista das tabelas com
-  o numero de linhas achadas; escolher uma abre essa tabela com a mesma pesquisa. O escopo padrao fica em **Settings >
+  o numero de linhas achadas; escolher uma abre essa tabela com a mesma pesquisa. O escopo padrao (inicial: **All
+  tables**) fica em **Settings >
   Default search scope**.
 - **Linhas marcadas** (aba Data): a primeira coluna da grade tem uma caixa por linha (clique, `Espaco` na linha da
   celula escolhida, botao direito ou **Edit > Mark or unmark row**). As marcadas ficam sempre no topo, na ordem da
@@ -98,14 +99,17 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
   DuckDB (tabelas do .duckdb e as copiadas do SQLite e do Access); numa view, por todos os valores (linhas identicas
   marcam juntas).
 - Aba **Advanced Search** (`Ctrl+4`): cole uma lista (por exemplo uma coluna do Excel, um termo por linha), escolha **Whole
-  value** (a celula inteira, sem espacos nas pontas, igual ao termo; numero casa pelo valor, em formato EUA ou BR:
-  216 acha 216.0, "216,0" e "216"; 1234.5 acha "1.234,5"; 216 nao acha 2160) ou **Contains**, sem diferenciar maiusculas, e
-  **This table** ou **All tables**; **Search terms** (ou `Ctrl+Enter`) procura no motor, em todas as colunas, com
-  progresso e **Cancel**. Mostra o resumo, as tabelas com acerto e a grade da escolhida (coluna **Term** + as colunas
-  da tabela, na ordem da lista colada) e os termos nao encontrados (texto copiavel). **Copy the rows found in this
-  table** copia todas as linhas achadas com o cabecalho e sem a coluna Term; o relatorio (Export > Term search report)
-  sai em Excel, CSV (pasta), SQLite ou DuckDB com a aba **Filter Result** (cada termo, onde achou e quantas linhas,
-  tambem os nao encontrados) e uma aba por tabela com acerto.
+  value** (a celula inteira, sem espacos nas pontas, igual ao termo; o termo numerico, escrito em formato EUA ou BR,
+  casa pelo valor com as colunas numericas: 216 acha 216.0, 1.234,5 acha 1234.5, 216 nao acha 2160; coluna de texto
+  compara como texto) ou **Contains**, sem diferenciar maiusculas, e
+  **All tables** (sempre ao abrir, qualquer que seja o escopo padrao da aba Data) ou **This table** (o resumo diz
+  "(only in <tabela>)"); **Search terms** (ou `Ctrl+Enter`) procura no motor, em todas as colunas, com
+  progresso e **Cancel**. Na mesma linha, depois do botao, uma caixa com "N input lines" e o resumo; os seletores ficam
+  a direita. Mostra as tabelas com acerto e a grade da escolhida (so as colunas da tabela, com
+  os titulos e os tipos dela; cada linha achada uma vez, na ordem da lista colada) e os termos nao encontrados (texto
+  copiavel). **Copy the rows found in this table** copia todas as linhas achadas com o cabecalho; o relatorio (Export >
+  Advanced Search report) sai em Excel, CSV (pasta), SQLite ou DuckDB com uma aba (tabela, arquivo) por tabela com
+  acerto, as mesmas colunas e tipos da tabela.
 - **Columns...**: marque e desmarque colunas (busca por nome no topo, caixas em grade que acompanha a janela).
   **Show all** e **Hide all** agem nas colunas listadas (com busca, so nelas). A barra de status mostra "N hidden
   columns". A pesquisa olha todas as colunas e a exportacao sai com todas.
@@ -163,9 +167,9 @@ search scope** (This table, All tables), **Term matching** (Whole value, Contain
 NULL** (desligado por padrao: a celula NULL fica vazia; ligado, mostra
 `NULL`); as escolhas ficam gravadas e valem na hora.
 
-**Menu Help > About mdb2sql** (o titulo do dialogo): versao, build, stack (Rust + Tauri + Svelte), janela (WebView2/WebKitGTK), SQLite e
-DuckDB, leitor do Access, gravacao (SQLite, DuckDB, Excel e CSV; .mdb/.accdb nao), autor, licenca e os links do codigo no GitHub e no GitLab (o app so pode abrir esses dois
-enderecos).
+**Menu Help > About mdb2sql**, igual nas 4 versoes: "MDB2SQL (Rust)", "Version 1.3.0 - commit <hash> - <data>", a
+linha de runtime (Rust, Tauri, Svelte, WebView2/WebKitGTK), "Tools: SQLite, DuckDB, mdbtools" com as versoes, "ODBC driver
+support, if installed.", autor, "License: GPLv2" e os links GitHub / GitLab (o app so pode abrir esses dois enderecos).
 
 **Atalhos** (os dos itens de menu; valem quando o item vale): `Ctrl+O` abrir, `F5` abrir de novo o banco (sem banco aberto: o dialogo), `Ctrl+S`
 salvar, `Ctrl+Shift+S` salvar como, `Ctrl+W` fechar, `Ctrl+Q` sair, `Ctrl+F` pesquisar na aba Data, `Ctrl+T` lista de
@@ -284,8 +288,8 @@ Stack: Rust 1.99.1, tauri 2.12 (tauri-cli 2.12.4, tauri-plugin-dialog 2.8, tauri
 
 ## Versao
 
-A fonte unica e `version` em `Cargo.toml`; `ui/package.json` repete o numero e o `cargo test` confere. Numero do
-build (`git rev-list --count HEAD`) e data entram no About pelo build oficial; fora dele, "build dev".
+A fonte unica e `version` em `Cargo.toml`; `ui/package.json` repete o numero e o `cargo test` confere. O commit
+(`git rev-parse HEAD`) e a data dele entram no About pelo build oficial; fora dele, "dev".
 Historico: [CHANGELOG.md](CHANGELOG.md).
 
 ## Seguranca

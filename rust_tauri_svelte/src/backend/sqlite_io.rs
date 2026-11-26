@@ -19,20 +19,10 @@ pub(crate) fn is_sqlite_file(path: &Path) -> bool {
         .is_ok_and(|_| &magic == b"SQLite format 3\0")
 }
 
-// NIVEL BASICO: Tipos que o SQLite arredondaria (afinidade INTEGER/NUMERIC guarda so 64 bits ou 15 digitos)
-// sao declarados com nome de afinidade TEXT: o valor fica exato como texto e volta com o tipo DuckDB
-// NIVEL TECNICO: any declared name containing "INT" gets INTEGER affinity, hence names without it
+// NIVEL BASICO: Nomes de tipo que versoes antigas gravavam para guardar o numero exato como texto; so a leitura de
+// arquivos antigos usa (hoje nada numerico vai como texto, secao 19 h)
 const EXACT_AS_TEXT: [(&str, &str); 3] = [("TEXT_HUGE128", "HUGEINT"), ("TEXT_UHUGE128", "UHUGEINT"), ("TEXT_UBIG64", "UBIGINT")];
 
-// tipo declarado no SQLite para uma coluna DuckDB
-fn lite_type(duck: &str) -> String {
-    let d = duck.trim().to_ascii_uppercase();
-    if let Some(&(lite, _)) = EXACT_AS_TEXT.iter().find(|(_, t)| *t == d) {
-        return lite.to_string();
-    }
-    let precision = d.strip_prefix("DECIMAL(").and_then(|rest| rest.split([',', ')']).next()?.trim().parse::<u32>().ok());
-    if precision.is_some_and(|p| p > 15) { format!("TEXT_{d}") } else { duck.to_string() }
-}
 
 // NIVEL BASICO: Tipo declarado no SQLite vira tipo do DuckDB (regras de afinidade do SQLite)
 // NIVEL TECNICO: the exporter below declares DuckDB type names, so a round trip keeps them
@@ -138,7 +128,10 @@ fn import_table(duck: &duckdb::Connection, lite: &rusqlite::Connection, table: &
     appender.flush().map_err(|e| e.to_string())
 }
 
-// NIVEL BASICO: Valor do DuckDB para gravar no SQLite (datas como texto ISO, decimais como texto numerico)
+// NIVEL BASICO: Valor do DuckDB para gravar no SQLite: numero como numero (INTEGER ou REAL; o SQLite nao tem decimal:
+// o DECIMAL vai como REAL e a coluna continua declarada DECIMAL(p,s)), nunca texto; datas e horas como texto ISO
+// shortcut: an integer beyond i64 goes as REAL (about 16 digits kept); store such ids as text only if a database ever
+// needs them exact
 fn duck_to_lite(value: DuckRef) -> LiteValue {
     match value {
         DuckRef::Null => LiteValue::Null,
@@ -150,30 +143,18 @@ fn duck_to_lite(value: DuckRef) -> LiteValue {
         DuckRef::UTinyInt(i) => LiteValue::Integer(i.into()),
         DuckRef::USmallInt(i) => LiteValue::Integer(i.into()),
         DuckRef::UInt(i) => LiteValue::Integer(i.into()),
-        DuckRef::UBigInt(i) => i64::try_from(i).map_or_else(|_| LiteValue::Text(i.to_string()), LiteValue::Integer),
-        DuckRef::HugeInt(i) => i64::try_from(i).map_or_else(|_| LiteValue::Text(i.to_string()), LiteValue::Integer),
-        DuckRef::UHugeInt(i) => LiteValue::Text(i.to_string()),
+        DuckRef::UBigInt(i) => i64::try_from(i).map_or(LiteValue::Real(i as f64), LiteValue::Integer),
+        DuckRef::HugeInt(i) => i64::try_from(i).map_or(LiteValue::Real(i as f64), LiteValue::Integer),
+        DuckRef::UHugeInt(i) => i64::try_from(i).map_or(LiteValue::Real(i as f64), LiteValue::Integer),
         DuckRef::Float(f) => LiteValue::Real(f.into()),
         DuckRef::Double(f) => LiteValue::Real(f),
         DuckRef::Blob(b) => LiteValue::Blob(b.to_vec()),
-        // coluna declarada DECIMAL(p,s) tem afinidade NUMERIC: o SQLite guarda o texto como numero
+        DuckRef::Decimal(d) => d.to_string().parse().map_or_else(|_| LiteValue::Text(d.to_string()), LiteValue::Real),
+        // data, hora e outros nao numericos: o texto mostrado
         other => LiteValue::Text(json_text(&value_to_json(other))),
     }
 }
 
-// NIVEL BASICO: DECIMAL com mais de 15 digitos (a Moeda do Access chega como DECIMAL(19,4)): se TODO valor da coluna
-// volta igual depois de passar por um DOUBLE, a coluna vai ao SQLite como numero (REAL, tipo declarado REAL_DECIMAL(p,s),
-// afinidade REAL): no sqlite3, WHERE > 20, ORDER BY e SUM comparam como numero. Se um valor so cabe exato como
-// texto (mais de ~15 digitos significativos), a coluna inteira fica TEXT_DECIMAL (exata; no sqlite3 compara como texto)
-fn decimal_fits_double(duck: &duckdb::Connection, table: &str, column: &str, duck_type: &str) -> bool {
-    let c = ident(column);
-    let sql = format!(
-        "SELECT count(*) FROM {} WHERE {c} IS NOT NULL AND CAST(CAST({c} AS DOUBLE) AS {duck_type}) <> {c}",
-        ident(table)
-    );
-    // erro (ex.: o DOUBLE arredondado passa do limite do DECIMAL) = nao cabe
-    duck.query_row(&sql, [], |r| r.get::<_, i64>(0)).is_ok_and(|n| n == 0)
-}
 
 // NIVEL BASICO: Grava as tabelas num arquivo SQLite novo (path ainda nao existe)
 // NIVEL TECNICO: the declared type is the DuckDB type name; SQLite derives the affinity from it
@@ -198,16 +179,11 @@ pub fn export(
         // tipo declarado e expressao lida do DuckDB, por coluna
         let mut defs = Vec::new();
         let mut reads = Vec::new();
+        // secao 20: o tipo e da coluna (o schema): o SQLite declara o tipo do DuckDB (DECIMAL(19,4), DOUBLE, BIGINT...)
+        // e cada valor vai com a sua natureza (numero como numero), sem CAST
         for (name, duck_type) in &columns {
-            let lite = lite_type(duck_type);
-            if lite.starts_with("TEXT_DECIMAL") && decimal_fits_double(duck, table, name, duck_type) {
-                // "REAL" no nome: afinidade REAL (com DECIMAL o SQLite guardaria 97.0 como INTEGER 97)
-                defs.push(format!("{} REAL_{duck_type}", ident(name)));
-                reads.push(format!("CAST({} AS DOUBLE)", ident(name)));
-            } else {
-                defs.push(format!("{} {lite}", ident(name)));
-                reads.push(ident(name));
-            }
+            defs.push(format!("{} {duck_type}", ident(name)));
+            reads.push(ident(name));
         }
         let marks = vec!["?"; columns.len()].join(", ");
 

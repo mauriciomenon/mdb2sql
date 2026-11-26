@@ -95,6 +95,18 @@ test('pasted terms: one per non-empty line, trimmed, repeated ones counted once'
   assert.deepEqual(parseTerms(pasted), { terms: ['PNTNAM', 'GERADOR A', 'TURBINA B', 'C'], repeated: 2 });
   assert.deepEqual(parseTerms('  \n\n'), { terms: [], repeated: 0 });
   assert.deepEqual(parseTerms('um termo com espacos dentro'), { terms: ['um termo com espacos dentro'], repeated: 0 });
+  // secao 17: os 8 termos do dono colados do Excel (CRLF e a quebra do fim) = 8 termos
+  const owner = [
+    'GENERADOR CGS VIBRACION ANORMAL 1 CANAL 1',
+    'GENERADOR CGS VIBRACION ANORMAL 2 CANAL 1',
+    'TURBINA CGI VIBRACION ANORMAL 1 CANAL 1',
+    'GENERADOR COJ EMP VIBRACION ANORMAL 1 CANAL 1',
+    'GENERADOR COJ EMP VIBRACION ANORMAL 2 CANAL 1',
+    'GENERADOR GGB ALIMENTACION CONTROL 24VCC',
+    'GENERADOR GGB INTERRUPTORES CONTROL CIRCUITO 2',
+    'TURBINA CGI VIBRACION ANORMAL 2 CANAL 1',
+  ];
+  assert.deepEqual(parseTerms(`${owner.join('\r\n')}\r\n`), { terms: owner, repeated: 0 });
 });
 
 // resultado: tabelas com acerto (linhas somadas dos termos), nao encontrados na ordem colada, termos achados e linhas
@@ -120,11 +132,11 @@ test('found rows are copied with the header and no extra line', () => {
   assert.equal(rowsToTsv(['id', 'name'], rows), 'id\tname\r\n1\t"x\ty"\r\n2\t');
   assert.equal(rowsToTsv(['id'], []), 'id');
   const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
-  // todas as linhas achadas (limit 0), sem a coluna Termo (a primeira)
-  assert.match(app, /invoke\('terms_rows', \{ table: termsTable, limit: 0, label: t\('terms\.col'\) \}\);\s*const names = all\.columns\.slice\(1\)\.map\(\(col\) => col\.name\);/);
-  assert.match(app, /extra=\{termsExtra\}\s*copySkip=\{1\}/);
+  // todas as linhas achadas (limit 0), so com as colunas da tabela (secao 19 d: nao ha coluna Termo)
+  assert.match(app, /invoke\('terms_rows', \{ table: termsTable, limit: 0 \}\);\s*const names = all\.columns\.map\(\(col\) => col\.name\);/);
+  assert.doesNotMatch(app, /copySkip|terms\.col/);
   const grid = readFileSync(new URL('./Grid.svelte', import.meta.url), 'utf8');
-  assert.match(grid, /const names = columns\.slice\(copySkip\)\.map\(\(col\) => col\.name\);/);
+  assert.match(grid, /const names = columns\.map\(\(col\) => col\.name\);/);
 });
 
 // padrao item 16: SQL que roda sem erro tira o erro de SQL anterior da barra de baixo e do contador (outros erros ficam)

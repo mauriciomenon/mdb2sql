@@ -19,6 +19,87 @@ mod tests {
         |_, _, _| Ok(())
     }
 
+    // Le de volta uma aba de um .xlsx (secao 19 f): o tar do Windows abre zip. Devolve, por linha, as celulas como
+    // (referencia, tipo, valor): tipo "n" = numero (sem atributo t), "s"/"inlineStr"/"b" como no arquivo; valor da string
+    // ja resolvido. E as larguras de <cols>
+    #[cfg(windows)]
+    fn xlsx_sheet(file: &Path, sheet: usize) -> (Vec<Vec<(String, String, String)>>, Vec<f64>) {
+        let out = file.with_extension("unzipped");
+        std::fs::create_dir_all(&out).unwrap();
+        let tar = Path::new(&std::env::var("SystemRoot").unwrap()).join("System32").join("tar.exe");
+        assert!(std::process::Command::new(tar).arg("-xf").arg(file).arg("-C").arg(&out).status().unwrap().success());
+        let read = |p: &str| std::fs::read_to_string(out.join(p)).unwrap_or_default();
+        let xml = read(&format!("xl/worksheets/sheet{sheet}.xml"));
+        let shared: Vec<String> = read("xl/sharedStrings.xml").split("<si>").skip(1).map(|si| text_of(si, "<t", "</t>")).collect();
+        let attr = |tag: &str, name: &str| tag.split(&format!(" {name}=\"")).nth(1).map(|v| v.split('"').next().unwrap().to_string());
+        let rows = xml
+            .split("<row ")
+            .skip(1)
+            .map(|row| {
+                row.split("<c ")
+                    .skip(1)
+                    .map(|cell| {
+                        let tag = &format!(" {}", cell.split('>').next().unwrap()); // r= vem logo depois de "<c "
+                        let kind = attr(tag, "t").unwrap_or_else(|| "n".into());
+                        let value = match kind.as_str() {
+                            "s" => shared[text_of(cell, "<v", "</v>").parse::<usize>().unwrap()].clone(),
+                            "inlineStr" | "str" => text_of(cell, "<t", "</t>"),
+                            _ => text_of(cell, "<v", "</v>"),
+                        };
+                        (attr(tag, "r").unwrap(), kind, value)
+                    })
+                    .collect()
+            })
+            .collect();
+        // <col min max width>: colunas vizinhas com a mesma largura vem num elemento so
+        let widths = xml
+            .split("<col ")
+            .skip(1)
+            .flat_map(|col| {
+                let col = format!(" {col}");
+                let n = |name: &str| attr(&col, name).unwrap().parse::<usize>().unwrap();
+                std::iter::repeat_n(attr(&col, "width").unwrap().parse::<f64>().unwrap(), n("max") - n("min") + 1)
+            })
+            .collect();
+        (rows, widths)
+    }
+
+    // texto entre <tag ...> e </tag> (o primeiro), com as entidades basicas do XML
+    #[cfg(windows)]
+    fn text_of(xml: &str, open: &str, close: &str) -> String {
+        let Some(start) = xml.find(open).and_then(|i| xml[i..].find('>').map(|j| i + j + 1)) else { return String::new() };
+        let end = xml[start..].find(close).map_or(start, |j| start + j);
+        xml[start..end].replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&amp;", "&")
+    }
+
+    // secao 19 c, f e g: no Excel, numero e celula numerica, data e data, NULL vazio, titulos iguais aos da tabela e a
+    // largura de cada coluna pelo conteudo
+    #[cfg(windows)]
+    #[test]
+    fn xlsx_keeps_types_titles_and_fits_columns() {
+        let dir = tempdir().unwrap();
+        let path = sample_duckdb(dir.path());
+        duckdb::Connection::open(&path).unwrap().execute_batch("UPDATE points SET name = 'um texto bem comprido para a coluna crescer' WHERE id = 1").unwrap();
+        let manager = DBManager::new();
+        manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+        let conn = manager.export_connection().unwrap();
+        let file = dir.path().join("points.xlsx");
+        export::write_tables(&conn, &["points".to_string()], "xlsx", &file, &mut ok_progress()).unwrap();
+        let (rows, widths) = xlsx_sheet(&file, 1);
+        let header: Vec<&str> = rows[0].iter().map(|c| c.2.as_str()).collect();
+        assert_eq!(header, ["id", "name", "ts", "d", "t", "n", "u", "ok", "x"]);
+        let kinds: Vec<(&str, &str)> = rows[1].iter().map(|c| (c.0.as_str(), c.1.as_str())).collect();
+        // id, ts (data), d (data), n (decimal), u, x: numero; ok: booleano; name e t (hora): texto
+        assert_eq!(kinds.iter().filter(|k| k.1 == "n").map(|k| k.0).collect::<Vec<_>>(), ["A2", "C2", "D2", "F2", "G2", "I2"]);
+        assert_eq!(rows[1][0].2, "1");
+        assert_eq!(rows[1][5].2, "12.3");
+        // linha so com NULL: so o id tem celula
+        assert_eq!(rows[2].iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), ["A3"]);
+        // largura pelo conteudo: o texto comprido alarga a coluna name; id fica estreita
+        assert_eq!(widths.len(), 9);
+        assert!(widths[1] >= 40.0 && widths[0] < 10.0, "{widths:?}");
+    }
+
     // banco DuckDB pequeno com os tipos que importam (inteiro, texto com virgula/aspas, data, hora, decimal...)
     fn sample_duckdb(dir: &Path) -> PathBuf {
         let path = dir.join("real.duckdb");
@@ -421,7 +502,9 @@ mod tests {
                    \t\"intrat\"\t\t\tDOUBLE PRECISION, \n\t\"when\"\t\t\tTIMESTAMP WITHOUT TIME ZONE, \n\t\"pic\"\t\t\tBYTEA, \n\
                    \t\"ok\"\t\t\tBOOLEAN\n);\n\nCREATE TABLE IF NOT EXISTS \"other\"\n (\n\t\"memo\"\t\t\tTEXT\n);\n";
         let tables = parse_pg_schema(sql);
-        assert_eq!(tables["ranger_sostat"], ["DECIMAL(10,0)", "VARCHAR", "DOUBLE", "TIMESTAMP", "BLOB", "BOOLEAN"]);
+        // secao 19 a: Numeric(p,0) e inteiro (RTUNO), nunca texto; acima de 18 digitos, DECIMAL exato
+        assert_eq!(tables["ranger_sostat"], ["BIGINT", "VARCHAR", "DOUBLE", "TIMESTAMP", "BLOB", "BOOLEAN"]);
+        assert_eq!(pg_to_duck("NUMERIC (20, 0)"), "DECIMAL(20,0)");
         assert_eq!(tables["other"], ["VARCHAR"]);
         assert_eq!(pg_to_duck("REAL"), "FLOAT");
         assert_eq!(pg_to_duck("SERIAL"), "INTEGER");
@@ -587,8 +670,8 @@ mod tests {
                 "id INTEGER",
                 "tiny SMALLINT",
                 "small INTEGER",
-                "price REAL_DECIMAL(19,4)",
-                "exact TEXT_DECIMAL(18,4)",
+                "price DECIMAL(19,4)",
+                "exact DECIMAL(18,4)",
                 "ratio DOUBLE",
                 "name VARCHAR",
                 "note VARCHAR",
@@ -597,15 +680,16 @@ mod tests {
                 "raw BLOB"
             ]
         );
-        // no arquivo: decimal exato como texto, NULL como NULL, binario como BLOB
-        let (exact, raw, null_name): (String, Vec<u8>, Option<String>) = lite
+        // no arquivo: decimal como numero (REAL, ~15 digitos), NULL como NULL, binario como BLOB
+        let (exact, raw, null_name): (f64, Vec<u8>, Option<String>) = lite
             .query_row(
                 "SELECT exact, raw, (SELECT name FROM \"Sample Types\" WHERE id = 2) FROM \"Sample Types\" WHERE id = 1",
                 [],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap();
-        assert_eq!((exact.as_str(), raw, null_name), ("12345678901234.5683", vec![0, 1, 254, 255], None));
+        assert!((exact - 12345678901234.5683).abs() < 0.01, "{exact}");
+        assert_eq!((raw, null_name), (vec![0, 1, 254, 255], None));
         // Moeda que cabe num DOUBLE vai como numero: o sqlite3 compara e soma como numero (nao como texto)
         let (price_type, over_20, total): (String, i64, f64) = lite
             .query_row(
@@ -615,9 +699,16 @@ mod tests {
             )
             .unwrap();
         assert_eq!((price_type.as_str(), over_20, total), ("real", 1, 1234567.8912));
-        // o decimal de 18 digitos nao cabe num DOUBLE: fica texto exato
-        let exact_type: String = lite.query_row("SELECT typeof(exact) FROM \"Sample Types\" WHERE id = 1", [], |r| r.get(0)).unwrap();
-        assert_eq!(exact_type, "text");
+        // secoes 19 h e 20: o tipo e da coluna (o schema acima: DECIMAL(19,4), DECIMAL(18,4), DOUBLE...) e coluna numerica
+        // tem numero: nenhum texto nas colunas numericas do SQLite convertido
+        let text_in_numbers: i64 = lite
+            .query_row(
+                "SELECT count(*) FILTER (WHERE 'text' IN (typeof(id), typeof(tiny), typeof(small), typeof(price), typeof(exact), typeof(ratio))) FROM \"Sample Types\"",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(text_in_numbers, 0);
         drop(lite);
 
         // o que o app mostra veio do SQLite e tem os tipos do Access
@@ -635,7 +726,8 @@ mod tests {
         assert_eq!(first["id"], json!(1));
         assert_eq!(first["tiny"], json!(255));
         assert_eq!(first["price"], json!("1234567.8912"));
-        assert_eq!(first["exact"], json!("12345678901234.5683"));
+        // o decimal de 18 digitos passou por REAL no SQLite (secao 19 h): ~15 digitos certos
+        assert!(first["exact"].as_str().unwrap().starts_with("12345678901234.56"), "{}", first["exact"]);
         assert_eq!(first["ratio"], json!(0.1));
         assert_eq!(first["name"], json!("Ação, \"aspas\""));
         assert_eq!(first["note"].as_str().unwrap().lines().collect::<Vec<_>>(), ["linha 1", "linha 2"]);
@@ -854,6 +946,8 @@ mod tests {
         std::fs::write(&path, b"abc").unwrap();
         let key = converted::file_key(&path).expect("key of an existing file");
         assert_eq!(converted::file_key(&path), Some(key.clone()), "same file, same key");
+        // secao 19 b: a chave leva a versao do conversor (o lembrado por uma versao antiga converte de novo)
+        assert!(key.ends_with(&format!("|converter {}", converted::CONVERTER_VERSION)) && converted::CONVERTER_VERSION >= 2, "{key}");
         // o mesmo arquivo por outro caminho (relativo, com ..) da a mesma chave
         let other_way = dir.path().join("sub").join("..").join("Banco.accdb");
         std::fs::create_dir(dir.path().join("sub")).unwrap();
@@ -1045,19 +1139,20 @@ mod tests {
         }
     }
 
-    // auditoria externa 4: decimal longo, inteiros de 128 bits e UBIGINT acima do i64 voltam exatos do .sqlite
+    // secoes 19 h e 20 (substituem a auditoria externa 4): no SQLite salvo cada coluna tem o tipo do DuckDB no schema
+    // (DECIMAL(p,s) continua DECIMAL(p,s)) e nada numerico vai como texto (o SQLite guarda o numero, ~15 digitos); os
+    // tipos voltam iguais e, no DuckDB salvo, DECIMAL continua DECIMAL exato
     #[test]
-    fn sqlite_export_keeps_long_decimals_and_huge_integers_exact() {
+    fn sqlite_export_writes_every_number_as_a_number() {
         let dir = tempdir().unwrap();
         let src = dir.path().join("big.duckdb");
         duckdb::Connection::open(&src)
             .unwrap()
             .execute_batch(
-                "CREATE TABLE big (d DECIMAL(38,10), h HUGEINT, u UBIGINT, uh UHUGEINT, small DECIMAL(10,2));
+                "CREATE TABLE big (d DECIMAL(38,10), h HUGEINT, u UBIGINT, uh UHUGEINT, small DECIMAL(10,2), whole DECIMAL(12,0), money DECIMAL(19,4));
                  INSERT INTO big VALUES
-                   (1234567890123456789012345678.0123456789, 170141183460469231731687303715884105727,
-                    18446744073709551615, 340282366920938463463374607431768211455, 12.30),
-                   (-0.0000000001, -170141183460469231731687303715884105728, 1, 0, NULL);",
+                   (1234567890123456789012345678.0123456789, 1000000000000000000000000000000, 10000000000000000000, 7, 12.30, 123456789012, 922337203685477.5807),
+                   (-0.0000000001, -5, 1, 0, NULL, NULL, 1234567.8912);",
             )
             .unwrap();
         let manager = DBManager::new();
@@ -1065,19 +1160,47 @@ mod tests {
         let out = dir.path().join("big.sqlite");
         export::export_database(&manager.export_connection().unwrap(), "sqlite", &out, &mut ok_progress()).unwrap();
 
+        let lite = rusqlite::Connection::open(&out).unwrap();
+        // secao 20: o schema do SQLite tem o tipo de cada coluna; coluna numerica tem numero (nenhum texto)
+        let schema: Vec<String> = lite
+            .prepare("SELECT type FROM pragma_table_info('big')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(schema, ["DECIMAL(38,10)", "HUGEINT", "UBIGINT", "UHUGEINT", "DECIMAL(10,2)", "DECIMAL(12,0)", "DECIMAL(19,4)"]);
+        let text: i64 = lite
+            .query_row(
+                "SELECT count(*) FILTER (WHERE 'text' IN (typeof(d), typeof(h), typeof(u), typeof(uh), typeof(small), typeof(whole), typeof(money))) FROM big",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(text, 0);
+        let (sum, over): (f64, i64) = lite.query_row("SELECT sum(money), count(*) FROM big WHERE money > 2000000", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(over, 1, "money compares as a number");
+        assert!(sum > 9.2e14, "{sum}");
+        drop(lite);
+
         let reopened = DBManager::new();
         reopened.connect(out.to_str().unwrap(), &mut no_progress()).unwrap();
         let types: Vec<String> = reopened.get_table_schema("big").unwrap().into_iter().map(|c| c.col_type).collect();
-        assert_eq!(types, ["DECIMAL(38,10)", "HUGEINT", "UBIGINT", "UHUGEINT", "DECIMAL(10,2)"]);
+        assert_eq!(types, ["DECIMAL(38,10)", "HUGEINT", "UBIGINT", "UHUGEINT", "DECIMAL(10,2)", "DECIMAL(12,0)", "DECIMAL(19,4)"]);
         let rows = reopened.query_table("big", 10, &[], "").unwrap();
-        assert_eq!(rows[0]["d"], "1234567890123456789012345678.0123456789");
-        assert_eq!(rows[0]["h"], "170141183460469231731687303715884105727");
-        assert_eq!(rows[0]["u"], "18446744073709551615");
-        assert_eq!(rows[0]["uh"], "340282366920938463463374607431768211455");
         assert_eq!(rows[0]["small"], "12.30");
-        assert_eq!(rows[1]["d"], "-0.0000000001");
-        assert_eq!(rows[1]["h"], "-170141183460469231731687303715884105728");
+        assert_eq!(rows[0]["whole"], "123456789012");
+        assert_eq!(rows[1]["money"], "1234567.8912");
         assert_eq!(rows[1]["u"], 1);
+
+        // DuckDB salvo: DECIMAL continua DECIMAL, exato
+        let saved = dir.path().join("big_saved.duckdb");
+        export::export_database(&manager.export_connection().unwrap(), "duckdb", &saved, &mut ok_progress()).unwrap();
+        let duck = duckdb::Connection::open(&saved).unwrap();
+        let (kind, d): (String, String) = duck
+            .query_row("SELECT typeof(d), CAST(d AS VARCHAR) FROM big WHERE uh = 7", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((kind.as_str(), d.as_str()), ("DECIMAL(38,10)", "1234567890123456789012345678.0123456789"));
     }
 
     // auditoria externa 12: inteiro fora de Number.MAX_SAFE_INTEGER vai como texto (o JavaScript perderia digitos)
@@ -1279,8 +1402,8 @@ mod tests {
 
     // item 32: pesquisa de termos em todas as colunas (numeros e datas como texto). Valor inteiro: celula sem espacos nas
     // pontas igual ao termo, sem maiusculas; Contem: a celula contem o termo. Acertos na ordem da lista colada, depois da
-    // tabela; linha achada por 2 termos aparece 2 vezes; nao encontrados ficam de fora. Relatorio em xlsx, SQLite,
-    // DuckDB e CSV com Resumo, uma tabela por tabela com acerto e Nao encontrados
+    // tabela; linha achada por 2 termos aparece 1 vez (secao 19 d); nao encontrados ficam de fora. Relatorio em xlsx,
+    // SQLite, DuckDB e CSV: uma aba por tabela com acerto, com as colunas da tabela
     #[test]
     fn term_search_finds_whole_values_and_contained_text() {
         use crate::backend::terms::{self, TermHit};
@@ -1305,84 +1428,85 @@ mod tests {
 
         let conn = manager.export_connection().unwrap();
         let whole = terms::search(&conn, &terms, true, &tables, &mut ok_progress()).unwrap();
-        assert_eq!(whole, [hit(1, "a_pts", 2), hit(2, "a_pts", 1), hit(3, "a_pts", 1), hit(2, "b_other", 1), hit(4, "b_other", 1)]);
-        let rows = terms::rows(&conn, "a_pts", "Termo", usize::MAX).unwrap();
-        let names: Vec<&str> = rows.columns.iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(names, ["Termo", "rtu", "pnt", "name"]);
-        // ordem: o termo na ordem colada, depois a ordem da tabela; o termo como foi colado
-        let found: Vec<(String, i64)> = rows.rows.iter().map(|r| (r["Termo"].as_str().unwrap().to_string(), r["pnt"].as_i64().unwrap())).collect();
-        assert_eq!(found, [("generador x".into(), 300), ("generador x".into(), 238), ("GENERADOR Y".into(), 242), ("238".into(), 238)]);
-        assert_eq!(terms::rows(&conn, "a_pts", "Termo", 2).unwrap().rows.len(), 2, "the grid limit");
+        // secao 19 d: cada linha conta uma vez, no primeiro termo que a achou; "238" so achou a linha de "generador x" (0)
+        // e "2024-01-02" a de "GENERADOR Y" (0): os dois foram encontrados
+        assert_eq!(whole, [hit(1, "a_pts", 2), hit(2, "a_pts", 1), hit(3, "a_pts", 0), hit(2, "b_other", 1), hit(4, "b_other", 0)]);
+        let rows = terms::rows(&conn, "a_pts", usize::MAX).unwrap();
+        // so as colunas da tabela, com os titulos e os tipos dela (sem coluna Termo)
+        let names: Vec<(&str, &str)> = rows.columns.iter().map(|c| (c.name.as_str(), c.col_type.as_str())).collect();
+        assert_eq!(names, [("rtu", "INTEGER"), ("pnt", "INTEGER"), ("name", "VARCHAR")]);
+        // ordem: o primeiro termo que achou a linha (na ordem colada), depois a ordem da tabela; cada linha uma vez
+        let found: Vec<i64> = rows.rows.iter().map(|r| r["pnt"].as_i64().unwrap()).collect();
+        assert_eq!(found, [300, 238, 242]);
+        assert_eq!(terms::rows(&conn, "a_pts", 2).unwrap().rows.len(), 2, "the grid limit");
 
-        // Contem: "Y" acha as duas linhas de GENERADOR Y (que tambem achou por inteiro): cada uma aparece 2 vezes
+        // Contem: "Y" acha as linhas de GENERADOR Y, ja contadas pelo termo dele (0)
         let conn = manager.export_connection().unwrap();
         let contains = terms::search(&conn, &terms, false, &tables, &mut ok_progress()).unwrap();
         assert_eq!(
             contains,
-            [hit(1, "a_pts", 2), hit(2, "a_pts", 1), hit(3, "a_pts", 1), hit(5, "a_pts", 1), hit(2, "b_other", 1), hit(4, "b_other", 1), hit(5, "b_other", 1)]
+            [hit(1, "a_pts", 2), hit(2, "a_pts", 1), hit(3, "a_pts", 0), hit(5, "a_pts", 0), hit(2, "b_other", 1), hit(4, "b_other", 0), hit(5, "b_other", 0)]
         );
         // so esta tabela
         let conn = manager.export_connection().unwrap();
-        assert_eq!(terms::search(&conn, &terms, true, &["b_other".to_string()], &mut ok_progress()).unwrap(), [hit(2, "b_other", 1), hit(4, "b_other", 1)]);
+        assert_eq!(terms::search(&conn, &terms, true, &["b_other".to_string()], &mut ok_progress()).unwrap(), [hit(2, "b_other", 1), hit(4, "b_other", 0)]);
         // Cancelar (o progresso devolve erro) para a pesquisa
         let conn = manager.export_connection().unwrap();
         assert!(terms::search(&conn, &terms, true, &tables, &mut |_, _, _| Err("[[err.searchCancelled]]".into())).is_err());
 
-        // relatorio da pesquisa por inteiro
+        // relatorio da pesquisa por inteiro (secao 19 d): so uma aba (tabela, arquivo CSV) por tabela com acerto, com o nome
+        // dela, as linhas achadas uma vez e as colunas originais; sem "Resultado Filtro" nem coluna Termo
         let conn = manager.export_connection().unwrap();
         terms::search(&conn, &terms, true, &tables, &mut ok_progress()).unwrap();
-        // BRIEF secao 13 i: uma aba "Resultado Filtro" com tudo (encontrados e nao encontrados) e uma por tabela, sem sufixo
-        let labels: Vec<String> = ["Termo", "Situação", "Tabela", "Linhas", "Encontrado", "Não encontrado", "Resultado Filtro"].map(String::from).to_vec();
         let with_hits = ["a_pts".to_string(), "b_other".to_string()];
-        let names = terms::report(&conn, &with_hits, &labels).unwrap();
-        assert_eq!(names, ["Resultado Filtro", "a_pts", "b_other"]);
+        let names = terms::report(&conn, &with_hits).unwrap();
+        assert_eq!(names, with_hits);
         let out = dir.path().join("rel.sqlite");
         export::write_tables(&conn, &names, "sqlite", &out, &mut ok_progress()).unwrap();
         let rel = rusqlite::Connection::open(&out).unwrap();
-        let summary: Vec<(String, String, String, i64)> = rel
-            .prepare("SELECT \"Termo\", \"Situação\", \"Tabela\", \"Linhas\" FROM \"Resultado Filtro\"")
+        let cols: Vec<(String, String)> = rel
+            .prepare("SELECT name, type FROM pragma_table_info('a_pts')")
             .unwrap()
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        let line = |t: &str, s: &str, tb: &str, n: i64| (t.to_string(), s.to_string(), tb.to_string(), n);
-        assert_eq!(
-            summary,
-            [
-                line("PNTNAM", "Não encontrado", "", 0),
-                line("generador x", "Encontrado", "a_pts", 2),
-                line("GENERADOR Y", "Encontrado", "a_pts", 1),
-                line("GENERADOR Y", "Encontrado", "b_other", 1),
-                line("238", "Encontrado", "a_pts", 1),
-                line("2024-01-02", "Encontrado", "b_other", 1),
-                line("Y", "Não encontrado", "", 0),
-            ]
-        );
-        let cols: Vec<String> = rel.prepare("SELECT name FROM pragma_table_info('a_pts')").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
-        assert_eq!(cols, ["Termo", "rtu", "pnt", "name"]);
-        assert_eq!(rel.query_row("SELECT count(*) FROM a_pts", [], |r| r.get::<_, i64>(0)).unwrap(), 4);
+        let col = |n: &str, t: &str| (n.to_string(), t.to_string());
+        assert_eq!(cols, [col("rtu", "INTEGER"), col("pnt", "INTEGER"), col("name", "VARCHAR")]);
+        assert_eq!(rel.query_row("SELECT count(*) FROM a_pts", [], |r| r.get::<_, i64>(0)).unwrap(), 3);
+        assert_eq!(rel.query_row("SELECT count(*) FROM b_other", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        let tables_out: i64 = rel.query_row("SELECT count(*) FROM sqlite_master WHERE type = 'table'", [], |r| r.get(0)).unwrap();
+        assert_eq!(tables_out, 2);
         drop(rel);
         for format in ["duckdb", "xlsx"] {
             let file = dir.path().join(format!("rel.{format}"));
             let done = export::write_tables(&conn, &names, format, &file, &mut ok_progress()).unwrap();
-            assert_eq!(done.count, 3);
+            assert_eq!(done.count, 2);
             assert!(file.is_file());
+        }
+        // secao 19 f: o relatorio em xlsx lido de volta: 1a aba = a_pts, titulos da tabela, rtu e pnt celulas numericas
+        #[cfg(windows)]
+        {
+            let (rows, _) = xlsx_sheet(&dir.path().join("rel.xlsx"), 1);
+            assert_eq!(rows[0].iter().map(|c| c.2.as_str()).collect::<Vec<_>>(), ["rtu", "pnt", "name"]);
+            assert_eq!(rows[1][..2].iter().map(|c| (c.1.as_str(), c.2.as_str())).collect::<Vec<_>>(), [("n", "50"), ("n", "300")]);
+            assert_eq!(rows[1][2].2, "GENERADOR X");
+            assert_eq!(rows.len(), 4, "header + 3 rows, each once");
         }
         let folder = dir.path().join("csv");
         std::fs::create_dir(&folder).unwrap();
         export::export_folder(&conn, &names, &folder, &mut ok_progress()).unwrap();
-        let result = std::fs::read_to_string(folder.join("Resultado Filtro.csv")).unwrap();
-        assert!(result.starts_with("\u{FEFF}Termo,Situação,Tabela,Linhas\r\nPNTNAM,Não encontrado,,0\r\n"), "{result}");
-        assert_eq!(export::csv_files(&folder, &terms::report_names(&with_hits, "Resultado Filtro")).iter().filter(|f| f.exists()).count(), 3);
+        let a_csv = std::fs::read_to_string(folder.join("a_pts.csv")).unwrap();
+        assert_eq!(a_csv, "\u{FEFF}rtu,pnt,name\r\n50,300,GENERADOR X\r\n50,238,Generador X\r\n50,242,  generador y  \r\n");
+        assert_eq!(export::csv_files(&folder, &with_hits).iter().filter(|f| f.exists()).count(), 2);
         // a tabela de verdade nao mudou (as views do relatorio sao temporarias da conexao da pesquisa)
         assert_eq!(manager.get_row_count("a_pts", &[], "").unwrap(), 4);
         assert_eq!(manager.get_table_schema("a_pts").unwrap().len(), 3);
     }
 
-    // BRIEF secao 13 a: Valor inteiro com numeros, regra frouxa (dados em formato EUA e BR/Europa): termo e celula casam
-    // quando alguma leitura de um e igual a alguma do outro. Casam: 216 com 216.0, "216,0" e "216"; 0,1 com 0.1; 1234.5
-    // com "1.234,5"; 1,234 com 1234 e com 1.234. Nao casam: 216 com 2160 nem com 216.5. Texto que nao e numero: como antes
+    // BRIEF secoes 13 a e 20: Valor inteiro com numeros, regra frouxa SO no termo (formato EUA ou BR/Europa), comparado
+    // com as colunas NUMERICAS do schema pelo valor: 216 acha 216.0; 0,1 acha 0.1; 1,234 acha 1234. Coluna de texto e
+    // texto: "216" acha a celula "216", mas "216,0" e "1.234,5" numa coluna de texto nao sao lidos como numero
     #[test]
     fn term_whole_value_reads_numbers_loosely() {
         use crate::backend::terms::{self, TermHit};
@@ -1404,12 +1528,13 @@ mod tests {
             let terms: Vec<String> = terms.iter().map(|t| t.to_string()).collect();
             terms::search(&manager.export_connection().unwrap(), &terms, true, &["n".to_string()], &mut ok_progress()).unwrap()
         };
-        // "216": linha 1 (i 216 e o texto "216,0") e linha 5 ("216"); nunca 2160 nem 216.5 (linha 2)
-        // "0,1": d 0.1; "1234.5": m 1234.50 e o texto "1.234,5"; "1,234": i 1234 (linha 4) e m 1.23 nao; "1234567": "1,234.567"
-        // nao: e 1234.567, e "12,34,567" (milhar so em grupos de 3: nao e numero) e "1234,567" (1234.567) tambem nao, como no
-        // Python; "abc": texto; "216.50": d 216.5; "1": nunca "0,1" (0.1) nem 1.23
+        // "216": linha 1 (i 216) e linha 5 (o texto "216"); nunca 2160 nem 216.5 (linha 2) nem o texto "216,0"
+        // "0,1": d 0.1 (linha 1); "1234.5": m 1234.50 (linha 1; o texto "1.234,5" da linha 2 nao); "1,234": i 1234 (linha
+        // 4) e m 1.23 nao; "1234567": nada (os textos nao sao lidos); "abc": texto; "216.50": d 216.5 (linha 2); "2.160":
+        // i 2160 (linha 2); "1": nunca 0.1 nem 1.23
         let hits = search(&["216", "0,1", "1234.5", "1,234", "1234567", "abc", "216.50", "2.160", "1"]);
-        assert_eq!(hits, [hit(0, 2), hit(1, 1), hit(2, 2), hit(3, 1), hit(5, 1), hit(6, 1), hit(7, 1)]);
+        // secao 19 d: cada linha conta uma vez, no primeiro termo que a achou (0 = achou so linhas ja contadas)
+        assert_eq!(hits, [hit(0, 2), hit(1, 0), hit(2, 0), hit(3, 1), hit(5, 1), hit(6, 1), hit(7, 0)]);
         // sem termo numerico, so o texto (o caminho de antes)
         assert_eq!(search(&["ABC", "zzz"]), [hit(0, 1)]);
     }
@@ -1438,8 +1563,8 @@ mod tests {
         assert_eq!(attached.rows, [json!({ "database_name": "memory" }), json!({ "database_name": "src" })]);
     }
 
-    // revisao do Python (B2): tabela com uma coluna chamada como a coluna do termo (Termo, term, TÉRMINO) nao quebra a
-    // grade nem a copia: a coluna do termo ganha "_" e as da tabela ficam inteiras
+    // revisao do Python (B2) e secao 19 d: a grade e a copia da Pesquisa Avancada tem so as colunas da tabela, com os
+    // titulos dela (uma tabela com colunas "Termo" e "Termo_" fica igual; nada de coluna a mais)
     #[test]
     fn term_column_never_collides_with_a_table_column() {
         use crate::backend::terms;
@@ -1453,13 +1578,10 @@ mod tests {
         manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
         let conn = manager.export_connection().unwrap();
         terms::search(&conn, &["A".to_string()], true, &["t".to_string()], &mut ok_progress()).unwrap();
-        for label in ["Termo", "termo"] {
-            let rows = terms::rows(&conn, "t", label, usize::MAX).unwrap();
-            let names: Vec<&str> = rows.columns.iter().map(|c| c.name.as_str()).collect();
-            let term = format!("{label}__");
-            assert_eq!(names, [term.as_str(), "Termo", "Termo_", "v"], "{label}");
-            assert_eq!(rows.rows, [json!({ term: "A", "Termo": "a", "Termo_": "b", "v": 1 })]);
-        }
+        let rows = terms::rows(&conn, "t", usize::MAX).unwrap();
+        let names: Vec<&str> = rows.columns.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["Termo", "Termo_", "v"]);
+        assert_eq!(rows.rows, [json!({ "Termo": "a", "Termo_": "b", "v": 1 })]);
     }
 
     // revisao do Python (P1): as marcadas voltam na ordem da tabela (ORDER BY rowid) tambem numa tabela grande, lida em
@@ -1557,12 +1679,26 @@ mod tests {
         }
         let files: Vec<PathBuf> = ["DB3.sqlite", "DB3.duckdb", "DB3.accdb"].iter().map(|f| folder.join(f)).filter(|f| f.is_file()).collect();
         for file in files {
+            let file_is_access = file.extension().is_some_and(|e| e == "accdb");
             let manager = DBManager::new();
             let started = std::time::Instant::now();
             manager.connect(file.to_str().unwrap(), &mut no_progress()).unwrap();
             let tables = manager.list_tables().unwrap();
             eprintln!("DB3 {}: opened in {:?}, {} tables", file.display(), started.elapsed(), tables.len());
             let conn = manager.export_connection().unwrap();
+            if file_is_access {
+                // secao 19 a: o Access convertido com os tipos do mdb-schema do DB3: 1.681 Numeric(p,0) inteiras, 5.816 Double,
+                // 2.861 texto (2.858 VARCHAR + 3 memo) e 6 datas (o BRIEF diz 2.867 texto: e texto + datas)
+                let count = |kinds: &str| -> i64 {
+                    let sql = format!("SELECT count(*) FROM duckdb_columns() WHERE database_name = current_database() AND data_type IN ({kinds})");
+                    conn.query_row(&sql, [], |r| r.get(0)).unwrap()
+                };
+                let counts = [count("'TINYINT', 'SMALLINT', 'INTEGER', 'BIGINT'"), count("'DOUBLE', 'FLOAT'"), count("'VARCHAR'"), count("'TIMESTAMP'")];
+                eprintln!("DB3 accdb column types (integer, double, text, timestamp): {counts:?}");
+                assert_eq!(counts, [1681, 5816, 2861, 6]);
+                let sostat: Vec<String> = ["RTUNO", "PNTNO"].iter().map(|c| manager.get_table_schema("RANGER_SOSTAT").unwrap().into_iter().find(|s| s.name == *c).unwrap().col_type).collect();
+                assert_eq!(sostat, ["BIGINT", "BIGINT"]);
+            }
             // busca em todas as tabelas: antes (dev 2f17599: so colunas VARCHAR), todas as colunas dobrando toda celula
             // (o commit wip) e agora (todas as colunas, numeros e datas sem dobrar): as duas ultimas acham o mesmo
             let columns = crate::backend::db_manager::all_columns(&conn).unwrap();
@@ -1615,7 +1751,7 @@ mod tests {
                 with_hits.dedup();
                 let missing: Vec<&String> = terms.iter().enumerate().filter(|(i, _)| !hits.iter().any(|h| h.ord == *i)).map(|(_, t)| t).collect();
                 eprintln!("DB3 terms whole={whole}: {} terms, all tables in {time:?}; tables {with_hits:?}; not found {missing:?}", terms.len());
-                let sostat = terms::rows(&conn, "RANGER_SOSTAT", "Termo", usize::MAX).unwrap();
+                let sostat = terms::rows(&conn, "RANGER_SOSTAT", usize::MAX).unwrap();
                 // RTUNO e PNTNO sao texto num banco e numero em outro: compara o texto da grade
                 let text = |v: &serde_json::Value| crate::backend::db_manager::json_text(v);
                 let points: Vec<(String, String, String)> = sostat.rows.iter().map(|r| (text(&r["RTUNO"]), text(&r["PNTNO"]), text(&r["SUBNAM"]))).collect();
@@ -1626,6 +1762,26 @@ mod tests {
                 // Contem acha PNTNAM tambem nas mensagens de RANGER_SOTEXT ("SOSTAT.SUBNAM+PNTNAM"); por inteiro, nao
                 if whole {
                     assert_eq!(missing, [&"PNTNAM".to_string()]);
+                    // secao 19 f: o relatorio em xlsx lido de volta: uma aba por tabela, titulos da tabela, sem Termo;
+                    // no Access convertido RTUNO e PNTNO sao celulas numericas
+                    #[cfg(windows)]
+                    {
+                        let names = terms::report(&conn, &with_hits).unwrap();
+                        let file = std::env::temp_dir().join(format!("mdb2sql-db3-{}.xlsx", std::process::id()));
+                        export::write_tables(&conn, &names, "xlsx", &file, &mut ok_progress()).unwrap();
+                        let sheet = with_hits.iter().position(|t| t == "RANGER_SOSTAT").unwrap() + 1;
+                        let (rows, widths) = xlsx_sheet(&file, sheet);
+                        let header: Vec<String> = rows[0].iter().map(|c| c.2.clone()).collect();
+                        let columns: Vec<String> = manager.get_table_schema("RANGER_SOSTAT").unwrap().into_iter().map(|c| c.name).collect();
+                        assert_eq!(header, columns);
+                        assert_eq!(rows.len(), 9);
+                        if file_is_access {
+                            assert_eq!((rows[1][0].1.as_str(), rows[1][1].1.as_str()), ("n", "n"), "RTUNO, PNTNO");
+                        }
+                        assert_eq!(widths.len(), columns.len());
+                        let _ = std::fs::remove_file(&file);
+                        let _ = std::fs::remove_dir_all(file.with_extension("unzipped"));
+                    }
                 } else {
                     assert!(missing.is_empty() && with_hits.contains(&"RANGER_SOTEXT".to_string()), "{missing:?}");
                 }

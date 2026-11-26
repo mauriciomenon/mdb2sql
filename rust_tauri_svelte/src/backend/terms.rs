@@ -8,22 +8,20 @@
 // The grid, the copy and the report read those tables, so nothing is searched twice. Temporary tables belong to
 // the connection: the open file and the session copy never change.
 
-use super::db_manager::{ColumnSchema, SqlResult, all_columns, has_rowid, ident, is_number, literal, rows_to_json, table_info};
+use super::db_manager::{ColumnSchema, SqlResult, all_columns, has_rowid, ident, is_number, rows_to_json, table_info};
 use duckdb::Connection;
 use serde::Serialize;
 
 const TERMS: &str = "\"mdb2sql terms\""; // (ord INTEGER, term VARCHAR): os termos na ordem colada
-const COUNTS: &str = "\"mdb2sql counts\""; // (ord INTEGER, tbl VARCHAR, n BIGINT): linhas de cada termo em cada tabela
 const KEYS: &str = "\"mdb2sql keys\""; // (ord INTEGER, key VARCHAR): chaves do valor inteiro de cada termo (texto e numero)
 const ORD: &str = "\"mdb2sql ord\"";
-const TERM: &str = "\"mdb2sql term\"";
 const RID: &str = "\"mdb2sql rid\"";
 
 fn hit_name(table: &str) -> String {
     format!("mdb2sql hit {table}")
 }
 
-// NIVEL BASICO: Leituras de numero de um texto (BRIEF secao 13 a, regra frouxa: ha dados em formato EUA e BR/Europa), as
+// NIVEL BASICO: Leituras de numero do TERMO (secoes 13 a e 20, regra frouxa: ha dados em formato EUA e BR/Europa), as
 // mesmas do Python: ponto decimal com virgula de milhar (mdb2sql_n1) e virgula decimal com ponto de milhar (mdb2sql_n2),
 // milhar so em grupos de exatamente 3 digitos. 1.234,5 e 1,234.5 = 1234.5; 1.234.567 = 1234567; 1,234 = 1234 ou 1.234;
 // 216,0 = 216 (nunca 2160); 0,1 = 0.1 (nunca 1); 12,34,567 nao e numero. A leitura que nao cabe e NULL. mdb2sql_key = a
@@ -41,17 +39,17 @@ fn term_keys() -> String {
     format!("SELECT ord, 't:' || lower(trim(term)) AS key FROM {TERMS} UNION ALL {} UNION ALL {}", reading("mdb2sql_n1"), reading("mdb2sql_n2"))
 }
 
-// NIVEL BASICO: Chaves de uma celula no valor inteiro: 't:' + o texto; com termo numerico, a coluna numerica tambem pelo
-// valor e a de texto tambem pelas leituras de numero dela ("216,0", "1.234,5")
+// NIVEL BASICO: Chaves de uma celula no valor inteiro: 't:' + o texto; com termo numerico, a coluna NUMERICA do schema
+// tambem pelo valor. Coluna de texto e texto: nada de ler numero dentro da celula (secao 20; a leitura frouxa de virgula e
+// ponto e so do termo)
 // shortcut: the value goes through DOUBLE, so integers above 2^53 that differ only past that precision match the same
 // term; compare them as text if such ids ever need it
 fn cell_keys(column: &str, kind: &str, numbers: bool) -> String {
-    let text = format!("CAST({column} AS VARCHAR)");
-    let key = format!("'t:' || lower(trim({text}))");
-    match (numbers, is_number(kind), kind.eq_ignore_ascii_case("VARCHAR")) {
-        (true, true, _) => format!("[{key}, 'n:' || CAST(CAST({column} AS DOUBLE) AS VARCHAR)]"),
-        (true, _, true) => format!("[{key}, mdb2sql_key(mdb2sql_n1(trim({text}))), mdb2sql_key(mdb2sql_n2(trim({text})))]"),
-        _ => format!("[{key}]"),
+    let key = format!("'t:' || lower(trim(CAST({column} AS VARCHAR)))");
+    if numbers && is_number(kind) {
+        format!("[{key}, 'n:' || CAST(CAST({column} AS DOUBLE) AS VARCHAR)]")
+    } else {
+        format!("[{key}]")
     }
 }
 
@@ -78,8 +76,7 @@ pub fn search(
 ) -> Result<Vec<TermHit>, String> {
     let run = |sql: &str| conn.execute_batch(sql).map_err(|e| e.to_string());
     run(&format!(
-        "CREATE TEMP TABLE {TERMS} (ord INTEGER, term VARCHAR); CREATE TEMP TABLE {COUNTS} (ord INTEGER, tbl VARCHAR, n BIGINT); \
-         BEGIN TRANSACTION"
+        "CREATE TEMP TABLE {TERMS} (ord INTEGER, term VARCHAR); BEGIN TRANSACTION"
     ))?;
     {
         let mut insert = conn.prepare(&format!("INSERT INTO {TERMS} VALUES (?, ?)")).map_err(|e| e.to_string())?;
@@ -125,51 +122,46 @@ pub fn search(
         run(&format!(
             "CREATE TEMP TABLE {name} AS WITH base AS {kept}(SELECT {rid} AS {RID}, * FROM {}.{}.{}), \
              cell AS (SELECT {RID} AS rid, {cell} AS cell FROM base), hit AS ({hit}) \
-             SELECT hit.ord AS {ORD}, k.term AS {TERM}, base.* EXCLUDE ({RID}) FROM hit JOIN {TERMS} k ON k.ord = hit.ord \
-             JOIN base ON base.{RID} = hit.rid ORDER BY hit.ord, hit.rid",
+             SELECT hit.ord AS {ORD}, base.* FROM hit JOIN base ON base.{RID} = hit.rid ORDER BY hit.ord, hit.rid",
             ident(&catalog),
             ident(&schema),
             ident(table)
         ))
         .map_err(|e| format!("{table}: {e}"))?;
         let found: Vec<(i64, i64)> = conn
-            .prepare(&format!("SELECT {ORD}, count(*) FROM {name} GROUP BY 1 ORDER BY 1"))
+            // cada linha conta uma vez, no primeiro termo que a achou (a tela e o relatorio mostram cada linha uma vez);
+            // termo que so achou linhas ja contadas vem com 0 (foi encontrado)
+            .prepare(&format!(
+                "SELECT {ORD}, count(*) FILTER (WHERE n = 1) FROM (SELECT {ORD}, row_number() OVER (PARTITION BY {RID} ORDER BY {ORD}) AS n \
+                 FROM {name}) GROUP BY 1 ORDER BY 1"
+            ))
             .and_then(|mut stmt| stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect())
             .map_err(|e| format!("{table}: {e}"))?;
         if found.is_empty() {
             run(&format!("DROP TABLE {name}"))?;
         }
         for (ord, count) in found {
-            run(&format!("INSERT INTO {COUNTS} VALUES ({ord}, {}, {count})", literal(table)))?;
             hits.push(TermHit { ord: ord as usize, table: table.clone(), count });
         }
     }
     Ok(hits)
 }
 
-// titulo da coluna do termo; se a tabela ja tem uma coluna com esse nome, ganha "_" ate nao repetir
-fn term_label(label: &str, columns: &[ColumnSchema]) -> String {
-    let mut label = label.to_string();
-    while columns.iter().any(|column| column.name.eq_ignore_ascii_case(&label)) {
-        label.push('_');
-    }
-    label
-}
-
-// colunas da tabela achada (sem as duas internas) e o SELECT das linhas dela: o termo, com o titulo `label`, e depois
-// as colunas da tabela, na ordem em que foram guardadas (termo, depois tabela)
-fn hit_select(conn: &Connection, table: &str, label: &str) -> Result<(Vec<ColumnSchema>, String), String> {
+// colunas da tabela achada (sem as duas internas) e o SELECT das linhas dela: so as colunas da tabela, com os titulos e
+// os tipos dela; cada linha uma vez, na ordem do primeiro termo que a achou e depois na da tabela (secao 19 d)
+fn hit_select(conn: &Connection, table: &str) -> Result<(Vec<ColumnSchema>, String), String> {
     let mut columns = table_info(conn, &hit_name(table))?;
     columns.drain(..2.min(columns.len()));
-    let label = term_label(label, &columns);
-    let select = format!("SELECT {TERM} AS {}, * EXCLUDE ({ORD}, {TERM}) FROM {}", ident(&label), ident(&hit_name(table)));
-    columns.insert(0, ColumnSchema { name: label, col_type: "VARCHAR".to_string(), null: "NO".to_string() });
+    let select = format!(
+        "SELECT * EXCLUDE ({ORD}, {RID}) FROM {} QUALIFY row_number() OVER (PARTITION BY {RID} ORDER BY {ORD}) = 1 ORDER BY {ORD}, {RID}",
+        ident(&hit_name(table))
+    );
     Ok((columns, select))
 }
 
-// NIVEL BASICO: Linhas achadas de uma tabela (grade da aba Termos e Copiar as linhas encontradas): ate `limit`
-pub fn rows(conn: &Connection, table: &str, label: &str, limit: usize) -> Result<SqlResult, String> {
-    let (columns, select) = hit_select(conn, table, label)?;
+// NIVEL BASICO: Linhas achadas de uma tabela (grade da Pesquisa Avancada e Copiar as linhas encontradas): ate `limit`
+pub fn rows(conn: &Connection, table: &str, limit: usize) -> Result<SqlResult, String> {
+    let (columns, select) = hit_select(conn, table)?;
     let mut stmt = conn.prepare(&select).map_err(|e| e.to_string())?;
     let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
     let names = rows.as_ref().map(|s| s.column_names()).unwrap_or_default();
@@ -177,39 +169,15 @@ pub fn rows(conn: &Connection, table: &str, label: &str, limit: usize) -> Result
     Ok(SqlResult { columns, rows, truncated })
 }
 
-// NIVEL BASICO: Nomes das abas do relatorio (e das tabelas no SQLite/DuckDB e dos arquivos CSV), sem numero nem
-// sufixo: a aba do resultado ("Resultado Filtro") e uma por tabela com acerto, com o nome dela (o Excel corta e limpa)
-pub fn report_names(tables: &[String], result: &str) -> Vec<String> {
-    std::iter::once(result.to_string()).chain(tables.iter().cloned()).collect()
-}
-
-// NIVEL BASICO: Prepara o relatorio da ultima pesquisa: views temporarias com os nomes de report_names e os titulos
-// no idioma da tela. Resultado: uma linha por termo x tabela, na ordem colada (termo nao encontrado na mesma aba, com a
-// tabela vazia e 0 linhas); uma view por tabela com acerto (termo + colunas). labels = Termo, Situacao, Tabela, Linhas,
-// Encontrado, Nao encontrado, nome da aba do resultado. Devolve os nomes, na ordem das abas
+// NIVEL BASICO: Prepara o relatorio da ultima pesquisa: uma view temporaria por tabela com acerto, com o nome da tabela
+// (aba do Excel, tabela do SQLite/DuckDB ou arquivo CSV), com as linhas achadas e so as colunas originais. Sem aba de
+// resumo (secao 19 d). Devolve os nomes, na ordem das abas
 // NIVEL TECNICO: temporary views come first in name lookup, so the writers of export.rs read them by plain name
-pub fn report(conn: &Connection, tables: &[String], labels: &[String]) -> Result<Vec<String>, String> {
-    let [term, status, table, rows, found, missing, result] = labels else {
-        return Err("Term report needs 7 labels".to_string());
-    };
-    let names = report_names(tables, result);
-    let view = |name: &str, select: &str| format!("CREATE OR REPLACE TEMP VIEW {} AS {select};", ident(name));
-    let mut sql = view(
-        &names[0],
-        &format!(
-            "SELECT k.term AS {}, CASE WHEN c.tbl IS NULL THEN {} ELSE {} END AS {}, coalesce(c.tbl, '') AS {}, coalesce(c.n, 0) AS {} \
-             FROM {TERMS} k LEFT JOIN {COUNTS} c ON c.ord = k.ord ORDER BY k.ord, c.tbl",
-            ident(term),
-            literal(missing),
-            literal(found),
-            ident(status),
-            ident(table),
-            ident(rows)
-        ),
-    );
+pub fn report(conn: &Connection, tables: &[String]) -> Result<Vec<String>, String> {
+    let mut sql = String::new();
     for table in tables {
-        sql += &view(table, &hit_select(conn, table, term)?.1);
+        sql += &format!("CREATE OR REPLACE TEMP VIEW {} AS {};", ident(table), hit_select(conn, table)?.1);
     }
     conn.execute_batch(&sql).map_err(|e| e.to_string())?;
-    Ok(names)
+    Ok(tables.to_vec())
 }

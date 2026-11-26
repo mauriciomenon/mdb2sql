@@ -85,10 +85,11 @@ test('Schema titles name the nullability column, never just NULL', () => {
   assert.deepEqual([yesNo('pt-BR'), yesNo('es'), yesNo('en')], [['Sim', 'Não'], ['Sí', 'No'], ['Yes', 'No']]);
 });
 
-test('license line of the About says GPL v2 or later in each language', () => {
-  assert.equal(CATALOGS['pt-BR']['about.licenseValue'], 'GPL v2 ou posterior');
-  assert.equal(CATALOGS.en['about.licenseValue'], 'GPL v2 or later');
-  assert.equal(CATALOGS.es['about.licenseValue'], 'GPL v2 o posterior');
+// secao 18 b: so "GPLv2", sem "ou posterior" nem nota
+test('license line of the About says GPLv2 in each language', () => {
+  assert.equal(CATALOGS['pt-BR']['about.license'], 'Licença: GPLv2');
+  assert.equal(CATALOGS.en['about.license'], 'License: GPLv2');
+  assert.equal(CATALOGS.es['about.license'], 'Licencia: GPLv2');
 });
 
 // padrao item 23: o mesmo item com o mesmo texto do catalogo do Go (a referencia de redacao), nas 3 linguas. Ficam com o
@@ -109,7 +110,7 @@ test('texts of the same item match the Go catalog in the 3 languages', (t) => {
     ['menu.help', 'menu.help'], ['view.log', 'menu.log'], ['settings.theme', 'menu.theme'], ['settings.language', 'menu.language'],
     ['settings.showNull', 'menu.showNull'], ['settings.searchScope', 'menu.searchScope'], ['edit.find', 'menu.search'], ['theme.system', 'theme.system'],
     ['theme.light', 'theme.light'], ['theme.dark', 'theme.dark'], ['open.title', 'dlg.open'], ['open.all', 'filter.all'],
-    ['about.author', 'about.author'], ['about.license', 'about.license'], ['about.licenseValue', 'about.licenseText'],
+    // Autor e Licenca: os textos da secao 18 b, iguais nas 4 (o Go passa a ter os mesmos)
     ['about.linkTip', 'about.openLink'], ['common.close', 'about.close'], ['common.cancel', 'conv.cancel'],
     ['convert.title', 'conv.title'], ['columns.search', 'cols.filter'],
     ['columns.none', 'cols.none'], ['columns.showAll', 'cols.showAll'], ['columns.hideAll', 'cols.hideAll'],
@@ -169,8 +170,6 @@ test('new texts of Save, exit, marked rows and Terms are the agreed ones', () =>
     ['exportRun.text', { name: 'x.csv' }, 'Sair cancela a exportação de x.csv.', 'Exiting cancels the export of x.csv.', 'Salir cancela la exportación de x.csv.'],
     ['save.title', {}, 'Salvar como SQLite, DuckDB ou Excel (arquivos .mdb e .accdb não podem ser gravados)', 'Save as SQLite, DuckDB or Excel (.mdb and .accdb files cannot be written)', 'Guardar como SQLite, DuckDB o Excel (los archivos .mdb y .accdb no se pueden escribir)'],
     ['save.copyName', { name: 'DB3' }, 'DB3 (cópia)', 'DB3 (copy)', 'DB3 (copia)'],
-    ['about.write', {}, 'Gravação', 'Writing', 'Escritura'],
-    ['about.writeValue', {}, 'SQLite, DuckDB, Excel e CSV. Arquivos .mdb e .accdb não podem ser gravados: o formato do Access é proprietário da Microsoft.', 'SQLite, DuckDB, Excel and CSV. .mdb and .accdb files cannot be written: the Access format is proprietary to Microsoft.', 'SQLite, DuckDB, Excel y CSV. Los archivos .mdb y .accdb no se pueden escribir: el formato de Access es propiedad de Microsoft.'],
     ['ask.overwriteMany', { count: 3 }, '3 arquivos já existem nesta pasta. Substituir?', '3 files already exist in this folder. Replace them?', '3 archivos ya existen en esta carpeta. ¿Reemplazarlos?'],
     ['ask.overwriteMany', { count: 1 }, '1 arquivo já existe nesta pasta. Substituir?', '1 file already exists in this folder. Replace it?', '1 archivo ya existe en esta carpeta. ¿Reemplazarlo?'],
     ['err.sqlReadOnly', {}, 'A aba SQL só lê o banco: este comando não é permitido', 'The SQL tab only reads the database: this command is not allowed', 'La pestaña SQL solo lee la base de datos: este comando no está permitido'],
@@ -189,21 +188,16 @@ test('new texts of Save, exit, marked rows and Terms are the agreed ones', () =>
     ],
     ['match.help', {}, 'Valor inteiro: a célula inteira é igual ao termo. Contém: a célula contém o termo. Maiúsculas e espaços nas pontas não contam.', 'Whole value: the whole cell equals the term. Contains: the cell contains the term. Case and spaces at the ends do not count.', 'Valor completo: la celda entera es igual al término. Contiene: la celda contiene el término. Mayúsculas y espacios en los extremos no cuentan.'],
     ['settings.match', {}, 'Comparação dos termos', 'Term matching', 'Comparación de términos'],
-    ['terms.count', { count: 9 }, '9 termos', '9 terms', '9 términos'],
-    ['terms.count', { count: 1 }, '1 termo', '1 term', '1 término'],
-    ['terms.repeated', { count: 2 }, ', 2 repetidos', ', 2 repeated', ', 2 repetidos'],
-    ['terms.repeated', { count: 1 }, ', 1 repetido', ', 1 repeated', ', 1 repetido'],
+    // secao 18 c: a caixa da linha dos controles comeca com as linhas coladas
+    ['terms.lines', { count: 8 }, '8 linhas de entrada', '8 input lines', '8 líneas de entrada'],
+    ['terms.lines', { count: 1 }, '1 linha de entrada', '1 input line', '1 línea de entrada'],
     ['terms.summary', { found: 8, total: 9, rows: 8, tables: 1 }, '8 de 9 termos encontrados: 8 linhas em 1 tabela', '8 of 9 terms found: 8 rows in 1 table', '8 de 9 términos encontrados: 8 filas en 1 tabla'],
     ['terms.summary', { found: 1, total: 1, rows: 1, tables: 2 }, '1 de 1 termo encontrado: 1 linha em 2 tabelas', '1 of 1 term found: 1 row in 2 tables', '1 de 1 término encontrado: 1 fila en 2 tablas'],
+    // secao 17: com Esta tabela o resumo diz onde pesquisou
+    ['terms.summaryIn', { found: 0, total: 8, rows: 0, tables: 0, table: 'T' }, '0 de 8 termos encontrados: 0 linhas em 0 tabelas (só em T)', '0 of 8 terms found: 0 rows in 0 tables (only in T)', '0 de 8 términos encontrados: 0 filas en 0 tablas (solo en T)'],
     ['terms.progress', { done: 2, total: 287, item: 'T' }, 'Pesquisando termos: tabela 2 de 287 (T)', 'Searching terms: table 2 of 287 (T)', 'Buscando términos: tabla 2 de 287 (T)'],
-    ['terms.col', {}, 'Termo', 'Term', 'Término'],
     ['terms.notFound', { count: 1 }, 'Não encontrados (1)', 'Not found (1)', 'No encontrados (1)'],
     ['terms.copyHits', {}, 'Copiar as linhas encontradas desta tabela', 'Copy the rows found in this table', 'Copiar las filas encontradas en esta tabla'],
-    // BRIEF secao 13 i: uma aba so com o resultado (encontrados e nao encontrados) e uma por tabela
-    ['terms.sheetResult', {}, 'Resultado Filtro', 'Filter Result', 'Resultado Filtro'],
-    ['terms.status', {}, 'Situação', 'Status', 'Situación'],
-    ['terms.found', {}, 'Encontrado', 'Found', 'Encontrado'],
-    ['terms.missing', {}, 'Não encontrado', 'Not found', 'No encontrado'],
     // item 34 (BRIEF secao 11)
     // BRIEF secao 13 b: o Log diz o formato real do arquivo salvo
     ['status.reused', { name: 'DB3.accdb', format: 'DuckDB', path: 'P' }, 'DB3.accdb: aberto o DuckDB salvo dele (P)', 'DB3.accdb: opened the DuckDB saved from it (P)', 'DB3.accdb: abierto el DuckDB guardado de él (P)'],

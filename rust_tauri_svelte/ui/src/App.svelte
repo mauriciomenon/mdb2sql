@@ -57,9 +57,8 @@
   const LAST_DIR_KEY = 'mdb2sql.lastDir';
   const SAVE_DIR_KEY = 'mdb2sql.lastSaveDir'; // ultima pasta em que o usuario salvou ou exportou (Salvar como...)
   const LANG_KEY = 'mdb2sql.lang';
-  const LOG_KEY = 'mdb2sql.log'; // 'open' = painel de log aberto (padrao: recolhido)
   const NULL_KEY = 'mdb2sql.showNull'; // 'on' = celula NULL mostra "NULL" (padrao, sem valor gravado: vazia)
-  const SCOPE_KEY = 'mdb2sql.searchScope'; // 'all' = a pesquisa comeca em Todas as tabelas (padrao: Esta tabela)
+  const SCOPE_KEY = 'mdb2sql.searchScope'; // 'table' = a pesquisa comeca em Esta tabela (padrao: Todas as tabelas, secao 18 a)
   const MATCH_KEY = 'mdb2sql.termMatch'; // 'contains' = a pesquisa de termos comeca em Contem (padrao: Valor inteiro)
   // Access ja convertido e salvo (SQLite ou DuckDB): { [chave do Access]: { dest, destKey } } com as chaves de file_key
   // (caminho, tamanho, data). Fica entre execucoes; as 50 mais recentes
@@ -146,7 +145,7 @@
   let filters = $state.raw([]); // [{ column, value }] aplicados na consulta ao banco (AND)
   let search = $state(''); // pesquisa na tabela inteira, no banco
   let searchTimer;
-  let defaultScope = $state(loadSetting(SCOPE_KEY) === 'all' ? 'all' : 'table');
+  let defaultScope = $state(loadSetting(SCOPE_KEY) === 'table' ? 'table' : 'all');
   let scope = $state(defaultScope); // 'table' (tabela aberta) | 'all' (todas as tabelas)
   // { tables: [{ table, count }] } da pesquisa em todas as tabelas do termo, escopo, tabela e arquivo de agora; null =
   // pesquisando; tables null = falhou (erro na barra de status)
@@ -174,7 +173,8 @@
   let termList = $derived(parseTerms(termsText)); // { terms, repeated }
   let defaultMatch = $state(loadSetting(MATCH_KEY) === 'contains' ? 'contains' : 'whole');
   let match = $state(defaultMatch); // 'whole' (valor inteiro) | 'contains'
-  let termsScope = $state(defaultScope);
+  // sempre Todas as tabelas ao abrir, nunca o escopo padrao da aba Dados (secao 17: com Esta tabela o dono nao achava nada)
+  let termsScope = $state('all');
   let termsRun = 0; // numero da pesquisa de termos que vale; a resposta de uma anterior e descartada
   let termsWork = $state.raw(null); // { done, total, item } da pesquisa em andamento
   let termsResult = $state.raw(null); // { terms, tables: [{ table, count }], notFound, found, rows }
@@ -194,7 +194,7 @@
   let contextMenu = $state.raw(null);
   // log da sessao: { time, level: 'error' | 'warning' | 'info', key, values } | { ..., err, context } | { ..., render }
   let log = $state.raw([]);
-  let logOpen = $state(loadSetting(LOG_KEY) === 'open');
+  let logOpen = $state(false); // o Log sempre comeca fechado (secao 18 d), nada gravado
   let seen = $state(0); // entradas do log ja vistas (painel aberto)
   let logArea = $state();
   const entryText = (e) => (e.render ? e.render() : e.err !== undefined ? errorLine(e.err, e.context) : t(e.key, e.values));
@@ -249,24 +249,19 @@
   let x11Text = $derived(
     x11 ? [t('x11.wayland'), x11Missing, x11.command ? `${x11.distro}: ${x11.command}` : ''].filter(Boolean).join(' ') : ''
   );
-  let aboutRows = $derived.by(() => {
-    if (!aboutInfo) return [];
-    const access = aboutInfo.access_odbc
-      ? 'about.accessOdbc'
-      : aboutInfo.mdbtools_embedded
-        ? 'about.accessEmbedded'
-        : 'about.accessSystem';
-    return [
-      [t('about.build'), aboutInfo.build],
-      [t('about.stack'), aboutInfo.stack],
-      [t('about.window'), aboutInfo.webview],
-      [t('about.engines'), aboutInfo.engines],
-      [t('about.access'), t(access, { version: aboutInfo.mdbtools })],
-      [t('about.write'), t('about.writeValue')],
-      [t('about.author'), aboutInfo.author],
-      [t('about.license'), t('about.licenseValue')],
-    ];
-  });
+  // Sobre igual nas 4 (secao 18 b): so estas linhas, nesta ordem, texto tecnico; depois os links GitHub / GitLab
+  let aboutLines = $derived(
+    aboutInfo
+      ? [
+          t('about.version', { version: aboutInfo.version, build: aboutInfo.build }),
+          aboutInfo.runtime,
+          t('about.tools', { tools: aboutInfo.tools }),
+          t('about.odbc'),
+          t('about.author', { name: aboutInfo.author }),
+          t('about.license'),
+        ]
+      : [],
+  );
 
   $effect(() => {
     document.documentElement.lang = lang;
@@ -293,12 +288,11 @@
     note('error', error);
   };
 
-  // abre/recolhe o painel de log (seta no log e na barra de status, Exibir > Log, Ctrl+L); a escolha fica gravada
+  // abre/recolhe o painel de log (seta no log e na barra de status, Exibir > Log, Ctrl+L), so ate fechar o programa
   function setLog(open) {
     openMenu = null;
     logOpen = open;
     seen = log.length;
-    saveSetting(LOG_KEY, open ? 'open' : 'closed');
   }
 
   // NIVEL BASICO: O que cada exportacao precisa para estar habilitada (a lista e fixa; o que nao se aplica fica
@@ -712,15 +706,13 @@
     openMenu = null;
     lang = code;
     saveSetting(LANG_KEY, code);
-    if (termsTable) openTermsTable(termsTable); // o titulo da coluna Termo vem com as linhas
   }
 
-  // Settings > Escopo padrao da busca: gravado, e passa a valer tambem na pesquisa aberta e na aba Termos
+  // Settings > Escopo padrao da busca: gravado, e passa a valer tambem na pesquisa aberta (a Pesquisa Avancada nao muda)
   function setDefaultScope(next) {
     openMenu = null;
     defaultScope = next;
-    saveSetting(SCOPE_KEY, next === 'all' ? 'all' : null);
-    termsScope = next;
+    saveSetting(SCOPE_KEY, next === 'table' ? 'table' : null);
     setScope(next);
   }
 
@@ -996,8 +988,8 @@
       const table = termsScope === 'table' ? selectedTable : null;
       const hits = await invoke('search_terms', { terms, whole: match === 'whole', table });
       if (run !== termsRun) return;
-      termsResult = { terms, ...termsOutcome(terms, hits) };
-      showStatus('terms.summary', termsValues(termsResult));
+      termsResult = { terms, only: table, ...termsOutcome(terms, hits) };
+      showStatus(termsKey(termsResult), termsValues(termsResult));
       if (termsResult.tables.length) await openTermsTable(termsResult.tables[0].table);
     } catch (err) {
       if (run === termsRun) showError(err);
@@ -1007,14 +999,16 @@
     }
   }
 
-  const termsValues = (r) => ({ found: fmt(r.found), total: fmt(r.terms.length), rows: fmt(r.rows), tables: fmt(r.tables.length) });
+  const termsValues = (r) => ({ found: fmt(r.found), total: fmt(r.terms.length), rows: fmt(r.rows), tables: fmt(r.tables.length), table: r.only });
+  // pesquisa so na tabela escolhida: o resumo diz "(só em {tabela})", para nunca parecer que o termo nao existe no banco
+  const termsKey = (r) => (r.only ? 'terms.summaryIn' : 'terms.summary');
 
   // linhas achadas da tabela escolhida: a coluna Termo e as colunas da tabela, ate o limite de linhas
   async function openTermsTable(table) {
     termsTable = table;
     const run = termsRun;
     try {
-      const page = await invoke('terms_rows', { table, limit, label: t('terms.col') });
+      const page = await invoke('terms_rows', { table, limit });
       if (run === termsRun && table === termsTable) termsPage = page;
     } catch (err) {
       if (run === termsRun) showError(err);
@@ -1025,8 +1019,8 @@
   // e sem a coluna Termo; colar no Excel da exatamente as linhas achadas
   async function copyTermHits() {
     try {
-      const all = await invoke('terms_rows', { table: termsTable, limit: 0, label: t('terms.col') });
-      const names = all.columns.slice(1).map((col) => col.name);
+      const all = await invoke('terms_rows', { table: termsTable, limit: 0 });
+      const names = all.columns.map((col) => col.name);
       if (await copyText(rowsToTsv(names, all.rows))) showStatus('terms.copied', { count: fmt(all.rows.length) });
     } catch (err) {
       showError(err);
@@ -1052,10 +1046,10 @@
     sql: () => ({ name: 'query', unit: 'Rows', request: { scope: 'sql', sql: lastSql } }),
     found: () => ({ name: `${stem(openedPath)}_busca`, unit: 'Tables', request: { scope: 'found', search: search.trim() } }),
     terms: (format) => ({
-      name: `${stem(openedPath)}_termos`,
+      name: `${stem(openedPath)} - ${t('tabs.terms')}`, // "DB3 - Pesquisa Avançada.xlsx" (secao 19 e)
       folder: format === 'csv',
       unit: 'Tables',
-      request: { scope: 'terms', labels: ['terms.col', 'terms.status', 'tables.name', 'tables.rows', 'terms.found', 'terms.missing', 'terms.sheetResult'].map((key) => t(key)) },
+      request: { scope: 'terms', labels: [] },
     }),
   };
   // titulos Tabela, Coluna, Tipo, Aceita nulo e os valores Sim e Nao do esquema exportado, no idioma da tela
@@ -1354,21 +1348,17 @@
 
   <dialog bind:this={aboutDialog} class="about" aria-labelledby="about-title">
     {#if aboutInfo}
-      <!-- titulo "Sobre o mdb2sql" (o do Zig, o mesmo do menu); o conteudo e o desta versao -->
-      <h2 id="about-title">{t('help.about')} <span class="version">{aboutInfo.version}</span></h2>
-      <p class="tagline">{t('about.description')}</p>
-      <dl>
-        {#each aboutRows as [label, value]}
-          <dt>{label}</dt>
-          <dd>{value}</dd>
+      <!-- secao 18 b: igual nas 4, "MDB2SQL (Rust)" e as linhas de aboutLines, nada mais; os links por ultimo -->
+      <h2 id="about-title">{t('about.title')}</h2>
+      {#each aboutLines as line}
+        <p>{line}</p>
+      {/each}
+      <p class="links">
+        {#each aboutInfo.links as [label, url], i}
+          {#if i}/{/if}
+          <a href={url} title={t('about.linkTip')} onclick={(e) => openLink(e, url)} onauxclick={(e) => e.preventDefault()}>{label}</a>
         {/each}
-        {#each aboutInfo.links as [label, url]}
-          <dt>{label}</dt>
-          <dd>
-            <a href={url} title={t('about.linkTip')} onclick={(e) => openLink(e, url)} onauxclick={(e) => e.preventDefault()}>{url}</a>
-          </dd>
-        {/each}
-      </dl>
+      </p>
     {/if}
     <button type="button" class="default" onclick={() => aboutDialog.close()}>{t('common.close')}</button>
   </dialog>
@@ -1586,23 +1576,26 @@
              tabelas com acerto e a grade da escolhida; (e) os termos nao encontrados, copiaveis -->
         <div class="terms">
           <textarea bind:value={termsText} rows="8" aria-label={t('tabs.terms')} placeholder={t('terms.hint')} spellcheck="false"></textarea>
+          <!-- secao 18 c: [Pesquisar termos] | caixa com "N linhas de entrada" e o resumo (ou o progresso), o texto quebra e
+               nunca e cortado | a direita Valor inteiro | Contem, separador fino, Esta tabela | Todas as tabelas -->
           <div class="table-bar terms-bar">
-            {@render choice(MATCHES, match, (id) => (match = id), t('settings.match'), t('match.help'))}
-            {@render choice(SCOPES, termsScope, (id) => (termsScope = id), t('scope.label'))}
             {#if termsWork}
               <button type="button" class="secondary" onclick={() => invoke('cancel_terms')}>{t('common.cancel')}</button>
             {:else}
               <button type="button" title={t('sql.runTip')} onclick={runTerms} disabled={!canRunTerms}>{t('terms.run')}</button>
             {/if}
-            <span>{t('terms.count', { count: fmt(termList.terms.length) })}{termList.repeated ? t('terms.repeated', { count: fmt(termList.repeated) }) : ''}</span>
+            <p class="terms-info">
+              {t('terms.lines', { count: fmt(termList.terms.length + termList.repeated) })}
+              {#if termsWork}
+                {t('terms.progress', { done: termsWork.total ? termsWork.done + 1 : 0, total: termsWork.total, item: termsWork.item })}
+              {:else if termsResult}
+                {t(termsKey(termsResult), termsValues(termsResult))}
+              {/if}
+            </p>
+            {@render choice(MATCHES, match, (id) => (match = id), t('settings.match'), t('match.help'))}
+            <span class="separator" aria-hidden="true"></span>
+            {@render choice(SCOPES, termsScope, (id) => (termsScope = id), t('scope.label'))}
           </div>
-          <p class="table-info">
-            {#if termsWork}
-              {t('terms.progress', { done: termsWork.total ? termsWork.done + 1 : 0, total: termsWork.total, item: termsWork.item })}
-            {:else if termsResult}
-              {t('terms.summary', termsValues(termsResult))}
-            {/if}
-          </p>
         </div>
         {#if termsResult}
           <div class="terms-found">
@@ -1627,7 +1620,6 @@
                   onstatus={showStatus}
                   onerror={showError}
                   extra={termsExtra}
-                  copySkip={1}
                 />
               {/key}
             {/if}
@@ -2016,7 +2008,7 @@
 
   label {
     color: var(--muted);
-    font-size: 11px;
+    font-size: inherit;
     font-weight: 600;
   }
 
@@ -2085,59 +2077,23 @@
     width: 460px;
   }
 
-  /* Sobre: nome e versao em destaque, frase, e os detalhes numa grade de duas colunas alinhadas */
+  /* Sobre: largura para a linha do commit (40 digitos) caber inteira */
   dialog.about {
     width: 560px;
   }
 
-  dialog.about h2 {
-    font-size: 24px;
-    letter-spacing: 0.01em;
+  /* Sobre: uma linha por informacao, texto simples (secao 18 b) */
+  dialog.about p {
+    margin: 4px 0;
   }
 
-  .version {
-    margin-left: 6px;
-    padding: 2px 10px;
-    border-radius: 999px;
-    background: var(--accent);
-    color: var(--accent-text);
-    font-size: 14px;
-    vertical-align: middle;
-  }
-
-  dialog .tagline {
-    margin: 6px 0 14px;
-    color: var(--muted);
-  }
-
-  dl {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 7px 18px;
-    margin: 0;
-    padding-top: 14px;
-    border-top: 1px solid var(--border);
-  }
-
-  dt {
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 20px;
-  }
-
-  dd {
-    margin: 0;
-    overflow-wrap: anywhere;
-  }
-
-  dd a {
+  dialog.about .links a {
     color: var(--accent);
     text-decoration: underline;
     cursor: pointer;
   }
 
-  dd a:focus-visible {
+  dialog.about .links a:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
@@ -2217,7 +2173,7 @@
   .column-list small {
     margin-left: auto;
     color: var(--muted);
-    font-size: 11px;
+    font-size: inherit;
     letter-spacing: 0.04em;
   }
 
@@ -2281,7 +2237,7 @@
     background: var(--surface);
     border-bottom: 1px solid var(--border);
     color: var(--muted);
-    font-size: 11px;
+    font-size: inherit;
     font-weight: 600;
   }
 
@@ -2344,8 +2300,8 @@
     max-height: 25vh;
     padding: 4px 8px;
     resize: vertical;
-    font-family: Consolas, 'Cascadia Mono', monospace;
-    font-size: 11px;
+    font-family: inherit;
+    font-size: inherit;
     line-height: 1.4;
     white-space: pre;
   }
@@ -2354,7 +2310,7 @@
   .log-bar h2 {
     margin-right: auto;
     color: var(--muted);
-    font-size: 11px;
+    font-size: inherit;
   }
 
   /* seta de abrir/recolher o log: discreta, sem caixa */
@@ -2419,7 +2375,7 @@
     padding: 2px 6px;
     border: 1px solid var(--border);
     border-radius: 4px;
-    font-family: Consolas, 'Cascadia Mono', monospace;
+    font-family: inherit;
     user-select: all;
   }
 
@@ -2459,7 +2415,7 @@
     border-color: transparent;
     background: none;
     color: var(--muted);
-    font-size: 16px;
+    font-size: inherit;
     font-weight: 400;
     line-height: 1.4;
   }
@@ -2509,7 +2465,7 @@
     align-items: center;
     gap: 6px 12px;
     color: var(--muted);
-    font-size: 12px;
+    font-size: inherit;
   }
 
   /* nenhum botao maior que os outros numa linha (dono 26/11, abas Dados, SQL e Pesquisa Avancada): todos com o
@@ -2526,8 +2482,8 @@
     gap: 6px;
   }
 
-  /* o select do Chromium ignora line-height (texto de 18 px contra 16,8 dos botoes): 2,4 px em cima e embaixo da a
-     altura dos botoes e campos da linha (24,8 px) */
+  /* o select do Chromium ignora line-height (com 3 px ficava 1,4 px mais alto): 2,4 px em cima e embaixo da a altura
+     dos botoes e campos da linha (27,6 px com a letra de 14 px; medido no exe) */
   .limit select {
     padding: 2.4px 6px;
   }
@@ -2544,7 +2500,7 @@
     gap: 12px;
     margin: 0;
     color: var(--muted);
-    font-size: 12px;
+    font-size: inherit;
   }
 
   /* paginas ◀ ▶ logo depois da contagem, do tamanho dos botoes das linhas das abas */
@@ -2584,8 +2540,31 @@
   .terms textarea,
   .not-found textarea {
     resize: vertical;
-    font-family: Consolas, 'Cascadia Mono', monospace;
-    font-size: 12px;
+    font-family: inherit;
+    font-size: inherit;
+  }
+
+  /* linha dos controles da Pesquisa Avancada (secao 18 c): a caixa do resumo ocupa o meio, com margem, e quebra a linha
+     em vez de cortar o texto; os seletores ficam encostados a direita, com um separador fino entre eles */
+  .terms-bar {
+    flex-wrap: nowrap;
+  }
+
+  .terms-info {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  .terms-bar .separator {
+    align-self: stretch;
+    width: 1px;
+    background: var(--border);
   }
 
   /* tabelas com acerto ao lado da grade da tabela escolhida */
@@ -2610,7 +2589,7 @@
   h2 {
     margin: 0;
     color: var(--text);
-    font-size: 15px;
+    font-size: inherit;
     font-weight: 600;
   }
 
@@ -2718,7 +2697,7 @@
     align-items: center;
     gap: 8px;
     color: var(--muted);
-    font-size: 12px;
+    font-size: inherit;
   }
 
   .chip {
@@ -2730,7 +2709,7 @@
     border-radius: 999px;
     background: var(--row-hover);
     color: var(--text);
-    font-family: Consolas, 'Cascadia Mono', monospace;
+    font-family: inherit;
   }
 
   .chip button {
@@ -2761,8 +2740,8 @@
   .sql textarea {
     min-height: 90px;
     resize: vertical;
-    font-family: Consolas, 'Cascadia Mono', monospace;
-    font-size: 12px;
+    font-family: inherit;
+    font-size: inherit;
   }
 
   .empty {
@@ -2778,7 +2757,7 @@
     background: var(--surface);
     border: 1px solid var(--border);
     color: var(--muted);
-    font-size: 11px;
+    font-size: inherit;
   }
 
   .statusbar.error {

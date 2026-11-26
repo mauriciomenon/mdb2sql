@@ -10,9 +10,9 @@ $env:RUSTFLAGS = "--remap-path-prefix=$HOME=~ --remap-path-prefix=$Root=."
 $env:CFLAGS = "/d1trimfile:$Root\"
 $env:CXXFLAGS = "/d1trimfile:$Root\"
 
-# numero e data do build no dialogo Sobre (build.rs); o mesmo valor no build e no teste evita recompilar
-$env:MDB2SQL_BUILD_NUMBER = (git rev-list --count HEAD)
-$env:MDB2SQL_BUILD_DATE = Get-Date -Format 'yyyy-MM-dd'
+# commit (hash completo) e data dele no dialogo Sobre (build.rs); o mesmo valor no build e no teste evita recompilar
+$env:MDB2SQL_COMMIT = (git rev-parse HEAD)
+$env:MDB2SQL_COMMIT_DATE = (git log -1 --format=%cs)
 
 # no maximo 4 nucleos em todo build e teste (cargo e o C++ do DuckDB pelo jobserver do cargo): a maquina continua usavel
 $env:CARGO_BUILD_JOBS = '4'

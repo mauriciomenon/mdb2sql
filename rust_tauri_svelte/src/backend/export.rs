@@ -123,11 +123,10 @@ fn xlsx_err(e: XlsxError) -> String {
     format!("Excel: {e}")
 }
 
-// NIVEL BASICO: Escreve um valor do DuckDB numa celula com o tipo mais proximo
-// Numeros com mais de 15 digitos significativos vao como texto (o Excel arredondaria);
-// datas viram data do Excel (antes de 1900 o Excel nao tem data: vai texto); texto e cortado em 32.767.
+// NIVEL BASICO: Escreve um valor do DuckDB numa celula com o tipo mais proximo: todo numero e celula numerica (secao
+// 19 c e h; o Excel guarda ~15 digitos), datas viram data do Excel (antes de 1900 o Excel nao tem data: vai texto),
+// NULL fica vazio e o texto e cortado em 32.767.
 fn write_cell(ws: &mut Worksheet, row: u32, col: u16, value: ValueRef, date: &Format, datetime: &Format) -> Result<(), XlsxError> {
-    const EXACT: u128 = 1 << 53;
     let text = |v: ValueRef| json_text(&value_to_json(v));
     match value {
         ValueRef::Null => return Ok(()),
@@ -138,19 +137,16 @@ fn write_cell(ws: &mut Worksheet, row: u32, col: u16, value: ValueRef, date: &Fo
         ValueRef::UTinyInt(i) => ws.write_number(row, col, i),
         ValueRef::USmallInt(i) => ws.write_number(row, col, i),
         ValueRef::UInt(i) => ws.write_number(row, col, i),
-        ValueRef::BigInt(i) if u128::from(i.unsigned_abs()) <= EXACT => ws.write_number(row, col, i as f64),
-        ValueRef::UBigInt(i) if u128::from(i) <= EXACT => ws.write_number(row, col, i as f64),
-        ValueRef::HugeInt(i) if i.unsigned_abs() <= EXACT => ws.write_number(row, col, i as f64),
+        ValueRef::BigInt(i) => ws.write_number(row, col, i as f64),
+        ValueRef::UBigInt(i) => ws.write_number(row, col, i as f64),
+        ValueRef::HugeInt(i) => ws.write_number(row, col, i as f64),
+        ValueRef::UHugeInt(i) => ws.write_number(row, col, i as f64),
         ValueRef::Float(f) if f.is_finite() => ws.write_number(row, col, f),
         ValueRef::Double(f) if f.is_finite() => ws.write_number(row, col, f),
-        ValueRef::Decimal(d) => {
-            let s = d.to_string();
-            let digits = s.trim_start_matches(['-', '0', '.']).chars().filter(char::is_ascii_digit).count();
-            match s.parse::<f64>() {
-                Ok(f) if digits <= 15 => ws.write_number(row, col, f),
-                _ => ws.write_string(row, col, s),
-            }
-        }
+        ValueRef::Decimal(d) => match d.to_string().parse::<f64>() {
+            Ok(f) => ws.write_number(row, col, f),
+            Err(_) => ws.write_string(row, col, d.to_string()),
+        },
         ValueRef::Timestamp(..) | ValueRef::Date32(_) => {
             let s = text(value);
             let format = if matches!(value, ValueRef::Date32(_)) { date } else { datetime };
@@ -166,6 +162,30 @@ fn write_cell(ws: &mut Worksheet, row: u32, col: u16, value: ValueRef, date: &Fo
         other => ws.write_string(row, col, truncate_utf16(&text(other), EXCEL_MAX_TEXT)),
     }
     .map(|_| ())
+}
+
+// caracteres que a celula mostra no Excel (largura da coluna, secao 19 g)
+fn shown_len(value: ValueRef) -> usize {
+    match value {
+        ValueRef::Null => 0,
+        ValueRef::Date32(_) => 10,
+        ValueRef::Timestamp(..) => 19,
+        ValueRef::Text(t) => String::from_utf8_lossy(t).chars().count(),
+        // o formato Geral do Excel mostra ate 11 caracteres de um numero com casas
+        ValueRef::Float(_) | ValueRef::Double(_) => json_text(&value_to_json(value)).len().min(11),
+        other => json_text(&value_to_json(other)).chars().count(),
+    }
+}
+
+// largura de cada coluna da ultima aba pelo conteudo (o maior texto, cabecalho incluso, ate 80 caracteres). O arquivo nao
+// tem "ajustar ao conteudo" e o autofit do rust_xlsxwriter nao ve as linhas ja gravadas (constant memory): a medida e
+// feita enquanto as linhas passam e as larguras entram no arquivo ao salvar
+fn fit_columns(wb: &mut Workbook, widths: &[usize]) -> Result<(), String> {
+    let ws = wb.worksheets_mut().last_mut().expect("sheet just added");
+    for (c, width) in widths.iter().enumerate() {
+        ws.set_column_width(c as u16, (*width).min(80) as f64 + 2.0).map_err(xlsx_err)?;
+    }
+    Ok(())
 }
 
 // NIVEL BASICO: Resultado de um SELECT em abas: cabecalho na 1a linha, nova aba "<nome> (2)" a cada
@@ -199,16 +219,22 @@ pub(crate) fn write_sheets(
         Ok(())
     };
     start(wb, &mut sheets)?;
+    // cabecalho em negrito: um caractere a mais
+    let header: Vec<usize> = names.iter().map(|name| name.chars().count() + 1).collect();
+    let mut widths = header.clone();
     let mut total = 0usize;
     while let Some(row) = rows.next().map_err(|e| format!("{base}: {e}"))? {
         if sheets.last().is_some_and(|s| s.1 == max_rows) {
+            fit_columns(wb, &widths)?;
+            widths = header.clone();
             start(wb, &mut sheets)?;
         }
         let r = sheets.last().map_or(0, |s| s.1) as u32 + 1;
         // constant memory: a aba em uso e sempre a ultima criada
         let ws = wb.worksheets_mut().last_mut().expect("sheet just added");
-        for c in 0..names.len() {
+        for (c, width) in widths.iter_mut().enumerate() {
             let value = row.get_ref(c).map_err(|e| e.to_string())?;
+            *width = (*width).max(shown_len(value));
             write_cell(ws, r, c as u16, value, &date, &datetime).map_err(xlsx_err)?;
         }
         sheets.last_mut().expect("sheet just added").1 += 1;
@@ -217,6 +243,7 @@ pub(crate) fn write_sheets(
             tick()?;
         }
     }
+    fit_columns(wb, &widths)?;
     Ok(sheets)
 }
 
