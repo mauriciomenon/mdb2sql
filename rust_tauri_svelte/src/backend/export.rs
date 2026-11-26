@@ -168,6 +168,30 @@ fn write_cell(ws: &mut Worksheet, row: u32, col: u16, value: ValueRef, date: &Fo
     .map(|_| ())
 }
 
+// caracteres que a celula mostra no Excel (largura da coluna, secao 19 g)
+fn shown_len(value: ValueRef) -> usize {
+    match value {
+        ValueRef::Null => 0,
+        ValueRef::Date32(_) => 10,
+        ValueRef::Timestamp(..) => 19,
+        ValueRef::Text(t) => String::from_utf8_lossy(t).chars().count(),
+        // o formato Geral do Excel mostra ate 11 caracteres de um numero com casas
+        ValueRef::Float(_) | ValueRef::Double(_) => json_text(&value_to_json(value)).len().min(11),
+        other => json_text(&value_to_json(other)).chars().count(),
+    }
+}
+
+// largura de cada coluna da ultima aba pelo conteudo (o maior texto, cabecalho incluso, ate 80 caracteres). O arquivo nao
+// tem "ajustar ao conteudo" e o autofit do rust_xlsxwriter nao ve as linhas ja gravadas (constant memory): a medida e
+// feita enquanto as linhas passam e as larguras entram no arquivo ao salvar
+fn fit_columns(wb: &mut Workbook, widths: &[usize]) -> Result<(), String> {
+    let ws = wb.worksheets_mut().last_mut().expect("sheet just added");
+    for (c, width) in widths.iter().enumerate() {
+        ws.set_column_width(c as u16, (*width).min(80) as f64 + 2.0).map_err(xlsx_err)?;
+    }
+    Ok(())
+}
+
 // NIVEL BASICO: Resultado de um SELECT em abas: cabecalho na 1a linha, nova aba "<nome> (2)" a cada
 // max_rows linhas de dados. Devolve (nome da aba, linhas de dados) de cada aba criada.
 #[allow(clippy::too_many_arguments)] // os parametros do SELECT vao junto com ele
@@ -199,16 +223,22 @@ pub(crate) fn write_sheets(
         Ok(())
     };
     start(wb, &mut sheets)?;
+    // cabecalho em negrito: um caractere a mais
+    let header: Vec<usize> = names.iter().map(|name| name.chars().count() + 1).collect();
+    let mut widths = header.clone();
     let mut total = 0usize;
     while let Some(row) = rows.next().map_err(|e| format!("{base}: {e}"))? {
         if sheets.last().is_some_and(|s| s.1 == max_rows) {
+            fit_columns(wb, &widths)?;
+            widths = header.clone();
             start(wb, &mut sheets)?;
         }
         let r = sheets.last().map_or(0, |s| s.1) as u32 + 1;
         // constant memory: a aba em uso e sempre a ultima criada
         let ws = wb.worksheets_mut().last_mut().expect("sheet just added");
-        for c in 0..names.len() {
+        for (c, width) in widths.iter_mut().enumerate() {
             let value = row.get_ref(c).map_err(|e| e.to_string())?;
+            *width = (*width).max(shown_len(value));
             write_cell(ws, r, c as u16, value, &date, &datetime).map_err(xlsx_err)?;
         }
         sheets.last_mut().expect("sheet just added").1 += 1;
@@ -217,6 +247,7 @@ pub(crate) fn write_sheets(
             tick()?;
         }
     }
+    fit_columns(wb, &widths)?;
     Ok(sheets)
 }
 

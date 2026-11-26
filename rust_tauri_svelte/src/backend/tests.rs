@@ -19,6 +19,78 @@ mod tests {
         |_, _, _| Ok(())
     }
 
+    // Le de volta uma aba de um .xlsx (secao 19 f): o tar do Windows abre zip. Devolve, por linha, as celulas como
+    // (referencia, tipo, valor): tipo "n" = numero (sem atributo t), "s"/"inlineStr"/"b" como no arquivo; valor da string
+    // ja resolvido. E as larguras de <cols>
+    #[cfg(windows)]
+    fn xlsx_sheet(file: &Path, sheet: usize) -> (Vec<Vec<(String, String, String)>>, Vec<f64>) {
+        let out = file.with_extension("unzipped");
+        std::fs::create_dir_all(&out).unwrap();
+        let tar = Path::new(&std::env::var("SystemRoot").unwrap()).join("System32").join("tar.exe");
+        assert!(std::process::Command::new(tar).arg("-xf").arg(file).arg("-C").arg(&out).status().unwrap().success());
+        let read = |p: &str| std::fs::read_to_string(out.join(p)).unwrap_or_default();
+        let xml = read(&format!("xl/worksheets/sheet{sheet}.xml"));
+        let shared: Vec<String> = read("xl/sharedStrings.xml").split("<si>").skip(1).map(|si| text_of(si, "<t", "</t>")).collect();
+        let attr = |tag: &str, name: &str| tag.split(&format!(" {name}=\"")).nth(1).map(|v| v.split('"').next().unwrap().to_string());
+        let rows = xml
+            .split("<row ")
+            .skip(1)
+            .map(|row| {
+                row.split("<c ")
+                    .skip(1)
+                    .map(|cell| {
+                        let tag = cell.split('>').next().unwrap();
+                        let kind = attr(tag, "t").unwrap_or_else(|| "n".into());
+                        let value = match kind.as_str() {
+                            "s" => shared[text_of(cell, "<v", "</v>").parse::<usize>().unwrap()].clone(),
+                            "inlineStr" | "str" => text_of(cell, "<t", "</t>"),
+                            _ => text_of(cell, "<v", "</v>"),
+                        };
+                        (attr(tag, "r").unwrap(), kind, value)
+                    })
+                    .collect()
+            })
+            .collect();
+        let widths = xml.split("<col ").skip(1).map(|col| attr(col, "width").unwrap().parse().unwrap()).collect();
+        (rows, widths)
+    }
+
+    // texto entre <tag ...> e </tag> (o primeiro), com as entidades basicas do XML
+    #[cfg(windows)]
+    fn text_of(xml: &str, open: &str, close: &str) -> String {
+        let Some(start) = xml.find(open).and_then(|i| xml[i..].find('>').map(|j| i + j + 1)) else { return String::new() };
+        let end = xml[start..].find(close).map_or(start, |j| start + j);
+        xml[start..end].replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&amp;", "&")
+    }
+
+    // secao 19 c, f e g: no Excel, numero e celula numerica, data e data, NULL vazio, titulos iguais aos da tabela e a
+    // largura de cada coluna pelo conteudo
+    #[cfg(windows)]
+    #[test]
+    fn xlsx_keeps_types_titles_and_fits_columns() {
+        let dir = tempdir().unwrap();
+        let path = sample_duckdb(dir.path());
+        duckdb::Connection::open(&path).unwrap().execute_batch("UPDATE points SET name = 'um texto bem comprido para a coluna crescer' WHERE id = 1").unwrap();
+        let manager = DBManager::new();
+        manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+        let conn = manager.export_connection().unwrap();
+        let file = dir.path().join("points.xlsx");
+        export::write_tables(&conn, &["points".to_string()], "xlsx", &file, &mut ok_progress()).unwrap();
+        let (rows, widths) = xlsx_sheet(&file, 1);
+        let header: Vec<&str> = rows[0].iter().map(|c| c.2.as_str()).collect();
+        assert_eq!(header, ["id", "name", "ts", "d", "t", "n", "u", "ok", "x"]);
+        let kinds: Vec<(&str, &str)> = rows[1].iter().map(|c| (c.0.as_str(), c.1.as_str())).collect();
+        // id, ts (data), d (data), n (decimal), u, x: numero; ok: booleano; name e t (hora): texto
+        assert_eq!(kinds.iter().filter(|k| k.1 == "n").map(|k| k.0).collect::<Vec<_>>(), ["A2", "C2", "D2", "F2", "G2", "I2"]);
+        assert_eq!(rows[1][0].2, "1");
+        assert_eq!(rows[1][5].2, "12.3");
+        // linha so com NULL: so o id tem celula
+        assert_eq!(rows[2].iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), ["A3"]);
+        // largura pelo conteudo: o texto comprido alarga a coluna name; id fica estreita
+        assert_eq!(widths.len(), 9);
+        assert!(widths[1] >= 40.0 && widths[0] < 10.0, "{widths:?}");
+    }
+
     // banco DuckDB pequeno com os tipos que importam (inteiro, texto com virgula/aspas, data, hora, decimal...)
     fn sample_duckdb(dir: &Path) -> PathBuf {
         let path = dir.join("real.duckdb");
