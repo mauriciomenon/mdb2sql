@@ -11,7 +11,7 @@ from backend.access import odbc_available
 from shared import about, i18n
 from shared.bundle import bundled
 from shared.display import decide
-from ui.dialogs import AboutDialog, ColumnsDialog, DisplayWarning
+from ui.dialogs import AboutDialog, ChoiceBox, ColumnsDialog, DisplayWarning
 from ui.main_window import MainWindow
 
 GITHUB = "https://github.com/mauriciomenon/mdb2sql"
@@ -39,8 +39,10 @@ def test_title_is_short_and_uses_the_single_version_source() -> None:
 def test_about_fields() -> None:
     fields = dict(about.about_fields())
 
-    # as linhas do Sobre do Rust, igual nas 4 versoes
-    assert list(fields) == ["Build", "Stack", "Window", "Databases", "Access reading", "Author", "License"]
+    # as linhas do Sobre do Rust, igual nas 4 versoes, e a da gravacao depois da leitura do Access
+    assert list(fields) == ["Build", "Stack", "Window", "Databases", "Access reading", "Writing", "Author", "License"]
+    assert fields["Writing"] == ("SQLite, DuckDB, Excel and CSV. .mdb and .accdb files cannot be written: the Access "
+                                 "format is proprietary to Microsoft.")
     assert fields["Build"] == "dev"
     assert re.fullmatch(r"Python [\d.]+\S* \+ PyQt6 [\d.]+", fields["Stack"])
     assert re.fullmatch(r"Qt [\d.]+", fields["Window"])
@@ -75,7 +77,8 @@ def test_every_dialog_has_an_explicit_default_button_and_esc_closes(qtbot) -> No
     # REGRA_VISUAL: botao explicito (OK/Fechar), Enter = botao padrao, Esc = fechar; nunca so o X
     _, notice = decide({"WAYLAND_DISPLAY": "wayland-0"}, "ID=debian\n", [])
     for dialog, label in ((AboutDialog(), "OK"), (ColumnsDialog("t", ["a"], set()), "Close"),
-                          (DisplayWarning(notice), "OK")):
+                          (DisplayWarning(notice), "OK"),
+                          (ChoiceBox("t", "q", {"s": "Save"}, {"b": "Back", "e": "Exit"}, "s", "b"), "Save")):
         qtbot.addWidget(dialog)
         dialog.show()
         defaults = [b.text() for b in dialog.findChildren(QPushButton) if b.isDefault()]

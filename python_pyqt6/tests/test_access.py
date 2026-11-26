@@ -209,7 +209,9 @@ def test_sample_mdb_converts_once_to_a_typed_sqlite_file(monkeypatch, tmp_path: 
     assert not folder.exists() and copy.exists()
 
 
-def test_release_saves_the_converted_sqlite(monkeypatch, tmp_path: Path) -> None:
+def test_saving_an_access_file_as_sqlite_copies_the_converted_file(monkeypatch, tmp_path: Path) -> None:
+    from backend.export import export_database
+
     if access.mdbtools_dir() is None:
         pytest.skip("sem .tools/mdbtools")
     monkeypatch.setenv("MDB2SQL_ACCESS_READER", "mdbtools")
@@ -218,11 +220,14 @@ def test_release_saves_the_converted_sqlite(monkeypatch, tmp_path: Path) -> None
     target = tmp_path / "out" / "sample.sqlite"
     target.parent.mkdir()
     target.write_bytes(b"old")  # o dialogo de salvar ja confirmou a troca
-    folder = manager.converted.parent
+    converted = manager.converted
 
-    manager.release(save_to=target)
-
-    assert not folder.exists() and manager.converted is None
+    assert export_database(manager, target, lambda *_a: None) == 2
+    assert target.read_bytes() == converted.read_bytes()  # a copia, com os tipos declarados
+    with pytest.raises(ValueError, match="open database"):  # o temporario nunca e o destino
+        export_database(manager, converted, lambda *_a: None)
+    manager.release()
+    assert not converted.parent.exists() and manager.converted is None
     with DBManager(str(target)) as saved:  # o salvo abre como SQLite comum, com os mesmos dados
         assert saved.reader == "SQLite" and _all_rows(saved, "points") == SAMPLE_ROWS
 

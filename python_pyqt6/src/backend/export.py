@@ -84,6 +84,13 @@ def _staged(out: Path, cancel: threading.Event | None) -> Iterator[Path]:
         _remove(temp)
 
 
+def _refuse_open(manager: DBManager, out: Path) -> None:
+    # nunca por cima do arquivo aberto nem do SQLite temporario convertido do Access
+    reading = [Path(path).resolve() for path in (manager.current_db, manager.converted) if path]
+    if out.resolve() in reading:
+        raise ValueError(tr("error.export_self"))
+
+
 def export_database(
     manager: DBManager, out: Path, progress: Progress, cancel: threading.Event | None = None
 ) -> int:
@@ -91,8 +98,7 @@ def export_database(
     suffix = out.suffix.lower()
     if suffix not in DATABASE_FORMATS:
         raise ValueError(tr("error.export_format", suffix=suffix))
-    if manager.current_db and out.resolve() == Path(manager.current_db).resolve():
-        raise ValueError(tr("error.export_self"))
+    _refuse_open(manager, out)
     tables = manager.list_tables()
     with _staged(out, cancel) as temp:
         if suffix == ".xlsx":

@@ -23,10 +23,11 @@ def isolated_settings(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(temp_store, "temp_folders", lambda: [sessions])
     monkeypatch.delenv("MDB2SQL_SETTINGS", raising=False)
     i18n.set_language("en")
-    # a pergunta do SQLite convertido e modal (exec): nos testes responde "Apagar", salvo quando o teste troca
-    from ui.main_window import DELETE, MainWindow
+    # as perguntas ao sair sao modais (exec): nos testes respondem "Sair", salvo quando o teste troca
+    from ui.main_window import EXIT, MainWindow
 
-    monkeypatch.setattr(MainWindow, "ask_converted", lambda _self, _source: (DELETE, False))
+    monkeypatch.setattr(MainWindow, "ask_exit", lambda _self, _source: EXIT)
+    monkeypatch.setattr(MainWindow, "ask_export_running", lambda _self, _name: EXIT)
 
 
 @pytest.fixture

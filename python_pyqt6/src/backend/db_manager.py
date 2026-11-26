@@ -451,15 +451,12 @@ class DBManager:
         self.sqlite_file = None
         self._tables = None
 
-    def release(self, save_to: Optional[Path] = None) -> None:
-        """Fecha; o SQLite convertido do Access vai para save_to ou e apagado (com a pasta dele)."""
+    def release(self) -> None:
+        """Fecha; o SQLite convertido do Access e apagado (com a pasta dele)."""
         self.close()
         converted, self.converted = self.converted, None
-        if converted is None:
-            return
-        if save_to is not None and converted.is_file():
-            shutil.move(converted, save_to)  # outro disco: copia e apaga; destino existente e substituido
-        shutil.rmtree(converted.parent, ignore_errors=True)
+        if converted is not None:
+            shutil.rmtree(converted.parent, ignore_errors=True)
 
     def __enter__(self):
         # Suporte a context manager (with statement)

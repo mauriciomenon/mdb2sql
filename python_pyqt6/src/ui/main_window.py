@@ -30,7 +30,6 @@ from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QGuiApplication, Q
 from PyQt6.QtWidgets import (
     QAbstractButton,
     QApplication,
-    QCheckBox,
     QComboBox,
     QDockWidget,
     QFileDialog,
@@ -77,7 +76,7 @@ from shared.about import app_title
 from shared.bundle import resource
 from shared.i18n import num, tr
 from shared.tsv import rows_to_tsv
-from ui.dialogs import AboutDialog, ColumnsDialog
+from ui.dialogs import AboutDialog, ChoiceBox, ColumnsDialog
 from ui.table_model import COPY_ROLE, SORT_ROLE, TableModel, fold, search_words
 from ui.widgets import FlowLayout, PathEdit, SelectionTextDelegate, WrapLabel
 
@@ -95,8 +94,8 @@ SCOPES = {"table": "scope.table", "all": "scope.all"}
 THEMES = {"system": Qt.ColorScheme.Unknown, "light": Qt.ColorScheme.Light, "dark": Qt.ColorScheme.Dark}
 # lista de tabelas: linha selecionada com o destaque da paleta (claro e escuro)
 TABLES_STYLE = "QTreeView::item:selected { background: palette(highlight); color: palette(highlighted-text); }"
-# resposta da pergunta sobre o SQLite convertido do Access
-SAVE, DELETE, CANCEL = "save", "delete", "cancel"
+# respostas das perguntas ao sair (SQLite convertido do Access nao salvo; exportacao em andamento)
+SAVE, BACK, EXIT = "save", "back", "exit"
 
 
 def open_filter() -> str:
@@ -250,7 +249,9 @@ class MainWindow(QMainWindow):
         self.matched_rows = 0  # linhas da tabela que passam nos filtros e na pesquisa
         self.loaded_search = ""  # pesquisa usada na consulta da tabela carregada
         self.loaded_filters: list[tuple[str, Any]] = []  # filtros usados na consulta da tabela carregada
-        self.converted_choice: str | None = None  # "Lembrar nesta sessao" da pergunta do SQLite convertido
+        self.converted_saved = False  # o banco aberto ja foi gravado por Salvar: nada a perguntar ao sair
+        # trabalho longo em andamento (_start_job): o que o cancela e, numa exportacao, o nome do arquivo
+        self._job: tuple[threading.Event, str] | None = None
         self._table_request = 0
         self._sql_request = 0
         self._db_request = 0
@@ -322,14 +323,13 @@ class MainWindow(QMainWindow):
         self._t(self.open_action.setToolTip, "tip.open")
         self.reload_action = self._action("action.reload", self.load_database, "F5")
         self._t(self.reload_action.setToolTip, "tip.reload")
-        self.close_db_action = self._action("action.close", self.close_database, QKeySequence.StandardKey.Close)
+        self.close_db_action = self._action("action.close", self.release_database, QKeySequence.StandardKey.Close)
         self.quit_action = self._action("action.quit", self.close, "Ctrl+Q")
 
-        # Exportar (os itens do Rust, nesta ordem nas 4 versoes): banco inteiro para SQLite, DuckDB, Excel (uma aba por
-        # tabela); tabela atual e resultado do SQL para CSV e Excel
-        self.export_db_actions = []
-        for suffix, key in ((".sqlite", "export.db_sqlite"), (".duckdb", "export.db_duckdb"), (".xlsx", "export.db_xlsx")):
-            self.export_db_actions.append(self._action(key, lambda _c=False, s=suffix: self.export_database_as(s)))
+        # Salvar / Salvar como...: o banco inteiro em SQLite, DuckDB ou Excel (uma aba por tabela), com qualquer
+        # banco aberto; Exportar fica com o que e mais especifico (tabela atual e resultado do SQL para CSV e Excel)
+        self.save_action = self._action("action.save", lambda: self.save_database(), QKeySequence.StandardKey.Save)
+        self.save_as_action = self._action("action.save_as", lambda: self.save_database(save_as=True), "Ctrl+Shift+S")
         self.export_table_actions = []
         for suffix, key in ((".csv", "export.table_csv"), (".xlsx", "export.table_xlsx")):
             self.export_table_actions.append(self._action(key, lambda _c=False, s=suffix: self.export_table_as(s)))
@@ -825,8 +825,6 @@ class MainWindow(QMainWindow):
         # Exportar... abre o mesmo menu de Arquivo > Exportar, logo abaixo do botao
         self.export_menu = QMenu(self)
         self._t(self.export_menu.setTitle, "menu.export")
-        self.export_menu.addActions(self.export_db_actions)
-        self.export_menu.addSeparator()
         self.export_menu.addActions(self.export_table_actions)
         self.export_menu.addSeparator()
         self.export_menu.addActions(self.export_sql_actions)
@@ -844,7 +842,7 @@ class MainWindow(QMainWindow):
         row.addWidget(self.path_edit, 1)
         for button in (self.browse_button, self.open_button, self.export_button):
             row.addWidget(button)
-        toolbar = QToolBar(self)
+        self.top_bar = toolbar = QToolBar(self)
         self._t(toolbar.setWindowTitle, "toolbar.main")
         toolbar.setObjectName("mainToolbar")
         toolbar.setMovable(False)
@@ -867,7 +865,7 @@ class MainWindow(QMainWindow):
         return None
 
     def dragEnterEvent(self, event) -> None:  # noqa: N802 (Qt)
-        if self.dropped_file(event) is not None:
+        if self.dropped_file(event) is not None and self._job is None:  # exportando: nada abre
             event.acceptProposedAction()
 
     def dropEvent(self, event) -> None:  # noqa: N802 (Qt)
@@ -895,9 +893,9 @@ class MainWindow(QMainWindow):
             item.setEnabled(not opening)
 
     def _open_chosen(self, path: Path) -> None:
-        if self.release_database():  # Access convertido: pergunta antes (Cancelar mantem o aberto)
-            self._remember_dir(path)
-            self.open_database(path)
+        self.release_database()
+        self._remember_dir(path)
+        self.open_database(path)
 
     def _create_menus(self) -> None:
         menu_bar = self.menuBar()
@@ -906,11 +904,13 @@ class MainWindow(QMainWindow):
         file_menu = menu_bar.addMenu("")
         self._t(file_menu.setTitle, "menu.file")
         file_menu.addAction(self.open_action)
+        file_menu.addActions([self.save_action, self.save_as_action])
         file_menu.addMenu(self.export_menu)
         file_menu.addAction(self.close_db_action)
         file_menu.addSeparator()
         file_menu.addAction(self.quit_action)
-        self.addAction(self.reload_action)
+        # !T: Also on the window: Ctrl+Q still works while a job disables the menu bar (closeEvent asks first)
+        self.addActions([self.reload_action, self.quit_action])
 
         edit_menu = menu_bar.addMenu("")
         self._t(edit_menu.setTitle, "menu.edit")
@@ -1272,13 +1272,13 @@ class MainWindow(QMainWindow):
         # consultas de tabela e SQL ainda pendentes sao do banco anterior: descartar o que elas devolverem
         self._table_request += 1
         self._sql_request += 1
-        if self.manager is not None:
-            # recarregar (F5) o mesmo arquivo: o anterior fecha depois das consultas em andamento; o SQLite
-            # convertido dele e substituido pelo novo, sem pergunta
-            self.manager.release()
+        # reabrir (F5) o mesmo arquivo: o anterior fecha agora; o SQLite convertido dele, se nao foi salvo, e
+        # descartado (Log) e substituido pelo novo, sem pergunta
+        self._drop_manager()
         self.manager = manager
         self.current_db_path = db_path
         self.current_db_key = source_key
+        self.converted_saved = False
         self.sql_query = None
         self.sql_model.set_rows([])
         self.sql_info.clear()
@@ -1322,72 +1322,26 @@ class MainWindow(QMainWindow):
         self._set_message(self.status_label, tr("status.error", message=message), error=True)
         self._set_opening(False)
 
-    # ------------------------------------------- fechar: SQLite convertido do Access
+    # ------------------------------------------- fechar e sair: SQLite convertido do Access
 
-    def ask_converted(self, source: Path) -> tuple[str, bool]:
-        """Pergunta o que fazer com o SQLite convertido: (SAVE | DELETE | CANCEL, lembrar nesta sessao)."""
-        # igual ao Go: titulo, pergunta, "Lembrar nesta sessao", Salvar... / Apagar / Cancelar (sem icone)
-        box = QMessageBox(QMessageBox.Icon.NoIcon, tr("converted.title"), tr("converted.text", name=source.name),
-                          QMessageBox.StandardButton.NoButton, self)
-        save = box.addButton(tr("converted.save"), QMessageBox.ButtonRole.AcceptRole)
-        delete = box.addButton(tr("converted.delete"), QMessageBox.ButtonRole.DestructiveRole)
-        cancel = box.addButton(tr("button.cancel"), QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(save)
-        box.setEscapeButton(cancel)
-        remember = QCheckBox(tr("converted.remember"))
-        box.setCheckBox(remember)
-        box.exec()
-        choice = {save: SAVE, delete: DELETE}.get(box.clickedButton(), CANCEL)
-        return choice, remember.isChecked() and choice != CANCEL
+    def unsaved_conversion(self) -> bool:
+        """O banco aberto e um Access convertido que ainda nao foi gravado por Salvar."""
+        return self.manager is not None and self.manager.converted is not None and not self.converted_saved
 
-    def ask_converted_target(self, source: Path) -> Path | None:
-        # padrao: ao lado do arquivo de origem, <origem>.sqlite
-        file_name, _ = QFileDialog.getSaveFileName(
-            self, tr("converted.save_title"), str(source.with_suffix(".sqlite")), file_type(".sqlite")
-        )
-        if not file_name:
-            return None
-        path = Path(file_name)
-        return path if path.suffix.lower() == ".sqlite" else path.with_name(path.name + ".sqlite")
-
-    def release_database(self) -> bool:
-        """Fecha o banco aberto. Com SQLite convertido do Access, pergunta: salvar, apagar ou cancelar (False)."""
-        manager = self.manager
+    def _drop_manager(self) -> None:
+        # fechar, abrir outro e reabrir (F5) nao perguntam: o convertido que nao foi salvo e apagado, com a linha no
+        # Log
+        manager, source, discarded = self.manager, self.current_db_path, self.unsaved_conversion()
         if manager is None:
-            return True
-        # uma abertura ainda em andamento (F5) nao troca o banco durante a pergunta: o resultado dela e descartado
-        self._db_request += 1
-        self._set_opening(False)
-        target = None
-        if manager.converted is not None and self.current_db_path is not None:
-            choice = self.converted_choice
-            while True:
-                if choice is None:
-                    choice, remember = self.ask_converted(self.current_db_path)  # Esc e o X da janela: Cancelar
-                    if remember:
-                        self.converted_choice = choice
-                if choice == CANCEL:
-                    return False
-                if choice == DELETE:
-                    break
-                target = self.ask_converted_target(self.current_db_path)
-                if target is not None:
-                    break
-                choice = None  # cancelou o dialogo de salvar: volta para a pergunta
-        source, source_key, converted = self.current_db_path, self.current_db_key, manager.converted
+            return
+        manager.release()
+        if discarded and source is not None:
+            self.log(tr("log.discarded", name=source.name))
+
+    def release_database(self) -> None:
+        """Fecha o banco aberto, sem perguntar."""
+        self._drop_manager()
         self._clear_database()
-        try:
-            manager.release(target)
-        except OSError as exc:
-            self._set_message(self.status_label, tr("status.error", message=exc), error=True)
-            return True
-        if target is not None and source is not None and converted is not None and target.is_file():
-            # o mesmo Access, sem mudanca, abre direto este SQLite (nesta e nas proximas execucoes)
-            self._remember_conversion(source, source_key, target)
-            self._set_message(self.status_label, tr("status.converted_saved", path=target))
-        elif converted is not None:
-            self.log(tr("log.converted_deleted", name=converted.name))
-        return True
 
     def _clear_database(self) -> None:
         # tela vazia; respostas pendentes do banco fechado sao descartadas
@@ -1399,6 +1353,7 @@ class MainWindow(QMainWindow):
         self.table_load_timer.stop()
         self.manager = None
         self.current_db_path = None
+        self.converted_saved = False
         self.loaded_table = None
         self.loaded_schema = []
         self.sql_query = None
@@ -1418,13 +1373,47 @@ class MainWindow(QMainWindow):
         self._set_opening(False)
         self._update_export_actions()
 
-    def close_database(self) -> None:
-        self.release_database()
+    def exit_box(self, source: Path) -> ChoiceBox:
+        """A pergunta ao sair com o SQLite convertido nao salvo (sem abrir): Salvar a esquerda; Voltar e Sair a
+        direita. Esc e o X da caixa: Voltar."""
+        return ChoiceBox(tr("converted.title"), tr("exit.text", name=source.name), {SAVE: tr("button.save")},
+                         {BACK: tr("button.back"), EXIT: tr("button.exit")}, SAVE, BACK, self)
+
+    def ask_exit(self, source: Path) -> str:
+        box = self.exit_box(source)
+        box.exec()
+        return box.choice
+
+    def export_running_box(self, name: str) -> ChoiceBox:
+        """A pergunta ao sair com uma exportacao em andamento (sem abrir): Voltar ou Sair (cancela a exportacao)."""
+        return ChoiceBox(tr("export.run_title"), tr("export.run_text", name=name), {},
+                         {BACK: tr("button.back"), EXIT: tr("button.exit")}, BACK, BACK, self)
+
+    def ask_export_running(self, name: str) -> str:
+        box = self.export_running_box(name)
+        box.exec()
+        return box.choice
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt)
-        if not self.release_database():
-            event.ignore()  # Cancelar: o app continua aberto
-            return
+        # sair do programa (X, Arquivo > Sair, Ctrl+Q, Alt+F4). Antes de tudo, a exportacao em andamento: Sair
+        # cancela (o arquivo parcial e apagado); a pesquisa de termos em andamento e cancelada sem perguntar
+        if self._job is not None:
+            cancel, exporting = self._job
+            if exporting and self.ask_export_running(exporting) != EXIT:
+                event.ignore()
+                return
+            cancel.set()
+            self.thread_pool.waitForDone()
+        # so com Access convertido e nao salvo: Salvar abre a caixa de salvar (cancelada, a pergunta volta) e o
+        # programa fecha depois de gravar; Sair apaga o temporario
+        while self.unsaved_conversion() and self.current_db_path is not None:
+            choice = self.ask_exit(self.current_db_path)
+            if choice == EXIT:
+                break
+            if choice == BACK or self.save_database(then=self.close):
+                event.ignore()
+                return
+        self.release_database()
         # sobra da sessao (conversao ainda em andamento) some quando as threads terminam
         self.thread_pool.waitForDone()
         if self.session is not None:
@@ -1798,7 +1787,7 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------------- export
 
     def _update_export_actions(self) -> None:
-        for action in self.export_db_actions:
+        for action in (self.save_action, self.save_as_action):
             action.setEnabled(self.manager is not None)
         for action in self.export_table_actions:
             action.setEnabled(self.manager is not None and self.loaded_table is not None)
@@ -1826,34 +1815,67 @@ class MainWindow(QMainWindow):
         box.exec()
         return {whole: False, found: True}.get(box.clickedButton())
 
-    def _ask_save_path(self, title: str, name: str, suffix: str) -> Path | None:
-        # pasta padrao: a do arquivo aberto; sem ele, a ultima pasta usada
-        folder = default_save_dir(self.current_db_path, self.settings.value("last_dir"))
-        target = folder / f"{name}{suffix}"
+    def _ask_save_path(self, title: str, name: str, suffixes: tuple[str, ...], chosen: str = "",
+                       folder: Path | None = None) -> Path | None:
+        """Caixa de salvar nativa: os tipos de `suffixes` com `chosen` ja marcado (o primeiro, sem ele) e o nome
+        sugerido em `folder` (a pasta do arquivo aberto; sem ele, a ultima usada). None = cancelada."""
+        chosen = chosen or suffixes[0]
+        folder = folder or default_save_dir(self.current_db_path, self.settings.value("last_dir"))
+        target = folder / f"{name}{chosen}"
         reading = {self.current_db_path, Path(self.manager.current_db) if self.manager and self.manager.current_db else None}
         if target in reading:
-            target = folder / f"{name}_export{suffix}"  # nunca sugerir o proprio banco aberto
-        file_name, _ = QFileDialog.getSaveFileName(self, title, str(target), file_type(suffix))
-        if not file_name:
-            return None
-        path = Path(file_name)
-        if path.suffix.lower() != suffix:
-            path = path.with_name(path.name + suffix)
+            target = folder / (tr("save.copy_name", name=name) + chosen)  # nunca sugerir o proprio banco aberto
+        types = {file_type(suffix): suffix for suffix in suffixes}
+        while True:
+            file_name, picked = QFileDialog.getSaveFileName(self, title, str(target), ";;".join(types), file_type(chosen))
+            if not file_name:
+                return None
+            path = Path(file_name)
+            picked = types.get(picked, chosen)
+            if path.suffix.lower() not in suffixes:
+                path = path.with_name(path.name + picked)
+            elif path.suffix.lower() == chosen != picked:
+                # !T: The Windows dialog renames the file when the type changes; Qt's own dialog (Linux) keeps the
+                # !T: suggested extension, and the type the user picked is the one that counts
+                path = path.with_suffix(picked)
+            if path == Path(file_name) or not path.exists():
+                break
+            target = path  # o nome mudou para um arquivo que ja existe: a caixa pergunta de novo, com ele
         self._remember_dir(path)
+        self.settings.setValue("save_dir", str(path.parent))
         return path
 
     @staticmethod
     def _dialog_title(action: QAction) -> str:
         return action.text().replace("&", "").removesuffix("...")  # "Tabela atual para CSV"
 
-    def export_database_as(self, suffix: str) -> None:
-        if self.manager is None or self.current_db_path is None:
-            return
-        title = self._dialog_title(self.export_db_actions[(".sqlite", ".duckdb", ".xlsx").index(suffix)])
-        out = self._ask_save_path(title, self.current_db_path.stem, suffix)
-        if out is not None:
-            manager = self.manager
-            self._start_export(out, lambda report, cancel: export_database(manager, out, report, cancel), "tables")
+    def save_database(self, save_as: bool = False, then: Callable[[], object] | None = None) -> bool:
+        """Arquivo > Salvar / Salvar como...: o banco aberto inteiro em SQLite, DuckDB ou Excel (uma aba por tabela),
+        ja marcado o tipo do aberto. Salvar comeca na pasta do arquivo original; Salvar como... na ultima pasta em que
+        o usuario salvou ou exportou. `then` roda depois de gravado. False = caixa cancelada."""
+        manager, source, source_key = self.manager, self.current_db_path, self.current_db_key
+        if manager is None or source is None:
+            return False
+        access = source.suffix.lower() in ACCESS_EXT
+        chosen = ".duckdb" if manager.reader == "DuckDB" and not access else ".sqlite"
+        last = Path(str(self.settings.value("save_dir", "")))
+        folder = last if save_as and last.is_dir() else default_save_dir(source, None)
+        out = self._ask_save_path(tr("save.title"), source.stem, (".sqlite", ".duckdb", ".xlsx"), chosen, folder)
+        if out is None:
+            return False
+
+        def saved() -> None:
+            # Access gravado: nada mais a perguntar ao sair; em SQLite ou DuckDB, o mesmo Access sem mudanca abre
+            # direto o arquivo salvo (nesta e nas proximas execucoes)
+            if manager is self.manager:
+                self.converted_saved = True
+            if access and out.suffix.lower() != ".xlsx" and out.is_file():
+                self._remember_conversion(source, source_key, out)
+            if then is not None:
+                then()
+
+        self._start_export(out, lambda report, cancel: export_database(manager, out, report, cancel), "tables", saved)
+        return True
 
     def export_table_as(self, suffix: str) -> None:
         # a tabela atual inteira; com a grade mostrando parte dela (pesquisa ou filtro por valor) pergunta: inteira ou
@@ -1868,7 +1890,7 @@ class MainWindow(QMainWindow):
         if not found:
             filters, search = [], ""
         title = self._dialog_title(self.export_table_actions[(".csv", ".xlsx").index(suffix)])
-        out = self._ask_save_path(title, table, suffix)
+        out = self._ask_save_path(title, table, (suffix,))
         if out is not None:
             manager = self.manager
 
@@ -1884,44 +1906,71 @@ class MainWindow(QMainWindow):
             return
         query = self.sql_query
         title = self._dialog_title(self.export_sql_actions[(".csv", ".xlsx").index(suffix)])
-        out = self._ask_save_path(title, "query", suffix)
+        out = self._ask_save_path(title, "query", (suffix,))
         if out is not None:
             manager = self.manager
             self._start_export(
                 out, lambda report, cancel: export_result(manager, query, "query", out, report, cancel), "rows"
             )
 
-    def _start_export(self, out: Path, task: Callable, unit: str) -> None:
-        # exportacao em thread: dialogo modal com progresso e Cancelar (apaga o arquivo parcial)
+    def _start_export(self, out: Path, task: Callable, unit: str, done: Callable[[], object] | None = None) -> None:
+        # task(report, cancel) grava em out (arquivo ou pasta) e devolve quantas tabelas ou linhas (unit); done()
+        # roda depois de gravado
+        def run(report, cancel):
+            return task(lambda count, total, item: report(
+                count, total, tr("export.running_item", name=out.name, item=item) if item else ""), cancel)
+
+        def finished(count: object) -> None:
+            self._set_message(self.status_label, counted(f"export.done_{unit}", count, path=out))  # type: ignore[arg-type]
+            if done is not None:
+                done()
+
+        self._start_job(tr("export.title"), tr("export.running", name=out.name), run, finished,
+                        tr("export.cancelled", name=out.name), "export.failed", exporting=out.name)
+
+    def _start_job(self, title: str, label: str, task: Callable, done: Callable[[object], None], cancelled: str,
+                   failed: str = "status.error", exporting: str = "") -> None:
+        """Trabalho longo em thread, com dialogo de progresso e Cancelar. task(report, cancel) devolve o resultado
+        entregue a done(); Cancelled (o Cancelar do dialogo) mostra `cancelled`, erro mostra o texto de `failed`.
+
+        Enquanto ele roda a janela nao aceita mais nada, menos sair (X, Alt+F4, Ctrl+Q): closeEvent pergunta antes
+        quando e uma exportacao (`exporting` = nome do arquivo)."""
         cancel = threading.Event()
-        dialog = QProgressDialog(tr("export.running", name=out.name), tr("button.cancel"), 0, 0, self)
-        dialog.setWindowTitle(tr("export.title"))
-        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog = QProgressDialog(label, tr("button.cancel"), 0, 0, self)
+        dialog.setWindowTitle(title)
         dialog.setMinimumDuration(0)
         dialog.setAutoClose(False)
         dialog.setAutoReset(False)
         dialog.canceled.connect(cancel.set)
         dialog.show()
-        self.export_dialog = dialog
+        job = self._job = (cancel, exporting)
+        self._set_working(True)
 
-        def progress(done: int, total: int, text: str) -> None:
+        def progress(count: int, total: int, text: str) -> None:
             if total:
                 dialog.setRange(0, total)
-                dialog.setValue(done)
+                dialog.setValue(count)
             if text:
-                dialog.setLabelText(tr("export.running_item", name=out.name, item=text))
+                dialog.setLabelText(text)
 
-        def finished(message: str, error: bool = False, warning: bool = False) -> None:
+        def close_dialog() -> None:
+            if self._job is job:  # nao o de um trabalho mais novo (Salvar pedido ao sair, logo depois de cancelar)
+                self._job = None
+                self._set_working(False)
             dialog.canceled.disconnect(cancel.set)
             dialog.close()
-            dialog.deleteLater()  # nao acumula dialogos "Export" escondidos
-            self._set_message(self.status_label, message, error=error, warning=warning)
+            dialog.deleteLater()  # nao acumula dialogos escondidos
 
-        def cancelled_or_done(_request_id: int, count: object) -> None:
-            if count is None:
-                finished(tr("export.cancelled", name=out.name), warning=True)
+        def succeeded(_request_id: int, result: object) -> None:
+            close_dialog()
+            if result is None:
+                self._set_message(self.status_label, cancelled, warning=True)
             else:
-                finished(counted(f"export.done_{unit}", count, path=out))  # type: ignore[arg-type]
+                done(result)
+
+        def errored(_request_id: int, message: str) -> None:
+            close_dialog()
+            self._set_message(self.status_label, tr(failed, message=message), error=True)
 
         def run(report):
             try:
@@ -1929,5 +1978,8 @@ class MainWindow(QMainWindow):
             except Cancelled:
                 return None
 
-        failed = lambda _id, message: finished(tr("export.failed", message=message), True)  # noqa: E731
-        self._run(0, run, cancelled_or_done, failed, progress)
+        self._run(0, run, succeeded, errored, progress)
+
+    def _set_working(self, working: bool) -> None:
+        for widget in (self.menuBar(), self.top_bar, self.centralWidget(), self.tables_dock, self.log_dock):
+            widget.setEnabled(not working)

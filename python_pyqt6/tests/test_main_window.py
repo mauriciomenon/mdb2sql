@@ -350,15 +350,16 @@ def test_decimal_without_scale_shows_as_integer(qtbot, tmp_path: Path) -> None:
 def test_menus_have_export_and_settings_theme(window: MainWindow) -> None:
     titles = [a.text() for a in window.menuBar().actions()]
     assert titles == ["&File", "&Edit", "&View", "&Settings", "&Help"]  # Exportar fica dentro de File
-    # Arquivo igual nas 4 versoes (Zig): Abrir... (Ctrl+O), Exportar >, Fechar, Sair (Ctrl+Q)
+    # Arquivo: Abrir... (Ctrl+O), Salvar (Ctrl+S), Salvar como... (Ctrl+Shift+S), Exportar >, Fechar, Sair (Ctrl+Q)
     from PyQt6.QtGui import QKeySequence
 
     file_menu = _menu(window, "&File")
     close_key = QKeySequence.keyBindings(QKeySequence.StandardKey.Close)[0].toString()  # Ctrl+F4 / Ctrl+W
     assert [(a.text(), a.shortcut().toString()) for a in file_menu.actions() if not a.isSeparator()] == [
-        ("&Open...", "Ctrl+O"), ("&Export", ""), ("&Close", close_key), ("E&xit", "Ctrl+Q")
+        ("&Open...", "Ctrl+O"), ("&Save", "Ctrl+S"), ("Save &as...", "Ctrl+Shift+S"), ("&Export", ""),
+        ("&Close", close_key), ("E&xit", "Ctrl+Q")
     ]
-    assert file_menu.actions()[1].menu() is window.export_menu
+    assert file_menu.actions()[3].menu() is window.export_menu
     # F5 (recarregar) continua valendo como atalho da janela, fora dos menus
     assert window.reload_action in window.actions() and window.reload_action.shortcut().toString() == "F5"
     theme = _menu(window, "&Settings").actions()[0].menu()
@@ -614,11 +615,13 @@ def test_sql_tab_refuses_a_command_that_is_not_a_read(qtbot, window: MainWindow)
     assert window.sql_info.text().startswith("SQL query error:")  # a tabela nao foi criada
 
 
-def test_export_actions_write_files_next_to_source(qtbot, window: MainWindow, people_db: Path, monkeypatch) -> None:
-    asked = []
+def test_save_and_export_actions_write_files_next_to_source(qtbot, window: MainWindow, people_db: Path, monkeypatch) -> None:
+    asked, picked = [], []
 
-    def fake_save(_parent, _title, suggested, _filter):
-        asked.append(suggested)
+    def fake_save(_parent, title, suggested, types, chosen):
+        asked.append((title, Path(suggested), types, chosen))
+        if picked:  # Salvar: o nome sugerido como veio e o tipo escolhido na caixa
+            return suggested, picked[0]
         return str(people_db.parent / f"out{Path(suggested).suffix}"), ""
 
     monkeypatch.setattr(QFileDialog, "getSaveFileName", fake_save)
@@ -628,24 +631,48 @@ def test_export_actions_write_files_next_to_source(qtbot, window: MainWindow, pe
     window.run_sql()
     qtbot.waitUntil(lambda: window.sql_model.rowCount() == 3 and window._busy == 0, timeout=30000)
 
-    # os itens do Rust, nesta ordem (igual nas 4 versoes): banco SQLite, DuckDB, Excel; tabela CSV, Excel; SQL CSV, Excel
-    actions = window.export_db_actions + window.export_table_actions + window.export_sql_actions
-    assert [a.text().replace("&", "") for a in actions] == [
-        "Database to SQLite (.sqlite)...", "Database to DuckDB (.duckdb)...",
-        "Database to Excel (.xlsx, one sheet per table)...", "Current table to CSV...", "Current table to Excel (.xlsx)...",
-        "SQL result to CSV...", "SQL result to Excel (.xlsx)...",
-    ]
-    for action in actions:
-        action.trigger()
-        qtbot.waitUntil(lambda: window.status_label.text().startswith("Export"), timeout=60000)
+    def done() -> None:
+        qtbot.waitUntil(lambda: window.status_label.text().startswith("Export") and window._job is None, timeout=60000)
         assert window.status_label.text().startswith("Exported"), window.status_label.text()
         window.status_label.setText("")
 
-    # pasta sugerida = pasta do banco aberto; o proprio banco nunca e sugerido; resultado SQL = query.csv (nas 4)
-    assert [Path(s).parent for s in asked] == [people_db.parent] * 7
-    assert [Path(s).name for s in asked] == ["people.sqlite", "people_export.duckdb", "people.xlsx", "people.csv",
-                                             "people.xlsx", "query.csv", "query.xlsx"]
-    assert sorted(p.name for p in people_db.parent.glob("out.*")) == ["out.csv", "out.duckdb", "out.sqlite", "out.xlsx"]
+    # Arquivo > Salvar (item 28): o banco inteiro em SQLite, DuckDB ou Excel; o tipo do aberto (DuckDB) ja marcado e
+    # o proprio arquivo aberto nunca sugerido
+    types = ["SQLite database (*.sqlite)", "DuckDB database (*.duckdb)", "Excel workbook (*.xlsx)"]
+    assert window.save_action.shortcut().toString() == "Ctrl+S" and window.save_as_action.shortcut().toString() == "Ctrl+Shift+S"
+    for kind in types:
+        picked[:] = [kind]
+        window.save_action.trigger()
+        done()
+    assert asked == [("Save as SQLite, DuckDB or Excel (.mdb and .accdb files cannot be written)",
+                      people_db.parent / "people (copy).duckdb", ";;".join(types), types[1])] * 3
+    assert sorted(p.name for p in people_db.parent.glob("people (copy).*")) == [
+        "people (copy).duckdb", "people (copy).sqlite", "people (copy).xlsx"]
+    # Salvar sobre o proprio arquivo aberto: recusado
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_a: (str(people_db), ""))
+    window.save_action.trigger()
+    qtbot.waitUntil(lambda: window.status_label.text().startswith("Export failed") and window._job is None, timeout=60000)
+    assert window.status_label.text() == "Export failed: The output file is the open database; choose another name"
+    window.set_log_visible(True)  # erro lido: a barra volta a mostrar a ultima acao
+    window.set_log_visible(False)
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", fake_save)
+
+    # Exportar: tabela atual e resultado do SQL, para CSV e Excel (os 3 "Banco para ..." sairam: sao o Salvar)
+    asked.clear()
+    picked.clear()
+    actions = window.export_table_actions + window.export_sql_actions
+    assert [a.text().replace("&", "") for a in actions] == [
+        "Current table to CSV...", "Current table to Excel (.xlsx)...", "SQL result to CSV...",
+        "SQL result to Excel (.xlsx)...",
+    ]
+    for action in actions:
+        action.trigger()
+        done()
+
+    # pasta sugerida = pasta do banco aberto; resultado SQL = query.csv (nas 4)
+    assert [a[1].parent for a in asked] == [people_db.parent] * 4
+    assert [a[1].name for a in asked] == ["people.csv", "people.xlsx", "query.csv", "query.xlsx"]
+    assert sorted(p.name for p in people_db.parent.glob("out.*")) == ["out.csv", "out.xlsx"]
     assert QSettings().value("last_dir") == str(people_db.parent)
     # cada exportacao fecha e apaga o seu dialogo "Export": nenhum fica acumulado na janela
     qtbot.waitUntil(lambda: not window.findChildren(QProgressDialog), timeout=5000)

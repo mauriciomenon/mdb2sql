@@ -1,5 +1,7 @@
-# Dialogos da janela principal: Sobre (Ajuda > Sobre) e Colunas (ocultar/mostrar varias colunas de uma vez)
-# !T: Both are opened with open() by the caller: no nested event loop, so tests and UI Automation do not block
+# Dialogos da janela principal: Sobre (Ajuda > Sobre), Colunas (ocultar/mostrar varias colunas de uma vez) e a
+# pergunta com botoes proprios (sair com o SQLite convertido nao salvo, sair com exportacao em andamento)
+# !T: About and Columns are opened with open() by the caller: no nested event loop, so tests and UI Automation do
+# !T: not block
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QGuiApplication, QPixmap
@@ -85,6 +87,39 @@ class AboutDialog(QDialog):
         layout.addLayout(self.form)
         layout.addWidget(buttons)
         self.setMinimumWidth(560)
+
+
+class ChoiceBox(QDialog):
+    """Pergunta sem icone com botoes proprios (chave -> texto): os de `left` a esquerda e os de `right` a direita,
+    lado a lado, como OK/Cancelar. Depois de exec(), `choice` e a chave do botao clicado; Esc e o X da caixa deixam
+    `escape`. Enter aciona `default`."""
+
+    def __init__(self, title: str, text: str, left: dict[str, str], right: dict[str, str], default: str, escape: str,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.choice = escape
+        self.text = QLabel(text)
+        self.buttons: dict[str, QPushButton] = {}
+        row = QHBoxLayout()
+        for side in (left, right):
+            for key, caption in side.items():
+                button = self.buttons[key] = QPushButton(caption)
+                button.setDefault(key == default)
+                button.clicked.connect(lambda _checked=False, k=key: self._pick(k))
+                row.addWidget(button)
+            if side is left:
+                row.addStretch(1)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 16)
+        layout.setSpacing(18)
+        layout.addWidget(self.text)
+        layout.addLayout(row)
+        self.buttons[default].setFocus()
+
+    def _pick(self, key: str) -> None:
+        self.choice = key
+        self.accept()
 
 
 class DisplayWarning(QDialog):
