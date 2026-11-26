@@ -36,7 +36,7 @@ The top line holds the path of the open file (a path longer than the field shows
 buttons Browse..., Open and Export.... Open a file with Browse... or File > Open... (Ctrl+O), by typing or pasting
 its path in the field and pressing Enter or Open, by dragging it onto the window, by passing the path on the
 command line (`mdb2sql.exe "C:\data\base.accdb"`), or with the environment variable `MDB2SQL_DB_PATH` and F5
-(F5 reloads the open file).
+(F5, File > Reopen, opens the open file again).
 
 **Access files** are converted once, when opened, into a SQLite file in a temporary folder, and the program reads
 from there (status bar: "Converting ... table N of M", then `Loaded: <file> (N tables)`; the right end says
@@ -44,22 +44,23 @@ from there (status bar: "Converting ... table N of M", then `Loaded: <file> (N t
 keeps the column types (integer, decimal, double, text, date, true/false, binary) and NULLs. A 115 MB `.accdb`
 with 287 tables takes 20-35 s by mdbtools and 8-18 s by ODBC (Intel Core Ultra 7 258V, 8 cores; the time is mostly
 one big table, 36,754 rows x 123 columns, in mdb-export). The source file is
-never changed.
-When the file is closed (File > Close, Ctrl+W), another file is opened or the program is closed, it asks
-what to do with the converted SQLite:
+never changed. The temporary folder is the user one (`%TEMP%`), else the system one (`%SystemRoot%\Temp`, `/tmp`),
+last the folder of the Access file: the first where a file can be created (subfolder `mdb2sql-python-pyqt6`).
 
-- **Save...**: choose where; the default is next to the Access file, with the same name and `.sqlite`. The
-  saved file is a normal SQLite database (any SQLite tool opens it; this program opens it as SQLite).
-- **Delete**: the temporary file is removed.
-- **Cancel** (also Esc or the window X): nothing is closed. Enter chooses Save...; cancelling the save
-  dialog returns to the question.
+**File > Save** (Ctrl+S) and **Save as...** (Ctrl+Shift+S) write the open database, whatever its format, to SQLite,
+DuckDB or Excel (one sheet per table). The native dialog opens with the name of the original and the type of the
+open file already chosen (Access -> SQLite); Save starts in the folder of the original, Save as... in the last
+folder used to save or export. The open file and the converted temporary file are refused as targets. `.mdb` and
+`.accdb` files cannot be written: the Access format is proprietary to Microsoft. An Access file saved to SQLite or
+DuckDB is remembered in the settings with the path, size and date of both files: opening the same Access file again
+opens the saved file at once, also in later runs; if either file changed, the Access file is converted again.
 
-"Remember for this session" skips the question until the program is closed. A saved SQLite is remembered in the
-settings with the path, size and date of the Access file and of the SQLite: opening the same Access file again
-opens that SQLite at once, without converting or asking when it is closed, also in later runs; if either file
-changed or the SQLite was deleted, the Access file is converted again. Temporary files are never left behind:
-the folder of the session is removed on exit, and the folder of a session that crashed is removed at the next start
-(`%TEMP%\mdb2sql-python-pyqt6\`, `/tmp/mdb2sql-python-pyqt6/` on Linux).
+Closing the file (File > Close, Ctrl+W), opening another one or F5 never asks: a converted SQLite that was not saved
+is deleted and the Log says `SQLite converted from <file> discarded`. Only exiting the program (X, File > Exit,
+Ctrl+Q, Alt+F4) with an unsaved conversion asks "Save" (the save dialog; cancelled, the question comes back),
+"Back" or "Exit" (Esc and the X of the question = Back). Exiting during an export asks first: Back, or Exit, which
+cancels the export (no half-written file). Temporary files are never left behind: the folder of the session is
+removed on exit, and the leftovers of a session that crashed are removed at the next start, with a Log line.
 
 Left panel: list of tables with the row count of each one (Table | Rows), and a filter box (Ctrl+T goes to the
 list); all words, any order, no case or accents, applied 300 ms after the last key or at once with Enter.
@@ -89,32 +90,61 @@ Tabs:
     value (an empty NULL cell filters `IS NULL`), in the database query. Several filters add up (AND) and combine
     with the search. Each active filter is a button in a line above the grid (`SUBNAM = 'U02' ×`, click to remove
     it); "Clear filters" removes all. Selecting another table clears them.
+  - **Marked rows**: the first column of the grid is a check box per row (click it, Space on the current row, the
+    cell menu or Edit > Mark or unmark row). Marks are kept per table while the file is open (Close, opening another
+    file and F5 clear them). Marked rows always stay at the top of the grid, in table order, whatever the search,
+    the value filters or the scope; the rows of the current search follow without repeats (a newly marked row moves
+    to the top at the next query). The line under the grid adds `, N marked` and, only with marks, the "Only
+    marked" box (= View > Only marked rows). Export > Marked rows and the cell menu export them (all columns, table
+    order, `<table>_marcadas`). A row is identified by the engine rowid (DuckDB and SQLite tables, also the
+    converted Access); in a view or a SQLite `WITHOUT ROWID` table by all its values, so identical rows mark
+    together.
 - **Schema** (Ctrl+2): columns, types and nullability (Yes / No), 6 px more on each side of the text.
-- **SQL** (Ctrl+3): free SQL (DuckDB dialect) over the open database, run with Ctrl+Enter or Run. Shows up to
+- **SQL** (Ctrl+3): SQL (DuckDB dialect) over the open database, run with Ctrl+Enter or Run. Only reading commands
+  run (SELECT/WITH, SHOW, DESCRIBE, EXPLAIN, SUMMARIZE, reading PRAGMA, by the DuckDB statement type); anything else
+  is refused before it runs ("The SQL tab only reads the database"), so the file, the converted copy and the memory
+  never change. Shows up to
   the "Rows" limit. Table names with spaces or symbols go in double quotes: `SELECT * FROM "My Table"`. The line of
   the Run button shows the result (`SQL result: 3 rows`) or the error; an error clears the previous result, and the
   next query that works clears the error there and in the status bar.
+- **Terms** (Ctrl+4): paste a list of terms (one per line, for example an Excel column), choose "Whole value |
+  Contains" (default in Settings > Term matching) and "This table | All tables", and Search terms (Ctrl+Enter in
+  the tab). Every column of every table is compared as text: whole value = the cell without spaces at the ends is
+  the term; contains = the cell contains it; case does not count. Empty lines are skipped and a repeated term is
+  searched once (`8 terms, 2 repeated`); a header pasted from Excel is a term like any other. The search runs in
+  the database engine with progress and Cancel, then shows `X of Y terms found: N rows in M tables`, the tables with
+  hits as `table (n)` and the grid of the chosen one: a Term column plus every column of the table, in the order
+  of the pasted list and then of the table (a row found by two terms appears twice), limited by "Rows". The terms
+  not found are listed below, one per line, with Copy. Right-click on the grid: the three copy items (without the
+  Term column), Copy the rows found in this table (with header, TAB separated, pastes into Excel as exactly the
+  found rows) and the report (Excel, CSV folder, SQLite or DuckDB: Summary, one sheet/table per table with hits,
+  Not found; name `<database>_termos`). DB3 (287 tables), the owner's 9 terms, whole value, all tables: 6.8 s on the
+  SQLite file, 3.6 s on the DuckDB file.
 
 Menus:
 
-- **File**: Open... (Ctrl+O), Export (submenu, also the Export... button at the top), Close (Ctrl+W), Exit (Ctrl+Q).
-  - Database to SQLite / Database to DuckDB: every table, with its types (an Access file copies its converted
-    SQLite).
-  - Database to Excel (one sheet per table): sheet name = table name, cleaned of `[]:*?/\` and cut to the
-    31-character Excel limit (repeated names get `~2`, `~3`); header in row 1; a table with more than 1,048,575 rows
-    continues in sheets `<name> (2)`, `<name> (3)`, ...
-  - Current table to CSV / to Excel: the whole current table (not only the loaded rows). When the grid shows part of the
+- **File**: Open... (Ctrl+O, = Browse...), Open the typed path (= Open), Reopen (F5), Save (Ctrl+S), Save as...
+  (Ctrl+Shift+S), Export (submenu, also the Export... button at the top), Close (Ctrl+W), Exit (Ctrl+Q).
+- **Export** (a fixed list; what does not apply is disabled): Current table, Marked rows, Current table schema
+  (Column, Type, Nullable; `<table>_schema`), Database schema (Table, Column, Type, Nullable; `<database>_schema`),
+  each to CSV or Excel; All tables to CSV (a folder, `<table>.csv` each; files that already exist: one question);
+  SQL result to CSV or Excel; All-tables search result (Excel: one sheet per table with hits, the rows the search
+  finds; `<database>_busca`); Term search report (see Terms).
+  - Excel: sheet name = table name, cleaned of `[]:*?/\` and cut to the 31-character Excel limit (repeated names
+    get `~2`, `~3`); header in row 1; a table with more than 1,048,575 rows continues in sheets `<name> (2)`, ...
+  - Current table: the whole current table (not only the loaded rows). When the grid shows part of the
     table (a search or a value filter) it asks first: "Whole table" or "Only the N rows found" (the rows the grid counts, value filters included).
-  - SQL result to CSV / to Excel: the whole result of the last query that ran; default name `query.csv` /
+  - SQL result: the whole result of the last query that ran; default name `query.csv` /
     `query.xlsx`. CSV is UTF-8 with BOM, comma separated.
   - The save dialog opens in the folder of the open database (after that, the last folder used). Exports run in the
     background with a progress window; Cancel stops and deletes the partial file.
-  - Writing `.mdb`/`.accdb` is not offered: there is no reliable free library that writes Access files.
-- **Edit**: Copy value (Ctrl+C), Copy row (Ctrl+Shift+C), Copy row with header, Find in the table (Ctrl+F), Filter
-  by this value, Clear filters. Right-click on a cell of the Data grid: Filter by this value and Clear filters first,
-  then the three copy items (the other grids: copy only). Copied rows are TAB-separated: they paste as columns in
-  Excel.
-- **View**: Tables panel (Ctrl+B), Log (Ctrl+L), Go to the table list (Ctrl+T), Data / Schema / SQL tabs, Run SQL.
+- **Edit**: Copy value (Ctrl+C), Copy row (Ctrl+Shift+C), Copy row with header, Copy the whole log, Search (Ctrl+F),
+  Filter by this value, Clear filters, Mark or unmark row (Space), Unmark all rows. Right-click on a cell of the
+  Data grid: Filter by this value and Clear filters first, then the three copy items, then the mark items and
+  Export marked rows (the other grids: copy only). Copied rows are TAB-separated: they paste as columns in Excel.
+- **View**: Data / Schema / SQL / Terms tabs (Ctrl+1 to Ctrl+4), Rows (100 / 500 / 1000), Columns..., Search in
+  (This table / All tables), Only marked rows, Go to the table list (Ctrl+T), Run SQL (Ctrl+Enter), Search terms
+  (Ctrl+Enter in the Terms tab), Log (Ctrl+L). The tables panel cannot be closed.
   The **Log** panel, at the bottom (about 10% of the height, drag the edge to resize), lists the messages of the
   session with the time in a smaller fixed font (selectable, Ctrl+C, "Copy all"). It starts collapsed and keeps
   the last state; the arrow in its header and the arrow at the left of the status bar collapse and expand it. While
@@ -123,12 +153,14 @@ Menus:
   opens the log. Right-click on the status bar: Copy (the whole message) and Log. Numeric columns and their headers
   are right-aligned.
 - **Settings**: Theme (System, Light or Dark; switching changes the whole window), Language (English by default,
-  Português (Brasil), Español; applies at once), Default search scope (This table or All tables) and Show NULL
+  Português (Brasil), Español; applies at once), Default search scope (This table or All tables; also the Terms
+  tab), Term matching (Whole value or Contains) and Show NULL
   (off by default: a NULL cell is empty). All are saved (Windows registry `HKCU\Software\MDB2SQL`,
-  Linux `~/.config/MDB2SQL/MDB2SQL.conf`).
+  Linux `~/.config/MDB2SQL/MDB2SQL.conf`; with the environment variable `MDB2SQL_SETTINGS=<file.ini>`, in that file).
 - **Help > About mdb2sql**: name, version, Build (number and date), Stack (Python and PyQt6 versions), Window (Qt
   version), Databases (SQLite and DuckDB versions), Access reading ("Embedded mdbtools 1.0.1", or "Access ODBC
-  driver (installed); fallback: embedded mdbtools 1.0.1"), Author, License, links.
+  driver (installed); fallback: embedded mdbtools 1.0.1"), Writing (SQLite, DuckDB, Excel and CSV; `.mdb` and
+  `.accdb` cannot be written), Author, License, links.
 
 The window title is short, `mdb2sql 1.3.0 - Python` (with a file open, `<file> - mdb2sql 1.3.0 - Python`).
 Changes of each version: [CHANGELOG.md](CHANGELOG.md).
@@ -167,9 +199,14 @@ the same files made by another converter as reference.
 - Generated `tests/data/sample.mdb` (versioned, made by `tests/data/make_sample_mdb.py`): integer, Byte, Integer,
   Currency (exact `18.0000`, `12.3456`), Double, text with accents, quotes and line breaks, dates, Yes/No, binary
   (empty and NULL), NULL, a table name with spaces; read by both readers, also on Debian.
-- Search beyond the loaded rows, value filters, save / delete / cancel of the converted SQLite, temporary folder of
-  a crashed session removed, three language catalogs with the same keys and no screen text outside them.
-  103 automatic tests (pytest + pytest-qt); the real-database comparison runs with `MDB2SQL_TEST_ACCDB`.
+- Search beyond the loaded rows, value filters, Save / Save as, the exit question, marked rows, the term search
+  (whole value, contains, case, spaces, repeats, list order, not found), the read-only SQL tab, the temporary
+  folder fallback, the menu tree, three language catalogs with the same keys and no screen text outside them.
+  179 automatic tests (pytest + pytest-qt); the real-database comparison runs with `MDB2SQL_TEST_ACCDB`.
+- 2026-11-26: copies of DB3 (`.accdb`, and its `.sqlite` and `.duckdb` conversions), the owner's list of 9 terms,
+  whole value, all tables: RANGER_SOSTAT 8 rows (RTUNO 50, PNTNO 238, 242, 254, 256, 260, 304, 308, 2190, SUBNAM
+  U9A) in the order of the list, RANGER_SOEQID 8 rows, `PNTNAM` not found; contains adds RANGER_SOTEXT (72 rows of
+  `PNTNAM`).
 
 ## Known limits
 
@@ -181,8 +218,7 @@ the same files made by another converter as reference.
 - SQLite stores decimals as REAL: values with more than 15 significant digits lose the last digits (Access Currency
   up to 100 billion with 4 decimals is exact). The program shows them again as DECIMAL(p,s).
 - Sort works on the loaded rows (100 by default, at most 1000); search and filters run on the whole table.
-- The SQL tab works on the open copy: on Access, the converted SQLite is read-only and new tables go to memory
-  (they are not saved; they do go into an export). DuckDB and SQLite files are opened read-only.
+- Every file is opened read-only and the SQL tab only reads: changes are made in a saved copy with another tool.
 - Excel limits: text longer than 32,767 characters is cut; dates before 1900 are written as text.
 - The Windows exe and installer are not code-signed. macOS, Arch and BSD builds are not provided in this version.
 
@@ -202,7 +238,7 @@ Commands, products, work folders and cleaning: [README-BUILD.txt](README-BUILD.t
 
 Layout: `src/main.py` entry point; `src/ui/` window, dialogs and table model; `src/backend/` database access
 (`db_manager.py`), Access to SQLite conversion (`access.py`), session temporary folder (`temp_store.py`), exports
-(`export.py`); `src/shared/` About data, language catalogs loader (`i18n.py`), TAB copy, bundled files;
+(`export.py`), term search (`terms.py`); `src/shared/` About data, language catalogs loader (`i18n.py`), TAB copy, bundled files;
 `src/resources/i18n/` the three catalogs; `tests/`; `mdb2sql.spec` PyInstaller spec; `scripts/` build steps and
 `installer.nsi`.
 
