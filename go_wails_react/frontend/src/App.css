@@ -548,6 +548,14 @@ td.mark input {
   margin: 0;
 }
 
+/* pages of the Data tab: the previous and next buttons after the line, as large as every button */
+.pager {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 12px;
+  vertical-align: middle;
+}
+
 /* Terms tab: the pasted terms (about 8 lines, then a scroll bar), one line of selectors, the tables found beside the
    rows of the chosen one, the terms not found */
 .terms-text,

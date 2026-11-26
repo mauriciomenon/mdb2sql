@@ -579,3 +579,44 @@ func TestTermColumnNameOfTheTable(t *testing.T) {
 		}
 	}
 }
+
+// owner 26/11 (13h): pages of the Data tab: a table of more than 1000 rows read page by page in table order, the last
+// page short; the search holds on every page; a view (no rowid) pages too
+func TestQueryTablePages(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "p.duckdb")
+	db, err := sql.Open("duckdb", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE p AS SELECT i, CASE WHEN i % 10 = 0 THEN 'ten' ELSE 'x' END AS s FROM range(1050) t(i); CREATE VIEW pv AS SELECT * FROM p`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewDBManager()
+	if err := m.Connect(path); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	for _, table := range []string{"p", "pv"} {
+		var got []any
+		for offset := 0; offset < 1050; offset += 500 {
+			rows, err := m.QueryTablePage(table, 500, offset, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, ids(rows, "i")...)
+		}
+		if len(got) != 1050 || got[0] != int64(0) || got[500] != int64(500) || got[1049] != int64(1049) {
+			t.Errorf("%s: %d rows, %v %v %v", table, len(got), got[0], got[500], got[len(got)-1])
+		}
+		last, err := m.QueryTablePage(table, 500, 1000, "")
+		if err != nil || len(last) != 50 {
+			t.Errorf("%s: last page %d rows (%v)", table, len(last), err)
+		}
+		found, err := m.QueryTablePage(table, 50, 50, "ten")
+		if got := ids(found, "i"); err != nil || len(got) != 50 || got[0] != int64(500) {
+			t.Errorf("%s: second page of the search: %v (%v)", table, got, err)
+		}
+	}
+}

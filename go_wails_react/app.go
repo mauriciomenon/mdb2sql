@@ -527,12 +527,12 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 // GetTableData retorna linhas de uma tabela com limite configuravel; filters = coluna = valor (clique direito) e
 // search = pesquisa da aba Data, as duas no banco sobre a tabela inteira
 // !T: Returns slice of maps with column names as keys, limit defaults to 100 rows
-func (a *App) GetTableData(tableName string, limit int, filters []backend.Filter, search string) ([]map[string]interface{}, error) {
+func (a *App) GetTableData(tableName string, limit int, filters []backend.Filter, search string, offset int) ([]map[string]interface{}, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 
-	return a.dbManager.QueryTable(tableName, limit, search, filters...)
+	return a.dbManager.QueryTablePage(tableName, limit, offset, search, filters...)
 }
 
 // GetRowCount retorna total de linhas em tabela (das que casam com os filtros e a pesquisa, se houver)

@@ -86,9 +86,9 @@ describe('App IPC flow', () => {
     expect(tableItem).toBeInTheDocument();
     fireEvent.click(tableItem);
 
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenCalledWith('RANGER_SOACCU', 100, [], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenCalledWith('RANGER_SOACCU', 100, [], '', 0));
     expect(screen.getByText('Alpha')).toBeInTheDocument();
-    expect(screen.getByText(/showing 2 of 2 rows/i)).toBeInTheDocument();
+    expect(screen.getByText(/rows 1 to 2 of 2/)).toBeInTheDocument();
   });
 
   it('opens the file picked in the native dialog and shows its schema', async () => {
@@ -258,18 +258,18 @@ describe('App IPC flow', () => {
     expect(within(bar).getByRole('radiogroup', { name: 'Search in' })).toBeInTheDocument();
     expect(within(bar).getByRole('combobox')).toBeInTheDocument();
     expect(within(bar).getByRole('button', { name: 'Columns...' })).toBeInTheDocument();
-    expect(content.querySelector('.info').textContent).toBe('RANGER_SOACCU: showing 2 of 2 rows');
+    expect(content.querySelector('.info').textContent).toBe('RANGER_SOACCU: rows 1 to 2 of 2◀▶');
 
     fireEvent.contextMenu(screen.getByText('Beta'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Filter by this value' }));
     await screen.findByText("Filter: NAME = 'Beta'");
     expect(parts()).toEqual(['content-bar', 'filters', 'table-container', 'info']);
-    await waitFor(() => expect(content.querySelector('.info').textContent).toBe('RANGER_SOACCU: showing 2 of 1 row found'));
+    await waitFor(() => expect(content.querySelector('.info').textContent).toBe('RANGER_SOACCU: row 1 of 1 found◀▶'));
 
     fireEvent.contextMenu(screen.getByText('Beta'));
     fireEvent.click(screen.getByRole('menuitem', { name: /Copy value/ }));
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Copied value'));
-    expect(content.querySelector('.info').textContent).toBe('RANGER_SOACCU: showing 2 of 1 row found');
+    expect(content.querySelector('.info').textContent).toBe('RANGER_SOACCU: row 1 of 1 found◀▶');
   });
 
   it('does nothing when the dialog is cancelled', async () => {
@@ -395,7 +395,7 @@ describe('App IPC flow', () => {
     fireEvent.contextMenu(header('NAME'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Hide this column' }));
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], '', 0));
     await waitFor(() => expect(header('NAME')).toBeInTheDocument());
   });
 
@@ -467,17 +467,17 @@ describe('App IPC flow', () => {
     openDefault();
     await screen.findByText('Alpha');
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'tension de campo' } });
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], 'tension de campo'), { timeout: 2000 });
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], 'tension de campo', 0), { timeout: 2000 });
     expect(GetRowCount).toHaveBeenCalledWith('RANGER_SOACCU', [], 'tension de campo');
-    expect(await screen.findByText(/showing 2 of 1 row found$/)).toBeInTheDocument();
+    expect(await screen.findByText(/row 1 of 1 found$/)).toBeInTheDocument();
     // the search stays when another table is chosen
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'tension de campo'));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'tension de campo', 0));
     // Enter searches at once, without the pause
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'u9a' } });
-    expect(bridge.GetTableData).not.toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'u9a');
+    expect(bridge.GetTableData).not.toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'u9a', 0);
     fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
-    expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'u9a');
+    expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'u9a', 0);
   });
 
   it('searches all tables from the Data tab and opens a table of the list with the same search', async () => {
@@ -512,10 +512,10 @@ describe('App IPC flow', () => {
     expect(hit.closest('ul').className).toBe('hits');
     expect(screen.queryByRole('columnheader')).not.toBeInTheDocument();
     expect(screen.getByText('1 table with rows matching "tensao"')).toBeInTheDocument();
-    expect(bridge.GetTableData).not.toHaveBeenCalledWith('RANGER_SOACCU', 100, [], 'tensao'); // the grid is not queried
+    expect(bridge.GetTableData).not.toHaveBeenCalledWith('RANGER_SOACCU', 100, [], 'tensao', 0); // the grid is not queried
 
     fireEvent.click(hit);
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'tensao'));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 100, [], 'tensao', 0));
     expect(within(scope).getByRole('radio', { name: 'This table' })).toHaveAttribute('aria-checked', 'true');
     expect(await screen.findByText('Alpha')).toBeInTheDocument();
 
@@ -590,7 +590,7 @@ describe('App IPC flow', () => {
     fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
     const hit = await screen.findByRole('button', { name: 'RANGER_SOACCU (2)' });
     fireEvent.click(hit);
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], 'a'));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], 'a', 0));
     expect(screen.queryByRole('group', { name: 'Active filters' })).not.toBeInTheDocument();
   });
 
@@ -630,7 +630,7 @@ describe('App IPC flow', () => {
 
     openDefault();
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], '', 0));
     expect(screen.getByLabelText('Search the table')).toHaveValue('');
     expect(screen.getByLabelText('Filter 2 tables')).toHaveValue('');
     expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true');
@@ -648,25 +648,25 @@ describe('App IPC flow', () => {
     expect(screen.getByRole('menuitem', { name: 'Clear filters' })).toBeDisabled();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Filter by this value' }));
     const byName = { column: 'NAME', value: 'Beta' };
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [byName], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [byName], '', 0));
     expect(GetRowCount).toHaveBeenCalledWith('RANGER_SOACCU', [byName], '');
     expect(await screen.findByText("Filter: NAME = 'Beta'")).toBeInTheDocument();
-    expect(await screen.findByText(/showing 2 of 1 row found$/)).toBeInTheDocument();
+    expect(await screen.findByText(/row 1 of 1 found$/)).toBeInTheDocument();
 
     // a second column is ANDed; the row limit keeps the filters
     fireEvent.contextMenu(screen.getByRole('cell', { name: '2' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Filter by this value' }));
     const byId = { column: 'ID', value: 2 };
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [byName, byId], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [byName, byId], '', 0));
     expect(await screen.findByText('Filter: ID = 2')).toBeInTheDocument();
     fireEvent.change(screen.getByRole('combobox'), { target: { value: '500' } });
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 500, [byName, byId], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 500, [byName, byId], '', 0));
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove filter NAME' }));
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 500, [byId], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 500, [byId], '', 0));
     await waitFor(() => expect(screen.queryByText("Filter: NAME = 'Beta'")).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 500, [], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 500, [], '', 0));
     await waitFor(() => expect(screen.queryByRole('group', { name: 'Active filters' })).not.toBeInTheDocument());
 
     // changing table clears the filters
@@ -674,7 +674,7 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Filter by this value' }));
     await screen.findByText("Filter: NAME = 'Beta'");
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 500, [], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOGEN', 500, [], '', 0));
     await waitFor(() => expect(screen.queryByRole('group', { name: 'Active filters' })).not.toBeInTheDocument());
   });
 
@@ -1116,6 +1116,42 @@ describe('App IPC flow', () => {
     ]);
   });
 
+  // owner 26/11 (13h): pages in the Data tab, as large as the Rows list; the line says which rows of how many; previous
+  // and next are disabled at the ends; another search goes back to the first page
+  it('pages through a table of more than 1000 rows, the last page short', async () => {
+    const total = (search) => (search ? 3 : 1050);
+    const GetTableData = vi.fn(async (_t, limit, _f, search, offset) =>
+      Array.from({ length: Math.max(0, Math.min(limit, total(search) - offset)) }, (_, i) => ({ ID: offset + i + 1, NAME: 'n' })),
+    );
+    const GetRowCount = vi.fn(async (_t, _f, search) => total(search));
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, GetRowCount } } } });
+    render(<App />);
+    openDefault();
+    await screen.findByText('RANGER_SOACCU: rows 1 to 100 of 1,050');
+    const prev = () => screen.getByRole('button', { name: 'Previous page' });
+    const next = () => screen.getByRole('button', { name: 'Next page' });
+    expect(prev()).toBeDisabled();
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '500' } });
+    await screen.findByText('RANGER_SOACCU: rows 1 to 500 of 1,050');
+    fireEvent.click(next());
+    await screen.findByText('RANGER_SOACCU: rows 501 to 1,000 of 1,050');
+    expect(GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 500, [], '', 500);
+    fireEvent.click(next());
+    await screen.findByText('RANGER_SOACCU: rows 1,001 to 1,050 of 1,050');
+    expect(document.querySelectorAll('.table-container tbody tr')).toHaveLength(50);
+    expect(next()).toBeDisabled();
+    expect(prev()).toBeEnabled();
+    fireEvent.click(prev());
+    await screen.findByText('RANGER_SOACCU: rows 501 to 1,000 of 1,050');
+    // a search: the first page again, the rows found
+    fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'n' } });
+    fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
+    await screen.findByText('RANGER_SOACCU: rows 1 to 3 of 3 found');
+    expect(GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 500, [], 'n', 0);
+    expect(next()).toBeDisabled();
+    expect(translateN('pt-BR', 'info.page', 36804, 'T', '1', '100', (36804).toLocaleString('pt-BR'))).toBe('T: linhas 1 a 100 de 36.804');
+  });
+
   // standard item 34: favorite tables first in the table list, in alphabetical order, with a star; right-click a table
   // or View > Favorite or unfavorite table (Ctrl+D, the open table); kept by name while the program is open
   it('puts the favorite tables first in the table list, from its right-click menu and Ctrl+D', async () => {
@@ -1241,7 +1277,7 @@ describe('App IPC flow', () => {
     await waitFor(() => expect(names()).toEqual(['kkk', 'jjj', 'hhh', 'ggg']));
     expect(screen.getAllByRole('checkbox', { name: 'Mark rows' }).map((c) => c.checked)).toEqual([true, true, true, false]);
     const info = document.querySelector('.info');
-    expect(info.textContent).toBe('Only marked' + 'RANGER_SOACCU: showing 1 of 1 row found, 3 marked');
+    expect(info.textContent).toBe('Only marked' + 'RANGER_SOACCU: row 1 of 1 found, 3 marked' + '◀▶');
 
     // Only marked (the box under the grid and View > Only marked rows)
     fireEvent.click(screen.getByRole('checkbox', { name: 'Only marked' }));
@@ -1408,7 +1444,7 @@ describe('App IPC flow', () => {
 
     fireEvent.change(screen.getByLabelText('Search the table'), { target: { value: 'alp' } });
     fireEvent.keyDown(screen.getByLabelText('Search the table'), { key: 'Enter' });
-    await screen.findByText(/showing 2 of 1 row found/);
+    await screen.findByText(/row 1 of 1 found/);
     exportCsv();
     const dialog = await screen.findByRole('dialog', { name: 'Export RANGER_SOACCU' });
     expect(buttonTexts(dialog)).toEqual(['Whole table', 'Only the 1 row found', 'Cancel']);
@@ -1436,7 +1472,7 @@ describe('App IPC flow', () => {
     fireEvent.contextMenu(cell); // menu key: no mouse position
     expect(screen.getByRole('menu', { name: 'Cell' }).style.left).not.toBe('0px');
     fireEvent.click(screen.getByRole('menuitem', { name: 'Filter by this value' }));
-    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [{ column: 'NAME', value: 'Beta' }], ''));
+    await waitFor(() => expect(bridge.GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [{ column: 'NAME', value: 'Beta' }], '', 0));
   });
 
   // jsdom has no layout, so the rules themselves are checked: 1.2.0 cut "RANGER_SOSTAT" to "RAN..." and the table
@@ -1496,7 +1532,7 @@ describe('App IPC flow', () => {
     slowTable.armed = true;
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOGEN' }));
     fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOACCU' }));
-    await waitFor(() => expect(GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], ''));
+    await waitFor(() => expect(GetTableData).toHaveBeenLastCalledWith('RANGER_SOACCU', 100, [], '', 0));
     slowTable.resolve([{ ID: 9, NAME: 'Late' }]);
     await screen.findByText('Alpha');
     expect(screen.queryByText('Late')).not.toBeInTheDocument();

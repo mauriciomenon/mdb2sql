@@ -534,6 +534,12 @@ func AccessReader() string {
 // Executa SELECT na tabela e retorna resultados como slice de maps
 // !T: Returns []map[string]interface{} for dynamic column handling in frontend
 func (m *DBManager) QueryTable(tableName string, limit int, search string, filters ...Filter) ([]map[string]interface{}, error) {
+	return m.QueryTablePage(tableName, limit, 0, search, filters...)
+}
+
+// QueryTablePage is QueryTable from row offset on (pages of the Data tab, standard 13h): in rowid order when the table
+// has one, so every page follows the last; search and filters hold on every page
+func (m *DBManager) QueryTablePage(tableName string, limit, offset int, search string, filters ...Filter) ([]map[string]interface{}, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.conn == nil {
@@ -558,8 +564,12 @@ func (m *DBManager) QueryTable(tableName string, limit int, search string, filte
 	if err != nil {
 		return nil, err
 	}
-	query := fmt.Sprintf(`SELECT %s FROM %s%s LIMIT ?`, selectRows(rowID), quoteIdent(tableName), where)
-	return m.rowMaps(rowID, query, append(args, limit)...)
+	order := ""
+	if rowID {
+		order = " ORDER BY rowid"
+	}
+	query := fmt.Sprintf(`SELECT %s FROM %s%s%s LIMIT ? OFFSET ?`, selectRows(rowID), quoteIdent(tableName), where, order)
+	return m.rowMaps(rowID, query, append(args, limit, max(offset, 0))...)
 }
 
 // RowIDKey is the key that holds, in each row sent to the Data tab, the engine's rowid of that row (no column can be

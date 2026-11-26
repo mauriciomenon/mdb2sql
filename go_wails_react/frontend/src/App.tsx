@@ -65,7 +65,7 @@ declare global {
       main: {
         App: {
           LoadDatabase: (dbPath: string) => Promise<string[]>;
-          GetTableData: (tableName: string, limit: number, filters: Filter[], search: string) => Promise<Row[]>;
+          GetTableData: (tableName: string, limit: number, filters: Filter[], search: string, offset: number) => Promise<Row[]>;
           GetRowCount: (tableName: string, filters: Filter[], search: string) => Promise<number>;
           GetTableSchema?: (tableName: string) => Promise<Column[]>;
           SelectDatabase?: () => Promise<string>;
@@ -443,6 +443,7 @@ function App() {
   const loadedFind = useRef(''); // search of the last table request
   const [shownFind, setShownFind] = useState(''); // search of the rows shown in the Data tab
   const [shownTable, setShownTable] = useState(''); // table of the rows shown (the counts below belong to it)
+  const [page, setPage] = useState(0); // page of the rows shown (Data tab, standard 13h), 0 = the first
   const [querying, setQuerying] = useState(false);
 
   // the log keeps the full text; short = the one line the status bar shows for it
@@ -893,8 +894,9 @@ function App() {
   }
 
   // keep = filtros a manter (mesma tabela: novo limite ou filtro); sem keep e outra tabela: filtros e colunas ocultas
-  // zeram. find = pesquisa da aba Data, feita no banco sobre a tabela inteira
-  async function loadTable(tableName: string, rowLimit: number, keep?: Filter[], find = tableSearch) {
+  // zeram. find = pesquisa da aba Data, feita no banco sobre a tabela inteira. pageNo = pagina de rowLimit linhas
+  // (0 = a primeira: outra tabela, busca, filtro ou limite volta a ela)
+  async function loadTable(tableName: string, rowLimit: number, keep?: Filter[], find = tableSearch, pageNo = 0) {
     const tableFilters = keep ?? [];
     const req = ++tableReq.current;
     loadedFind.current = find;
@@ -910,7 +912,7 @@ function App() {
       if (view === 'sql') setView('data');
       const bridge = getWailsBridge();
       const [data, count, cols] = await Promise.all([
-        bridge.GetTableData(tableName, rowLimit, tableFilters, find),
+        bridge.GetTableData(tableName, rowLimit, tableFilters, find, pageNo * rowLimit),
         bridge.GetRowCount(tableName, tableFilters, find),
         bridge.GetTableSchema ? bridge.GetTableSchema(tableName) : Promise.resolve([]),
       ]);
@@ -920,6 +922,7 @@ function App() {
       setSchema(cols ?? []);
       setShownFind(find);
       setShownTable(tableName);
+      setPage(pageNo);
     } catch (err) {
       if (req === tableReq.current) fail(err);
     }
@@ -1149,6 +1152,13 @@ function App() {
   };
   // the search of the rows on screen, not of the one being typed: the counts below belong to those rows
   const narrowed = filters.length > 0 || shownFind !== '';
+  // line under the Data grid (standard 13h): "{table}: rows 1 to 100 of 36,804" (with a search or filter "... found"),
+  // numbers in the format of the language; nothing to show keeps "showing 0 of 0 rows"
+  const num = (n: number) => n.toLocaleString(lang);
+  const pageText = () =>
+    rowCount === 0
+      ? tn(narrowed ? 'info.found' : 'info.showing', 0, shownTable, 0, 0)
+      : tn(narrowed ? 'info.pageFound' : 'info.page', rowCount, shownTable, num(page * limit + 1), num(page * limit + rows.length), num(rowCount));
   const copyCell = () => sel && copyText(cellText(sel.row[sel.col]), t('copied.value'));
   const copyColumns = view === 'terms' ? gridColumns.slice(1) : gridColumns; // Terms: without the Term column
   const copyRow = (withHeader: boolean) =>
@@ -1697,8 +1707,19 @@ function App() {
                     ? shownHits
                       ? tn('info.searchAll', shownHits.length, shownHits.length, tableSearch)
                       : searching && progressText(t('job.searching'), progress, t)
-                    : tn(narrowed ? 'info.found' : 'info.showing', rowCount, shownTable, rows.length, rowCount) + (markCount > 0 ? tn('mark.count', markCount, markCount) : '')}
+                    : pageText() + (markCount > 0 ? tn('mark.count', markCount, markCount) : '')}
                 {sqlSearching && tn('info.searchSql', visibleRows.length, visibleRows.length, search.trim())}
+                {/* pages of the Data tab (standard 13h): previous and next, disabled at the ends */}
+                {view === 'data' && !searchAll && rowCount > 0 && (
+                  <span className="pager">
+                    <button aria-label={t('page.prev')} title={t('page.prev')} disabled={page === 0} onClick={() => loadTable(shownTable, limit, filters, shownFind, page - 1)}>
+                      ◀
+                    </button>
+                    <button aria-label={t('page.next')} title={t('page.next')} disabled={(page + 1) * limit >= rowCount} onClick={() => loadTable(shownTable, limit, filters, shownFind, page + 1)}>
+                      ▶
+                    </button>
+                  </span>
+                )}
               </footer>
             )}
           </>
