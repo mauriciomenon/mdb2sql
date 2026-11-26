@@ -75,12 +75,14 @@ Dependencias de execucao do .deb (Depends gerado pelo dpkg-shlibdeps do binario 
   Na maquina do usuario o app cria so:
     %LOCALAPPDATA%\mdb2sql\go-wails-react-<versao>-<build>\   mdbtools e extensao sqlite (extraidos ao usar;
                                                              pastas de builds antigos sao apagadas)
-    %LOCALAPPDATA%\mdb2sql\converted-go-wails-react\<pid>\   SQLite convertido de um Access ate o usuario salvar
-                                                             ou apagar (apagado ao sair; sobra de queda e apagada
-                                                             na proxima abertura)
+    %TEMP%\mdb2sql-go-wails-react\<pid>\                     SQLite convertido de um Access (senao na Temp do
+                                                             sistema, senao ao lado do Access); apagado ao deixar
+                                                             o arquivo ou sair; sobra de queda e apagada na
+                                                             proxima abertura
     %LOCALAPPDATA%\mdb2sql\go-wails-react-webview\           dados do WebView2
-    %APPDATA%\mdb2sql\go-wails-react.json                    tema, idioma, ultima pasta, Log, Exibir NULL e
-                                                             escopo padrao da busca
+    %APPDATA%\mdb2sql\go-wails-react.json                    tema, idioma, ultima pasta, Log, Exibir NULL,
+                                                             escopo padrao da busca, comparacao dos termos e
+                                                             os salvos de cada Access
   Linux: ~/.cache/mdb2sql/ e ~/.config/mdb2sql/ no lugar de %LOCALAPPDATA% e %APPDATA%.
 
 

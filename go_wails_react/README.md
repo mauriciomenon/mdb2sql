@@ -132,15 +132,37 @@ the dialog lists Access, SQLite and DuckDB files), by dropping the file on the w
   the log; right-click > Copy), and the reader used ("Opened via mdbtools,
   converted to SQLite", "Opened via SQLite"...).
 
-Menus: File (Open... Ctrl+O, Export >, Close, Exit Ctrl+Q), View (Log), Settings (Theme: System, Light, Dark;
-Language; Default search scope: This table, All tables; Show NULL), Help (About). File > Export and the Export...
-button of the path bar open the same list: Database to SQLite / DuckDB / Excel; Current table to CSV / Excel; SQL
-result to CSV / Excel (proposed name `query.csv`); all with progress and Cancel; a failed export leaves no half
-file.
+Menus (every button has a menu item):
 
-Shortcuts: Ctrl+O (open), Ctrl+F (search), F5 (open the file again; nothing open: `MDB2SQL_DB_PATH` or the
-sample), Ctrl+Q (exit), Ctrl+1 / Ctrl+2 / Ctrl+3 (Data, Schema, SQL), Ctrl+L (log), Ctrl+Enter (run the SQL),
-Ctrl+C (copy the cell).
+- File: Open... Ctrl+O, Open the typed path, Reopen F5, Save Ctrl+S, Save as... Ctrl+Shift+S, Export >, Close
+  Ctrl+W, Exit Ctrl+Q. Save (any open file) opens the native save dialog in the folder of the file, with its name,
+  as SQLite, DuckDB or Excel (one sheet per table); Save as... starts in the last folder saved or exported to.
+  .mdb and .accdb files cannot be written.
+- Export > (the same list under the Export... button; what does not apply now is disabled): Current table, Marked
+  rows, Current table schema, Database schema (each CSV or Excel), All tables to CSV (one file per table, in a
+  folder), SQL result (CSV or Excel, `query.csv`), All-tables search result (Excel), Term search report (Excel,
+  CSV, SQLite or DuckDB). All with progress and Cancel; a failed export leaves no half file.
+- Edit: Copy value Ctrl+C, Copy row Ctrl+Shift+C, Copy row with header, Copy the whole log, Search Ctrl+F, Filter
+  by this value, Clear filters, Mark or unmark row (Space), Unmark all rows.
+- View: Data Ctrl+1, Schema Ctrl+2, SQL Ctrl+3, Terms Ctrl+4, Rows (100/500/1000), Columns..., Search in (This
+  table, All tables), Only marked rows, Go to the table list Ctrl+T, Run SQL Ctrl+Enter, Search terms Ctrl+Enter,
+  Log Ctrl+L.
+- Settings: Theme, Language, Default search scope, Term matching (Whole value, Contains), Show NULL.
+- Help: About mdb2sql.
+
+An Access file is converted to a SQLite file in the temporary folder. Close, another file and Reopen leave it
+without a question (the Log says it was discarded); exiting with it not saved asks: Save | Back, Exit. Exiting
+during an export asks Back or Exit (Exit cancels the export). The SQL tab only reads: a command that would write
+is refused before it runs.
+
+Marked rows (Data tab): a box at the start of each row (also Space and the menus); the marked rows of a table stay
+on top of the grid, in table order, whatever the search or filter; "Only marked" under the grid shows only them.
+A row is told apart by the engine's rowid (DuckDB and SQLite tables, Access converted to SQLite); a view has
+none: there all the values of the row count, so equal rows are marked together.
+
+Terms tab: paste a list (one term per line, for example an Excel column); each term is searched in every column
+of this table or of all tables, the whole cell (Whole value) or inside it (Contains), ignoring case and the spaces
+at the ends. The tables found, their rows with the term first, and the terms not found (copiable).
 
 Opening Access: the progress window counts the tables; Cancel (or Esc) stops it. The 287-table NMR5 test file
 (115 MB) takes about 10 s with the ODBC driver and about 33 s with mdbtools on Windows (Intel Core Ultra 7 258V, 8
@@ -153,11 +175,12 @@ Files the program creates (nothing else):
 
 - `%LOCALAPPDATA%\mdb2sql\go-wails-react-<version>-<build>\` (Linux: `~/.cache/mdb2sql/...`): mdbtools and the
   SQLite extension, unpacked on first use; folders of older builds are deleted automatically.
-- `%LOCALAPPDATA%\mdb2sql\converted-go-wails-react\<process id>\`: the SQLite converted from an Access file,
-  until you save or delete it (deleted on exit; left-overs of a crash are deleted at the next start).
+- `%TEMP%\mdb2sql-go-wails-react\<process id>\` (else `%SystemRoot%\Temp\...`, else beside the Access file;
+  Linux: `/tmp/...`): the SQLite converted from an Access file, deleted when the file is left or the program
+  exits; left-overs of a crash are deleted at the next start.
 - `%LOCALAPPDATA%\mdb2sql\go-wails-react-webview\`: WebView2 data (Windows).
 - `%APPDATA%\mdb2sql\go-wails-react.json` (Linux: `~/.config/mdb2sql/`): theme, language, last folder, Log panel
-  state, Show NULL and default search scope.
+  state, Show NULL, default search scope, term matching and the files saved from Access files.
 
 ## Tested
 
