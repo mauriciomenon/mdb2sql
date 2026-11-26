@@ -130,6 +130,12 @@ const Capture = struct {
     hit_rows: u64 = 0, // open_hit: linhas que a busca global listou para a tabela
     release_key: ?c_int = null, // passos key_*: tecla apertada, solta no quadro seguinte
     source_path: [1024:0]u8 = @splat(0), // prompt_delete: o Access de origem (reopen_saved abre de novo)
+    pending_mark: bool = false, // search_mark: a busca rodou, falta marcar a 1a linha nao marcada
+    terms_phase: u8 = 0, // terms: 1 = pesquisando; 2 = RANGER_SOSTAT escolhida na lista
+    terms_file: []const u8 = "", // MDB2SQL_CAPTURE_TERMS: a lista colada na aba Termos
+    terms_report: std.ArrayList(u8) = .empty, // capture_terms.txt
+    dialog: bool = false, // MDB2SQL_CAPTURE_DIALOG=1: o passo save_dialog abre a caixa nativa
+    log_mark: usize = 0, // prompt_delete: tamanho do Log antes de Fechar
 
     fn size(c: *const Capture) [2]u32 {
         const s = dbm.capture.plan[@min(c.step, dbm.capture.plan.len - 1)];
@@ -140,7 +146,8 @@ const Capture = struct {
     fn ready(app: *const App) bool {
         if (app.slot.busy() or app.want_open or app.want_reload or app.want_run or app.want_select != null or app.want_global or
             app.search_wait.due != null or app.want_filter != null or app.want_unfilter != null or app.want_clear_filters or
-            app.want_close or app.want_save != null or app.exit_ask != null) return false;
+            app.want_close or app.want_save != null or app.want_mark != null or app.want_unmark_all or
+            app.want_terms or app.want_terms_page != null or app.want_terms_copy) return false;
         return app.db.isOpen() and app.selected != null;
     }
 
@@ -151,8 +158,57 @@ const Capture = struct {
             .exit_esc => return c.esc_frames > 14 and app.exit_ask == null and !app.quit and ready(app),
             .prompt => return app.exit_ask == .unsaved and !app.slot.busy(),
             .prompt_delete => return !app.slot.busy() and !app.want_close and !app.db.isOpen() and app.converted == null,
+            .search_mark => return !c.pending_mark and ready(app),
+            .terms => return c.terms_phase == 2 and ready(app),
             else => return ready(app),
         }
+    }
+
+    // Passos de duas fases: depois da busca, marca a 1a linha nao marcada; depois da pesquisa de termos, escolhe a
+    // tabela RANGER_SOSTAT na lista
+    fn secondPhase(c: *Capture, app: *App) void {
+        if (!c.applied or !ready(app)) return;
+        if (c.pending_mark) {
+            c.pending_mark = false;
+            const rows = if (app.data) |g| g.rows.len else 0;
+            if (app.marked_top < rows) app.want_mark = app.marked_top else c.note(app.gpa, "the search found no row to mark");
+        }
+        if (c.terms_phase == 1) {
+            c.terms_phase = 2;
+            const res = app.terms_res orelse return c.note(app.gpa, "the term search gave no result");
+            for (res.tables, 0..) |hit, i| if (std.mem.eql(u8, app.db.table_names[hit.table], dbm.capture.first_table)) {
+                if (i != app.terms_hit) app.want_terms_page = i;
+            };
+        }
+    }
+
+    // capture_terms.txt: o resumo, o tempo, as tabelas com acerto, os nao encontrados e as linhas de RANGER_SOSTAT
+    fn recordTerms(c: *Capture, app: *const App, how: []const u8) void {
+        const res = app.terms_res orelse return;
+        const rep = &c.terms_report; // texto do --capture (auxiliar de teste)
+        const a = app.gpa;
+        var sb: [3][96]u8 = undefined;
+        var summary: [400]u8 = undefined;
+        rep.print(a, "[{s}] {s}\r\ntempo: {d:.2} s\r\ntabelas:", .{ how, i18n.fmt(&summary, "terms_summary", .{
+            i18n.fmtCount(&sb[0], "terms_found", res.terms.len, .{ res.found, res.terms.len }),
+            i18n.fmtCount(&sb[1], "terms_rows", res.rows, .{res.rows}),
+            i18n.fmtCount(&sb[2], "terms_tables", res.tables.len, .{res.tables.len}),
+        }), app.terms_seconds }) catch return;
+        for (res.tables) |hit| rep.print(a, " {s} ({d});", .{ app.db.table_names[hit.table], hit.rows }) catch return;
+        rep.print(a, "\r\nnao encontrados: {s}\r\n", .{res.not_found}) catch return;
+        const g = app.terms_grid orelse return;
+        if (app.terms_hit >= res.tables.len) return;
+        rep.print(a, "{s}:\r\n", .{app.db.table_names[res.tables[app.terms_hit].table]}) catch return;
+        // Termo e as colunas que identificam o ponto
+        var picks: [4]?usize = .{ 0, null, null, null };
+        for (g.columns, 0..) |col, i| for ([_][]const u8{ "RTUNO", "PNTNO", "SUBNAM" }, 1..) |want, k| {
+            if (std.ascii.eqlIgnoreCase(col, want)) picks[k] = i;
+        };
+        for (g.rows) |row| {
+            for (picks, 0..) |p, k| if (p) |i| rep.print(a, "{s}{s}", .{ if (k > 0) " | " else "  ", row[i] orelse "" }) catch return;
+            rep.appendSlice(a, "\r\n") catch return;
+        }
+        rep.appendSlice(a, "\r\n") catch {};
     }
 
     fn skip(c: *Capture, gpa: std.mem.Allocator, why: []const u8) void {
@@ -169,6 +225,7 @@ const Capture = struct {
             shim_key(ig.ImGuiMod_Ctrl, false);
             c.release_key = null;
         }
+        c.secondPhase(app);
         // global_clear: o termo e apagado com a busca rodando, como o usuario apagando a caixa
         if (c.applied and c.step < dbm.capture.plan.len and dbm.capture.plan[c.step].action == .global_clear and
             !c.cleared and app.slot.busyWith(.search_all))
@@ -211,7 +268,8 @@ const Capture = struct {
         if (action != .export_ask) app.ask_export = null;
         app.close_popups = true;
         switch (action) {
-            .sql_tab, .sql_error, .key_ctrl_enter => app.want_tab = .sql,
+            .sql_tab, .sql_error, .sql_write, .key_ctrl_enter => app.want_tab = .sql,
+            .terms, .terms_show => app.want_tab = .terms,
             .key_ctrl_1, .key_ctrl_2, .key_ctrl_f => {},
             else => app.want_tab = .data,
         }
@@ -251,6 +309,55 @@ const Capture = struct {
             },
             .file_menu => app.start_menu = .File,
             .export_menu => app.start_menu = .Export,
+            .edit_menu => app.start_menu = .Edit,
+            .view_menu => app.start_menu = .View,
+            .table => {
+                const i = indexOf(app.db.table_names, cap.plan[c.step].arg) orelse {
+                    c.skip(app.gpa, "table not found");
+                    return false;
+                };
+                if (app.selected != i) app.want_select = i;
+            },
+            .search_mark, .search_only => {
+                // busca digitada na aba Dados (Esta tabela); search_mark marca depois a 1a linha nao marcada
+                app.scope = .table;
+                copyZ(&app.search, cap.plan[c.step].arg);
+                app.runSearch();
+                c.pending_mark = action == .search_mark;
+            },
+            .only_marked => {
+                app.only_marked = true;
+                app.want_reload = true;
+            },
+            .unmark_all => app.want_unmark_all = true,
+            .terms => {
+                if (c.terms_file.len == 0) {
+                    c.skip(app.gpa, "no term list (MDB2SQL_CAPTURE_TERMS=<file>)");
+                    return false;
+                }
+                // a lista colada, Todas as tabelas, a comparacao do passo
+                const text = std.Io.Dir.cwd().readFile(app.io, c.terms_file, app.terms_text[0 .. app.terms_text.len - 1]) catch {
+                    c.skip(app.gpa, "the term list could not be read");
+                    return false;
+                };
+                app.terms_text[text.len] = 0;
+                app.countTerms();
+                app.terms_match = if (std.mem.eql(u8, cap.plan[c.step].arg, "contains")) .contains else .whole;
+                app.terms_scope = .all;
+                app.want_terms = true;
+                c.terms_phase = 1;
+            },
+            .terms_show => if (app.terms_res == null) {
+                c.skip(app.gpa, "no term search result");
+                return false;
+            },
+            .save_dialog => {
+                if (!c.dialog) {
+                    c.skip(app.gpa, "the native save box blocks (MDB2SQL_CAPTURE_DIALOG=1 and a script that closes it)");
+                    return false;
+                }
+                app.want_save = .save;
+            },
             .sql_tab => {
                 app.sql[0] = 0;
                 app.clearResult();
@@ -258,6 +365,10 @@ const Capture = struct {
             },
             .sql_error => {
                 copyZ(&app.sql, "SELEC 1");
+                app.want_run = true;
+            },
+            .sql_write => {
+                copyZ(&app.sql, cap.plan[c.step].arg);
                 app.want_run = true;
             },
             .key_ctrl_enter => {
@@ -350,11 +461,7 @@ const Capture = struct {
                 app.pickGlobal(hit.table, &g.term);
             },
             .reopen => {
-                if (app.converted != null) {
-                    c.skip(app.gpa, "an Access file asks before closing");
-                    return false;
-                }
-                // filtro da lista de tabelas, busca e escopo diferentes do padrao; depois abre de novo o mesmo arquivo
+                // (abrir de novo nao pergunta mais, nem com o Access convertido) filtro da lista de tabelas, busca e escopo diferentes do padrao; depois abre de novo o mesmo arquivo
                 copyZ(&app.table_filter, "SOX");
                 app.table_filter_applied = app.table_filter;
                 copyZ(&app.search, cap.filter_value);
@@ -374,6 +481,7 @@ const Capture = struct {
                 } else {
                     // Fechar: sem pergunta; o temporario some (descartado, ou salvo antes como na caixa de Salvar)
                     c.deleted_tmp = cv.tmp;
+                    c.log_mark = session_log.slice().len; // a linha do descarte tem de vir depois daqui
                     if (c.save_type) |ty| {
                         var nb: [600]u8 = undefined;
                         const file = settings.fileName(&nb, std.fs.path.stem(zstr(&cv.source)), ty.ext());
@@ -461,14 +569,27 @@ const Capture = struct {
             .key_ctrl_2 => if (app.tab != .schema) c.note(app.gpa, "Ctrl+2 did not show the Schema tab"),
             .key_ctrl_f => if (app.tab != .data or app.focus_search) c.note(app.gpa, "Ctrl+F did not focus the Data search"),
             .sql_error => if (alert.len == 0 or !app.sql_msg.is_err) c.note(app.gpa, "the SQL error is not on the status bar"),
+            .sql_write => if (!std.mem.eql(u8, app.sql_msg.text(), tr("sql_read_only")) or indexOf(app.db.table_names, cap.first_table) == null)
+                c.note(app.gpa, "the SQL tab ran a statement that writes"),
             .key_ctrl_enter => if (app.result == null or alert.len > 0 or app.sql_msg.is_err) c.note(app.gpa, "Ctrl+Enter with a SQL that works did not clear the previous error"),
             .key_f5 => if (!app.db.isOpen() or !app.status.loaded) c.note(app.gpa, "F5 did not open the file again"),
             .reopen_saved => if (app.converted != null or (app.source != .sqlite and app.source != .duckdb)) c.note(app.gpa, "the saved file was not reused (the Access file was converted again)"),
+            .search_only => if (app.marked_top != 3) c.note(app.gpa, "the 3 marked rows are not on top during another search"),
+            .only_marked => if (app.data == null or app.data.?.rows.len != app.marksOf(app.selected).len) c.note(app.gpa, "Only marked does not show just the marked rows"),
+            .unmark_all => if (app.marksOf(app.selected).len != 0 or app.only_marked) c.note(app.gpa, "Unmark all rows left marks"),
+            .terms => {
+                c.recordTerms(app, cap.plan[c.step].arg);
+                const res = app.terms_res orelse return;
+                for (res.tables) |hit| {
+                    if (std.mem.eql(u8, app.db.table_names[hit.table], cap.first_table)) break;
+                } else c.note(app.gpa, "the term search did not find " ++ cap.first_table);
+            },
             // Fechar nao pergunta: o convertido nao salvo e descartado com a linha do Log
             .prompt_delete => {
                 var lb: [1200]u8 = undefined;
                 const line = i18n.fmt(&lb, "log_discarded", .{std.fs.path.basename(zstr(&c.source_path))});
-                const logged = std.mem.indexOf(u8, session_log.slice(), line) != null;
+                const log_now = session_log.slice();
+                const logged = std.mem.indexOf(u8, log_now[@min(c.log_mark, log_now.len)..], line) != null;
                 if (logged == (c.save_type != null)) c.note(app.gpa, "closing logged the discard wrongly (missing, or after saving)");
             },
             else => {},
@@ -500,7 +621,13 @@ const Capture = struct {
     fn report(c: *Capture, gpa: std.mem.Allocator, io: std.Io) void {
         defer c.skipped.deinit(gpa);
         defer c.wrong.deinit(gpa);
+        defer c.terms_report.deinit(gpa);
         defer if (c.saved_path) |p| gpa.free(p);
+        if (c.terms_report.items.len > 0) {
+            const path = std.fs.path.join(gpa, &.{ c.out_dir, "capture_terms.txt" }) catch return;
+            defer gpa.free(path);
+            std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = c.terms_report.items }) catch {};
+        }
         if (c.skipped.items.len > 0) {
             const path = std.fs.path.join(gpa, &.{ c.out_dir, "capture_skipped.txt" }) catch return;
             defer gpa.free(path);
@@ -3650,6 +3777,8 @@ fn run(init: std.process.Init) !void {
         try std.Io.Dir.cwd().createDirPath(init.io, o.out_dir);
         const save_type = if (init.environ_map.get("MDB2SQL_CAPTURE_SAVE")) |v| std.meta.stringToEnum(dialog.SaveType, v) else null;
         capture = .{ .out_dir = o.out_dir, .fbo = try Fbo.load(), .save_type = save_type };
+        capture.?.terms_file = init.environ_map.get("MDB2SQL_CAPTURE_TERMS") orelse "";
+        capture.?.dialog = if (init.environ_map.get("MDB2SQL_CAPTURE_DIALOG")) |v| std.mem.eql(u8, v, "1") else false;
     }
     defer if (capture) |*c| {
         if (c.failed != null or c.wrong.items.len > 0) capture_failed = true;

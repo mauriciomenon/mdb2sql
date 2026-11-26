@@ -45,8 +45,15 @@ pub fn parse(args: []const []const u8) error{Usage}!?Options {
 // key_ctrl_enter (erro e depois SQL certo pelo Ctrl+Enter: o erro sai da barra), key_* (atalhos teclados de verdade:
 // Ctrl+1/2/F, F5) e reopen_saved (Access salvo aberto de novo: o arquivo salvo, sem converter; so com
 // MDB2SQL_CAPTURE_SAVE=sqlite ou duckdb). exit_esc sai pelo Ctrl+Q.
-pub const Action = enum { display_warning, log_error, log_error_open, exit_esc, show, filter, columns, close_columns, other_table, about, log, settings_menu, lang_en, lang_pt_br, lang_es, prompt, prompt_delete, click_cell, global_late, global_clear, global, open_hit, reopen, export_ask, header_menu, cell_menu, file_menu, export_menu, sql_tab, sql_error, key_ctrl_enter, key_ctrl_1, key_ctrl_2, key_ctrl_f, key_f5, reopen_saved };
-pub const Step = struct { name: []const u8, action: Action, w: u32, h: u32 };
+// Itens 27-33 (passos t_, u_, s_, em pt-BR): table abre a tabela `arg`; search_mark busca `arg` na aba Dados e marca a
+// 1a linha nao marcada (o exemplo do dono: 3 buscas, 1 marcada em cada); search_only busca `arg` (as 3 marcadas
+// continuam no topo); only_marked liga "So as marcadas"; unmark_all desmarca e desliga; edit_menu e view_menu abrem
+// os menus; terms cola a lista de MDB2SQL_CAPTURE_TERMS (arquivo) na aba Termos, Todas as tabelas, comparacao `arg`
+// (whole|contains), pesquisa, escolhe a tabela RANGER_SOSTAT e grava o resultado em capture_terms.txt (sem a
+// variavel: pulado); terms_show mostra a aba Termos (outro idioma); save_dialog abre a caixa de salvar nativa (so com
+// MDB2SQL_CAPTURE_DIALOG=1: ela bloqueia ate um script de fora fotografar e fechar).
+pub const Action = enum { display_warning, log_error, log_error_open, exit_esc, show, filter, columns, close_columns, other_table, about, log, settings_menu, lang_en, lang_pt_br, lang_es, prompt, prompt_delete, click_cell, global_late, global_clear, global, open_hit, reopen, export_ask, header_menu, cell_menu, file_menu, export_menu, sql_tab, sql_error, key_ctrl_enter, key_ctrl_1, key_ctrl_2, key_ctrl_f, key_f5, reopen_saved, sql_write, table, search_mark, search_only, only_marked, unmark_all, edit_menu, view_menu, terms, terms_show, save_dialog };
+pub const Step = struct { name: []const u8, action: Action, w: u32, h: u32, arg: []const u8 = "" };
 pub const default_size = [2]u32{ 1280, 800 }; // tamanho em que o programa abre
 pub const max_size = [2]u32{ 1920, 1129 }; // area de trabalho de 1920x1200 menos a barra de tarefas e o titulo
 pub const narrow_size = [2]u32{ 720, 800 }; // a linha da tabela quebra em vez de ser cortada
@@ -57,6 +64,8 @@ pub const second_table = "RANGER_SOANLG";
 // no DB4 (287 tabelas; 10.364 colunas no .duckdb) ELSUL esta em 3 tabelas; a RANGER_SOXAGC vem depois da coluna 10.000
 pub const late_term = "ELSUL";
 pub const late_table = "RANGER_SOXAGC";
+// linhas marcadas: 3 buscas com 1 marcada em cada, depois outra busca (os PNTNAM da lista do dono, RANGER_SOSTAT)
+pub const mark_terms = [_][]const u8{ "TURBINA CGI VIBRACION ANORMAL 1 CANAL 1", "GENERADOR GGB ALIMENTACION CONTROL 24VCC", "GENERADOR GGB INTERRUPTORES CONTROL CIRCUITO 2", "GENERADOR COJ EMP VIBRACION" };
 
 pub const plan = [_]Step{
     .{ .name = "0_display_warning", .action = .display_warning, .w = default_size[0], .h = default_size[1] },
@@ -82,8 +91,29 @@ pub const plan = [_]Step{
     .{ .name = "q_ctrlf_search", .action = .key_ctrl_f, .w = default_size[0], .h = default_size[1] },
     .{ .name = "r_sql_empty", .action = .sql_tab, .w = default_size[0], .h = default_size[1] },
     .{ .name = "r_sql_error", .action = .sql_error, .w = default_size[0], .h = default_size[1] },
+    // item 33: um comando que escreve e recusado antes de rodar (a tabela aberta continua la)
+    .{ .name = "r_sql_write_refused", .action = .sql_write, .w = default_size[0], .h = default_size[1], .arg = "DROP TABLE " ++ first_table },
     .{ .name = "r_sql_fixed_ctrl_enter", .action = .key_ctrl_enter, .w = default_size[0], .h = default_size[1] },
     .{ .name = "q_f5_reopened", .action = .key_f5, .w = default_size[0], .h = default_size[1] },
+    // itens 27-33, em pt-BR: linhas marcadas, menus, aba Termos, caixa de salvar
+    .{ .name = "t_lang_pt_br", .action = .lang_pt_br, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "t_table", .action = .table, .w = default_size[0], .h = default_size[1], .arg = first_table },
+    .{ .name = "t_mark_1", .action = .search_mark, .w = default_size[0], .h = default_size[1], .arg = mark_terms[0] },
+    .{ .name = "t_mark_2", .action = .search_mark, .w = default_size[0], .h = default_size[1], .arg = mark_terms[1] },
+    .{ .name = "t_mark_3", .action = .search_mark, .w = default_size[0], .h = default_size[1], .arg = mark_terms[2] },
+    .{ .name = "t_marked_top_pt_br", .action = .search_only, .w = default_size[0], .h = default_size[1], .arg = mark_terms[3] },
+    .{ .name = "t_only_marked_pt_br", .action = .only_marked, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "s_menu_edit_pt_br", .action = .edit_menu, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "s_menu_view_pt_br", .action = .view_menu, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "t_unmarked", .action = .unmark_all, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "s_menu_file_pt_br", .action = .file_menu, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "s_menu_export_pt_br", .action = .export_menu, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "s_menu_settings_pt_br", .action = .settings_menu, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "u_terms_pt_br", .action = .terms, .w = default_size[0], .h = default_size[1], .arg = "whole" },
+    .{ .name = "u_terms_contains_pt_br", .action = .terms, .w = default_size[0], .h = default_size[1], .arg = "contains" },
+    .{ .name = "u_terms_max_pt_br", .action = .terms_show, .w = max_size[0], .h = max_size[1] },
+    .{ .name = "s_save_dialog_pt_br", .action = .save_dialog, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "t_lang_en", .action = .lang_en, .w = default_size[0], .h = default_size[1] },
     .{ .name = "e_soanlg", .action = .other_table, .w = default_size[0], .h = default_size[1] },
     .{ .name = "e_soanlg_max", .action = .other_table, .w = max_size[0], .h = max_size[1] },
     .{ .name = "g_log", .action = .log, .w = default_size[0], .h = default_size[1] },
@@ -97,9 +127,11 @@ pub const plan = [_]Step{
     .{ .name = "j_prompt_pt_br", .action = .prompt, .w = default_size[0], .h = default_size[1] },
     .{ .name = "g_log_pt_br", .action = .log, .w = default_size[0], .h = default_size[1] },
     .{ .name = "i_table_es", .action = .lang_es, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "u_terms_es", .action = .terms_show, .w = default_size[0], .h = default_size[1] },
     .{ .name = "b_about_es", .action = .about, .w = default_size[0], .h = default_size[1] },
     .{ .name = "j_prompt_es", .action = .prompt, .w = default_size[0], .h = default_size[1] },
     .{ .name = "i_table_en", .action = .lang_en, .w = default_size[0], .h = default_size[1] },
+    .{ .name = "u_terms_en", .action = .terms_show, .w = default_size[0], .h = default_size[1] },
     // erro real (SQL errado) com o Log recolhido (a barra mostra o erro) e depois aberto
     .{ .name = "l_log_collapsed_error", .action = .log_error, .w = default_size[0], .h = default_size[1] },
     .{ .name = "l_log_open_error", .action = .log_error_open, .w = default_size[0], .h = default_size[1] },

@@ -129,8 +129,17 @@ Debian - dist/debian/amd64/
     $env:MDB2SQL_ACCESS_READER = 'mdbtools'
     mdb2sql-zig.exe --capture C:\copia\shots --db C:\copia\DB4.accdb --theme light
   Estados (src\capture.zig): RANGER_SOSTAT, filtro SUBNAM = 'U02', Columns com colunas ocultas (1280x800 e
-  1920x1129), janela estreita 720x800, RANGER_SOANLG, Log, Settings > Language, About, dialogo do SQLite convertido,
-  os mesmos em portugues e espanhol, e por fim Delete (a captura confere que o temporario sumiu).
+  1920x1129), janela estreita 720x800, RANGER_SOANLG, Log, Settings > Language, About, a pergunta ao sair com o
+  Access convertido e nao salvo, os mesmos em portugues e espanhol, e por fim Fechar (sem pergunta: a captura confere
+  que o temporario sumiu e que o Log diz que ele foi descartado).
+  Itens 27-33, em portugues (t_, s_, u_): 3 buscas com 1 linha marcada em cada (os PNTNAM da lista do dono), outra
+  busca com as 3 marcadas no topo, So as marcadas, menus Editar, Exibir, Arquivo, Exportar e Configuracoes, a aba
+  Termos (Valor inteiro e Contem, Todas as tabelas, a tabela RANGER_SOSTAT escolhida; o resultado e o tempo vao para
+  <pasta>\capture_terms.txt) e a aba Termos em espanhol e ingles. A lista vem de um arquivo:
+    $env:MDB2SQL_CAPTURE_TERMS = 'C:\copia\termos.txt'   (sem ela os passos de Termos sao pulados)
+  A caixa de salvar nativa bloqueia o programa: o passo s_save_dialog_pt_br so roda com
+  $env:MDB2SQL_CAPTURE_DIALOG = '1' e um script de fora que a fotografa e fecha (o run_capture.ps1 das capturas de
+  25/11 faz isso por mensagens a janela, sem mouse).
   Estados conferidos (m_, n_, o_): clique numa celula com colunas ocultas (continuam ocultas), busca em todas as
   tabelas por ELSUL (a RANGER_SOXAGC, depois da coluna 10.000 do catalogo do DB4, esta no resultado), termo apagado
   com a busca rodando (o resultado velho nao volta), acerto da tabela aberta com o filtro SUBNAM = 'U02' (abre sem o
@@ -140,9 +149,9 @@ Debian - dist/debian/amd64/
   verdade (Ctrl+2 Esquema, Ctrl+1 Dados, Ctrl+F busca, F5 abrir de novo, Ctrl+Q na saida com Access), aba SQL vazia
   (dica), SQL errado (erro na barra) e o certo por Ctrl+Enter (o erro sai da barra). Conferencia que falha vai para
   capture_error.txt (saida 2) e a captura continua. Com
-  $env:MDB2SQL_CAPTURE_SAVE = '1' o ultimo passo responde Save (resposta lembrada, grava <pasta>\<origem>.sqlite sem
-  dialogo) e confere que o arquivo salvo e um SQLite e que o temporario sumiu; depois (k_reopened_saved) abre o mesmo
-  Access de novo e confere que veio o SQLite salvo, sem converter nem perguntar. Linux: o 1o passo (0_display_warning)
+  $env:MDB2SQL_CAPTURE_SAVE = 'sqlite' (ou 'duckdb', 'xlsx') o passo Fechar salva antes, sem a caixa, em
+  <pasta>\<origem>.<tipo>, e confere o tipo do arquivo salvo e que o temporario sumiu; com sqlite ou duckdb, depois
+  (k_reopened_saved) abre o mesmo Access de novo e confere que veio o arquivo salvo, sem converter. Linux: o 1o passo (0_display_warning)
   grava o aviso "Display mode" quando o programa abriu no Wayland por reserva (ex.: env -u DISPLAY no WSLg); com X11
   ele e pulado (capture_skipped.txt).
   Linux, escolha do sistema de janelas: src/display.zig (decisao, com teste) e initLinuxDisplay em src/main.zig;
