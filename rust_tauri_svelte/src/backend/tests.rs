@@ -1437,6 +1437,15 @@ mod tests {
             assert_eq!(done.count, 2);
             assert!(file.is_file());
         }
+        // secao 19 f: o relatorio em xlsx lido de volta: 1a aba = a_pts, titulos da tabela, rtu e pnt celulas numericas
+        #[cfg(windows)]
+        {
+            let (rows, _) = xlsx_sheet(&dir.path().join("rel.xlsx"), 1);
+            assert_eq!(rows[0].iter().map(|c| c.2.as_str()).collect::<Vec<_>>(), ["rtu", "pnt", "name"]);
+            assert_eq!(rows[1][..2].iter().map(|c| (c.1.as_str(), c.2.as_str())).collect::<Vec<_>>(), [("n", "50"), ("n", "300")]);
+            assert_eq!(rows[1][2].2, "GENERADOR X");
+            assert_eq!(rows.len(), 4, "header + 3 rows, each once");
+        }
         let folder = dir.path().join("csv");
         std::fs::create_dir(&folder).unwrap();
         export::export_folder(&conn, &names, &folder, &mut ok_progress()).unwrap();
@@ -1623,13 +1632,14 @@ mod tests {
         }
         let files: Vec<PathBuf> = ["DB3.sqlite", "DB3.duckdb", "DB3.accdb"].iter().map(|f| folder.join(f)).filter(|f| f.is_file()).collect();
         for file in files {
+            let file_is_access = file.extension().is_some_and(|e| e == "accdb");
             let manager = DBManager::new();
             let started = std::time::Instant::now();
             manager.connect(file.to_str().unwrap(), &mut no_progress()).unwrap();
             let tables = manager.list_tables().unwrap();
             eprintln!("DB3 {}: opened in {:?}, {} tables", file.display(), started.elapsed(), tables.len());
             let conn = manager.export_connection().unwrap();
-            if file.extension().is_some_and(|e| e == "accdb") {
+            if file_is_access {
                 // secao 19 a: o Access convertido com os tipos do mdb-schema (1.681 inteiras, 5.816 double, 2.867 texto)
                 let count = |kinds: &str| -> i64 {
                     let sql = format!("SELECT count(*) FROM duckdb_columns() WHERE database_name = current_database() AND data_type IN ({kinds})");
@@ -1704,6 +1714,26 @@ mod tests {
                 // Contem acha PNTNAM tambem nas mensagens de RANGER_SOTEXT ("SOSTAT.SUBNAM+PNTNAM"); por inteiro, nao
                 if whole {
                     assert_eq!(missing, [&"PNTNAM".to_string()]);
+                    // secao 19 f: o relatorio em xlsx lido de volta: uma aba por tabela, titulos da tabela, sem Termo;
+                    // no Access convertido RTUNO e PNTNO sao celulas numericas
+                    #[cfg(windows)]
+                    {
+                        let names = terms::report(&conn, &with_hits).unwrap();
+                        let file = std::env::temp_dir().join(format!("mdb2sql-db3-{}.xlsx", std::process::id()));
+                        export::write_tables(&conn, &names, "xlsx", &file, &mut ok_progress()).unwrap();
+                        let sheet = with_hits.iter().position(|t| t == "RANGER_SOSTAT").unwrap() + 1;
+                        let (rows, widths) = xlsx_sheet(&file, sheet);
+                        let header: Vec<String> = rows[0].iter().map(|c| c.2.clone()).collect();
+                        let columns: Vec<String> = manager.get_table_schema("RANGER_SOSTAT").unwrap().into_iter().map(|c| c.name).collect();
+                        assert_eq!(header, columns);
+                        assert_eq!(rows.len(), 9);
+                        if file_is_access {
+                            assert_eq!((rows[1][0].1.as_str(), rows[1][1].1.as_str()), ("n", "n"), "RTUNO, PNTNO");
+                        }
+                        assert_eq!(widths.len(), columns.len());
+                        let _ = std::fs::remove_file(&file);
+                        let _ = std::fs::remove_dir_all(file.with_extension("unzipped"));
+                    }
                 } else {
                     assert!(missing.is_empty() && with_hits.contains(&"RANGER_SOTEXT".to_string()), "{missing:?}");
                 }
