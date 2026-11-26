@@ -2,7 +2,7 @@
 // !T: Single-screen viewer talking to Go through the Wails IPC bridge (window.go.main.App). Every visible text comes
 // from the catalogs in ../../i18n (see i18n.ts)
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, version as reactVersion } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import { LANGS, translate, translateN, type Lang, type T, type TN } from './i18n';
 
@@ -47,15 +47,14 @@ export type MenuItem =
 type DisplayWarning = { text: string; missing: string; distro: string; command: string; help: string };
 export type AppInfo = {
   version: string;
-  build?: string;
+  commit?: string; // full commit hash of the build; "" = not an official build ("dev")
   buildDate?: string;
   go: string;
   wails: string;
-  duckdb: string;
-  access?: string; // reader an Access file would use now: "Access ODBC", "mdbtools" or ""
   webview?: string; // what draws the window: "WebView2 158.0.4370.33" (runtime API), "WebKitGTK"
-  mdbtools?: string; // "mdbtools 1.0.1" (embedded) or "mdbtools" (on PATH: mdbtoolsSystem); "" = none
-  mdbtoolsSystem?: boolean;
+  duckdb: string;
+  sqlite?: string; // the SQLite inside DuckDB's sqlite extension, the one that reads the files
+  mdbtools?: string; // "mdbtools 1.0.1" (embedded) or "mdbtools" (on PATH); "" = none
 };
 export type Filter = { column: string; value: unknown }; // column = exact value, applied in the database query
 
@@ -88,8 +87,6 @@ declare global {
           ExportTerms?: (res: TermsResult, contains: boolean, format: string) => Promise<string>;
           CancelJob?: () => Promise<void>;
           GetTheme?: () => Promise<Theme>;
-          GetLogOpen?: () => Promise<boolean>;
-          SetLogOpen?: (open: boolean) => Promise<void>;
           SetTheme?: (theme: Theme) => Promise<void>;
           GetLanguage?: () => Promise<Lang>;
           SetLanguage?: (lang: Lang) => Promise<void>;
@@ -162,32 +159,25 @@ export function parseTerms(text: string) {
   return { terms, repeated };
 }
 
-// How an Access file is read now: the ODBC driver (embedded mdbtools as fallback), mdbtools only, or nothing
-function accessReading(info: AppInfo, t: T): string {
-  const mdb = info.mdbtools ?? '';
-  if (info.access === 'Access ODBC') return mdb ? t('about.accessOdbc', mdb) : t('about.accessOdbcOnly');
-  if (info.access === 'mdbtools') return t(info.mdbtoolsSystem ? 'about.accessSystem' : 'about.accessEmbedded', mdb);
-  return t('about.reader.none');
-}
-
-// Linhas (rotulo, valor) do dialogo Sobre, as do Rust (Build, Stack, Janela, Bancos, Leitura do Access, Gravacao,
-// Autor, Licenca, links); versao de wails.json, numero/data do build gravados pelo build, runtimes lidos em execucao.
-// Valor que comeca com https:// vira link aberto no navegador padrao.
-export function aboutRows(info: AppInfo, t: T): [string, string][] {
-  const v = (s: string) => s.replace(/^v/, '');
+// The lines of the About dialog, the same in the 4 versions (standard 18b), in this order, technical text only; then
+// the GitHub / GitLab links (REPOS). Version from wails.json, commit and date written by the build, runtimes read now.
+export function aboutLines(info: AppInfo, t: T): string[] {
+  const v = (s = '') => s.replace(/^v/, '');
+  const tools = [info.sqlite && `SQLite ${v(info.sqlite)}`, `DuckDB ${v(info.duckdb)}`, info.mdbtools].filter(Boolean).join(', ');
   return [
-    [t('about.build'), info.build ? `${info.build} (${info.buildDate})` : 'dev'],
-    [t('about.stack'), `Go ${info.go} + Wails ${v(info.wails)} + React ${reactVersion}`],
-    [t('about.window'), info.webview ?? ''],
-    [t('about.engines'), `DuckDB ${v(info.duckdb)}`], // SQLite files are read by DuckDB (its sqlite extension)
-    [t('about.access'), accessReading(info, t)],
-    [t('about.write'), t('about.writeValue')], // .mdb and .accdb cannot be written (standard item 28)
-    [t('about.author'), 'Mauricio Menon'],
-    [t('about.license'), t('about.licenseText')],
-    ['GitHub', 'https://github.com/mauriciomenon/mdb2sql'],
-    ['GitLab', 'https://gitlab.com/mauricio.menon/mdb2sql'],
+    'MDB2SQL (Go)',
+    info.commit ? t('about.version', info.version, info.commit, info.buildDate ?? '') : t('about.versionDev', info.version),
+    [`Go ${info.go}`, `Wails ${v(info.wails)}`, info.webview].filter(Boolean).join(', '),
+    t('about.tools', tools),
+    t('about.odbc'),
+    `${t('about.author')}: Mauricio Menon`,
+    `${t('about.license')}: GPLv2`,
   ];
 }
+export const REPOS: [string, string][] = [
+  ['GitHub', 'https://github.com/mauriciomenon/mdb2sql'],
+  ['GitLab', 'https://gitlab.com/mauricio.menon/mdb2sql'],
+];
 
 // Texto do filtro ativo: SIGLA = 'U9A' | ID = 7 | NOTE IS NULL
 export function filterLabel(f: Filter): string {
@@ -380,9 +370,11 @@ function App() {
   const [about, setAbout] = useState<AppInfo | null>(null);
   const [search, setSearch] = useState('');
   const [tableSearch, setTableSearch] = useState(''); // search applied in the database (Data tab), after a pause
-  const [scope, setScope] = useState<Scope>('table'); // where the Data tab searches now
-  const [defaultScope, setDefaultScope] = useState<Scope>('table'); // Settings > Default search scope
-  const defaultScopeRef = useRef<Scope>('table'); // the same, for openPath started by an older render (startup file)
+  // the Data tab searches all tables unless Settings say otherwise (standard 18a: with the first table open, a search
+  // of that table only found nothing)
+  const [scope, setScope] = useState<Scope>('all'); // where the Data tab searches now
+  const [defaultScope, setDefaultScope] = useState<Scope>('all'); // Settings > Default search scope
+  const defaultScopeRef = useRef<Scope>('all'); // the same, for openPath started by an older render (startup file)
   // "All tables" result and the search it answers (null = searching or failed)
   const [hits, setHits] = useState<{ search: string; tables: TableHits[] } | null>(null);
   const [searching, setSearching] = useState(false);
@@ -424,8 +416,10 @@ function App() {
   const [termsText, setTermsText] = useState('');
   const [match, setMatch] = useState<Match>('whole');
   const [defaultMatch, setDefaultMatch] = useState<Match>('whole');
-  const [termsScope, setTermsScope] = useState<Scope>('table');
-  const [termsRes, setTermsRes] = useState<{ res: TermsResult; contains: boolean } | null>(null);
+  // the Advanced Search always starts in All tables, whatever the default scope of the Data tab (standard 17)
+  const [termsScope, setTermsScope] = useState<Scope>('all');
+  // only: the table searched with This table ('' = all of them), told in the summary
+  const [termsRes, setTermsRes] = useState<{ res: TermsResult; contains: boolean; only: string } | null>(null);
   const [termsTable, setTermsTable] = useState('');
   const [termGrid, setTermGrid] = useState<QueryResult | null>(null);
   const termsReq = useRef(0);
@@ -458,16 +452,14 @@ function App() {
     setErrorText(short);
     if (text) addLog(text, 'error', short);
   };
-  // collapse/expand (log header arrow, status bar, View > Log, Ctrl+L); remembered by Go between sessions. What
-  // was in the log when it is opened or closed counts as read.
+  // collapse/expand (log header arrow, status bar, View > Log, Ctrl+L); the app always opens with it collapsed
+  // (standard 18d). What was in the log when it is opened or closed counts as read.
   const logCount = useRef(0);
   logCount.current = logLines.length;
   const toggleLog = (open?: boolean) =>
     setLogOpen((old) => {
-      const next = open ?? !old;
       setReadMark(logCount.current);
-      if (next !== old) window.go?.main?.App?.SetLogOpen?.(next)?.catch(() => {});
-      return next;
+      return open ?? !old;
     });
 
   useEffect(() => {
@@ -581,7 +573,6 @@ function App() {
     if (started.current) return; // StrictMode runs effects twice in development
     started.current = true;
     const bridge = window.go?.main?.App;
-    bridge?.GetLogOpen?.().then((open) => open && setLogOpen(true)).catch(() => {});
     bridge?.GetTheme?.().then((th) => th && setThemeState(th)).catch(() => {});
     bridge?.GetShowNull?.().then((show) => setShowNull(show === true)).catch(() => {});
     bridge?.GetSearchScope?.()
@@ -590,7 +581,6 @@ function App() {
           defaultScopeRef.current = s;
           setDefaultScope(s);
           setScope(s);
-          setTermsScope(s);
         }
       })
       .catch(() => {});
@@ -709,7 +699,6 @@ function App() {
     defaultScopeRef.current = s;
     setDefaultScope(s);
     setScope(s);
-    setTermsScope(s);
     window.go?.main?.App?.SetSearchScope?.(s)?.catch(fail);
   }
 
@@ -833,7 +822,7 @@ function App() {
     }
   }
 
-  // File > Open..., Browse... and Ctrl+O: the native file dialog, then the file chosen opens
+  // File > Open..., Open... of the path bar and Ctrl+O: the native file dialog, then the file chosen opens
   async function loadDatabase() {
     setError('');
     try {
@@ -847,8 +836,8 @@ function App() {
     }
   }
 
-  // the path of the top bar field: an empty field opens the default database (MDB2SQL_DB_PATH or the sample)
-  const openTyped = () => openPath(pathText.trim());
+  // the path of the top bar field (Enter, File > Open the typed path); an empty field opens the file dialog (standard 14)
+  const openTyped = () => (pathText.trim() ? openPath(pathText.trim()) : loadDatabase());
 
   // another file (or the same one again, F5): the open one is left without a question (Go deletes its unsaved SQLite)
   async function openPath(path: string) {
@@ -881,7 +870,7 @@ function App() {
       setSearch('');
       setTableSearch('');
       setScope(defaultScopeRef.current);
-      setTermsScope(defaultScopeRef.current);
+      setTermsScope('all');
       setStatus(tn('status.loaded', tableList.length, name, tableList.length));
       if (tableList.length > 0) await loadTable(tableList[0], limit, undefined, '');
     } catch (err) {
@@ -1049,6 +1038,7 @@ function App() {
   // Terms tab (standard item 32): Go searches every column of the tables in the engine, as a job with progress and
   // Cancel; the answer of an older search never shows
   const termsInfo = useMemo(() => parseTerms(termsText), [termsText]);
+  const inputLines = termsInfo.terms.length + termsInfo.repeated; // the lines with text in the box, repeats too
   async function runTerms() {
     const b = window.go?.main?.App;
     if (!b?.SearchTerms || termsInfo.terms.length === 0 || tables.length === 0 || busy) return;
@@ -1059,9 +1049,10 @@ function App() {
     setJob({ kind: 'terms', text: t('job.searching') });
     setProgress(null);
     try {
-      const res = await b.SearchTerms(termsText.split(/\r?\n/), contains, termsScope === 'table' ? selectedTable : '');
+      const only = termsScope === 'table' ? selectedTable : '';
+      const res = await b.SearchTerms(termsText.split(/\r?\n/), contains, only);
       if (req !== termsReq.current) return;
-      setTermsRes({ res, contains });
+      setTermsRes({ res, contains, only });
       setTermsTable(res.tables?.[0]?.table ?? '');
     } catch (err) {
       if (req === termsReq.current) fail(err);
@@ -1070,8 +1061,7 @@ function App() {
     }
   }
 
-  // the rows of the table chosen in the Terms list, limited as in the Data tab (Rows); asked again in another language
-  // (Go names the Term column)
+  // the rows of the table chosen in the Terms list (its own columns, each row once), limited as in the Data tab (Rows)
   useEffect(() => {
     const req = ++termGridReq.current;
     setTermGrid(null);
@@ -1079,16 +1069,16 @@ function App() {
     Promise.resolve(window.go?.main?.App?.TermRows?.(termsTable, termsRes.res.terms, termsRes.contains, limit))
       .then((r) => req === termGridReq.current && r && setTermGrid({ columns: r.columns ?? [], rows: r.rows ?? [], more: r.more }))
       .catch((err) => req === termGridReq.current && fail(err));
-  }, [termsRes, termsTable, limit, lang]);
+  }, [termsRes, termsTable, limit]);
   const termsHits = termsRes?.res.tables?.find((h) => h.table === termsTable)?.rows ?? 0;
 
-  // "Copy the rows found in this table": every row found, not only the ones on screen, with the header and without the
-  // Term column, so a paste in Excel gives exactly those rows
+  // "Copy the rows found in this table": every row found, not only the ones on screen, with the header (the columns of
+  // the table, standard 19d), so a paste in Excel gives exactly those rows
   async function copyHits() {
     try {
       const found = termsRes && (await window.go?.main?.App?.TermRows?.(termsTable, termsRes.res.terms, termsRes.contains, 0));
       if (!found) return;
-      const cols = (found.columns ?? []).slice(1);
+      const cols = found.columns ?? [];
       const list = found.rows ?? [];
       await copyText([cols.map(tsvField).join('\t'), ...list.map((r) => rowToTsv(cols, r, false))].join('\r\n'), tn('copied.hits', list.length, list.length));
     } catch (err) {
@@ -1109,7 +1099,7 @@ function App() {
     { label: t('export.allCsv'), on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportAllCSV?.()) },
     { label: t('export.sql'), on: !!resultSql, items: formats(TABLE_FORMATS, (f) => runExport(sqlResultName, () => bridge?.ExportQuery?.(resultSql, f))) },
     { label: t('export.searchAll'), on: !!shownHits?.length, run: () => runExport(dbName, () => bridge?.ExportSearch?.(tableSearch, (shownHits ?? []).map((h) => h.table))) },
-    { label: t('export.terms'), on: !!termsRes, items: formats(REPORT_FORMATS, exportTerms) },
+    { label: t('export.terms'), on: !!termsRes?.res.tables.length, items: formats(REPORT_FORMATS, exportTerms) },
   ];
 
   const visibleTables = useMemo(() => {
@@ -1160,9 +1150,8 @@ function App() {
       ? tn(narrowed ? 'info.found' : 'info.showing', 0, shownTable, 0, 0)
       : tn(narrowed ? 'info.pageFound' : 'info.page', rowCount, shownTable, num(page * limit + 1), num(page * limit + rows.length), num(rowCount));
   const copyCell = () => sel && copyText(cellText(sel.row[sel.col]), t('copied.value'));
-  const copyColumns = view === 'terms' ? gridColumns.slice(1) : gridColumns; // Terms: without the Term column
   const copyRow = (withHeader: boolean) =>
-    sel && copyText(rowToTsv(copyColumns, sel.row, withHeader), t(withHeader ? 'copied.rowHeader' : 'copied.row'));
+    sel && copyText(rowToTsv(gridColumns, sel.row, withHeader), t(withHeader ? 'copied.rowHeader' : 'copied.row'));
   const copyLog = () => copyText(logLines.map((e) => e.line).join('\r\n'), t('copied.log'));
   const filterBySel = () => sel && applyFilters(withFilter(filters, { column: sel.col, value: sel.row[sel.col] ?? null }));
   const busy = job !== null;
@@ -1171,7 +1160,8 @@ function App() {
   const shownStatus = logOpen ? { text: error || status, level: error ? 'error' : 'info', unread: 0 } : statusLine(logLines, readMark, status, error);
   const viewName = (v: View) => t(`tab.${v}`); // "Schema" without the column count (standard item 15)
 
-  const reload = () => openPath(openedPath); // nothing open: the default database, as the Python version
+  // F5 and File > Reopen: the open file again; nothing open: the file dialog (standard 14)
+  const reload = () => (openedPath ? openPath(openedPath) : loadDatabase());
   const focusSearch = () => {
     const focus = () => {
       searchRef.current?.focus();
@@ -1385,7 +1375,7 @@ function App() {
             </div>
           ))}
         </nav>
-        {/* path bar as in Zig: the field takes the line, Browse... Open Export... on the right */}
+        {/* path bar: the field takes the line (Enter opens it), Open... (the file dialog) and Export... on the right */}
         <div className="pathbar">
           <div className={pathElided ? 'path elided' : 'path'}>
             <input
@@ -1403,9 +1393,6 @@ function App() {
             />
           </div>
           <button disabled={busy} onClick={() => loadDatabase()}>
-            {t('top.browse')}
-          </button>
-          <button disabled={busy} onClick={openTyped}>
             {t('top.open')}
           </button>
           <div className="menu-root">
@@ -1578,38 +1565,46 @@ function App() {
                     }
                   }}
                 />
+                {/* the line of controls (standard 18c): Search terms | a box with the input lines and the summary (it
+                    grows, never smaller than its text) | Whole value | Contains, a thin line, This table | All tables */}
                 <div className="terms-bar">
-                  <div className="tabs" role="radiogroup" aria-label={t('menu.termMatch')} title={t('terms.matchTip')}>
-                    {MATCHES.map((m) => (
-                      <button key={m} role="radio" aria-checked={match === m} onClick={() => setMatch(m)}>
-                        {t(`terms.${m}`)}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="tabs" role="radiogroup" aria-label={t('scope.label')}>
-                    {SCOPES.map((s) => (
-                      <button key={s} role="radio" aria-checked={termsScope === s} onClick={() => setTermsScope(s)}>
-                        {t(`scope.${s}`)}
-                      </button>
-                    ))}
-                  </div>
                   <button disabled={termsInfo.terms.length === 0} onClick={runTerms} title="Ctrl+Enter">
                     {t('terms.run')}
                   </button>
-                  <span className="info">
-                    {tn('terms.count', termsInfo.terms.length, termsInfo.terms.length) + (termsInfo.repeated ? tn('terms.repeated', termsInfo.repeated, termsInfo.repeated) : '')}
-                  </span>
+                  <div className="terms-status">
+                    <span>{tn('terms.lines', inputLines, inputLines)}</span>
+                    {termsRes && (
+                      <span>
+                        {t(
+                          'terms.summary',
+                          tn('terms.found', termsRes.res.terms.length, termsRes.res.terms.length - termsRes.res.notFound.length, termsRes.res.terms.length),
+                          tn('terms.rows', sumRows(termsRes.res.tables), sumRows(termsRes.res.tables)),
+                          tn('terms.tables', termsRes.res.tables.length, termsRes.res.tables.length),
+                        ) + (termsRes.only ? ` ${t('terms.onlyIn', termsRes.only)}` : '')}
+                      </span>
+                    )}
+                  </div>
+                  {/* the right block goes below as one piece when the line is too narrow (1280 px: it is) */}
+                  <div className="terms-right">
+                    <div className="tabs" role="radiogroup" aria-label={t('menu.termMatch')} title={t('terms.matchTip')}>
+                      {MATCHES.map((m) => (
+                        <button key={m} role="radio" aria-checked={match === m} onClick={() => setMatch(m)}>
+                          {t(`terms.${m}`)}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="terms-sep" aria-hidden="true" />
+                    <div className="tabs" role="radiogroup" aria-label={t('scope.label')}>
+                      {SCOPES.map((s) => (
+                        <button key={s} role="radio" aria-checked={termsScope === s} onClick={() => setTermsScope(s)}>
+                          {t(`scope.${s}`)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
                 {termsRes && (
                   <>
-                    <p className="info">
-                      {t(
-                        'terms.summary',
-                        tn('terms.found', termsRes.res.terms.length, termsRes.res.terms.length - termsRes.res.notFound.length, termsRes.res.terms.length),
-                        tn('terms.rows', sumRows(termsRes.res.tables), sumRows(termsRes.res.tables)),
-                        tn('terms.tables', termsRes.res.tables.length, termsRes.res.tables.length),
-                      )}
-                    </p>
                     <div className="terms-hits">
                       <ul className="hits">
                         {termsRes.res.tables.map((h) => (
@@ -1918,33 +1913,27 @@ function App() {
       {about && (
         <div className="backdrop" onClick={(e) => e.target === e.currentTarget && setAbout(null)}>
           <div className="about" role="dialog" aria-modal="true" aria-labelledby="about-title">
-            <h2 id="about-title">
-              {t('about.title')} <span className="version">{about.version}</span>
-            </h2>
-            <p className="tagline">{t('about.tagline')}</p>
-            <dl>
-              {aboutRows(about, t).map(([label, value]) => (
-                <div key={label}>
-                  <dt>{label}</dt>
-                  <dd>
-                    {value.startsWith('https://') ? (
-                      <a
-                        href={value}
-                        title={t('about.openLink')}
-                        onClick={(e) => {
-                          e.preventDefault(); // never navigate the app's own webview away
-                          window.runtime?.BrowserOpenURL?.(value);
-                        }}
-                      >
-                        {value}
-                      </a>
-                    ) : (
-                      value
-                    )}
-                  </dd>
-                </div>
+            <h2 id="about-title">{t('about.title')}</h2>
+            {aboutLines(about, t).map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+            <p>
+              {REPOS.map(([name, url], i) => (
+                <span key={name}>
+                  {i > 0 && ' / '}
+                  <a
+                    href={url}
+                    title={`${t('about.openLink')}: ${url}`}
+                    onClick={(e) => {
+                      e.preventDefault(); // never navigate the app's own webview away
+                      window.runtime?.BrowserOpenURL?.(url);
+                    }}
+                  >
+                    {name}
+                  </a>
+                </span>
               ))}
-            </dl>
+            </p>
             <button className="primary" autoFocus onClick={() => setAbout(null)}>
               {t('about.close')}
             </button>

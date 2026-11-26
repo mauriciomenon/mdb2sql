@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/duckdb/duckdb-go/v2"
 	"github.com/xuri/excelize/v2"
@@ -162,6 +163,42 @@ func tableItems(tables []string) []exportItem {
 }
 
 // ExportDatabase writes every table to out; format is "duckdb", "sqlite" or "xlsx"
+// savedSelect is the SELECT of a whole table for Save as: from a SQLite file (also a converted Access) a column
+// declared DECIMAL(p,s), BOOLEAN or REAL comes back as that type (DuckDB reads them as DOUBLE, BIGINT and DOUBLE), so a
+// DuckDB file saved keeps DECIMAL and a SQLite one keeps the declared type: the schema, standard 19h and 20
+func (m *DBManager) savedSelect(table string) string {
+	all := "SELECT * FROM " + quoteIdent(table)
+	if m.source == SourceDuckDB {
+		return all
+	}
+	pragma := "SELECT name, type FROM pragma_table_info(" + quoteLiteral(table) + ")"
+	rows, err := m.conn.Query("SELECT * FROM sqlite_query('src', " + quoteLiteral(pragma) + ")")
+	if err != nil {
+		return all
+	}
+	defer rows.Close()
+	var cols []string
+	cast := false
+	for rows.Next() {
+		var name, typ string
+		if err := rows.Scan(&name, &typ); err != nil {
+			return all
+		}
+		col, t := quoteIdent(name), strings.ToUpper(strings.TrimSpace(typ))
+		var p, s int
+		if _, err := fmt.Sscanf(t, "DECIMAL(%d,%d)", &p, &s); err == nil && decimalType(p, s) != "DOUBLE" {
+			col, cast = "CAST("+col+" AS "+decimalType(p, s)+") AS "+col, true
+		} else if t == "BOOLEAN" || t == "REAL" {
+			col, cast = "CAST("+col+" AS "+t+") AS "+col, true
+		}
+		cols = append(cols, col)
+	}
+	if !cast || rows.Err() != nil {
+		return all
+	}
+	return "SELECT " + strings.Join(cols, ", ") + " FROM " + quoteIdent(table)
+}
+
 func (m *DBManager) ExportDatabase(ctx context.Context, format, out string, progress Progress) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -169,6 +206,9 @@ func (m *DBManager) ExportDatabase(ctx context.Context, format, out string, prog
 		return fmt.Errorf("no database connected")
 	}
 	items := tableItems(m.tableList)
+	for i := range items {
+		items[i].query = m.savedSelect(items[i].name)
+	}
 	return m.writeAtomically(out, func(tmp string) error {
 		switch format {
 		case "duckdb", "sqlite":
@@ -382,9 +422,10 @@ func (m *DBManager) writeAtomically(out string, write func(tmp string) error) er
 	return os.Rename(tmp, out)
 }
 
-// sqliteColumn gives the declared SQLite type of a DuckDB column and the expression that writes it. SQLite has no
-// boolean, decimal or date types: the declared name keeps the type for readers (DuckDB reads DATETIME as TIMESTAMP),
-// booleans are stored 0/1, dates as ISO text, decimals as REAL (exact up to 15 significant digits).
+// sqliteColumn gives the declared SQLite type of a DuckDB column and the expression that writes it (the conversion of
+// Access and Save as SQLite). The type is the column's (standard 20): the declared name carries the nature of the
+// number and the values go as they are, no cast that changes it (DuckDB reads DATETIME as TIMESTAMP and a declared
+// DECIMAL as DOUBLE; Save as reads DECIMAL and BOOLEAN back by that name, savedSelect).
 func sqliteColumn(name, duckType string) (decl, expr string) {
 	col := quoteIdent(name)
 	t := strings.ToUpper(duckType)
@@ -396,13 +437,23 @@ func sqliteColumn(name, duckType string) (decl, expr string) {
 	case "FLOAT", "REAL":
 		// through text: Access Single 0.1 must stay 0.1, not 0.10000000149011612
 		return "REAL", "CAST(CAST(" + col + " AS VARCHAR) AS DOUBLE)"
+	case "HUGEINT", "UBIGINT", "UHUGEINT":
+		// an integer column; a value beyond SQLite's 64-bit integer stops the save with DuckDB's error
+		return "INTEGER", col
 	case "TIMESTAMP", "TIMESTAMP_S", "TIMESTAMP_MS", "TIMESTAMP_NS":
 		return "DATETIME", col
 	}
 	if strings.HasPrefix(t, "DECIMAL(") {
+		// a whole DECIMAL (Access Numeric(p,0): RTUNO, PNTNO...) is an integer: DuckDB reads a declared DECIMAL back as
+		// DOUBLE and an INTEGER as BIGINT (standard 19a); up to 18 digits it fits SQLite's 64-bit integer
+		var p, s int
+		if _, err := fmt.Sscanf(t, "DECIMAL(%d,%d)", &p, &s); err == nil && s == 0 && p <= 18 {
+			return "INTEGER", col
+		}
+		// with places (Currency DECIMAL(19,4), Numeric(p,s)) or wider: declared as it is
 		return t, col
 	}
-	// VARCHAR, UUID, TIME, HUGEINT, UBIGINT, lists...: text keeps every digit and character
+	// VARCHAR, UUID, TIME, lists...: text keeps every character
 	return "TEXT", "CAST(" + col + " AS VARCHAR)"
 }
 
@@ -607,6 +658,7 @@ func (m *DBManager) writeSheets(ctx context.Context, f *excelize.File, used map[
 	for i, c := range cols {
 		header[i] = c
 	}
+	widths := m.xlsxWidths(ctx, it, cols)
 	var sw *excelize.StreamWriter
 	part, line := 0, 0 // line = last written sheet row
 	newSheet := func() error {
@@ -634,6 +686,11 @@ func (m *DBManager) writeSheets(ctx context.Context, f *excelize.File, used map[
 		}
 		if sw, err = f.NewStreamWriter(name); err != nil {
 			return err
+		}
+		for i, w := range widths { // before the first row: the stream writer takes widths only then
+			if err := sw.SetColWidth(i+1, i+1, w); err != nil {
+				return err
+			}
 		}
 		line = 1
 		return sw.SetRow("A1", header)
@@ -669,6 +726,37 @@ func (m *DBManager) writeSheets(ctx context.Context, f *excelize.File, used map[
 		return err
 	}
 	return sw.Flush()
+}
+
+// xlsxWidths: the width of each column of a sheet, fitted to the longest text of its title and cells (best fit,
+// standard 19g), between 8 and 60 characters; nil (Excel's default) if the query cannot be measured. Measured on the
+// pool, as the row count, with the columns renamed by position (a result may repeat a name)
+func (m *DBManager) xlsxWidths(ctx context.Context, it exportItem, cols []string) []float64 {
+	if len(cols) == 0 {
+		return nil
+	}
+	alias := make([]string, len(cols))
+	exprs := make([]string, len(cols))
+	for i := range cols {
+		alias[i] = fmt.Sprintf("c%d", i)
+		exprs[i] = fmt.Sprintf("coalesce(max(length(CAST(c%d AS VARCHAR))), 0)", i)
+	}
+	query := fmt.Sprintf("SELECT %s FROM (%s) AS mdb2sql_w(%s)", strings.Join(exprs, ", "),
+		strings.TrimRight(strings.TrimSpace(it.query), "; \t\r\n"), strings.Join(alias, ", "))
+	longest := make([]int64, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range longest {
+		ptrs[i] = &longest[i]
+	}
+	if err := m.conn.QueryRowContext(ctx, query, it.args...).Scan(ptrs...); err != nil {
+		return nil
+	}
+	widths := make([]float64, len(cols))
+	for i, c := range cols {
+		n := max(longest[i], int64(utf8.RuneCountInString(c)))
+		widths[i] = min(max(float64(n)+2, 8), 60)
+	}
+	return widths
 }
 
 // xlsxValue keeps numbers, booleans and dates as Excel values; the rest becomes text

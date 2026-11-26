@@ -53,10 +53,9 @@ Changes in 1.3.0:
   without restarting. Every text (menus, dialogs, messages, About, tooltips, native dialogs) comes from
   `i18n/en.json`, `i18n/pt-BR.json`, `i18n/es.json` (same keys, shared by Go and React).
 - Log panel at the bottom: the session messages with the time (open, convert, save/delete, export, copy,
-  errors), read-only and selectable (Ctrl+A, Ctrl+C), "Copy all"; monospace one step smaller than the rest; about
-  10% of the window, resized by its top border (3 lines to 25%). Collapsed by default; the arrow in its header,
-  the arrow in the status bar, View > Log and Ctrl+L collapse or expand it, and the state is kept for the next
-  start. Collapsed, the status bar shows the last unread error (highlighted), else the last warning, else the
+  errors), read-only and selectable (Ctrl+A, Ctrl+C), "Copy all"; the font of the app; about
+  10% of the window, resized by its top border (3 lines to 25%). Collapsed when the app opens; the arrow in its
+  header, the arrow in the status bar, View > Log and Ctrl+L collapse or expand it. Collapsed, the status bar shows the last unread error (highlighted), else the last warning, else the
   last action, with a counter of unread errors and warnings; a click on it opens the log. The status bar text is
   selectable and right-click > Copy.
 - Numeric columns are right-aligned, their header too.
@@ -95,8 +94,10 @@ accents, own icon, excelize 2.11.1.
 
 ## How to use
 
-Open a file with the path bar on top (type the path, then Open or Enter; a long path shows its end; Browse...
-opens the file dialog; with the field empty, Open opens `MDB2SQL_DB_PATH` or the sample), File > Open... (Ctrl+O,
+Open a file with the path bar on top (Open... opens the file dialog; type the full path and press Enter, or File >
+Open the typed path; Enter with the field empty opens the file dialog, as F5 and File > Reopen with nothing open;
+a long path shows its end; a file that does
+not exist, or a relative path, gives "File not found: {path}"), File > Open... (Ctrl+O,
 the dialog lists Access, SQLite and DuckDB files), by dropping the file on the window, on the command line
 (`mdb2sql.exe "C:\data\DB4.accdb"`, or drag the file onto the exe) or with `MDB2SQL_DB_PATH`. The status bar says
 "Loaded: DB4.accdb (287 tables)" (pt-BR "Aberto: ...") and the window title starts with the file name.
@@ -109,9 +110,9 @@ the dialog lists Access, SQLite and DuckDB files), by dropping the file on the w
     database: `tension de campo` finds "EXCITACION TENSION DE CAMPO" even beyond the first rows; there is no
     fuzzy match (`tensao` does not find "TENSION"). It runs after a 300 ms pause in typing (Enter: at once).
     Beside it, This table | All tables: All tables lists the tables with matching rows (same rule) as
-    `table (n)`; a click opens that table with the same search and no value filters. The default is in Settings >
-    Default search scope. Opening another file empties the search and the table list filter and returns to that
-    default.
+    `table (n)`; a click opens that table with the same search and no value filters. The default is All tables
+    (Settings > Default search scope changes it). Opening another file empties the search and the table list filter
+    and returns to that default. The Advanced Search always starts in All tables.
   - Schema: column names, types and nullability (Yes/No).
   - SQL: any DuckDB SQL over the open database (the field starts empty); Run or Ctrl+Enter; the search field
     filters its loaded result. A query that runs fine takes an earlier SQL error off the status bar.
@@ -170,13 +171,13 @@ has none: there all the values of the row count, so equal rows are marked togeth
 
 Advanced Search tab: paste a list (one term per line, for example an Excel column); each term is searched in every
 column of this table or of all tables, the whole cell (Whole value) or inside it (Contains), ignoring case and the
-spaces at the ends. In Whole value a term and a cell that read as numbers meet when any reading of one equals any
-reading of the other. A text reads as a number with a decimal point and commas of thousands, or with a decimal
-comma and points of thousands; a thousands mark only stands between groups of 3 digits. So "216" finds 216.0,
-"216,0" and 216 (never 2160), "0,1" finds 0.1 (and "1" does not find "0,1"), "1234.5" finds "1.234,5" and "1,234"
-reads 1.234 or 1234. The tables found, their rows with the term first, and the terms not
-found (copiable). Its report: a first sheet "Filter Result" with every term, where it was found and how many rows,
-then one sheet per table.
+spaces at the ends. In Whole value a term that reads as a number also finds the numeric columns (by the schema) with
+that value; a text column compares as text. The term reads as a number with a decimal point and commas of thousands,
+or with a decimal comma and points of thousands; a thousands mark only stands between groups of 3 digits. So "216"
+and "216,0" find 216 and 216.0 (never 2160), "0,1" and "0.1" find 0.1, "1234.5" and "1.234,5" find 1234.5; the text
+"1,234" is found only by "1,234". The tables found, their rows (the columns of the table as they are, each row once, in the
+order of the first term that finds it) and the terms not found (copiable). Its report: one sheet (or table, or CSV
+file) per table found, with those rows.
 
 Opening Access: the progress window counts the tables; Cancel (or Esc) stops it. The 287-table NMR5 test file
 (115 MB) takes about 10 s with the ODBC driver and about 33 s with mdbtools on Windows (Intel Core Ultra 7 258V, 8
@@ -233,9 +234,11 @@ machine, so the Debian package is kept.
 
 ## For developers
 
-Version: `wails.json` -> `info.productVersion` is the single source (About, exe resource, `.deb`). The build
-number (`git rev-list --count HEAD`) and date are set by the build scripts (`-ldflags -X`); outside them About
-shows "build dev".
+Version: `wails.json` -> `info.productVersion` is the single source (About, exe resource, `.deb`). The full commit
+(`git rev-parse HEAD`) and the date are set by the build scripts (`-ldflags -X`) and shown in About as
+"Version 1.3.0 - commit <40 digits> - <YYYY-MM-DD>"; outside them About shows "Version 1.3.0 - dev". About has the
+same lines in the four versions: name and stack, version, runtime, Tools (SQLite, DuckDB, mdbtools, real versions),
+ODBC driver support, Author, License (GPLv2), GitHub / GitLab.
 
 ### Stack and versions
 

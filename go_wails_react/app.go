@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"mdb2sql/backend"
 	"mdb2sql/i18n"
 	"os"
@@ -26,9 +27,11 @@ import (
 //go:embed wails.json
 var wailsJSON []byte
 
-// Numero e data do build, gravados por scripts\build_w11.ps1 (-ldflags -X); vazios = "build dev"
+// Numero (pasta de cache), commit completo e data do build, gravados por scripts\build_w11.ps1 (-ldflags -X); vazios
+// fora do build: o Sobre diz "dev"
 var (
 	buildNumber string
+	buildCommit string
 	buildDate   string
 )
 
@@ -43,7 +46,7 @@ type App struct {
 
 	// Access file converted to SQLite: the temporary file it is read from and the Access file it came from
 	converted, convertedFrom string
-	convertedFromKey         string          // fileKey of the Access file converted now
+	convertedFromKey         string          // accessKey of the Access file converted now
 	convSaved                bool            // File > Save already wrote it somewhere: leaving it asks nothing
 	startLog                 []string        // Log lines of the startup, read by the UI once it listens (StartupLog)
 	displayWarn              *DisplayWarning // Linux: X11 missing, running on Wayland (display.go)
@@ -65,16 +68,14 @@ type App struct {
 // !T: Data for the About dialog; React adds its own version on the frontend side
 type AppInfo struct {
 	Version   string `json:"version"`
-	Build     string `json:"build"`
+	Commit    string `json:"commit"` // full commit hash of the build; "" = not an official build ("dev")
 	BuildDate string `json:"buildDate"`
 	Go        string `json:"go"`
 	Wails     string `json:"wails"`
-	DuckDB    string `json:"duckdb"`
-	Access    string `json:"access"`  // reader an Access file would use now: "Access ODBC", "mdbtools" or ""
 	Webview   string `json:"webview"` // what draws the window: "WebView2 158.0.4370.33", "WebKitGTK"
-	// "mdbtools 1.0.1" (embedded) or "mdbtools" (on PATH, MdbtoolsSystem); "" = none
-	Mdbtools       string `json:"mdbtools"`
-	MdbtoolsSystem bool   `json:"mdbtoolsSystem"`
+	DuckDB    string `json:"duckdb"`
+	SQLite    string `json:"sqlite"`   // the SQLite inside DuckDB's sqlite extension, the one that reads the files; "" = none
+	Mdbtools  string `json:"mdbtools"` // "mdbtools 1.0.1" (embedded) or "mdbtools" (on PATH); "" = none
 }
 
 func productVersion() string {
@@ -107,18 +108,18 @@ func (a *App) GetAppInfo() AppInfo {
 	if err != nil {
 		duck = "unknown"
 	}
-	mdbtools, system := backend.MdbtoolsLabel()
+	lite, _ := backend.SQLiteVersion()
+	mdbtools, _ := backend.MdbtoolsLabel()
 	return AppInfo{
-		Version:        productVersion(),
-		Build:          buildNumber,
-		BuildDate:      buildDate,
-		Go:             strings.TrimPrefix(goruntime.Version(), "go"),
-		Wails:          wailsVersion(),
-		DuckDB:         duck,
-		Access:         backend.AccessReader(),
-		Webview:        webviewVersion(),
-		Mdbtools:       mdbtools,
-		MdbtoolsSystem: system,
+		Version:   productVersion(),
+		Commit:    buildCommit,
+		BuildDate: buildDate,
+		Go:        strings.TrimPrefix(goruntime.Version(), "go"),
+		Wails:     wailsVersion(),
+		Webview:   webviewVersion(),
+		DuckDB:    duck,
+		SQLite:    lite,
+		Mdbtools:  mdbtools,
 	}
 }
 
@@ -258,6 +259,18 @@ func fileKey(path string) string {
 	return fmt.Sprintf("%s|%d|%d", strings.ToLower(path), st.Size(), st.ModTime().UnixNano())
 }
 
+// converterVersion goes into the key of an Access file converted and saved (standard 19b): a file saved by an older
+// conversion (2 = Numeric(p,0) as integers, 19a) is converted again instead of reopened with the old column types
+const converterVersion = "2"
+
+// accessKey is the fileKey of an Access file plus the converter version
+func accessKey(path string) string {
+	if k := fileKey(path); k != "" {
+		return k + "|conv" + converterVersion
+	}
+	return ""
+}
+
 // rememberConversion keeps in the settings, between runs, the SQLite or DuckDB file saved from an Access file: the
 // Access file's fileKey (path, size, date), the saved file and its own fileKey (standard item 22). One entry per
 // Access file.
@@ -283,7 +296,7 @@ func (a *App) savedConversion(src string) string {
 	if !ok {
 		return ""
 	}
-	if s.Key != "" && s.Key == fileKey(src) && s.DestKey != "" && fileKey(s.Dest) == s.DestKey {
+	if s.Key != "" && s.Key == accessKey(src) && s.DestKey != "" && fileKey(s.Dest) == s.DestKey {
 		return s.Dest
 	}
 	delete(a.settings.Converted, id)
@@ -343,14 +356,20 @@ func (a *App) CloseDatabase() error {
 	return nil
 }
 
-// StartupPath: arquivo da linha de comando ou, sem ele, MDB2SQL_DB_PATH; "" = nada para abrir ao iniciar
+// StartupPath: arquivo da linha de comando ou, sem ele, MDB2SQL_DB_PATH; "" = nada para abrir ao iniciar. Relativo:
+// contra a pasta de onde o programa foi chamado, aqui (LoadDatabase nao resolve caminho relativo, padrao 14)
 func (a *App) StartupPath() string {
+	path := os.Getenv("MDB2SQL_DB_PATH")
 	for _, arg := range os.Args[1:] {
 		if !strings.HasPrefix(arg, "-") {
-			return arg
+			path = arg
+			break
 		}
 	}
-	return os.Getenv("MDB2SQL_DB_PATH")
+	if abs, err := filepath.Abs(path); path != "" && err == nil {
+		return abs
+	}
+	return path
 }
 
 // SelectDatabase abre o seletor de arquivo nativo; retorna "" se o usuario cancelar
@@ -389,8 +408,11 @@ func (a *App) validateDatabasePath(dbPath string) (string, error) {
 	// Resolve symlinks para prevenir path traversal
 	// !T: EvalSymlinks prevents attacks via malicious.db -> /etc/passwd
 	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", errors.New(i18n.T("err.notFound", dbPath)) // only the path, never the system text (standard 14)
+	}
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", i18n.T("err.notFound"), err)
+		return "", fmt.Errorf("%s: %w", i18n.T("err.badPath"), err)
 	}
 
 	// Valida extensao do arquivo no caminho final
@@ -401,8 +423,11 @@ func (a *App) validateDatabasePath(dbPath string) (string, error) {
 
 	// Garante que o caminho e um arquivo, nao diretorio
 	info, err := os.Stat(resolvedPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", errors.New(i18n.T("err.notFound", dbPath))
+	}
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", i18n.T("err.notFound"), err)
+		return "", fmt.Errorf("%s: %w", i18n.T("err.badPath"), err)
 	}
 	if info.IsDir() {
 		return "", errors.New(i18n.T("err.isDir", resolvedPath))
@@ -479,6 +504,7 @@ func (a *App) cancelReads() {
 // LoadDatabase abre o arquivo (Access e importado, com progresso) e retorna lista de tabelas
 // !T: Wails automatically exposes this to frontend via IPC
 func (a *App) LoadDatabase(dbPath string) ([]string, error) {
+	typed := dbPath // what the UI sent (path bar, file dialog, dropped file, StartupPath: absolute but the bar)
 	// Se path vazio, tenta env var ou usa default
 	if dbPath == "" {
 		if envPath := os.Getenv("MDB2SQL_DB_PATH"); envPath != "" {
@@ -498,6 +524,10 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 	// Valida caminho do banco
 	// !T: Prevent path traversal and validate file extension
 	validatedPath, err := a.validateDatabasePath(dbPath)
+	if typed != "" && !filepath.IsAbs(typed) {
+		// a relative path typed in the path bar would resolve against the folder of the exe (standard 14)
+		validatedPath, err = "", errors.New(i18n.T("err.notFound", typed))
+	}
 	// the file open until now is left either way (the UI has already dropped it, also for a wrong path typed in the
 	// path bar): its queries and searches stop, and the unsaved SQLite of an Access file is deleted, nobody asked
 	a.closeDatabase()
@@ -527,7 +557,7 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 	a.dbName = filepath.Base(validatedPath)
 	a.dbPath = validatedPath
 	if conv := a.dbManager.Converted(); conv != "" {
-		a.converted, a.convertedFrom, a.convertedFromKey = conv, validatedPath, fileKey(validatedPath)
+		a.converted, a.convertedFrom, a.convertedFromKey = conv, validatedPath, accessKey(validatedPath)
 		a.log("log.converted", a.dbName, a.dbManager.Source(), time.Since(start).Round(100*time.Millisecond), conv)
 	}
 
@@ -739,6 +769,10 @@ func (a *App) dbStem() string {
 	return strings.TrimSuffix(a.dbName, filepath.Ext(a.dbName))
 }
 
+// termsReportName: the name proposed for the Advanced Search report, "DB3 - Pesquisa Avançada" (the save dialog adds
+// .xlsx, .sqlite or .duckdb; standard 19e)
+func termsReportName(stem string) string { return stem + " - " + i18n.T("tab.terms") }
+
 // types of File > Save, in the order of the dialog: catalog key of the name and the pattern
 var saveFormats = []string{"sqlite", "duckdb", "xlsx"}
 
@@ -911,15 +945,15 @@ func (a *App) TermRows(table string, terms []string, contains bool, limit int) (
 	return a.dbManager.TermRows(context.Background(), table, terms, contains, limit)
 }
 
-// ExportTerms exporta o relatorio da pesquisa de termos: xlsx, sqlite ou duckdb num arquivo <banco>_termos; csv numa
-// pasta, um arquivo por aba
+// ExportTerms exporta o relatorio da Pesquisa Avancada: xlsx, sqlite ou duckdb num arquivo "<banco> - Pesquisa
+// Avançada" (nome da aba no idioma da tela, padrao 19e); csv numa pasta, um arquivo por tabela
 func (a *App) ExportTerms(res backend.TermsResult, contains bool, format string) (string, error) {
 	if format == "csv" {
 		return a.runFolderExport(backend.TermsSheets(res), func(ctx context.Context, dir string) error {
 			return a.dbManager.ExportTerms(ctx, res, contains, format, dir, a.progress)
 		})
 	}
-	return a.runExport(a.dbStem()+"_termos", format, func(ctx context.Context, out string) error {
+	return a.runExport(termsReportName(a.dbStem()), format, func(ctx context.Context, out string) error {
 		return a.dbManager.ExportTerms(ctx, res, contains, format, out, a.progress)
 	})
 }

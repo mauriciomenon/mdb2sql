@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xuri/excelize/v2"
+
 	"mdb2sql/i18n"
 )
 
@@ -41,6 +43,30 @@ func TestRealDB_Terms(t *testing.T) {
 				RemoveConverted(conv)
 			}()
 			t.Logf("%s: opened with %s in %s", name, m.Source(), time.Since(start).Round(100*time.Millisecond))
+			if name == "DB3.accdb" { // standard 19a: the Access types (mdb-schema: 1681 whole, 5816 double, 2867 text)
+				types := map[string]int{}
+				rows, err := m.conn.Query("SELECT data_type, count(*) FROM duckdb_columns() WHERE database_name = 'src' GROUP BY 1")
+				if err != nil {
+					t.Fatal(err)
+				}
+				for rows.Next() {
+					var typ string
+					var n int
+					rows.Scan(&typ, &n)
+					types[typ] = n
+				}
+				rows.Close()
+				t.Logf("DB3.accdb converted, column types: %v", types)
+				if types["BIGINT"] != 1681 || types["DOUBLE"] != 5816 || types["VARCHAR"]+types["TIMESTAMP"] != 2867 {
+					t.Errorf("converted types %v, want BIGINT 1681, DOUBLE 5816, VARCHAR+TIMESTAMP 2867", types)
+				}
+				schema, _ := m.tableSchema(realBigTable)
+				for i, want := range []string{"RTUNO", "PNTNO"} {
+					if len(schema) <= i || schema[i].Name != want || schema[i].Type != "BIGINT" {
+						t.Errorf("%s column %d: %+v, want %s BIGINT", realBigTable, i, schema[min(i, len(schema)-1)], want)
+					}
+				}
+			}
 
 			// identity of a marked row (standard item 31): the engine's rowid, or all the values
 			rowID, err := m.hasRowID(realBigTable)
@@ -91,9 +117,56 @@ func TestRealDB_Terms(t *testing.T) {
 				if want := []int{238, 242, 254, 256, 260, 304, 308, 2190}; !slices.Equal(nums, want) {
 					t.Errorf("PNTNO %v, want the set %v", pntno, want)
 				}
-				if rows.Columns[0] != i18n.T("terms.col") {
-					t.Errorf("first column %q", rows.Columns[0])
+				if schema, _ := m.tableSchema(realBigTable); len(rows.Columns) != len(schema) || rows.Columns[0] != schema[0].Name {
+					t.Errorf("grid columns %v, want the %d columns of %s (no Term column, standard 19d)", rows.Columns[:min(3, len(rows.Columns))], len(schema), realBigTable)
 				}
+			}
+			if name == "DB3.accdb" { // standard 19f: the report of the owner's 8 terms to Excel, read back
+				var eight []string
+				for _, l := range lines {
+					if l = strings.TrimSpace(l); l != "" && l != "PNTNAM" {
+						eight = append(eight, l)
+					}
+				}
+				res, err := m.SearchTerms(context.Background(), eight, false, "", noProgress)
+				if err != nil {
+					t.Fatal(err)
+				}
+				xlsx := filepath.Join(t.TempDir(), "DB3 - Pesquisa Avançada.xlsx")
+				if err := m.ExportTerms(context.Background(), res, false, "xlsx", xlsx, noProgress); err != nil {
+					t.Fatal(err)
+				}
+				f, err := excelize.OpenFile(xlsx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer f.Close()
+				if want := []string{"RANGER_SOEQID", "RANGER_SOSTAT"}; !slices.Equal(f.GetSheetList(), want) {
+					t.Errorf("sheets %v, want %v", f.GetSheetList(), want)
+				}
+				sheet, _ := f.GetRows(realBigTable)
+				schema, _ := m.tableSchema(realBigTable)
+				var names []string
+				for _, c := range schema {
+					names = append(names, c.Name)
+				}
+				if len(sheet) != 9 || !slices.Equal(sheet[0], names) {
+					t.Errorf("%s sheet: %d lines, titles %v", realBigTable, len(sheet), sheet[0][:min(3, len(sheet[0]))])
+				}
+				for row := 2; row <= 9; row++ {
+					for _, col := range []string{"A", "B"} { // RTUNO, PNTNO
+						if cell := fmt.Sprintf("%s%d", col, row); !numericCell(f, realBigTable, cell) {
+							t.Errorf("%s %s is not a number", realBigTable, cell)
+						}
+					}
+				}
+				t.Logf("DB3.accdb report of the 8 terms: sheets %v, %s titles %v..., RTUNO/PNTNO numeric", f.GetSheetList(), realBigTable, sheet[0][:3])
+			}
+
+			// standard 18a: the Data tab search, all tables (now the default), with the owner's text
+			if hits, err := m.SearchTables(context.Background(), "GENERADOR CGS VIBRACION ANORMAL 1 CANAL 1", noProgress); err != nil ||
+				!slices.Equal(hits, []TableHits{{"RANGER_SOEQID", 2}, {"RANGER_SOSTAT", 2}}) {
+				t.Errorf("%s: Data search in all tables %v (%v), want RANGER_SOEQID 2 and RANGER_SOSTAT 2", name, hits, err)
 			}
 
 			// the SQL tab only reads (standard item 33): a write is refused before it runs, a read works

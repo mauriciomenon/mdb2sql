@@ -2,7 +2,7 @@ import React from 'react';
 import { readFileSync } from 'node:fs';
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { vi, beforeEach } from 'vitest';
-import App, { aboutRows, clampLogHeight, columnCellWidth, favoritesFirst, filterLabel, gridText, LOG_MIN, logLine, nullableText, parseTerms, progressText, ROWID, rowKey, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
+import App, { aboutLines, clampLogHeight, columnCellWidth, favoritesFirst, filterLabel, gridText, LOG_MIN, logLine, nullableText, parseTerms, progressText, ROWID, rowKey, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
 import { CATALOGS, LANGS, translate, translateN } from './i18n';
 
 const tables = ['RANGER_SOACCU', 'RANGER_SOGEN'];
@@ -55,8 +55,13 @@ const sizers = (b) => [...b.querySelectorAll('.sized > .ghost')].map((g) => g.te
 const menuTree = (menuEl) =>
   [...menuEl.children].map((el) => (el.tagName === 'HR' ? '--' : el.classList.contains('menu-root') ? el.querySelector('button').textContent : el.textContent));
 
-// Open of the path bar with the field empty: the default database (MDB2SQL_DB_PATH or the sample)
-const openDefault = () => fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+// opens a database as a path typed in the path bar and Enter (Open..., F5 and File > Reopen with nothing open are the
+// file dialog since standard 14); the field found by its class, in any language
+const openDefault = () => {
+  const field = document.querySelector('.pathbar input');
+  fireEvent.change(field, { target: { value: 'C:\\data\\sample.duckdb' } });
+  fireEvent.keyDown(field, { key: 'Enter' });
+};
 
 // File > Open... (the native file dialog)
 const OPEN_DIALOG = /^Open\.\.\./;
@@ -116,10 +121,10 @@ describe('App IPC flow', () => {
     expect(translate('es', 'export.dbSchema')).toBe('Schema de la base de datos');
   });
 
-  // standard item 1: the path bar of Zig (field + Browse... Open Export...); a file dropped on the window opens
-  it('opens the path typed in the top bar, the one picked by Browse... and a dropped file', async () => {
+  // standard items 1 and 14: the path bar (field, Open..., Export...): Enter opens the typed path, Open... and Enter on
+  // an empty field the file dialog (no Browse... any more); a file dropped on the window opens
+  it('opens the path typed in the top bar, the one picked by Open... and a dropped file', async () => {
     const SelectDatabase = vi.fn(async () => 'C:\\data\\picked.sqlite');
-    const DatabasePath = vi.fn(async () => 'C:\\resolved\\sample.duckdb');
     let drop;
     const OnFileDrop = vi.fn((cb, useDropTarget) => {
       drop = cb;
@@ -136,7 +141,9 @@ describe('App IPC flow', () => {
     await screen.findByText('Alpha');
     expect(field).toHaveValue('C:\\data\\typed.duckdb');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Browse...' }));
+    expect(screen.queryByRole('button', { name: 'Browse...' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open...' }));
+    await waitFor(() => expect(SelectDatabase).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('C:\\data\\picked.sqlite'));
     await waitFor(() => expect(field).toHaveValue('C:\\data\\picked.sqlite'));
 
@@ -146,12 +153,13 @@ describe('App IPC flow', () => {
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('C:\\data\\dropped.mdb'));
     await waitFor(() => expect(field).toHaveValue('C:\\data\\dropped.mdb'));
 
-    // an empty field opens the default database; the field then shows the file Go resolved
-    window.go.main.App.DatabasePath = DatabasePath;
-    fireEvent.change(field, { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
-    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith(''));
-    await waitFor(() => expect(field).toHaveValue('C:\\resolved\\sample.duckdb'));
+    // Enter on an empty field opens the file dialog, never an empty path
+    const calls = bridge.LoadDatabase.mock.calls.length;
+    fireEvent.change(field, { target: { value: '  ' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    await waitFor(() => expect(SelectDatabase).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenCalledTimes(calls + 1));
+    expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('C:\\data\\picked.sqlite');
 
     fireEvent.click(screen.getByRole('button', { name: 'Export...' }));
     expect(within(screen.getByRole('menu', { name: 'Export' })).getByRole('menuitem', { name: /^Current table ▸/ })).toBeEnabled();
@@ -161,6 +169,44 @@ describe('App IPC flow', () => {
     fireEvent.change(field, { target: { value: 'C:\\data\\menu.duckdb' } });
     pick('File', 'Open the typed path');
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('C:\\data\\menu.duckdb'));
+  });
+
+  // standard 17 (defect found by the owner 26/11): the Advanced Search starts in All tables whatever the default scope
+  // of the Data tab (here This table): the owner's 8 terms pasted from Excel (CRLF) are found in RANGER_SOEQID and
+  // RANGER_SOSTAT without touching anything; with This table the summary says where it looked
+  it('searches the pasted terms in all tables even when the Data tab defaults to This table', async () => {
+    const terms = [
+      'GENERADOR CGS VIBRACION ANORMAL 1 CANAL 1', 'GENERADOR CGS VIBRACION ANORMAL 2 CANAL 1', 'TURBINA CGI VIBRACION ANORMAL 1 CANAL 1',
+      'GENERADOR COJ EMP VIBRACION ANORMAL 1 CANAL 1', 'GENERADOR COJ EMP VIBRACION ANORMAL 2 CANAL 1', 'GENERADOR GGB ALIMENTACION CONTROL 24VCC',
+      'GENERADOR GGB INTERRUPTORES CONTROL CIRCUITO 2', 'TURBINA CGI VIBRACION ANORMAL 2 CANAL 1',
+    ];
+    const all = {
+      terms, repeated: 0, notFound: [],
+      hits: terms.flatMap((term) => [{ term, table: 'RANGER_SOEQID', rows: 1 }, { term, table: 'RANGER_SOSTAT', rows: 1 }]),
+      tables: [{ table: 'RANGER_SOEQID', rows: 8 }, { table: 'RANGER_SOSTAT', rows: 8 }],
+    };
+    const SearchTerms = vi.fn(async (_lines, _contains, table) => (table ? { terms, repeated: 0, hits: [], tables: [], notFound: terms } : all));
+    const TermRows = vi.fn(async () => ({ columns: ['Term'], rows: [], more: false }));
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SearchTerms, TermRows, GetSearchScope: vi.fn(async () => 'table') } } } });
+    render(<App />);
+    openDefault();
+    await screen.findByText('Alpha');
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'This table' })).toHaveAttribute('aria-checked', 'true')); // the Data tab
+    fireEvent.click(screen.getByRole('tab', { name: 'Advanced Search' }));
+    expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.change(screen.getByLabelText('Advanced Search'), { target: { value: terms.join('\r\n') + '\r\n' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search terms' }));
+    await waitFor(() => expect(SearchTerms).toHaveBeenCalledTimes(1));
+    const [lines, contains, table] = SearchTerms.mock.calls[0];
+    expect([lines.map((l) => l.trim()).filter(Boolean), contains, table]).toEqual([terms, false, '']);
+    expect(await screen.findByText('8 of 8 terms found: 16 rows in 2 tables')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'This table' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Search terms' }));
+    await waitFor(() => expect(SearchTerms).toHaveBeenLastCalledWith(expect.any(Array), false, 'RANGER_SOACCU'));
+    expect(await screen.findByText('0 of 8 terms found: 0 rows in 0 tables (only in RANGER_SOACCU)')).toBeInTheDocument();
+    expect(translate('pt-BR', 'terms.onlyIn', 'X')).toBe('(só em X)');
+    expect(translate('es', 'terms.onlyIn', 'X')).toBe('(solo en X)');
   });
 
   // standard items 20 and 28: the shortcuts of the menus
@@ -175,7 +221,11 @@ describe('App IPC flow', () => {
     const key = (init) => fireEvent.keyDown(window, init);
 
     expect(key({ key: 'F5' })).toBe(false); // never the webview's page reload
-    await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('')); // nothing open: the default database
+    await waitFor(() => expect(SelectDatabase).toHaveBeenCalledTimes(1)); // nothing open: the file dialog (standard 14)
+    pick('File', 'Reopen'); // the same from the menu
+    await waitFor(() => expect(SelectDatabase).toHaveBeenCalledTimes(2));
+    expect(bridge.LoadDatabase).not.toHaveBeenCalled(); // the dialog was cancelled: no default database
+    openDefault();
     await screen.findByText('Alpha');
     key({ key: 'F5' });
     await waitFor(() => expect(bridge.LoadDatabase).toHaveBeenLastCalledWith('C:\\data\\db.duckdb')); // the open file again
@@ -292,12 +342,15 @@ describe('App IPC flow', () => {
     openDefault();
 
     expect(await screen.findByText(/Loaded: DB4\.duckdb \(2 tables\)/)).toBeInTheDocument();
-    expect(bridge.LoadDatabase).toHaveBeenCalledWith('');
+    expect(bridge.LoadDatabase).toHaveBeenCalledWith('C:\\data\\sample.duckdb');
   });
 
-  it('shows Help > About with version, build, full stack and the two links opened in the browser', async () => {
+  // standard 18b (owner 26/11): the About of the 4 versions, only these lines in this order (technical text), then the
+  // GitHub / GitLab links, opened in the default browser
+  it('shows Help > About with the lines of the 4 versions and the two links opened in the browser', async () => {
+    const commit = '0123456789abcdef0123456789abcdef01234567';
     const GetAppInfo = vi.fn(async () => ({
-      version: '1.3.0', build: '412', buildDate: '2026-11-17', go: '1.26.10', wails: 'v2.13.0', duckdb: 'v2.0.0', access: 'Access ODBC', mdbtools: 'mdbtools 1.0.1', webview: 'WebView2 158.0.4370.33',
+      version: '1.3.0', commit, buildDate: '2026-11-26', go: '1.26.11', wails: 'v2.13.0', webview: 'WebView2 158.0.4370.33', duckdb: 'v2.0.0', sqlite: '3.38.1', mdbtools: 'mdbtools 1.0.1',
     }));
     const BrowserOpenURL = vi.fn();
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetAppInfo } } }, runtime: { BrowserOpenURL } });
@@ -306,29 +359,21 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Help' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'About mdb2sql' }));
 
-    // standard item 21: the rows of Rust under the title "About mdb2sql" of Zig
-    const dialog = await screen.findByRole('dialog', { name: 'About mdb2sql 1.3.0' });
-    // Access first, SQLite second, DuckDB last
-    expect(dialog.querySelector('.tagline').textContent).toMatch(/Microsoft Access, SQLite and DuckDB/);
-    const rowsShown = [...dialog.querySelectorAll('dl > div')].map((el) => [el.querySelector('dt').textContent, el.querySelector('dd').textContent]);
-    expect(rowsShown.map(([label]) => label)).toEqual(['Build', 'Stack', 'Window', 'Databases', 'Access reading', 'Writing', 'Author', 'License', 'GitHub', 'GitLab']);
-    expect(rowsShown).toEqual([
-      ['Build', '412 (2026-11-17)'],
-      ['Stack', `Go 1.26.10 + Wails 2.13.0 + React ${React.version}`],
-      ['Window', 'WebView2 158.0.4370.33'],
-      ['Databases', 'DuckDB 2.0.0'],
-      ['Access reading', 'Access ODBC driver (installed); fallback: embedded mdbtools 1.0.1'],
-      // standard item 28: .mdb and .accdb cannot be written
-      ['Writing', 'SQLite, DuckDB, Excel and CSV. .mdb and .accdb files cannot be written: the Access format is proprietary to Microsoft.'],
-      ['Author', 'Mauricio Menon'],
-      ['License', 'GPL v2 or later'],
-      ['GitHub', 'https://github.com/mauriciomenon/mdb2sql'],
-      ['GitLab', 'https://gitlab.com/mauricio.menon/mdb2sql'],
+    const dialog = await screen.findByRole('dialog', { name: 'About mdb2sql' });
+    expect([...dialog.querySelectorAll('p')].map((p) => p.textContent)).toEqual([
+      'MDB2SQL (Go)',
+      `Version 1.3.0 - commit ${commit} - 2026-11-26`,
+      'Go 1.26.11, Wails 2.13.0, WebView2 158.0.4370.33',
+      'Tools: SQLite 3.38.1, DuckDB 2.0.0, mdbtools 1.0.1',
+      'ODBC driver support, if installed.',
+      'Author: Mauricio Menon',
+      'License: GPLv2',
+      'GitHub / GitLab',
     ]);
 
     // the links open in the default browser, never inside the app's own webview
-    for (const url of ['https://github.com/mauriciomenon/mdb2sql', 'https://gitlab.com/mauricio.menon/mdb2sql']) {
-      const link = screen.getByRole('link', { name: url });
+    for (const [name, url] of [['GitHub', 'https://github.com/mauriciomenon/mdb2sql'], ['GitLab', 'https://gitlab.com/mauricio.menon/mdb2sql']]) {
+      const link = screen.getByRole('link', { name });
       expect(link).toHaveAttribute('href', url);
       expect(fireEvent.click(link)).toBe(false); // default navigation prevented
       expect(BrowserOpenURL).toHaveBeenLastCalledWith(url);
@@ -337,16 +382,19 @@ describe('App IPC flow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // outside a build: "dev"; no SQLite extension: DuckDB only
     const pt = (key, ...args) => translate('pt-BR', key, ...args);
-    const dev = Object.fromEntries(aboutRows({ version: '1.3.0', go: '1', wails: '2', duckdb: '3', access: 'mdbtools', mdbtools: 'mdbtools 1.0.1', webview: 'WebKitGTK' }, pt));
-    expect(dev.Build).toBe('dev');
-    expect(dev.Janela).toBe('WebKitGTK');
-    expect(dev['Leitura do Access']).toBe('mdbtools 1.0.1 embutido');
-    expect(dev['Licença']).toBe('GPL v2 ou posterior');
-    const sys = Object.fromEntries(aboutRows({ version: '1', go: '1', wails: '2', duckdb: '3', access: 'mdbtools', mdbtools: 'mdbtools', mdbtoolsSystem: true }, pt));
-    expect(sys['Leitura do Access']).toBe('mdbtools do sistema');
-    expect(Object.fromEntries(aboutRows({ version: '1', go: '1', wails: '2', duckdb: '3', access: '' }, pt))['Leitura do Access']).toBe('Indisponível neste computador');
+    expect(aboutLines({ version: '1.3.0', go: '1', wails: 'v2', duckdb: 'v3', webview: 'WebKitGTK' }, pt)).toEqual([
+      'MDB2SQL (Go)', 'Versão 1.3.0 - dev', 'Go 1, Wails 2, WebKitGTK', 'Ferramentas: DuckDB 3', 'Suporte ao driver ODBC, caso instalado.',
+      'Autor: Mauricio Menon', 'Licença: GPLv2',
+    ]);
+    expect(translate('es', 'about.tools', 'x') + ' ' + translate('es', 'about.odbc')).toBe('Herramientas: x Soporte del controlador ODBC, si está instalado.');
     expect(pt('about.title')).toBe('Sobre o mdb2sql');
+    // the version line with the 40-digit commit fits (640 px); a narrow window breaks it between words, not in the date
+    const css = readFileSync('src/App.css', 'utf8').replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = (sel) => css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*]/g, '\\$&')} \\{([^}]*)\\}`))?.[1] ?? '';
+    expect(rule('.about')).toMatch(/max-width: 640px;/);
+    expect(rule('.about p')).toMatch(/overflow-wrap: break-word;/);
   });
 
   it('hides several columns at once from Columns... and from the header menu', async () => {
@@ -462,7 +510,8 @@ describe('App IPC flow', () => {
 
   it('searches the whole table in the database (Data tab), after a pause in typing', async () => {
     const GetRowCount = vi.fn(async (_t, _f, search) => (search ? 1 : 2));
-    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetRowCount } } } });
+    // Settings > Default search scope chosen This table (the default is All tables since standard 18a)
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetRowCount, GetSearchScope: vi.fn(async () => 'table') } } } });
     render(<App />);
     openDefault();
     await screen.findByText('Alpha');
@@ -494,7 +543,8 @@ describe('App IPC flow', () => {
     await screen.findByText('Alpha');
     const scope = screen.getByRole('radiogroup', { name: 'Search in' });
     expect(within(scope).getAllByRole('radio').map((r) => r.textContent)).toEqual(['This table', 'All tables']);
-    expect(within(scope).getByRole('radio', { name: 'This table' })).toHaveAttribute('aria-checked', 'true');
+    // standard 18a: All tables by default, with nothing chosen in Settings
+    expect(within(scope).getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.queryByRole('checkbox', { name: /tables/ })).not.toBeInTheDocument();
 
     fireEvent.click(within(scope).getByRole('radio', { name: 'All tables' }));
@@ -868,7 +918,7 @@ describe('App IPC flow', () => {
     global.window = Object.assign(window, { go: { main: { App: { ...bridge, LoadDatabase, GetLanguage: vi.fn(async () => 'pt-BR') } } } });
     render(<App />);
     expect(await screen.findByText('Nenhum banco aberto')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Abrir' }));
+    openDefault();
     expect(await screen.findByText('Aberto: sample.duckdb (1 tabela)')).toBeInTheDocument();
     expect(translate('en', 'status.loaded', 'x.mdb', 2)).toBe('Loaded: x.mdb (2 tables)');
     expect(translateN('es', 'status.loaded', 1, 'x.mdb', 1)).toBe('Abierto: x.mdb (1 tabla)');
@@ -922,14 +972,13 @@ describe('App IPC flow', () => {
     expect(logLine('x', new Date(2026, 0, 2, 3, 4, 5))).toBe('03:04:05  x');
   });
 
-  // owner's "Painel de Log": collapsed by default and remembered; arrow, View > Log and Ctrl+L; collapsed, the status
-  // bar shows the last unread error (then warning) with a counter, and a click on it expands the log
-  it('collapses and expands the log, remembers it, and shows the last unread error in the status bar', async () => {
-    const SetLogOpen = vi.fn(async () => {});
+  // owner's "Painel de Log": collapsed when the app opens (standard 18d); arrow, View > Log and Ctrl+L; collapsed, the
+  // status bar shows the last unread error (then warning) with a counter, and a click on it expands the log
+  it('collapses and expands the log and shows the last unread error in the status bar', async () => {
     const RunQuery = vi.fn(async () => {
       throw new Error(ENGINE_ERROR);
     });
-    global.window = Object.assign(window, { go: { main: { App: { ...bridge, SetLogOpen, RunQuery, GetLogOpen: vi.fn(async () => false) } } } });
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, RunQuery } } } });
     render(<App />);
     expect(screen.queryByRole('textbox', { name: 'Log' })).not.toBeInTheDocument(); // collapsed by default
     openDefault();
@@ -948,13 +997,11 @@ describe('App IPC flow', () => {
 
     fireEvent.click(screen.getByRole('status')); // click: expands, the error counts as read
     expect(screen.getByRole('textbox', { name: 'Log' }).value).toContain(ENGINE_ERROR);
-    expect(SetLogOpen).toHaveBeenLastCalledWith(true);
     expect(screen.queryByTitle(/unread/)).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Log' }).style.height).toMatch(/px$/);
 
     fireEvent.keyDown(window, { key: 'l', ctrlKey: true }); // Ctrl+L collapses
     expect(screen.queryByRole('textbox', { name: 'Log' })).not.toBeInTheDocument();
-    expect(SetLogOpen).toHaveBeenLastCalledWith(false);
     fireEvent.click(screen.getByRole('button', { name: 'Show the log' })); // the status bar arrow expands
     expect(screen.getByRole('textbox', { name: 'Log' })).toBeInTheDocument();
 
@@ -1003,10 +1050,15 @@ describe('App IPC flow', () => {
     expect(screen.queryByTitle(/unread/)).not.toBeInTheDocument();
   });
 
-  it('opens with the log expanded when it was left expanded', async () => {
-    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetLogOpen: vi.fn(async () => true) } } } });
+  // standard 18d: the Log is collapsed when the app opens, also if an older version left it expanded
+  it('opens with the log collapsed', async () => {
+    const GetLogOpen = vi.fn(async () => true); // what an older Go would still answer
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetLogOpen } } } });
     render(<App />);
-    expect(await screen.findByRole('textbox', { name: 'Log' })).toBeInTheDocument();
+    openDefault();
+    await screen.findByText('Alpha');
+    expect(screen.queryByRole('textbox', { name: 'Log' })).not.toBeInTheDocument();
+    expect(GetLogOpen).not.toHaveBeenCalled();
   });
 
   it('leaves NULL cells empty by default; Settings > Show NULL shows NULL and saves the choice', async () => {
@@ -1085,7 +1137,7 @@ describe('App IPC flow', () => {
     fireEvent.mouseEnter(item('Rows'));
     expect(menuTree(screen.getByRole('menu', { name: 'Rows' }))).toEqual(['✓100', '500', '1000']);
     fireEvent.mouseEnter(item('Search in'));
-    expect(menuTree(screen.getByRole('menu', { name: 'Search in' }))).toEqual(['✓This table', 'All tables']);
+    expect(menuTree(screen.getByRole('menu', { name: 'Search in' }))).toEqual(['This table', '✓All tables']); // standard 18a
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     fireEvent.mouseEnter(item('Term matching'));
     expect(menuTree(screen.getByRole('menu', { name: 'Term matching' }))).toEqual(['✓Whole value', 'Contains']);
@@ -1124,7 +1176,7 @@ describe('App IPC flow', () => {
       Array.from({ length: Math.max(0, Math.min(limit, total(search) - offset)) }, (_, i) => ({ ID: offset + i + 1, NAME: 'n' })),
     );
     const GetRowCount = vi.fn(async (_t, _f, search) => total(search));
-    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, GetRowCount } } } });
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, GetRowCount, GetSearchScope: vi.fn(async () => 'table') } } } });
     render(<App />);
     openDefault();
     await screen.findByText('RANGER_SOACCU: rows 1 to 100 of 1,050');
@@ -1249,7 +1301,7 @@ describe('App IPC flow', () => {
     const GetRowCount = vi.fn(async (_t, _f, search) => (search ? 1 : all.length));
     const MarkedRows = vi.fn(async (_t, marks) => all.filter((r) => marks.some((m) => m[ROWID] === r[ROWID])));
     const ExportMarked = vi.fn(async () => 'C:\\out\\RANGER_SOACCU_marcadas.csv');
-    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, GetRowCount, MarkedRows, ExportMarked } } } });
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, GetTableData, GetRowCount, MarkedRows, ExportMarked, GetSearchScope: vi.fn(async () => 'table') } } } });
     render(<App />);
     openDefault();
     await screen.findByText('ggg');
@@ -1311,8 +1363,8 @@ describe('App IPC flow', () => {
   });
 
   // standard item 32: the pasted terms (count, repeats), Whole value | Contains and This table | All tables (defaults of
-  // Settings), progress, the summary, the tables found, the rows of the chosen one (Term first), the terms not found
-  // with Copy, the copies without the Term column and the report
+  // Settings), progress, the summary, the tables found, the rows of the chosen one (its own columns, each row once:
+  // standard 19d), the terms not found with Copy, the copies and the report
   it('searches the pasted terms and shows the tables found, their rows and the terms not found', async () => {
     const res = {
       terms: ['TENSAO', 'PNTNAM', 'U9A'],
@@ -1324,19 +1376,18 @@ describe('App IPC flow', () => {
       ],
       tables: [
         { table: 'RANGER_SOGEN', rows: 1 },
-        { table: 'RANGER_SOSTAT', rows: 3 },
+        { table: 'RANGER_SOSTAT', rows: 2 }, // row 2, found by TENSAO and U9A, once
       ],
       notFound: ['PNTNAM'],
     };
     let answer;
     const SearchTerms = vi.fn(() => new Promise((resolve) => (answer = resolve)));
     const stat = [
-      { Term: 'TENSAO', ID: 1, NAME: 'a' },
-      { Term: 'TENSAO', ID: 2, NAME: 'b' },
-      { Term: 'U9A', ID: 2, NAME: 'b' },
+      { ID: 1, NAME: 'a' },
+      { ID: 2, NAME: 'b' },
     ];
-    const TermRows = vi.fn(async (table) => ({ columns: ['Term', 'ID', 'NAME'], rows: table === 'RANGER_SOGEN' ? [{ Term: 'U9A', ID: 7, NAME: 'g' }] : stat, more: false }));
-    const ExportTerms = vi.fn(async () => 'C:\\out\\sample_termos.xlsx');
+    const TermRows = vi.fn(async (table) => ({ columns: ['ID', 'NAME'], rows: table === 'RANGER_SOGEN' ? [{ ID: 7, NAME: 'g' }] : stat, more: false }));
+    const ExportTerms = vi.fn(async () => 'C:\\out\\sample - Advanced Search.xlsx');
     const SetTermMatch = vi.fn(async () => {});
     const ClipboardSetText = vi.fn(async () => true);
     let goProgress;
@@ -1363,22 +1414,31 @@ describe('App IPC flow', () => {
     expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true'); // Default search scope
     expect(screen.getByRole('radiogroup', { name: 'Term matching' }).title).toMatch(/^Whole value: the whole cell equals the term/);
     fireEvent.change(box, { target: { value: 'TENSAO\n  pntnam \n\nU9A\ntensao\n' } });
-    expect(screen.getByText('3 terms, 1 repeated')).toBeInTheDocument();
+    // standard 18c: the box beside Search terms counts the input lines (the 4 with text, the repeat too)
+    expect(document.querySelector('.terms-bar .terms-status').textContent).toBe('4 input lines');
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
     await waitFor(() => expect(SearchTerms).toHaveBeenCalledWith(['TENSAO', '  pntnam ', '', 'U9A', 'tensao', ''], true, ''));
     act(() => goProgress({ done: 1, total: 2, label: 'RANGER_SOGEN' }));
     expect(screen.getByText('Searching terms: table 1 of 2 (RANGER_SOGEN)')).toBeInTheDocument();
     await act(async () => answer(res));
-    expect(await screen.findByText('2 of 3 terms found: 4 rows in 2 tables')).toBeInTheDocument();
+    expect(await screen.findByText('2 of 3 terms found: 3 rows in 2 tables')).toBeInTheDocument();
+    // standard 18c: Search terms | the box (input lines and the summary, no line below) | at the right, one piece that
+    // wraps together: match, a thin line, scope
+    const bar = [...document.querySelector('.terms-bar').children];
+    const labels = (els) => els.map((el) => el.getAttribute('aria-label') ?? el.className ?? '');
+    expect(labels(bar)).toEqual(['', 'terms-status', 'terms-right']);
+    expect(labels([...bar[2].children])).toEqual(['Term matching', 'terms-sep', 'Search in']);
+    expect(bar[0].textContent).toBe('Search terms');
+    expect([...bar[1].children].map((s) => s.textContent)).toEqual(['4 input lines', '2 of 3 terms found: 3 rows in 2 tables']);
 
-    // the first table found is chosen; its rows, the Term first, limited as in Data (Rows)
+    // the first table found is chosen; its rows, its own columns, limited as in Data (Rows)
     await waitFor(() => expect(TermRows).toHaveBeenLastCalledWith('RANGER_SOGEN', res.terms, true, 100));
     expect(screen.getByRole('button', { name: 'RANGER_SOGEN (1)' })).toHaveAttribute('aria-current', 'true');
-    fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOSTAT (3)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'RANGER_SOSTAT (2)' }));
     await waitFor(() => expect(TermRows).toHaveBeenLastCalledWith('RANGER_SOSTAT', res.terms, true, 100));
-    await waitFor(() => expect([...document.querySelectorAll('.terms-hits th')].map((th) => th.textContent)).toEqual(['Term', 'ID', 'NAME']));
-    expect(document.querySelectorAll('.terms-hits tbody tr')).toHaveLength(3);
-    expect(screen.getByText('RANGER_SOSTAT: showing 3 of 3 rows')).toBeInTheDocument();
+    await waitFor(() => expect([...document.querySelectorAll('.terms-hits th')].map((th) => th.textContent)).toEqual(['ID', 'NAME']));
+    expect(document.querySelectorAll('.terms-hits tbody tr')).toHaveLength(2);
+    expect(screen.getByText('RANGER_SOSTAT: showing 2 of 2 rows')).toBeInTheDocument();
 
     // not found: one per line, in pasted order, with Copy
     expect(screen.getByRole('heading', { name: 'Not found (1)' })).toBeInTheDocument();
@@ -1386,7 +1446,7 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
     await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('PNTNAM'));
 
-    // the copies leave the Term column out; "Copy the rows found" copies every row found, with the header
+    // the copies have the columns of the table; "Copy the rows found" copies every row found, with the header
     fireEvent.contextMenu(screen.getByText('a'));
     expect(menuTree(screen.getByRole('menu', { name: 'Cell' }))).toEqual([
       'Copy value Ctrl+C', 'Copy row Ctrl+Shift+C', 'Copy row with header', '--', 'Copy the rows found in this table', 'Advanced Search report ▸',
@@ -1395,9 +1455,9 @@ describe('App IPC flow', () => {
     await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('ID\tNAME\r\n1\ta'));
     fireEvent.contextMenu(screen.getByText('a'));
     fireEvent.click(item('Copy the rows found in this table'));
-    await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('ID\tNAME\r\n1\ta\r\n2\tb\r\n2\tb'));
+    await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('ID\tNAME\r\n1\ta\r\n2\tb'));
     expect(TermRows).toHaveBeenLastCalledWith('RANGER_SOSTAT', res.terms, true, 0);
-    expect(screen.getByRole('status').textContent).toBe('Copied 3 rows');
+    expect(screen.getByRole('status').textContent).toBe('Copied 2 rows');
 
     // the report: cell menu and Export
     fireEvent.contextMenu(screen.getByText('a'));
@@ -1416,7 +1476,7 @@ describe('App IPC flow', () => {
     expect(screen.getByRole('radio', { name: 'Whole value' })).toHaveAttribute('aria-checked', 'true');
     // a new search: the old answer leaves at once
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
-    expect(screen.queryByText('2 of 3 terms found: 4 rows in 2 tables')).not.toBeInTheDocument();
+    expect(screen.queryByText('2 of 3 terms found: 3 rows in 2 tables')).not.toBeInTheDocument();
     await waitFor(() => expect(SearchTerms).toHaveBeenLastCalledWith(expect.any(Array), false, ''));
 
     // terms: one per line, trimmed, empty lines dropped, a repeat (ignoring case) searched once; the right plural
@@ -1425,7 +1485,7 @@ describe('App IPC flow', () => {
     expect(LANGS.map((l) => translate(l, 'tab.terms'))).toEqual(['Advanced Search', 'Pesquisa Avançada', 'Búsqueda Avanzada']);
     expect(translate('es', 'export.terms')).toBe('Informe de la Búsqueda Avanzada');
     const pt = (key, n, ...args) => translateN('pt-BR', key, n, ...args);
-    expect(pt('terms.count', 1, 1) + pt('terms.repeated', 1, 1)).toBe('1 termo, 1 repetido');
+    expect(pt('terms.lines', 1, 1) + ' / ' + pt('terms.lines', 8, 8)).toBe('1 linha de entrada / 8 linhas de entrada');
     expect(translate('pt-BR', 'terms.summary', pt('terms.found', 1, 1, 1), pt('terms.rows', 1, 1), pt('terms.tables', 1, 1))).toBe('1 de 1 termo encontrado: 1 linha em 1 tabela');
     expect(translate('pt-BR', 'terms.summary', pt('terms.found', 3, 2, 3), pt('terms.rows', 8, 8), pt('terms.tables', 2, 2))).toBe('2 de 3 termos encontrados: 8 linhas em 2 tabelas');
   });
@@ -1434,7 +1494,7 @@ describe('App IPC flow', () => {
   it('asks whole table or only the rows found before exporting a searched table', async () => {
     const ExportTable = vi.fn(async () => 'C:\\out\\t.csv');
     const GetRowCount = vi.fn(async (_t, _f, search) => (search ? 1 : 2));
-    global.window = Object.assign(window, { go: { main: { App: { ...bridge, ExportTable, GetRowCount } } } });
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, ExportTable, GetRowCount, GetSearchScope: vi.fn(async () => 'table') } } } });
     render(<App />);
     openDefault();
     await screen.findByText('Alpha');
@@ -1501,6 +1561,16 @@ describe('App IPC flow', () => {
     const rule = (sel) => css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*]/g, '\\$&')} \\{([^}]*)\\}`))?.[1] ?? '';
     expect(rule('.terms-missing textarea')).toMatch(/font: inherit;/);
     expect(rule('.terms-missing textarea')).not.toMatch(/monospace|Consolas/);
+  });
+
+  // standard 18e (owner 26/11): one font, Segoe UI 14 px, in every tab, box, grid and label: the body sets it, every
+  // other rule inherits it (SQL box, Log, titles included); no monospace, no other size
+  it('uses one font, Segoe UI 14 px, everywhere', () => {
+    const css = readFileSync('src/App.css', 'utf8').replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+    const fonts = [...css.matchAll(/\bfont:\s*([^;]+);/g)].map((m) => m[1]);
+    expect(fonts.filter((f) => f !== 'inherit')).toEqual(["14px/1.4 'Segoe UI', system-ui, -apple-system, 'Roboto', sans-serif"]);
+    expect([...new Set([...css.matchAll(/\bfont-size:\s*([^;]+);/g)].map((m) => m[1]))].sort()).toEqual(['14px', 'inherit']);
+    expect(css).not.toMatch(/monospace|Consolas|font-family/);
   });
 
   // coordinator 26/11: the title "Not found (n)" is not bold, as in the Python and Zig versions

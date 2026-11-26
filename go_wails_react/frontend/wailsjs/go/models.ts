@@ -121,15 +121,14 @@ export namespace main {
 	
 	export class AppInfo {
 	    version: string;
-	    build: string;
+	    commit: string;
 	    buildDate: string;
 	    go: string;
 	    wails: string;
-	    duckdb: string;
-	    access: string;
 	    webview: string;
+	    duckdb: string;
+	    sqlite: string;
 	    mdbtools: string;
-	    mdbtoolsSystem: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppInfo(source);
@@ -138,15 +137,14 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.version = source["version"];
-	        this.build = source["build"];
+	        this.commit = source["commit"];
 	        this.buildDate = source["buildDate"];
 	        this.go = source["go"];
 	        this.wails = source["wails"];
-	        this.duckdb = source["duckdb"];
-	        this.access = source["access"];
 	        this.webview = source["webview"];
+	        this.duckdb = source["duckdb"];
+	        this.sqlite = source["sqlite"];
 	        this.mdbtools = source["mdbtools"];
-	        this.mdbtoolsSystem = source["mdbtoolsSystem"];
 	    }
 	}
 	export class DisplayWarning {

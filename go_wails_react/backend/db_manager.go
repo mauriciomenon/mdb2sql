@@ -525,12 +525,6 @@ func (m *DBManager) tableWhere(tableName string, filters []Filter, search string
 	return filterWhere(filters, types, search)
 }
 
-// AccessReader diz qual leitor abriria um .mdb/.accdb agora (para o Sobre): "Access ODBC", "mdbtools" ou ""
-func AccessReader() string {
-	reader, _ := chooseAccessReader(os.Getenv("MDB2SQL_ACCESS_READER"), odbcInstalled(), mdbtoolsAvailable())
-	return reader
-}
-
 // Executa SELECT na tabela e retorna resultados como slice de maps
 // !T: Returns []map[string]interface{} for dynamic column handling in frontend
 func (m *DBManager) QueryTable(tableName string, limit int, search string, filters ...Filter) ([]map[string]interface{}, error) {
@@ -804,6 +798,23 @@ func (m *DBManager) SearchTables(ctx context.Context, search string, progress Pr
 
 // DuckDBVersion retorna a versao da biblioteca DuckDB linkada (ex.: "v2.0.0")
 // !T: Uses a throwaway in-memory database so it works before any file is opened
+// SQLiteVersion is the version of the SQLite inside DuckDB's sqlite extension, the one that reads and writes the SQLite
+// files (About, standard 18b); an error without the extension
+func SQLiteVersion() (string, error) {
+	ext, err := sqliteExtension()
+	if err != nil {
+		return "", err
+	}
+	db, err := openMemory("LOAD "+quoteLiteral(ext), "ATTACH ':memory:' AS mdb2sql_lite (TYPE sqlite)")
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	var version string
+	err = db.QueryRow("SELECT * FROM sqlite_query('mdb2sql_lite', 'SELECT sqlite_version()')").Scan(&version)
+	return version, err
+}
+
 func DuckDBVersion() (string, error) {
 	conn, err := sql.Open("duckdb", "")
 	if err != nil {

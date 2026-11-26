@@ -95,11 +95,12 @@ install -m 644 "$tools/downloads/sqlite_scanner.duckdb_extension.gz" "$emb/sqlit
 source_id=$(git describe --tags --always --long 2>/dev/null || git rev-parse --short HEAD)
 version=$(sed -n 's/.*"productVersion": "\(.*\)".*/\1/p' wails.json)
 build_number=$(git rev-list --count HEAD)
+build_commit=$(git rev-parse HEAD)
 build_date=$(date -u +%F)
 echo "Source: $source_id  versao $version  build $build_number ($build_date)  $(go version)"
 
 # webkit2_41: Debian 13 has only WebKitGTK 4.1
-wails build -clean -trimpath -tags webkit2_41 -ldflags "-X main.buildNumber=$build_number -X main.buildDate=$build_date" ||
+wails build -clean -trimpath -tags webkit2_41 -ldflags "-X main.buildNumber=$build_number -X main.buildCommit=$build_commit -X main.buildDate=$build_date" ||
     fail 1 "wails build falhou"
 built=$root/build/bin/mdb2sql
 go test -tags webkit2_41 ./... || fail 1 "go test falhou"

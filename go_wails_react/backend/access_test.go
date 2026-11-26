@@ -1,10 +1,12 @@
 package backend
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -14,6 +16,28 @@ const typesMDB = "testdata/types.mdb"
 // declared SQLite types of the converted Tipos table, in column order
 var wantDecl = []string{"ID INTEGER", "Flag BOOLEAN", "B INTEGER", "S INTEGER", "L INTEGER", "Money DECIMAL(19,4)",
 	"Dec DECIMAL(10,2)", "Sng REAL", "Dbl DOUBLE", "When DATETIME", "Txt TEXT", "Note TEXT", "Bin BLOB"}
+
+// declTipos is the schema of Tipos in the open SQLite file, "name TYPE" per column (standard 20: the tests check the
+// schema, the type of each column as in Access)
+func declTipos(t *testing.T, m *DBManager) []string {
+	t.Helper()
+	var decl []string
+	for _, r := range queryText(t, m, `SELECT * FROM sqlite_query('src', 'SELECT name, type FROM pragma_table_info(''Tipos'')')`) {
+		decl = append(decl, r[0]+" "+r[1])
+	}
+	return decl
+}
+
+// numericTipos: the number columns of Tipos are numeric types when read (a declared DECIMAL reads as DOUBLE)
+func numericTipos(t *testing.T, m *DBManager) {
+	t.Helper()
+	schema, _ := m.GetTableSchema("Tipos")
+	for _, c := range schema {
+		if strings.Contains("|B|S|L|Money|Dec|Sng|Dbl|", "|"+c.Name+"|") && !numericType(c.Type) {
+			t.Errorf("column %s reads as %s, not a number", c.Name, c.Type)
+		}
+	}
+}
 
 // rows of Tipos by ID as cellString text; NULL stays NULL
 var wantRows = [][]string{
@@ -76,12 +100,27 @@ func TestAccessConvertsToSQLite(t *testing.T) {
 			if tables, _ := m.ListTables(); !reflect.DeepEqual(tables, []string{"Cidades e Regiões", "Tipos"}) {
 				t.Fatalf("tables %q", tables)
 			}
-			var decl []string
-			for _, r := range queryText(t, m, `SELECT * FROM sqlite_query('src', 'SELECT name, type FROM pragma_table_info(''Tipos'')')`) {
-				decl = append(decl, r[0]+" "+r[1])
-			}
-			if !reflect.DeepEqual(decl, wantDecl) {
+			if decl := declTipos(t, m); !reflect.DeepEqual(decl, wantDecl) {
 				t.Errorf("declared types\n got %q\nwant %q", decl, wantDecl)
+			}
+			numericTipos(t, m)
+			// Save as DuckDB keeps DECIMAL and BOOLEAN (DuckDB reads them from SQLite as DOUBLE and BIGINT)
+			duck := filepath.Join(t.TempDir(), "saved.duckdb")
+			if err := m.ExportDatabase(context.Background(), "duckdb", duck, func(int, int, string) {}); err != nil {
+				t.Fatal(err)
+			}
+			saved := NewDBManager()
+			if err := saved.Connect(duck); err != nil {
+				t.Fatal(err)
+			}
+			types := map[string]string{}
+			schema, _ := saved.GetTableSchema("Tipos")
+			for _, c := range schema {
+				types[c.Name] = c.Type
+			}
+			saved.Close()
+			if types["Money"] != "DECIMAL(19,4)" || types["Dec"] != "DECIMAL(10,2)" || types["Flag"] != "BOOLEAN" || types["Dbl"] != "DOUBLE" {
+				t.Errorf("saved DuckDB types %v", types)
 			}
 			want := wantRows
 			if source == SourceODBC {
@@ -127,6 +166,23 @@ func TestAccessConvertsToSQLite(t *testing.T) {
 			if n, _ := back.GetRowCount("Tipos", ""); n != 3 {
 				t.Errorf("saved file: %d rows", n)
 			}
+			if decl := declTipos(t, back); !reflect.DeepEqual(decl, wantDecl) {
+				t.Errorf("saved file declared types\n got %q\nwant %q", decl, wantDecl)
+			}
+			// Save as SQLite of the open file keeps the schema (standard 19h and 20)
+			lite := filepath.Join(t.TempDir(), "again.sqlite")
+			if err := back.ExportDatabase(context.Background(), "sqlite", lite, func(int, int, string) {}); err != nil {
+				t.Fatal(err)
+			}
+			again := NewDBManager()
+			defer again.Close()
+			if err := again.Connect(lite); err != nil {
+				t.Fatal(err)
+			}
+			if decl := declTipos(t, again); !reflect.DeepEqual(decl, wantDecl) {
+				t.Errorf("Save as SQLite declared types\n got %q\nwant %q", decl, wantDecl)
+			}
+			numericTipos(t, again)
 		})
 	}
 }
@@ -181,5 +237,19 @@ func TestConvertedFolderFallsBackAndIsCleaned(t *testing.T) {
 	}
 	if _, err := os.Stat(second); !os.IsNotExist(err) {
 		t.Errorf("empty folder %s left: %v", second, err)
+	}
+}
+
+// standard 19a (owner 26/11): Access Numeric(p,0) (RTUNO, PNTNO...) goes to SQLite as INTEGER, which DuckDB reads back
+// as an integer; a declared DECIMAL came back as DOUBLE. Up to 18 digits; a fraction keeps its DECIMAL
+func TestSQLiteColumnKeepsWholeNumbersInteger(t *testing.T) {
+	for duck, want := range map[string]string{
+		"DECIMAL(10,0)": "INTEGER", "DECIMAL(18,0)": "INTEGER", "DECIMAL(28,0)": "DECIMAL(28,0)",
+		"DECIMAL(19,4)": "DECIMAL(19,4)", "DECIMAL(10,2)": "DECIMAL(10,2)", "INTEGER": "INTEGER", "DOUBLE": "DOUBLE",
+		"VARCHAR": "TEXT", "TIMESTAMP": "DATETIME",
+	} {
+		if got, _ := sqliteColumn("c", duck); got != want {
+			t.Errorf("sqliteColumn(%s) = %s, want %s", duck, got, want)
+		}
 	}
 }

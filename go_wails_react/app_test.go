@@ -59,6 +59,14 @@ func TestGetAppInfo(t *testing.T) {
 	if !regexp.MustCompile(`^v\d+\.\d+\.\d+`).MatchString(info.DuckDB) {
 		t.Fatalf("unexpected DuckDB version %q", info.DuckDB)
 	}
+	// About > Ferramentas (standard 18b): the real SQLite of the sqlite extension (with an embedded extension) and
+	// the embedded mdbtools on Windows; no build here: commit empty, the About says "dev"
+	if lite, err := backend.SQLiteVersion(); err == nil && (info.SQLite != lite || !regexp.MustCompile(`^3\.\d+\.\d+$`).MatchString(lite)) {
+		t.Fatalf("unexpected SQLite version %q (%q)", info.SQLite, lite)
+	}
+	if info.Commit != "" {
+		t.Fatalf("commit %q outside a build", info.Commit)
+	}
 	// About > Janela: the full WebView2 version (Windows 11 has the runtime), not the 158.0.0.0 of the user agent
 	if goruntime.GOOS == "windows" && !regexp.MustCompile(`^WebView2 \d+\.\d+\.\d+\.\d+$`).MatchString(info.Webview) {
 		t.Fatalf("unexpected window engine %q", info.Webview)
@@ -258,6 +266,18 @@ func TestDefaultSaveDir(t *testing.T) {
 	}
 }
 
+// standard 19e (owner 26/11): the Advanced Search report is proposed as "<database> - Pesquisa Avançada", in the
+// language of the screen, never "_termos"
+func TestTermsReportName(t *testing.T) {
+	defer i18n.SetLang("en")
+	for lang, want := range map[string]string{"pt-BR": "DB3 - Pesquisa Avançada", "en": "DB3 - Advanced Search", "es": "DB3 - Búsqueda Avanzada"} {
+		i18n.SetLang(lang)
+		if got := termsReportName("DB3"); got != want {
+			t.Errorf("%s: %q, want %q", lang, got, want)
+		}
+	}
+}
+
 // owner 26/11: the progress of a search goes to the UI at most 5 times a second, the first and the last always
 func TestProgressAtMostFiveASecond(t *testing.T) {
 	a := &App{}
@@ -281,6 +301,37 @@ func TestProgressAtMostFiveASecond(t *testing.T) {
 		if got := a.progressDue(s.done, s.total, s.at); got != s.want {
 			t.Errorf("progressDue(%d, %d) at %v = %v, want %v", s.done, s.total, s.at.Sub(t0), got, s.want)
 		}
+	}
+}
+
+// standard 14 (owner 26/11): a file that does not exist gives only "File not found: {path}", never the text of the
+// system (GetFileAttributesEx, errno); a relative path typed in the path bar is never resolved against the folder of
+// the exe; a relative file on the command line is, against the folder the program was called from
+func TestOpenMissingFileShortMessage(t *testing.T) {
+	app := NewApp()
+	t.Cleanup(func() { _ = app.dbManager.Close() })
+	dir := t.TempDir()
+	for _, path := range []string{
+		filepath.Join(dir, "missing.duckdb"),        // the file is missing
+		filepath.Join(dir, "no folder", "db.accdb"), // its folder too
+		"data",                                 // relative: what the owner hit (...\amd64\data)
+		filepath.Join("data", "sample.duckdb"), // relative, even where it exists
+	} {
+		_, err := app.LoadDatabase(path)
+		if want := "File not found: " + path; err == nil || err.Error() != want {
+			t.Errorf("LoadDatabase(%q) = %v, want %q", path, err, want)
+		}
+	}
+	args := os.Args
+	t.Cleanup(func() { os.Args = args })
+	os.Args = []string{"mdb2sql", "-flag", filepath.Join("sub", "db.accdb")}
+	if want, _ := filepath.Abs(filepath.Join("sub", "db.accdb")); app.StartupPath() != want {
+		t.Errorf("StartupPath = %q, want %q", app.StartupPath(), want)
+	}
+	os.Args = []string{"mdb2sql"}
+	t.Setenv("MDB2SQL_DB_PATH", "")
+	if got := app.StartupPath(); got != "" {
+		t.Errorf("StartupPath without a file = %q", got)
 	}
 }
 
@@ -484,7 +535,15 @@ func TestSavedConversionPersists(t *testing.T) {
 	}
 	write(src, "access")
 	write(dest, "sqlite")
+	// standard 19b: saved by an older conversion (its key has no converter version): converted again, entry dropped
 	NewApp().rememberConversion(src, fileKey(src), dest)
+	if got := NewApp().savedConversion(src); got != "" {
+		t.Fatalf("a conversion of an older converter reused: %q", got)
+	}
+	if _, ok := NewApp().settings.Converted[strings.ToLower(src)]; ok {
+		t.Fatal("entry of an older conversion kept")
+	}
+	NewApp().rememberConversion(src, accessKey(src), dest)
 	if got := NewApp().savedConversion(src); got != dest { // a new run
 		t.Fatalf("saved conversion after restart: %q", got)
 	}
@@ -495,7 +554,7 @@ func TestSavedConversionPersists(t *testing.T) {
 	if _, ok := NewApp().settings.Converted[strings.ToLower(src)]; ok {
 		t.Fatal("entry of a changed Access file kept")
 	}
-	NewApp().rememberConversion(src, fileKey(src), dest)
+	NewApp().rememberConversion(src, accessKey(src), dest)
 	write(dest, "sqlite, changed")
 	if got := NewApp().savedConversion(src); got != "" {
 		t.Fatalf("changed SQLite reused %q", got)
@@ -532,13 +591,6 @@ func TestSettingsPersist(t *testing.T) {
 	if got := NewApp().GetLanguage(); got != "es" || i18n.T("menu.file") != "Archivo" {
 		t.Fatalf("language after restart %q", got)
 	}
-	// the Log panel starts collapsed and keeps the last state
-	if app.GetLogOpen() {
-		t.Fatal("log expanded by default")
-	}
-	if err := app.SetLogOpen(true); err != nil || !NewApp().GetLogOpen() {
-		t.Fatalf("log state after restart: %v", err)
-	}
 	// Show NULL: off by default, also for a settings file written before the option existed
 	if err := os.WriteFile(settingsPath(), []byte(`{"theme": "dark"}`), 0o644); err != nil {
 		t.Fatal(err)
@@ -549,11 +601,15 @@ func TestSettingsPersist(t *testing.T) {
 	if err := app.SetShowNull(true); err != nil || !NewApp().GetShowNull() {
 		t.Fatalf("Show NULL after restart: %v", err)
 	}
-	// default search scope: this table, then what was chosen; an unknown one is refused
-	if app.GetSearchScope() != "table" {
+	// default search scope (standard 18a): all tables, also over the "searchScope": "table" that older versions wrote
+	// for everyone; then what was chosen; an unknown one is refused
+	if err := os.WriteFile(settingsPath(), []byte(`{"theme": "dark", "searchScope": "table"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if app = NewApp(); app.GetSearchScope() != "all" {
 		t.Fatalf("default search scope %q", app.GetSearchScope())
 	}
-	if err := app.SetSearchScope("all"); err != nil || app.SetSearchScope("everything") == nil || NewApp().GetSearchScope() != "all" {
+	if err := app.SetSearchScope("table"); err != nil || app.SetSearchScope("everything") == nil || NewApp().GetSearchScope() != "table" {
 		t.Fatalf("search scope after restart: %v", err)
 	}
 }

@@ -237,7 +237,7 @@ body {
   flex: 1;
   min-height: 72px;
   resize: vertical;
-  font: 14px/1.4 Consolas, 'Cascadia Mono', monospace;
+  font: inherit; /* one font, Segoe UI 14 px, in every tab, box, grid and label (standard 18e) */
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -256,7 +256,7 @@ body {
 
 h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: inherit;
   font-weight: 600;
   overflow-wrap: anywhere;
 }
@@ -569,11 +569,40 @@ td.mark input {
   padding: 6px 8px;
 }
 
+/* standard 18c: Search terms | the box (input lines and summary; grows, never smaller than its text: nothing cut) |
+   Whole value | Contains, a thin line, This table | All tables; a narrow window moves what does not fit below */
 .terms-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
+  gap: 8px;
+}
+
+.terms-status {
+  flex: 1 0 auto;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-height: 29px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+/* Whole value | Contains, the thin line, This table | All tables: one piece at the right, wrapped together */
+.terms-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.terms-sep {
+  align-self: stretch;
+  width: 1px;
+  background: var(--border);
 }
 
 .terms-hits {
@@ -691,7 +720,7 @@ td[aria-selected='true'] {
 }
 
 .about {
-  max-width: 560px;
+  max-width: 640px; /* the version line with the full commit fits on one line at 14 px */
   padding: 22px 26px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -705,46 +734,14 @@ td[aria-selected='true'] {
   font-size: inherit;
 }
 
-.about .version {
-  margin-left: 6px;
-  padding: 2px 9px;
-  font-size: 14px;
-  vertical-align: middle;
-  color: var(--accent-text);
-  background: var(--accent);
-  border-radius: 999px;
-}
-
+/* one line each; in a narrow window a line breaks between words, never inside the date */
 .about p {
-  margin: 10px 0 0;
-  overflow-wrap: anywhere;
+  margin: 6px 0 0;
+  overflow-wrap: break-word;
 }
 
-.about .tagline {
-  color: var(--muted);
-}
-
-/* label column as wide as the longest label, values aligned */
-.about dl {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 7px 16px;
-  margin: 16px 0 0;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
-
-.about dl > div {
-  display: contents;
-}
-
-.about dt {
-  color: var(--muted);
-}
-
-.about dd {
-  margin: 0;
-  overflow-wrap: anywhere;
+.about h2 + p {
+  margin-top: 14px;
 }
 
 .about a {
@@ -861,7 +858,7 @@ td[aria-selected='true'] {
 
 .display-cmd code {
   padding: 2px 6px;
-  font: 14px/1.4 Consolas, 'Cascadia Mono', monospace;
+  font: inherit;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -929,10 +926,10 @@ td[aria-selected='true'] {
   background: var(--row-hover);
 }
 
-/* monospace one step smaller than the 14 px base */
+/* the font of the app, as every box (standard 18e) */
 .log textarea {
   resize: none;
-  font: 13px/1.4 Consolas, 'Cascadia Mono', 'DejaVu Sans Mono', monospace;
+  font: inherit;
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--border);
