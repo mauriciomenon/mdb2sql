@@ -23,6 +23,35 @@ pub fn sourceKind(path: []const u8) PathError!SourceKind {
     return error.UnsupportedExtension;
 }
 
+// !T: SQLite declared type of a column from its DuckDB type (item 20): the schema keeps the nature of the number.
+// DECIMAL(p,s) stays DECIMAL(p,s) (NUMERIC affinity: the values are stored as numbers), integers INTEGER, FLOAT REAL,
+// DOUBLE DOUBLE, DATE and TIMESTAMP as they are, BOOLEAN, BLOB, the rest TEXT. The sqlite writer of DuckDB would
+// declare DECIMAL and TIMESTAMP as VARCHAR (text), so tables are created by SQLite itself with these types.
+pub fn sqliteType(duck: []const u8) []const u8 {
+    if (std.mem.startsWith(u8, duck, "DECIMAL(")) return duck;
+    const map = [_]struct { []const u8, []const u8 }{
+        .{ "BOOLEAN", "BOOLEAN" },    .{ "TINYINT", "INTEGER" },   .{ "SMALLINT", "INTEGER" }, .{ "INTEGER", "INTEGER" },
+        .{ "BIGINT", "INTEGER" },     .{ "UTINYINT", "INTEGER" },  .{ "USMALLINT", "INTEGER" }, .{ "UINTEGER", "INTEGER" },
+        .{ "UBIGINT", "INTEGER" },    .{ "HUGEINT", "DECIMAL(38,0)" }, .{ "UHUGEINT", "DECIMAL(38,0)" }, .{ "FLOAT", "REAL" },
+        .{ "DOUBLE", "DOUBLE" },      .{ "DATE", "DATE" },         .{ "TIMESTAMP", "TIMESTAMP" }, .{ "TIMESTAMP_S", "TIMESTAMP" },
+        .{ "TIMESTAMP_MS", "TIMESTAMP" }, .{ "TIMESTAMP_NS", "TIMESTAMP" }, .{ "BLOB", "BLOB" },
+    };
+    for (map) |m| if (std.mem.eql(u8, duck, m[0])) return m[1];
+    return "TEXT";
+}
+
+test "SQLite declared types from DuckDB types: DECIMAL stays DECIMAL, integers INTEGER, never a number as TEXT" {
+    try std.testing.expectEqualStrings("DECIMAL(19,4)", sqliteType("DECIMAL(19,4)"));
+    try std.testing.expectEqualStrings("INTEGER", sqliteType("BIGINT"));
+    try std.testing.expectEqualStrings("INTEGER", sqliteType("UTINYINT"));
+    try std.testing.expectEqualStrings("REAL", sqliteType("FLOAT"));
+    try std.testing.expectEqualStrings("DOUBLE", sqliteType("DOUBLE"));
+    try std.testing.expectEqualStrings("TIMESTAMP", sqliteType("TIMESTAMP"));
+    try std.testing.expectEqualStrings("BOOLEAN", sqliteType("BOOLEAN"));
+    try std.testing.expectEqualStrings("TEXT", sqliteType("VARCHAR"));
+    try std.testing.expectEqualStrings("DECIMAL(38,0)", sqliteType("HUGEINT"));
+}
+
 // !T: What the typed path does (Enter in the box, File > Open the typed path; item 14): empty = the open dialog; a
 // relative path is never resolved (against the exe folder or any other) = "File not found"; else open it
 pub const Typed = enum { pick, not_found, open };

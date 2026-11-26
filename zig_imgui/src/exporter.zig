@@ -87,17 +87,106 @@ pub fn database(db: *Db, io: Io, format: DbFormat, dest: []const u8, progress: *
     progress.begin(db.table_names.len);
     for (db.table_names) |name| {
         try progress.check();
-        sql.clearRetainingCapacity();
-        try sql.appendSlice(gpa, "CREATE TABLE mdb2sql_out.main.");
-        try query.writeIdent(&sql, gpa, name);
-        try sql.appendSlice(gpa, " AS SELECT * FROM ");
-        try query.writeIdent(&sql, gpa, name);
-        try db.exec(try zsql(&sql, gpa));
+        var src: std.ArrayList(u8) = .empty;
+        defer src.deinit(gpa);
+        try src.appendSlice(gpa, "SELECT * FROM ");
+        try query.writeIdent(&src, gpa, name);
+        if (format == .sqlite) {
+            try copyToSqlite(db, gpa, name, name, src.items);
+        } else {
+            sql.clearRetainingCapacity();
+            try sql.appendSlice(gpa, "CREATE TABLE mdb2sql_out.main.");
+            try query.writeIdent(&sql, gpa, name);
+            try sql.appendSlice(gpa, " AS ");
+            try duckSelect(db, gpa, &sql, name, src.items);
+            try db.exec(try zsql(&sql, gpa));
+        }
         progress.add(1);
     }
     try db.exec("COMMIT");
     try db.exec("DETACH DATABASE mdb2sql_out");
     try commit(io, part, dest);
+}
+
+// Fonte SQLite (o Access convertido tambem): o schema esta no tipo declarado de cada coluna, que o leitor do DuckDB
+// simplifica (DECIMAL(p,s) e REAL viram DOUBLE, BOOLEAN vira BIGINT)
+fn sqliteSource(db: *const Db) bool {
+    return if (db.source) |s| s != .duckdb else false;
+}
+
+// !T: Column names and types of an output table, by the schema (item 20): from a SQLite source, the declared type of
+// each column of `table` (PRAGMA table_info), which keeps DECIMAL(p,s), REAL and BOOLEAN; otherwise the DuckDB type
+// of the query (DESCRIBE). Rows: [name, type].
+fn outputColumns(db: *Db, gpa: std.mem.Allocator, table: ?[]const u8, source: []const u8) !dbm.Grid {
+    var sql: std.ArrayList(u8) = .empty;
+    defer sql.deinit(gpa);
+    if (sqliteSource(db) and table != null) {
+        var inner: std.ArrayList(u8) = .empty;
+        defer inner.deinit(gpa);
+        try inner.appendSlice(gpa, "SELECT name, type FROM pragma_table_info(");
+        try query.writeLiteral(&inner, gpa, table.?);
+        try inner.appendSlice(gpa, ") ORDER BY cid");
+        try sql.appendSlice(gpa, "SELECT * FROM sqlite_query('src', ");
+        try query.writeLiteral(&sql, gpa, inner.items);
+        try sql.appendSlice(gpa, ")");
+    } else try sql.print(gpa, "DESCRIBE {s}", .{source});
+    return db.run(try zsql(&sql, gpa), &.{});
+}
+
+// !T: One table of a SQLite output (item 20): created by SQLite itself with the declared type of each column (the
+// source's declared type, or query.sqliteType of the DuckDB type), then filled with the native values. DECIMAL stays
+// DECIMAL in the schema and its values are stored as numbers; nothing numeric becomes text.
+fn copyToSqlite(db: *Db, gpa: std.mem.Allocator, out_table: []const u8, schema_table: ?[]const u8, source: []const u8) !void {
+    var cols = try outputColumns(db, gpa, schema_table, source);
+    defer cols.deinit();
+    const declared = sqliteSource(db) and schema_table != null;
+    const names = try gpa.alloc([]const u8, cols.rows.len);
+    defer gpa.free(names);
+    const types = try gpa.alloc([]const u8, cols.rows.len);
+    defer gpa.free(types);
+    for (cols.rows, names, types) |r, *n, *ty| {
+        n.* = r[0] orelse "";
+        ty.* = if (declared) r[1] orelse "" else query.sqliteType(r[1] orelse "");
+    }
+    try db.createSqliteTable("mdb2sql_out", out_table, names, types);
+    var sql: std.ArrayList(u8) = .empty;
+    defer sql.deinit(gpa);
+    try sql.appendSlice(gpa, "INSERT INTO mdb2sql_out.main.");
+    try query.writeIdent(&sql, gpa, out_table);
+    try sql.print(gpa, " {s}", .{source});
+    try db.exec(try zsql(&sql, gpa));
+}
+
+// DECIMAL(p,s) ou NUMERIC(p,s) declarado no SQLite, com p ate 38: o mesmo tipo no DuckDB
+fn decimalDeclared(ty: []const u8) bool {
+    const up = if (std.ascii.startsWithIgnoreCase(ty, "DECIMAL(")) ty["DECIMAL(".len..] else if (std.ascii.startsWithIgnoreCase(ty, "NUMERIC(")) ty["NUMERIC(".len..] else return false;
+    if (up.len < 2 or up[up.len - 1] != ')') return false;
+    var it = std.mem.splitScalar(u8, up[0 .. up.len - 1], ',');
+    const p = std.fmt.parseInt(u8, std.mem.trim(u8, it.next() orelse "", " "), 10) catch return false;
+    const s = std.fmt.parseInt(u8, std.mem.trim(u8, it.next() orelse "0", " "), 10) catch return false;
+    return p >= 1 and p <= 38 and s <= p and it.next() == null;
+}
+
+// !T: The SELECT of a DuckDB output (item 20): from a SQLite source, each column takes back the type of the schema
+// that the DuckDB reader simplified: DECIMAL(p,s) stays DECIMAL(p,s), BOOLEAN BOOLEAN, REAL FLOAT; the rest as read.
+fn duckSelect(db: *Db, gpa: std.mem.Allocator, sql: *std.ArrayList(u8), schema_table: ?[]const u8, source: []const u8) !void {
+    if (!sqliteSource(db) or schema_table == null) return sql.appendSlice(gpa, source);
+    var cols = try outputColumns(db, gpa, schema_table, source);
+    defer cols.deinit();
+    try sql.appendSlice(gpa, "SELECT ");
+    for (cols.rows, 0..) |r, i| {
+        if (i > 0) try sql.appendSlice(gpa, ", ");
+        const name = r[0] orelse "";
+        const ty = r[1] orelse "";
+        const cast: ?[]const u8 = if (decimalDeclared(ty)) ty else if (std.ascii.eqlIgnoreCase(ty, "BOOLEAN")) "BOOLEAN" else if (std.ascii.eqlIgnoreCase(ty, "REAL")) "FLOAT" else null;
+        if (cast != null) try sql.appendSlice(gpa, "CAST(");
+        try sql.appendSlice(gpa, "q.");
+        try query.writeIdent(sql, gpa, name);
+        if (cast) |cty| try sql.print(gpa, " AS {s})", .{cty});
+        try sql.appendSlice(gpa, " AS ");
+        try query.writeIdent(sql, gpa, name);
+    }
+    try sql.print(gpa, " FROM ({s}) q", .{source});
 }
 
 fn zsql(sql: *std.ArrayList(u8), gpa: std.mem.Allocator) ![:0]const u8 {
@@ -213,11 +302,19 @@ pub fn bundle(db: *Db, io: Io, format: BundleFormat, items: []const Select, dest
             progress.begin(items.len);
             for (items) |item| {
                 try progress.check();
-                sql.clearRetainingCapacity();
-                try sql.appendSlice(gpa, "CREATE TABLE mdb2sql_out.main.");
-                try query.writeIdent(&sql, gpa, item.sheet);
-                try sql.print(gpa, " AS {s}", .{item.sql});
-                try db.exec(try zsql(&sql, gpa));
+                // os itens do relatorio da Pesquisa Avançada sao as tabelas (as colunas delas, item 19 d): o schema vem
+                // da tabela de mesmo nome
+                const schema_table: ?[]const u8 = if (query.contains(db.table_names, item.sheet)) item.sheet else null;
+                if (format == .sqlite) {
+                    try copyToSqlite(db, gpa, item.sheet, schema_table, item.sql);
+                } else {
+                    sql.clearRetainingCapacity();
+                    try sql.appendSlice(gpa, "CREATE TABLE mdb2sql_out.main.");
+                    try query.writeIdent(&sql, gpa, item.sheet);
+                    try sql.appendSlice(gpa, " AS ");
+                    try duckSelect(db, gpa, &sql, schema_table, item.sql);
+                    try db.exec(try zsql(&sql, gpa));
+                }
                 progress.add(1);
             }
             try db.exec("COMMIT");
@@ -381,6 +478,51 @@ test "whole database to .duckdb and .sqlite keeps every table, row and type" {
     defer g.deinit();
     try t.expectEqualStrings("Ação", g.rows[0][0].?);
     try t.expectError(error.FileNotFound, Io.Dir.cwd().access(t.io, dbm.tmpPath(&b1, &tmp, "out.sqlite.part"), .{}));
+}
+
+test "items 19 h and 20: the schema keeps the nature of the numbers: SQLite saved with DECIMAL/REAL/INTEGER and numeric values, DuckDB saved back with DECIMAL, Excel numeric cells" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var b: [4][256]u8 = undefined;
+    const src = dbm.tmpPath(&b[0], &tmp, "money.duckdb");
+    const lite = dbm.tmpPath(&b[1], &tmp, "money.sqlite");
+    const back = dbm.tmpPath(&b[2], &tmp, "money_back.duckdb");
+    const book = dbm.tmpPath(&b[3], &tmp, "money.xlsx");
+    var db = dbm.testDb();
+    defer db.close();
+    try db.open(src, false);
+    try db.exec("CREATE TABLE money AS SELECT * FROM (VALUES (1, 19.99::DECIMAL(19,4), 1234.56::DECIMAL(10,2), 0.5::FLOAT, 2316.25::DOUBLE, true, TIMESTAMP '2026-07-14 10:30:00', 'x')) " ++
+        "v(id, preco, valor, razao, d, ativo, quando, nome)");
+    try db.open(":memory:", false);
+    try db.openReadOnly(src);
+    var p: Progress = .{};
+    try database(&db, t.io, .sqlite, lite, &p);
+    // o SQLite salvo: o schema com o tipo de cada coluna e os numeros guardados como numero (nunca texto)
+    try db.open(":memory:", false);
+    try db.openReadOnly(lite);
+    var decl = try db.run("SELECT string_agg(name || ' ' || type, ', ' ORDER BY cid) FROM sqlite_query('src', 'SELECT cid, name, type FROM pragma_table_info(''money'')')", &.{});
+    defer decl.deinit();
+    try t.expectEqualStrings("id INTEGER, preco DECIMAL(19,4), valor DECIMAL(10,2), razao REAL, d DOUBLE, ativo BOOLEAN, quando TIMESTAMP, nome TEXT", decl.rows[0][0].?);
+    var kinds = try db.run("SELECT * FROM sqlite_query('src', 'SELECT typeof(id) || typeof(preco) || typeof(valor) || typeof(razao) || typeof(d) || typeof(ativo) FROM money')", &.{});
+    defer kinds.deinit();
+    try t.expectEqualStrings("integerrealrealrealrealinteger", kinds.rows[0][0].?);
+    // do SQLite para o DuckDB: DECIMAL volta DECIMAL, BOOLEAN volta BOOLEAN, REAL e FLOAT (o tipo do schema)
+    try database(&db, t.io, .duckdb, back, &p);
+    // e para o Excel: os numeros sao celulas numericas, a data e data
+    try workbookAll(&db, t.io, book, &p, xlsx.max_data_rows);
+    var check = dbm.testDb();
+    defer check.close();
+    try check.openReadOnly(back);
+    var types = try check.run("SELECT string_agg(column_name || ' ' || data_type, ', ' ORDER BY column_index) FROM duckdb_columns() WHERE table_name = 'money'", &.{});
+    defer types.deinit();
+    try t.expectEqualStrings("id BIGINT, preco DECIMAL(19,4), valor DECIMAL(10,2), razao FLOAT, d DOUBLE, ativo BOOLEAN, quando TIMESTAMP, nome VARCHAR", types.rows[0][0].?);
+    var vals = try check.run("SELECT preco::VARCHAR || '|' || valor::VARCHAR FROM money", &.{});
+    defer vals.deinit();
+    try t.expectEqualStrings("19.9900|1234.56", vals.rows[0][0].?);
+    const sheet = try xlsx.readPart(t.allocator, t.io, book, "xl/worksheets/sheet1.xml");
+    defer t.allocator.free(sheet);
+    try t.expect(std.mem.indexOf(u8, sheet, "<c r=\"B2\"><v>19.99</v></c><c r=\"C2\"><v>1234.56</v></c><c r=\"D2\"><v>0.5</v></c>") != null);
+    try t.expect(std.mem.indexOf(u8, sheet, "<c r=\"G2\" s=\"2\"><v>46217.4375</v></c>") != null);
 }
 
 test "cancel leaves no file behind" {

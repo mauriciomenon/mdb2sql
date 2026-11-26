@@ -667,6 +667,33 @@ pub const Db = struct {
 
     // Linhas de varias tabelas numa consulta so (UNION ALL): bem mais rapido que uma por tabela,
     // principalmente no SQLite. Se falhar, conta uma por uma (tabela com erro fica 0).
+    // !T: A table of an attached SQLite file (`attached`) created by SQLite itself (sqlite_query runs its own DDL), each
+    // column with its SQLite declared type (query.sqliteType or the declared type of a SQLite source). The schema keeps
+    // the nature of every column (DECIMAL(p,s), TIMESTAMP, BOOLEAN); the DuckDB writer would declare them VARCHAR.
+    pub fn createSqliteTable(self: *Db, attached: []const u8, table: []const u8, names: []const []const u8, types: []const []const u8) Error!void {
+        var ddl: std.ArrayList(u8) = .empty;
+        defer ddl.deinit(self.gpa);
+        try ddl.appendSlice(self.gpa, "CREATE TABLE ");
+        try query.writeIdent(&ddl, self.gpa, table);
+        try ddl.appendSlice(self.gpa, " (");
+        for (names, types, 0..) |name, ty, i| {
+            if (i > 0) try ddl.appendSlice(self.gpa, ", ");
+            try query.writeIdent(&ddl, self.gpa, name);
+            if (ty.len > 0) try ddl.print(self.gpa, " {s}", .{ty});
+        }
+        if (names.len == 0) try ddl.appendSlice(self.gpa, "empty_table_without_columns TEXT");
+        try ddl.appendSlice(self.gpa, ")");
+        var sql: std.ArrayList(u8) = .empty;
+        defer sql.deinit(self.gpa);
+        try sql.appendSlice(self.gpa, "SELECT * FROM sqlite_query(");
+        try query.writeLiteral(&sql, self.gpa, attached);
+        try sql.appendSlice(self.gpa, ", ");
+        try query.writeLiteral(&sql, self.gpa, ddl.items);
+        try sql.appendSlice(self.gpa, ")");
+        try sql.append(self.gpa, 0);
+        try self.exec(sql.items[0 .. sql.items.len - 1 :0]);
+    }
+
     pub fn countMany(self: *Db, names: []const []const u8, out: []u64) Error!void {
         // em blocos de 32 tabelas por consulta: as 287 sqlite_query do DB3 numa consulta so derrubaram a extensao
         // sqlite (segfault no teste do DB3.accdb, 26/11); a abertura ja contava assim, o Excel de todas as tabelas nao

@@ -75,12 +75,14 @@ libdecor, which loads GTK; two early starts on WSLg crashed inside it (README-BU
 
 Opening an `.accdb`/`.mdb` converts every table once into a temporary SQLite file in the subfolder `mdb2sql-zig` of
 the user's temporary folder (Windows `%TEMP%`), else of the system one (`%SystemRoot%\Temp`, Linux `/tmp`), last next
-to the source file (the first where a file can be created), and the program reads that file (the status line says `read with mdbtools, converted to SQLite`). Types are kept as SQLite
-stores them: integers (`Byte`, `Integer`, `Long Integer`, `Numeric (p, 0)` up to 18 digits) as INTEGER (declared
-BIGINT), `Single`, `Double`, `Currency` and the other `Numeric` as REAL (declared DOUBLE; exact up to 15 significant
-digits), dates as ISO text (`2026-07-14 10:30:00`, declared VARCHAR: ISO text sorts and compares in date order),
-Yes/No as 0/1, OLE/binary as BLOB, text as TEXT; NULL stays NULL. Every number has numeric affinity, so a filter
+to the source file (the first where a file can be created), and the program reads that file (the status line says `read with mdbtools, converted to SQLite`). Each table
+is created by SQLite itself with the Access type of every column in its schema: `Byte`, `Integer`, `Long Integer` and
+`Numeric (p, 0)` up to 18 digits INTEGER, `Currency` DECIMAL(19,4), `Numeric (p, s)` DECIMAL(p,s), `Single` REAL,
+`Double` DOUBLE, `DateTime` TIMESTAMP (ISO text `2026-07-14 10:30:00`), Yes/No BOOLEAN (0/1), OLE/binary BLOB, text
+TEXT; NULL stays NULL. Every number column has numeric affinity and its values are stored as numbers, so a filter
 (`WHERE SCALE > 100`), `ORDER BY` and `SUM` compare numbers, in the program and in any tool that opens the saved file.
+**Save as** SQLite keeps the same declared types (DECIMAL stays DECIMAL), **Save as** DuckDB turns them back into
+DuckDB types (DECIMAL(p,s), BOOLEAN, FLOAT), and an Access file saved by an older converter is converted again.
 
 **File > Save** (Ctrl+S) writes the open database, whatever its kind, through the native save box: the folder and the
 name of the original file, the types SQLite (`.sqlite`), DuckDB (`.duckdb`) and Excel (`.xlsx`, one sheet per table),
@@ -167,11 +169,11 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   then **This table** | **All tables** (always starts in All tables, whatever the Data tab's default scope; with This
   table the summary ends in `(only in <table>)`), thin separators between the groups (empty lines and the
   spaces at the ends do not count; a repeated term is searched once). Whole value: the cell as text, without the spaces
-  at the ends, equals the term ignoring case; when a term reads as a number it also matches by value, with a loose
-  rule for US and BR/European formats: a text has up to two readings, "." decimal with "," thousands and "," decimal
-  with "." thousands, a thousands mark only before groups of 3 digits (1,234 = 1.234 or 1234; 216,0 = 216, never
-  2160; 0,1 = 0.1; 216 finds 216.0, 216,0 and "216"; 1234.5 finds "1.234,5"; 216 does not find 2160 or 216.5); a
-  numeric column matches by its value; contains: the cell holds the term ignoring
+  at the ends, equals the term ignoring case; when a term reads as a number it also matches the columns that are
+  numeric in the schema by value, with a loose reading of the term for US and BR/European formats: up to two
+  readings, "." decimal with "," thousands and "," decimal with "." thousands, a thousands mark only before groups of
+  3 digits (1,234 = 1.234 or 1234; 216,0 = 216, never 2160; 0,1 = 0.1; 216 finds 216.0 and 216 in numeric columns,
+  not 2160 or 216.5); a text column compares as text (no number is read inside a text cell); contains: the cell holds the term ignoring
   case; every column of every
   table in the scope, numbers and dates as text. The search runs in the database (a temporary table of terms joined to
   each table), with progress `Searching terms: table i of n (name)` and **Cancel**. Then the summary in the box of the
@@ -303,6 +305,13 @@ the public mdbtools test data, and the small `testdata/mdb2sql_test.mdb` kept in
 - The SQL tab only reads (the statement type decides; writes are refused before running).
 - Favorite tables on top of the table list (right-click, View, Ctrl+D), kept by name for the session.
 - Dialog buttons of the same size in every language.
+- Pages ◀ ▶ in the Data tab; the Data search and the Advanced Search start in All tables; the top bar is
+  path | Open... | Export...; a missing file says only `File not found: <path>`; About with the full commit.
+- Faithful data: the converted SQLite keeps the Access type of every column in its schema (Currency and Numeric(p,s)
+  DECIMAL, Numeric(p,0) INTEGER, DateTime TIMESTAMP); Save as SQLite/DuckDB keeps DECIMAL; Excel exports keep numeric
+  cells and dates, with column widths fitted to the content; the Advanced Search grid, copy and report carry only the
+  table's columns (no Term column, no summary sheet), each row once; an Access file saved by an older converter is
+  converted again.
 
 ### Changes in 1.3.0
 
@@ -385,9 +394,10 @@ file's catalog again (about 0.3 s per table, 287 tables).
 - x86_64 only (Windows and Debian). Other systems are not built in this version.
 - mdbtools reads Access 97 `.mdb` text as Latin-1: characters 0x80-0x9F of Windows-1252 may come out wrong. Access
   2000 and later files are fine. mdbtools cannot tell an empty text from NULL: both come out as NULL.
-- In the converted SQLite file, `Currency` and `Numeric` values with decimals are REAL: exact up to 15 significant
-  digits (any value below 100 billion with 4 decimals); longer values are rounded to the nearest double. `Numeric`
-  integers longer than 18 digits are REAL too. (DB4 and DB3 1 have no Currency and no Numeric with decimals.)
+- In the converted SQLite file, `Currency` and `Numeric` columns with decimals are declared DECIMAL(p,s) and their
+  values are stored as SQLite numbers (REAL, or INTEGER when whole): exact up to 15 significant digits (any value
+  below 100 billion with 4 decimals); longer values are rounded to the nearest double. The program reads them as
+  DOUBLE. (DB4 and DB3 1 have no Currency and no Numeric with decimals.)
 - The ODBC driver may create a `.laccdb` lock file next to the `.accdb` while it reads it (normal Access behavior).
 - The single executable (Windows) needs `%LOCALAPPDATA%` to be writable.
 - The open and save dialogs block the window while open (running work continues). On Linux without `zenity` there

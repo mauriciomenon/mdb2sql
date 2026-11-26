@@ -216,19 +216,19 @@ pub fn deleteQuiet(io: Io, path: []const u8) void {
 
 // ------------------------------------------------------------------ tipos
 
-// Tipo DuckDB de uma coluna do Access pelo nome que o mdb-schema (backend "access") imprime. No SQLite (escrito
-// pela extensao sqlite do DuckDB) os inteiros viram INTEGER, o resto dos numeros REAL, data vira texto ISO, booleano 0/1,
-// binario BLOB. Todo numero tem afinidade numerica no SQLite (filtro, ORDER BY e SUM comparam numeros): um DECIMAL
-// do DuckDB seria gravado como texto declarado VARCHAR. Numeric(p,0) com p <= 18 e inteiro; Currency e Numeric com
-// casas decimais viram REAL (exato ate 15 digitos significativos; alem disso arredondado, ver README).
+// Tipo DuckDB de uma coluna do Access pelo nome que o mdb-schema (backend "access") imprime (item 20: o tipo e da
+// coluna). Numeric(p,0) com p <= 18 e inteiro; Currency e DECIMAL(19,4) e Numeric(p,s) e DECIMAL(p,s); Single FLOAT;
+// Double DOUBLE. No SQLite convertido cada tabela e criada pelo proprio SQLite (Db.createSqliteTable) com o tipo
+// declarado de query.sqliteType: INTEGER, DECIMAL(p,s), REAL, DOUBLE, TIMESTAMP, BOOLEAN, TEXT, BLOB; os numeros
+// ficam guardados como numero (afinidade numerica), nunca como texto.
 pub fn duckTypeFromAccess(buf: []u8, access_type: []const u8) []const u8 {
     const ty = std.mem.trim(u8, access_type, " \t,");
     const paren = std.mem.indexOfScalar(u8, ty, '(');
     const name = std.mem.trim(u8, if (paren) |p| ty[0..p] else ty, " ");
     const simple = [_]struct { []const u8, []const u8 }{
-        .{ "Boolean", "BOOLEAN" },      .{ "Byte", "UTINYINT" },      .{ "Integer", "SMALLINT" },
-        .{ "Long Integer", "INTEGER" }, .{ "Currency", "DOUBLE" },    .{ "Single", "FLOAT" },
-        .{ "Double", "DOUBLE" },        .{ "DateTime", "TIMESTAMP" }, .{ "OLE", "BLOB" },
+        .{ "Boolean", "BOOLEAN" },      .{ "Byte", "UTINYINT" },          .{ "Integer", "SMALLINT" },
+        .{ "Long Integer", "INTEGER" }, .{ "Currency", "DECIMAL(19,4)" }, .{ "Single", "FLOAT" },
+        .{ "Double", "DOUBLE" },        .{ "DateTime", "TIMESTAMP" },     .{ "OLE", "BLOB" },
         .{ "Binary", "BLOB" },
     };
     for (simple) |s| if (std.mem.eql(u8, name, s[0])) return s[1];
@@ -242,11 +242,12 @@ pub fn duckTypeFromAccess(buf: []u8, access_type: []const u8) []const u8 {
     return "VARCHAR"; // Text, Memo/Hyperlink, Replication ID e o que vier de desconhecido
 }
 
-// Numeric/Decimal(p, s) do Access (mdbtools ou ODBC)
+// Numeric/Decimal(p, s) do Access (mdbtools ou ODBC): inteiro ate 18 digitos sem casas; senao DECIMAL(p,s) (o
+// DuckDB vai ate 38 digitos; alem disso DOUBLE)
 fn numericType(buf: []u8, prec: usize, scale: usize) []const u8 {
-    _ = buf;
     if (scale == 0 and prec > 0 and prec <= 18) return "BIGINT";
-    return "DOUBLE";
+    if (prec == 0 or prec > 38 or scale > prec) return "DOUBLE";
+    return std.fmt.bufPrint(buf, "DECIMAL({d},{d})", .{ prec, scale }) catch "DOUBLE";
 }
 
 pub const Column = struct { name: []const u8, ty: []const u8 };
@@ -366,16 +367,16 @@ fn spawnExport(db: *Db, io: Io, opts: Options, path: []const u8, table: []const 
     }) catch |e| failFmt(db, "err_tool_run", .{ "mdb-export", e });
 }
 
-// CSV do mdb-export -> tabela do SQLite "conv" com os tipos do Access; NULL = campo vazio sem aspas, "" = texto vazio
+// CSV do mdb-export -> tabela do SQLite "conv" com os tipos do Access no schema (criada pelo SQLite, item 20) e os
+// valores nativos; NULL = campo vazio sem aspas, "" = texto vazio
 fn loadCsv(db: *Db, table: Table, csv_path: []const u8, sql: *std.ArrayList(u8)) !void {
     const gpa = db.gpa;
-    sql.clearRetainingCapacity();
-    try sql.appendSlice(gpa, "CREATE TABLE conv.main.");
-    try query.writeIdent(sql, gpa, table.name);
-    if (table.columns.len == 0) {
-        try sql.appendSlice(gpa, " (empty_table_without_columns VARCHAR)");
-    } else {
-        try sql.appendSlice(gpa, " AS SELECT * ");
+    try createConvTable(db, table.name, table.columns);
+    if (table.columns.len > 0) {
+        sql.clearRetainingCapacity();
+        try sql.appendSlice(gpa, "INSERT INTO conv.main.");
+        try query.writeIdent(sql, gpa, table.name);
+        try sql.appendSlice(gpa, " SELECT * ");
         var any_blob = false;
         for (table.columns) |col| any_blob = any_blob or std.mem.eql(u8, col.ty, "BLOB");
         if (any_blob) {
@@ -403,9 +404,23 @@ fn loadCsv(db: *Db, table: Table, csv_path: []const u8, sql: *std.ArrayList(u8))
             try query.writeLiteral(sql, gpa, if (std.mem.eql(u8, col.ty, "BLOB")) "VARCHAR" else col.ty);
         }
         try sql.appendSlice(gpa, "})");
+        try sql.append(gpa, 0);
+        try db.exec(sql.items[0 .. sql.items.len - 1 :0]);
     }
-    try sql.append(gpa, 0);
-    try db.exec(sql.items[0 .. sql.items.len - 1 :0]);
+}
+
+// A tabela do convertido, criada pelo proprio SQLite com o tipo declarado de cada coluna (query.sqliteType do tipo
+// DuckDB que veio do Access): DECIMAL(19,4) da Currency, INTEGER do Numeric(p,0), TIMESTAMP da data... (item 20)
+fn createConvTable(db: *Db, name: []const u8, columns: []const Column) !void {
+    const names = try db.gpa.alloc([]const u8, columns.len);
+    defer db.gpa.free(names);
+    const types = try db.gpa.alloc([]const u8, columns.len);
+    defer db.gpa.free(types);
+    for (columns, names, types) |col, *n, *ty| {
+        n.* = col.name;
+        ty.* = query.sqliteType(col.ty);
+    }
+    try db.createSqliteTable("conv", name, names, types);
 }
 
 fn randomU64(io: Io) u64 {
@@ -519,7 +534,7 @@ fn mapOdbcType(buf: []u8, sql_type: i16, size: usize, digits: i16) struct { []co
         -7 => .{ "BOOLEAN", .bit }, // SQL_BIT
         7 => .{ "FLOAT", .double }, // SQL_REAL
         6, 8 => .{ "DOUBLE", .double }, // SQL_FLOAT, SQL_DOUBLE
-        2, 3 => blk: { // SQL_NUMERIC, SQL_DECIMAL: a mesma regra do mdbtools (numericType)
+        2, 3 => blk: { // SQL_NUMERIC, SQL_DECIMAL (Currency e Numeric(19,4)): a mesma regra do mdbtools (numericType)
             const ty = numericType(buf, size, @intCast(@max(digits, 0)));
             break :blk if (std.mem.eql(u8, ty, "BIGINT")) .{ ty, .int } else .{ ty, .double };
         },
@@ -574,11 +589,9 @@ fn odbcImport(db: *Db, path: []const u8, progress: *Progress) !void {
     _ = SQLFreeStmt(stmt, 0); // SQL_CLOSE
     progress.begin(names.items.len);
 
-    var sql: std.ArrayList(u8) = .empty;
-    defer sql.deinit(gpa);
     for (names.items) |name| {
         try progress.check();
-        try copyTable(db, stmt, name, &sql, &wide, &text, progress);
+        try copyTable(db, stmt, name, &wide, &text, progress);
         progress.add(1);
     }
 }
@@ -630,7 +643,7 @@ fn appenderFail(db: *Db, app: c.duckdb_appender) error{Failed} {
     return error.Failed;
 }
 
-fn copyTable(db: *Db, stmt: SQLHANDLE, name: []const u8, sql: *std.ArrayList(u8), wide: *std.ArrayList(u16), text: *std.ArrayList(u8), progress: *Progress) !void {
+fn copyTable(db: *Db, stmt: SQLHANDLE, name: []const u8, wide: *std.ArrayList(u16), text: *std.ArrayList(u8), progress: *Progress) !void {
     const gpa = db.gpa;
     const select = try std.fmt.allocPrint(gpa, "SELECT * FROM [{s}]", .{name});
     defer gpa.free(select);
@@ -644,12 +657,12 @@ fn copyTable(db: *Db, stmt: SQLHANDLE, name: []const u8, sql: *std.ArrayList(u8)
     const fetch = try gpa.alloc(Fetch, @intCast(@max(n_cols, 0)));
     defer gpa.free(fetch);
 
-    // CREATE TABLE com os tipos que o driver informa
-    sql.clearRetainingCapacity();
-    try sql.appendSlice(gpa, "CREATE TABLE conv.main.");
-    try query.writeIdent(sql, gpa, name);
-    try sql.appendSlice(gpa, " (");
-    for (fetch, 1..) |*f, col| {
+    // a tabela com os tipos que o driver informa, criada pelo SQLite com o tipo declarado de cada coluna (item 20)
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const columns = try arena.alloc(Column, fetch.len);
+    for (fetch, columns, 1..) |*f, *column, col| {
         var col_name: [256]u16 = undefined;
         var name_len: i16 = 0;
         var data_type: i16 = 0;
@@ -660,21 +673,14 @@ fn copyTable(db: *Db, stmt: SQLHANDLE, name: []const u8, sql: *std.ArrayList(u8)
             return odbcFail(db, H_STMT, stmt, name);
         var tbuf: [32]u8 = undefined;
         const duck, f.* = mapOdbcType(&tbuf, data_type, size, digits);
-        if (col > 1) try sql.appendSlice(gpa, ", ");
         const nl: usize = @intCast(@min(@max(name_len, 0), col_name.len));
         var name_buf: [768]u8 = undefined;
-        try query.writeIdent(sql, gpa, name_buf[0..std.unicode.wtf16LeToWtf8(&name_buf, col_name[0..nl])]);
-        try sql.print(gpa, " {s}", .{duck});
+        column.* = .{
+            .name = try arena.dupe(u8, name_buf[0..std.unicode.wtf16LeToWtf8(&name_buf, col_name[0..nl])]),
+            .ty = try arena.dupe(u8, duck),
+        };
     }
-    try sql.appendSlice(gpa, ")");
-    if (n_cols == 0) {
-        sql.clearRetainingCapacity();
-        try sql.appendSlice(gpa, "CREATE TABLE conv.main.");
-        try query.writeIdent(sql, gpa, name);
-        try sql.appendSlice(gpa, " (empty_table_without_columns VARCHAR)");
-    }
-    try sql.append(gpa, 0);
-    try db.exec(sql.items[0 .. sql.items.len - 1 :0]);
+    try createConvTable(db, name, columns);
     if (n_cols == 0) return;
 
     const name_z = try gpa.dupeSentinel(u8, name, 0);
@@ -779,22 +785,25 @@ test "a file that is not Access fails with a message, through every reader avail
 
 test "Access types from mdb-schema" {
     var b: [32]u8 = undefined;
+    // item 20: o tipo e da coluna: Numeric(p,0) inteiro, Numeric(p,s) e Currency DECIMAL, Single FLOAT, Double DOUBLE
     try t.expectEqualStrings("BIGINT", duckTypeFromAccess(&b, "Numeric (10, 0), "));
-    try t.expectEqualStrings("DOUBLE", duckTypeFromAccess(&b, "Numeric (10, 2), "));
-    try t.expectEqualStrings("DOUBLE", duckTypeFromAccess(&b, "Numeric (18, 4)"));
-    try t.expectEqualStrings("DOUBLE", duckTypeFromAccess(&b, "Numeric (28, 0)"));
+    try t.expectEqualStrings("DECIMAL(10,2)", duckTypeFromAccess(&b, "Numeric (10, 2), "));
+    try t.expectEqualStrings("DECIMAL(18,4)", duckTypeFromAccess(&b, "Numeric (18, 4)"));
+    try t.expectEqualStrings("DECIMAL(28,0)", duckTypeFromAccess(&b, "Numeric (28, 0)"));
     try t.expectEqualStrings("DOUBLE", duckTypeFromAccess(&b, "Numeric (60, 2)"));
+    try t.expectEqualStrings("FLOAT", duckTypeFromAccess(&b, "Single"));
+    try t.expectEqualStrings("DOUBLE", duckTypeFromAccess(&b, "Double"));
     try t.expectEqualStrings("VARCHAR", duckTypeFromAccess(&b, "Text (48), "));
     try t.expectEqualStrings("VARCHAR", duckTypeFromAccess(&b, "Memo/Hyperlink (255)"));
     try t.expectEqualStrings("INTEGER", duckTypeFromAccess(&b, "Long Integer, "));
     try t.expectEqualStrings("SMALLINT", duckTypeFromAccess(&b, "Integer"));
     try t.expectEqualStrings("TIMESTAMP", duckTypeFromAccess(&b, "DateTime, "));
-    try t.expectEqualStrings("DOUBLE", duckTypeFromAccess(&b, "Currency"));
+    try t.expectEqualStrings("DECIMAL(19,4)", duckTypeFromAccess(&b, "Currency"));
     try t.expectEqualStrings("BLOB", duckTypeFromAccess(&b, "OLE"));
     try t.expectEqualStrings("VARCHAR", duckTypeFromAccess(&b, "Replication ID"));
     if (is_windows) {
         var o: [32]u8 = undefined;
-        try t.expectEqualStrings("DOUBLE", mapOdbcType(&o, 2, 19, 4)[0]); // Currency
+        try t.expectEqualStrings("DECIMAL(19,4)", mapOdbcType(&o, 2, 19, 4)[0]); // Currency
         try t.expectEqual(.double, mapOdbcType(&o, 2, 19, 4)[1]);
         try t.expectEqualStrings("BIGINT", mapOdbcType(&o, 2, 10, 0)[0]);
         try t.expectEqual(.int, mapOdbcType(&o, 2, 10, 0)[1]);
@@ -927,8 +936,11 @@ test "versioned .mdb through mdbtools becomes a SQLite file with types and NULLs
     // tipos lidos de volta do SQLite
     var sch = try db.schema("Tipos");
     defer sch.deinit();
-    const want_types = [_][]const u8{ "BIGINT", "VARCHAR", "DOUBLE", "DOUBLE", "DOUBLE", "VARCHAR", "BIGINT", "BIGINT", "BIGINT", "VARCHAR", "BLOB" };
+    const want_types = [_][]const u8{ "BIGINT", "VARCHAR", "DOUBLE", "DOUBLE", "DOUBLE", "TIMESTAMP", "BIGINT", "BIGINT", "BIGINT", "VARCHAR", "BLOB" };
     for (sch.rows, want_types) |row, ty| try t.expectEqualStrings(ty, row[1].?);
+    // item 20: o schema do SQLite convertido tem o tipo do Access de cada coluna (Numeric(10,2) e Currency DECIMAL,
+    // Double DOUBLE, DateTime TIMESTAMP, Boolean BOOLEAN, Long/Byte/Integer INTEGER, Text/Memo TEXT, OLE BLOB)
+    try expectCell(&db, "INTEGER|TEXT|DECIMAL(10,2)|DECIMAL(19,4)|DOUBLE|TIMESTAMP|BOOLEAN|INTEGER|INTEGER|TEXT|BLOB", "SELECT string_agg(type, '|' ORDER BY cid) FROM sqlite_query('src', 'SELECT cid, type FROM pragma_table_info(''Tipos'')')");
     // no proprio SQLite todo numero tem afinidade numerica (filtro, ORDER BY e SUM comparam numeros)
     try expectCell(&db, "integer|real|real|real|text|integer|integer", "SELECT concat_ws('|', a, b, c, d, e, f, g) FROM sqlite_query('src', 'SELECT typeof(id) a, typeof(valor) b, typeof(preco) c, typeof(razao) d, typeof(quando) e, typeof(ativo) f, typeof(curto) g FROM Tipos WHERE id = 1')");
     try expectCell(&db, "2|19.99|1", "SELECT concat_ws('|', n, s, m) FROM sqlite_query('src', 'SELECT count(*) n, sum(preco) s, min(id) m FROM Tipos WHERE preco >= 0')");
@@ -1002,8 +1014,14 @@ fn checkTypes(db: *Db, path: []const u8, reader: []const u8) !void {
     if (key.rows.len == 2) {
         for (key.rows) |r| try t.expect(std.mem.endsWith(u8, r[0].?, "INT") or std.mem.endsWith(u8, r[0].?, "INTEGER"));
     }
+    // item 20: o schema do SQLite convertido (o tipo declarado de cada coluna, PRAGMA table_info)
+    var decl = try db.run("SELECT string_agg(t || ' ' || n, '; ' ORDER BY t) FROM sqlite_query('src', 'SELECT p.type t, count(*) n FROM sqlite_master m, " ++
+        "pragma_table_info(m.name) p WHERE m.type = ''table'' GROUP BY p.type')", &.{});
+    defer decl.deinit();
+    std.debug.print("{s}: declared types {s}\n", .{ reader, decl.rows[0][0] orelse "" });
     if (std.mem.indexOf(u8, path, "DB3") == null) return;
     try t.expectEqualStrings("float 5816; int 1681; text 2867; ", line.items);
+    try t.expectEqualStrings("DOUBLE 5816; INTEGER 1681; TEXT 2867", decl.rows[0][0].?);
     try t.expectEqual(2, key.rows.len);
     try reportOfOwnerTerms(db);
 }
