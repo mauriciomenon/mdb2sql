@@ -7,7 +7,7 @@ import pytest
 
 from backend.db_manager import MARK_KEY, DBManager
 from backend.export import csv_name, export_csv_folder, export_sheets
-from backend.terms import not_found, parse_terms, report_sheets, search_terms, table_hits
+from backend.terms import not_found, number_readings, parse_terms, report_sheets, search_terms, table_hits
 
 
 def _noop(*_args) -> None:
@@ -84,6 +84,42 @@ def test_columns_named_like_our_own_do_not_clash_and_a_late_cancel_cancels(tmp_p
         cancel = threading.Event()
         with pytest.raises(Cancelled):
             search_terms(manager, ["abc"], False, ["t"], lambda *_a: cancel.set(), cancel)
+
+
+def test_number_readings_follow_the_loose_rule() -> None:
+    # 13 a): com os dois separadores o ultimo e o decimal; um separador repetido e de milhar; um so: as duas leituras
+    assert number_readings("1.234,5") == number_readings("1,234.5") == {1234.5}
+    assert number_readings("1.234.567") == number_readings("1,234,567") == {1234567}
+    assert number_readings("1,234") == number_readings("1.234") == {1.234, 1234}
+    assert number_readings(" 216,0 ") == number_readings("216.0") == number_readings("216") == {216}
+    assert number_readings("-0,1") == {-0.1}
+    assert number_readings("abc") == number_readings("1,2,3") == number_readings("U9A") == set()
+
+
+@pytest.mark.parametrize("kind", [".duckdb", ".sqlite"])
+def test_whole_value_numbers_match_with_the_loose_rule(tmp_path: Path, kind: str) -> None:
+    # 13 a): 216 acha 216.0 (DOUBLE), 216 (INTEGER) e "216,0" (texto), nao 2160 nem 216.5; 0,1 acha 0.10 (DECIMAL);
+    # 1234.5 acha "1.234,5"; o DOUBLE 1.234 tem uma leitura so (nao casa com 1234); texto segue como texto
+    rows = [(1, 216.0, None, None, None), (2, None, "0.10", None, None), (3, None, None, 216, None),
+            (4, None, None, None, "216,0"), (5, None, None, None, "1.234,5"), (6, None, None, None, "2160"),
+            (7, None, None, None, "216.5"), (8, 1.234, None, None, None), (9, None, None, None, "1,234"),
+            (10, None, None, None, "abc")]
+    path = tmp_path / f"n{kind}"
+    if kind == ".duckdb":
+        with duckdb.connect(str(path)) as conn:
+            conn.execute("CREATE TABLE n (id INTEGER, d DOUBLE, m DECIMAL(10,2), i INTEGER, s VARCHAR)")
+            conn.executemany("INSERT INTO n VALUES (?, ?, ?, ?, ?)", rows)
+    else:
+        with sqlite3.connect(path) as conn:
+            conn.execute("CREATE TABLE n (id INTEGER, d DOUBLE, m DECIMAL(10,2), i INTEGER, s TEXT)")
+            conn.executemany("INSERT INTO n VALUES (?, ?, ?, ?, ?)", rows)
+        conn.close()
+    with DBManager(str(path)) as manager:
+        terms = ["216", "0,1", "1234.5", "1234", "abc", "nothing"]
+        result = search_terms(manager, terms, False, ["n"], _noop)
+        hits = [(r["Term"], r["id"]) for r in manager.fetch_rows(*table_hits(result, "n"))]
+        assert hits == [("216", 1), ("216", 3), ("216", 4), ("0,1", 2), ("1234.5", 5), ("1234", 9), ("abc", 10)]
+        assert not_found(result) == ["nothing"]
 
 
 def test_report_in_every_format(points: DBManager, tmp_path: Path) -> None:

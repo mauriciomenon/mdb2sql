@@ -406,6 +406,18 @@ class DBManager:
         select, params = self.select_table(table_name, filters, search, keyed)
         return self.fetch_rows(select, params, limit)
 
+    def column_types(self) -> Dict[str, Dict[str, str]]:
+        """Tipo de cada coluna de cada tabela (o do DuckDB: INTEGER, DOUBLE, DECIMAL(10,2), VARCHAR...)."""
+        with self.cursor() as cursor:
+            rows = cursor.execute(
+                "SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_catalog ="
+                " current_database() AND table_schema = current_schema() ORDER BY ordinal_position"
+            ).fetchall()
+        types: Dict[str, Dict[str, str]] = {}
+        for table, column, kind in rows:
+            types.setdefault(table, {})[column] = kind
+        return types
+
     def table_columns(self) -> Dict[str, List[str]]:
         """Colunas de cada tabela, na ordem, numa consulta so (PRAGMA por tabela: ~2.5 s nas 287 do DB4)."""
         with self.cursor() as cursor:
