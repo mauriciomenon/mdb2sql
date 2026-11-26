@@ -949,10 +949,13 @@ fn focusOnAppear() void {
     ig.igSetNavCursorVisible(true);
 }
 
-// Botoes de dialogo do mesmo tamanho, alinhados a direita
-fn dialogButtonWidth(labels: []const [:0]const u8) f32 {
+// Botoes de um dialogo todos do mesmo tamanho (a altura e a de sempre): a largura do maior texto entre eles nos 3
+// idiomas, assim nenhum botao muda de tamanho com o idioma nem com o vizinho (pedido do dono, 26/11)
+fn dialogButtonWidth(comptime keys: []const []const u8) f32 {
     var w: f32 = 88;
-    for (labels) |l| w = @max(w, buttonWidth(l));
+    inline for (i18n.catalogs) |C| inline for (keys) |k| {
+        w = @max(w, buttonWidth(@field(C, k)));
+    };
     return w;
 }
 
@@ -2414,7 +2417,7 @@ const App = struct {
         ig.igSpacing();
         // Fechar a direita, do mesmo tamanho dos botoes dos outros dialogos
         const close_l = tr("close");
-        const bw = dialogButtonWidth(&.{close_l});
+        const bw = dialogButtonWidth(&.{"close"});
         ig.igSetCursorPosX(ig.igGetCursorPosX() + ig.igGetContentRegionAvail().x - bw);
         if (ig.igButton(close_l, .{ .x = bw, .y = 0 }) or dialogKeyClose()) ig.igCloseCurrentPopup();
     }
@@ -2443,7 +2446,7 @@ const App = struct {
         ig.igPopTextWrapPos();
         const copy_l = tr("copy");
         const ok_l = tr("ok");
-        const bw = dialogButtonWidth(&.{ copy_l, ok_l });
+        const bw = dialogButtonWidth(&.{ "copy", "ok" });
         if (w.command_len > 0) {
             // "<distro>:" e o comando numa caixa somente leitura (selecionavel) com Copiar ao lado
             ig.igAlignTextToFramePadding();
@@ -2499,7 +2502,7 @@ const App = struct {
             const save_l = tr("btn_save");
             const back_l = tr("btn_back");
             const exit_l = tr("btn_exit");
-            const bw = dialogButtonWidth(&.{ save_l, back_l, exit_l });
+            const bw = dialogButtonWidth(&.{ "btn_save", "btn_back", "btn_exit" });
             if (kind == .unsaved) {
                 // Salvar abre a caixa de Arquivo > Salvar; cancelada, esta pergunta volta
                 if (ig.igButton(save_l, .{ .x = bw, .y = 0 })) {
@@ -2561,7 +2564,13 @@ const App = struct {
         const whole_l = tr("export_whole");
         const found_l = i18n.fmtCountZ(&fb, "export_found", app.total, .{app.total});
         const cancel_l = tr("cancel");
-        const bw = dialogButtonWidth(&.{ whole_l, found_l, cancel_l });
+        // "So as N linhas encontradas" tem o numero: a largura dele nos 3 idiomas entra na conta
+        var bw = dialogButtonWidth(&.{ "export_whole", "cancel" });
+        inline for (i18n.catalogs) |C| {
+            var cb: [160]u8 = undefined;
+            const s = (if (app.total == 1) std.fmt.bufPrint(&cb, C.export_found_one, .{app.total}) else std.fmt.bufPrint(&cb, C.export_found, .{app.total})) catch "";
+            bw = @max(bw, textWidth(s) + 2 * ig.igGetStyle().*.FramePadding.x);
+        }
         const answer: ?ExportScope = blk: {
             if (ig.igButton(whole_l, .{ .x = bw, .y = 0 })) break :blk .whole;
             if (ig.igIsWindowAppearing()) {
@@ -3525,7 +3534,7 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         const show_l = tr("show_all");
         const hide_l = tr("hide_all");
         const close_l = tr("close");
-        const bw = dialogButtonWidth(&.{ show_l, hide_l, close_l });
+        const bw = dialogButtonWidth(&.{ "show_all", "hide_all", "close" });
         const full = ig.igGetContentRegionAvail().x;
         ig.igAlignTextToFramePadding();
         textT("columns_shown", .{ n_cols - sel.hiddenCount(n_cols), n_cols });
