@@ -856,6 +856,8 @@ mod tests {
         std::fs::write(&path, b"abc").unwrap();
         let key = converted::file_key(&path).expect("key of an existing file");
         assert_eq!(converted::file_key(&path), Some(key.clone()), "same file, same key");
+        // secao 19 b: a chave leva a versao do conversor (o lembrado por uma versao antiga converte de novo)
+        assert!(key.ends_with(&format!("|converter {}", converted::CONVERTER_VERSION)) && converted::CONVERTER_VERSION >= 2, "{key}");
         // o mesmo arquivo por outro caminho (relativo, com ..) da a mesma chave
         let other_way = dir.path().join("sub").join("..").join("Banco.accdb");
         std::fs::create_dir(dir.path().join("sub")).unwrap();
