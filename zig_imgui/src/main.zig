@@ -583,6 +583,10 @@ const Capture = struct {
                 for (res.tables) |hit| {
                     if (std.mem.eql(u8, app.db.table_names[hit.table], cap.first_table)) break;
                 } else c.note(app.gpa, "the term search did not find " ++ cap.first_table);
+                // a grade da tabela escolhida mostra as linhas contadas (ate o limite de Linhas)
+                const shown = if (app.terms_grid) |g| g.rows.len else 0;
+                if (app.terms_hit < res.tables.len and shown != @min(res.tables[app.terms_hit].rows, app.limit))
+                    c.note(app.gpa, "the grid of the chosen table does not show the rows counted");
             },
             // Fechar nao pergunta: o convertido nao salvo e descartado com a linha do Log
             .prompt_delete => {

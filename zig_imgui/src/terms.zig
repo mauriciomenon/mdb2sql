@@ -144,17 +144,10 @@ fn tableCounts(db: *Db, gpa: Allocator, table: []const u8, columns: []const []co
     while (true) {
         var sql: std.ArrayList(u8) = .empty;
         defer sql.deinit(gpa);
-        // rowid: os pares (linha, termo) ja contam, sem ler a tabela de novo; o texto da linha (identicas sao uma so na
-        // identidade, mas aparecem todas na grade): conta pela juncao com a tabela, como a grade
-        if (key.* == .rowid) {
-            try sql.appendSlice(gpa, "SELECT m.ord, COUNT(*) FROM ");
-            try writeMatches(&sql, gpa, table, columns, match, key.*);
-            try sql.appendSlice(gpa, " m");
-        } else {
-            try sql.appendSlice(gpa, "SELECT m.ord, COUNT(*)");
-            try writeFrom(&sql, gpa, table, columns, match, key.*);
-        }
-        try sql.appendSlice(gpa, " GROUP BY m.ord ORDER BY m.ord");
+        // os pares (linha, termo) sem repetir ja contam: a tabela e lida uma vez
+        try sql.appendSlice(gpa, "SELECT m.ord, COUNT(*) FROM ");
+        try writeMatches(&sql, gpa, table, columns, match, key.*, false);
+        try sql.appendSlice(gpa, " m GROUP BY m.ord ORDER BY m.ord");
         try sql.append(gpa, 0);
         return db.runMax(sql.items[0 .. sql.items.len - 1 :0], &.{}, std.math.maxInt(usize)) catch |e| {
             if (key.* == .hash or e != error.DuckDb or progress.cancel.load(.monotonic)) return e;
@@ -164,20 +157,14 @@ fn tableCounts(db: *Db, gpa: Allocator, table: []const u8, columns: []const []co
     }
 }
 
-// FROM <tabela> com os termos que acham cada linha: uma linha por (linha da tabela, termo). As celulas de cada linha
-// viram uma lista (unnest) e casam com a tabela de termos numa juncao; DISTINCT: o termo em duas colunas da mesma
-// linha conta uma vez.
-fn writeFrom(out: *std.ArrayList(u8), a: Allocator, table: []const u8, columns: []const []const u8, match: Match, key: query.RowKey) Allocator.Error!void {
-    try out.appendSlice(a, " FROM ");
-    try query.writeIdent(out, a, table);
-    try out.appendSlice(a, " AS " ++ row ++ " JOIN ");
-    try writeMatches(out, a, table, columns, match, key);
-    try out.print(a, " m ON {s} = m.k", .{query.keyExpr(key)});
-}
-
-// Os pares (identidade da linha, termo) de uma tabela, sem repetir: (SELECT DISTINCT k, ord, term ...)
-fn writeMatches(out: *std.ArrayList(u8), a: Allocator, table: []const u8, columns: []const []const u8, match: Match, key: query.RowKey) Allocator.Error!void {
-    try out.print(a, "(SELECT DISTINCT c.k, t.ord, t.term FROM (SELECT {s} AS k, unnest([", .{query.keyExpr(key)});
+// !T: The (row, term) pairs of a table, each once: the cells of every row become a list (unnest) matched against the
+// terms table in a join; DISTINCT ON: a term in two columns of the same row counts once. With `whole_row` the row
+// itself goes along as the struct mdb2sql_r, so the grid, the copy and the report come from this one scan: joining
+// the table again by rowid gave no rows at random on SQLite files (DB3/DB5 through the sqlite extension).
+fn writeMatches(out: *std.ArrayList(u8), a: Allocator, table: []const u8, columns: []const []const u8, match: Match, key: query.RowKey, whole_row: bool) Allocator.Error!void {
+    try out.print(a, "(SELECT DISTINCT ON (c.k, t.ord) c.k, t.ord, t.term{s} FROM (SELECT {s} AS k, {s}unnest([", .{
+        if (whole_row) ", c.mdb2sql_r" else "", query.keyExpr(key), if (whole_row) row ++ " AS mdb2sql_r, " else "",
+    });
     for (columns, 0..) |col, i| {
         if (i > 0) try out.appendSlice(a, ", ");
         try out.appendSlice(a, if (match == .whole) "lower(trim(CAST(" ++ row ++ "." else "lower(CAST(" ++ row ++ ".");
@@ -200,9 +187,10 @@ pub fn buildRows(a: Allocator, table: []const u8, hit: Table, match: Match, titl
         try query.writeIdent(&out, a, name);
         try out.appendSlice(a, ", ");
     }
-    try out.appendSlice(a, row ++ ".*");
-    try writeFrom(&out, a, table, hit.columns, match, hit.key);
-    try out.appendSlice(a, if (hit.key == .rowid) " ORDER BY m.ord, " ++ row ++ ".rowid" else " ORDER BY m.ord");
+    // as colunas da tabela, na ordem dela (o struct da linha aberto)
+    try out.appendSlice(a, "mdb2sql_r.* FROM ");
+    try writeMatches(&out, a, table, hit.columns, match, hit.key, true);
+    try out.appendSlice(a, if (hit.key == .rowid) " m ORDER BY m.ord, m.k" else " m ORDER BY m.ord");
     if (limit > 0) try out.print(a, " LIMIT {d}", .{limit});
     return out.toOwnedSliceSentinel(a, 0);
 }
@@ -458,6 +446,33 @@ test "term search on DuckDB and on SQLite: whole value, contains, case, spaces, 
     // as tabelas temporarias da pesquisa anterior nao entram na lista do arquivo novo
     try t.expect(!query.contains(db.table_names, "mdb2sql_terms") and !query.contains(db.table_names, "mdb2sql_pairs"));
     try expectSample(&db);
+}
+
+// Banco real (opcional): MDB2SQL_TEST_TERMS_DB aponta para uma COPIA (.sqlite, .duckdb) e MDB2SQL_TEST_TERMS para a
+// lista; a grade de cada tabela com acerto traz as linhas que a contagem achou
+test "term search on a real database: every table's grid has the rows counted (optional)" {
+    const path = t.environ.getAlloc(t.allocator, "MDB2SQL_TEST_TERMS_DB") catch return error.SkipZigTest;
+    defer t.allocator.free(path);
+    const list = try t.environ.getAlloc(t.allocator, "MDB2SQL_TEST_TERMS");
+    defer t.allocator.free(list);
+    var buf: [64 * 1024]u8 = undefined;
+    const text = try std.Io.Dir.cwd().readFile(t.io, list, &buf);
+    var db = dbm.testDb();
+    defer db.close();
+    try db.openReadOnly(path);
+    // varias vezes: com o leitor do SQLite em paralelo, a grade ja veio vazia numa rodada e cheia na outra
+    for (0..2) |_| for ([_]Match{ .whole, .contains }) |match| {
+        var p: Progress = .{};
+        var res = try search(&db, t.allocator, text, match, null, &p);
+        defer res.deinit();
+        for (res.tables) |hit| for ([_]u32{ 100, 0 }) |limit| {
+            // a grade da tela (Linhas 100) e a de copiar e exportar (todas)
+            var g = try page(&db, t.allocator, &res, hit, "Termo", limit);
+            defer g.deinit();
+            std.debug.print("{t} {s} limit {d}: {d} counted, {d} in the grid\n", .{ match, db.table_names[hit.table], limit, hit.rows, g.rows.len });
+            try t.expectEqual(@min(hit.rows, if (limit == 0) hit.rows else limit), g.rows.len);
+        };
+    };
 }
 
 test "term search report: summary, one table per table with rows, not found; into a new DuckDB file" {
