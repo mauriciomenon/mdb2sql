@@ -2925,53 +2925,57 @@ const App = struct {
         }
     }
 
-    // Aba Termos (item 32), de cima para baixo: a caixa dos termos; Valor inteiro | Contem, Esta tabela | Todas as
-    // tabelas, Pesquisar termos e a contagem; o resumo; as tabelas com acerto e a grade da escolhida; os nao
-    // encontrados numa caixa copiavel
+    // Aba Pesquisa Avançada, de cima para baixo: a caixa dos termos; a linha dos controles; as tabelas com acerto e a
+    // grade da escolhida; os nao encontrados numa caixa copiavel
     fn drawTerms(app: *App) void {
         const st = ig.igGetStyle();
         const box_h = ig.igGetTextLineHeight() * 8 + 2 * st.*.FramePadding.y;
         // Ctrl+Enter na caixa pesquisa (Enter quebra a linha)
         if (ig.igInputTextEx("##terms", tr("terms_hint"), app.terms_text.ptr, @intCast(app.terms_text.len), .{ .x = -1, .y = box_h }, ig.ImGuiInputTextFlags_Multiline | ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) app.want_terms = true;
         if (ig.igIsItemEdited()) app.countTerms();
-        const match_l = [_][:0]const u8{ tr("match_whole"), tr("match_contains") };
-        var match_hover = false;
-        if (segmented(1, &match_l, @intFromBool(app.terms_match == .contains), &match_hover)) |i| app.terms_match = if (i == 0) .whole else .contains;
-        if (match_hover) tooltip(tr("match_tip"));
-        const scope_l = [_][:0]const u8{ tr("scope_table"), tr("scope_all") };
-        sameLineIfFits(segmentedWidth(&scope_l), -1);
-        if (segmented(2, &scope_l, @intFromBool(app.terms_scope == .all), null)) |i| app.terms_scope = if (i == 0) .table else .all;
+
+        // Linha dos controles (item 18 c), da esquerda para a direita: Pesquisar termos | caixa "N linhas de entrada"
+        // + o resumo | encostados a direita: Valor inteiro | Contem, separador, Esta tabela | Todas as tabelas
         const run_l = tr("terms_run");
-        sameLineIfFits(buttonWidth(run_l), -1);
         ig.igBeginDisabled(app.slot.busyWith(.terms) or app.terms_counted[0] == 0);
         if (button(run_l)) app.want_terms = true;
         ig.igEndDisabled();
-        // "8 termos, 1 repetido"
-        var cb: [64]u8 = undefined;
-        var rb: [64]u8 = undefined;
-        var lb: [140]u8 = undefined;
         const n, const rep = app.terms_counted;
-        const count_s = std.fmt.bufPrint(&lb, "{s}{s}", .{ i18n.fmtCount(&cb, "terms_count", n, .{n}), if (rep > 0) i18n.fmtCount(&rb, "terms_repeated", rep, .{rep}) else "" }) catch "";
-        sameLineIfFits(rawWidth(count_s), -1);
-        ig.igAlignTextToFramePadding();
-        textSlice(count_s);
-
-        const res = if (app.terms_res) |*x| x else return;
-        // "6 de 9 termos encontrados: 14 linhas em 3 tabelas"
+        var lb: [64]u8 = undefined;
         var sb: [3][96]u8 = undefined;
         var summary: [400]u8 = undefined;
-        const n_terms = res.terms.len;
-        textSlice(i18n.fmt(&summary, "terms_summary", .{
-            i18n.fmtCount(&sb[0], "terms_found", n_terms, .{ res.found, n_terms }),
-            i18n.fmtCount(&sb[1], "terms_rows", res.rows, .{res.rows}),
-            i18n.fmtCount(&sb[2], "terms_tables", res.tables.len, .{res.tables.len}),
-        }));
-        // "Esta tabela" (item 17): diz onde pesquisou, para nunca parecer que o termo nao existe no banco
-        if (res.only) |ti| if (ti < app.db.table_names.len) {
-            ig.igSameLine(0, 0);
-            var ob: [600]u8 = undefined;
-            textSlice(i18n.fmt(&ob, "terms_only_in", .{app.db.table_names[ti]}));
-        };
+        var ob: [600]u8 = undefined;
+        var ib: [1200]u8 = undefined;
+        const lines_s = i18n.fmtCount(&lb, "terms_lines", n + rep, .{n + rep});
+        const res_opt: ?*const dbm.terms.Result = if (app.terms_res) |*x| x else null;
+        const info = if (res_opt) |r| std.fmt.bufPrint(&ib, "{s}   {s}{s}", .{
+            lines_s,
+            i18n.fmt(&summary, "terms_summary", .{
+                i18n.fmtCount(&sb[0], "terms_found", r.terms.len, .{ r.found, r.terms.len }),
+                i18n.fmtCount(&sb[1], "terms_rows", r.rows, .{r.rows}),
+                i18n.fmtCount(&sb[2], "terms_tables", r.tables.len, .{r.tables.len}),
+            }),
+            // "Esta tabela" (item 17): diz onde pesquisou, para nunca parecer que o termo nao existe no banco
+            if (r.only) |ti| (if (ti < app.db.table_names.len) i18n.fmt(&ob, "terms_only_in", .{app.db.table_names[ti]}) else "") else "",
+        }) catch lines_s else lines_s;
+        const match_l = [_][:0]const u8{ tr("match_whole"), tr("match_contains") };
+        const scope_l = [_][:0]const u8{ tr("scope_table"), tr("scope_all") };
+        const gap = st.*.ItemSpacing.x;
+        const right_w = segmentedWidth(&match_l) + segmentedWidth(&scope_l) + 1 + 2 * gap;
+        const info_min = rawWidth(info) + 2 * st.*.FramePadding.x;
+        vline();
+        // a caixa ocupa o que sobra ate o grupo da direita, nunca menos que o texto; sem espaco, o grupo desce
+        const avail = ig.igGetContentRegionAvail().x;
+        const fits = avail - right_w - 2 * gap - 1 >= info_min;
+        frameText(info, if (fits) avail - right_w - 2 * gap - 1 else @max(info_min, avail));
+        if (fits) vline() else ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - right_w));
+        var match_hover = false;
+        if (segmented(1, &match_l, @intFromBool(app.terms_match == .contains), &match_hover)) |i| app.terms_match = if (i == 0) .whole else .contains;
+        if (match_hover) tooltip(tr("match_tip"));
+        vline();
+        if (segmented(2, &scope_l, @intFromBool(app.terms_scope == .all), null)) |i| app.terms_scope = if (i == 0) .table else .all;
+
+        const res = res_opt orelse return;
         // embaixo: o titulo dos nao encontrados com Copiar e a caixa deles (4 linhas)
         const nf_box_h = ig.igGetTextLineHeight() * 4 + 2 * st.*.FramePadding.y;
         const nf_h = ig.igGetFrameHeightWithSpacing() + nf_box_h + st.*.ItemSpacing.y;
@@ -3017,7 +3021,7 @@ const App = struct {
         } else ig.igDummy(.{ .x = 1, .y = mid_h });
         // "Nao encontrados (2)" + Copiar; um termo por linha, na ordem colada
         ig.igAlignTextToFramePadding();
-        textT("not_found_title", .{n_terms - res.found});
+        textT("not_found_title", .{res.terms.len - res.found});
         ig.igSameLine(0, -1);
         if (button(tr("copy"))) setClipboard(res.not_found);
         _ = ig.igInputTextMultiline("##notfound", @constCast(res.not_found.ptr), res.not_found.len + 1, .{ .x = -1, .y = nf_box_h }, ig.ImGuiInputTextFlags_ReadOnly, null, null);
@@ -3264,6 +3268,30 @@ fn segmented(id: c_int, labels: []const [:0]const u8, current: usize, hovered: ?
         ig.ImDrawList_AddText_Vec2(dl, .{ .x = min.x + st.*.FramePadding.x, .y = min.y + st.*.FramePadding.y }, ig.igGetColorU32_Col(ig.ImGuiCol_Text, 1), label.ptr, label.ptr + label.len);
     }
     return clicked;
+}
+
+// Separador vertical fino entre grupos de uma linha de botoes, na altura do quadro (item 18 c)
+fn vline() void {
+    ig.igSameLine(0, -1);
+    const p = ig.igGetCursorScreenPos();
+    const h = ig.igGetFrameHeight();
+    ig.igDummy(.{ .x = 1, .y = h });
+    ig.ImDrawList_AddLine(ig.igGetWindowDrawList(), .{ .x = p.x, .y = p.y + 3 }, .{ .x = p.x, .y = p.y + h - 3 }, ig.igGetColorU32_Col(ig.ImGuiCol_Separator, 1), 1, 0);
+    ig.igSameLine(0, -1);
+}
+
+// Texto so de leitura numa caixa da linha de botoes: o fundo e a moldura das caixas, a altura do quadro e a margem
+// dele (o texto nunca encosta nem e cortado: quem chama da a largura dele, no minimo)
+fn frameText(s: []const u8, w: f32) void {
+    const st = ig.igGetStyle();
+    const min = ig.igGetCursorScreenPos();
+    const h = ig.igGetFrameHeight();
+    ig.igDummy(.{ .x = w, .y = h });
+    const max: @TypeOf(min) = .{ .x = min.x + w, .y = min.y + h };
+    const dl = ig.igGetWindowDrawList();
+    ig.ImDrawList_AddRectFilled(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_FrameBg, 1), st.*.FrameRounding, 0);
+    ig.ImDrawList_AddRect(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_Border, 1), st.*.FrameRounding, @max(1, st.*.FrameBorderSize), 0);
+    ig.ImDrawList_AddText_Vec2(dl, .{ .x = min.x + st.*.FramePadding.x, .y = min.y + st.*.FramePadding.y }, ig.igGetColorU32_Col(ig.ImGuiCol_Text, 1), s.ptr, s.ptr + s.len);
 }
 
 fn segmentedWidth(labels: []const [:0]const u8) f32 {

@@ -161,10 +161,11 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   is not allowed` (the file, the converted copy and the memory database never change). The empty box shows
   `SELECT * FROM ...`; **Run** (Ctrl+Enter), first 10,000 rows shown; a run that works clears the previous error next
   to the button and in the status bar, an error clears the old grid.
-- **Advanced Search** tab (Ctrl+4): paste a list (one term per line, for example an Excel column) in the box; **Whole value** |
-  **Contains** (default in **Settings > Term matching**: whole value), **This table** | **All tables** (always starts
-  in All tables, whatever the Data tab's default scope; with This table the summary ends in `(only in <table>)`),
-  **Search terms** (Ctrl+Enter) and the count `<n> terms, <n> repeated` (empty lines and the
+- **Advanced Search** tab (Ctrl+4): paste a list (one term per line, for example an Excel column) in the box. Below
+  it, one line from left to right: **Search terms** (Ctrl+Enter) | a box with `<n> input lines` and, after a search,
+  the summary | at the right **Whole value** | **Contains** (default in **Settings > Term matching**: whole value),
+  then **This table** | **All tables** (always starts in All tables, whatever the Data tab's default scope; with This
+  table the summary ends in `(only in <table>)`), thin separators between the groups (empty lines and the
   spaces at the ends do not count; a repeated term is searched once). Whole value: the cell as text, without the spaces
   at the ends, equals the term ignoring case; when a term reads as a number it also matches by value, with a loose
   rule for US and BR/European formats: a text has up to two readings, "." decimal with "," thousands and "," decimal
@@ -173,8 +174,8 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   numeric column matches by its value; contains: the cell holds the term ignoring
   case; every column of every
   table in the scope, numbers and dates as text. The search runs in the database (a temporary table of terms joined to
-  each table), with progress `Searching terms: table i of n (name)` and **Cancel**. Then the summary
-  `<found> of <n> terms found: <rows> rows in <tables> tables`, the tables with rows found as `<table> (<rows>)` and
+  each table), with progress `Searching terms: table i of n (name)` and **Cancel**. Then the summary in the box of the
+  controls line `<found> of <n> terms found: <rows> rows in <tables> tables`, the tables with rows found as `<table> (<rows>)` and
   the grid of the chosen one: only the table's columns, with their names, order and types; each row found once, in
   the order of the first pasted term that found it and then of the table; limited like the Data tab with `showing X
   of Y rows` (the rows count each row once). Below, **Not found (<n>)**: a read-only box, one term per line in the
