@@ -11,6 +11,7 @@ import {
   gridRows,
   hasAllWords,
   importantEntry,
+  favoritesFirst,
   parseTerms,
   resolveContext,
   rowToTsv,
@@ -19,6 +20,7 @@ import {
   setListed,
   statusLine,
   termsOutcome,
+  toggleFavorite,
   toggleHidden,
   toggleMarked,
   toggleShown,
@@ -56,6 +58,31 @@ test('marked rows stay on top in table order, whatever the search', () => {
   // a identidade nao e coluna: copiar a linha nao a leva
   assert.equal(rowToTsv(['n'], kkk[0]), '40');
   assert.deepEqual(Object.keys(kkk[0]), ['n']);
+});
+
+// item 34: favoritas no topo da lista de tabelas, em ordem alfabetica, depois as outras na ordem de sempre; o filtro vale
+// para elas (a lista ja vem filtrada) e favorita que nao existe no arquivo aberto nao aparece
+test('favorite tables come first, in alphabetical order', () => {
+  const tables = ['A_ONE', 'RANGER_SOTEXT', 'B_TWO', 'RANGER_SOEQID', 'RANGER_SOSTAT', 'Z_LAST'];
+  let favorites = new Set();
+  for (const name of ['RANGER_SOSTAT', 'RANGER_SOEQID', 'RANGER_SOTEXT', 'NOT_IN_THIS_FILE']) favorites = toggleFavorite(favorites, name);
+  assert.deepEqual(favoritesFirst(tables, favorites), ['RANGER_SOEQID', 'RANGER_SOSTAT', 'RANGER_SOTEXT', 'A_ONE', 'B_TWO', 'Z_LAST']);
+  // filtro "TEXT ONE": so as que passam, favoritas primeiro
+  assert.deepEqual(favoritesFirst(['A_ONE', 'RANGER_SOTEXT'], favorites), ['RANGER_SOTEXT', 'A_ONE']);
+  // desfavoritar volta a tabela ao lugar de sempre; o Set antigo nao muda
+  const fewer = toggleFavorite(favorites, 'RANGER_SOSTAT');
+  assert.deepEqual(favoritesFirst(tables, fewer), ['RANGER_SOEQID', 'RANGER_SOTEXT', 'A_ONE', 'B_TWO', 'RANGER_SOSTAT', 'Z_LAST']);
+  assert.ok(favorites.has('RANGER_SOSTAT'));
+  assert.deepEqual(favoritesFirst(tables, new Set()), tables);
+  // na tela: a lista usa a ordem, "★ " antes do nome; nada gravado (fechar e abrir outro mantem: resetTable nao zera)
+  const app = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
+  assert.match(app, /return favoritesFirst\(tables\.filter\(\(name\) => hasAllWords\(fold\(name\), words\)\), favorites\);/);
+  assert.match(app, /<span class="name">\{favorites\.has\(name\) \? '★ ' : ''\}\{name\}<\/span>/);
+  assert.match(app, /oncontextmenu=\{\(e\) => openStatusMenu\(e, name\)\}/);
+  assert.match(app, /\{@const text = t\(favorites\.has\(contextMenu\.table\) \? 'fav\.remove' : 'fav\.add'\)\}/);
+  assert.match(app, /\n {6}favorite: \{ run: \(\) => setFavorite\(selectedTable\), off: !selectedTable \},/);
+  assert.doesNotMatch(app.match(/\n {2}function resetTable\(\) \{[\s\S]*?\n {2}\}/)[0], /favorites/);
+  assert.doesNotMatch(app, /saveSetting\([^)]*[Ff]avorit/);
 });
 
 // item 32: termos = cada linha nao vazia, sem espacos nas pontas; repetidos (sem diferenciar maiusculas, como a

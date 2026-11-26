@@ -109,7 +109,7 @@ test('table list shows the row count of each table', () => {
   const list = ui.match(/<div\s+class="table-list"[\s\S]*?\{\/each\}/)[0];
   assert.match(list, /<div class="table-head" aria-hidden="true"><span>\{t\('tables\.name'\)\}<\/span><span>\{t\('tables\.rows'\)\}<\/span><\/div>/);
   // tabela que nao deu para contar (null): celula vazia, nunca um 0 que nao e verdade
-  assert.match(list, /<span class="name">\{name\}<\/span><span class="rows">\{tableRows\.get\(name\) == null \? '' : fmt\(tableRows\.get\(name\)\)\}<\/span>/);
+  assert.match(list, /<span class="name">\{favorites\.has\(name\) \? '★ ' : ''\}\{name\}<\/span><span class="rows">\{tableRows\.get\(name\) == null \? '' : fmt\(tableRows\.get\(name\)\)\}<\/span>/);
   assert.match(appFunction('openDatabase'), /tableRows = new Map\(opened\.tables\.map\(\(name, i\) => \[name, opened\.rows\[i\]\]\)\);/);
   assert.match(appFunction('closeDatabase'), /tableRows = new Map\(\);/);
   assert.deepEqual([en['tables.name'], en['tables.rows'], CATALOG_PT['tables.rows'], CATALOG_ES['tables.rows']], ['Table', 'Rows', 'Linhas', 'Filas']);
@@ -194,6 +194,7 @@ test('keyboard shortcuts are those of the menu items', () => {
     q: "'exit'",
     f: "'find'",
     t: "'goTables'",
+    d: "'favorite'",
     l: "'log'",
     1: "'tab.data'",
     2: "'tab.schema'",

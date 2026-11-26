@@ -13,6 +13,7 @@
   import {
     ROW_ID,
     columnCellWidth,
+    favoritesFirst,
     importantEntry,
     filterLabel,
     fold,
@@ -25,6 +26,7 @@
     setListed,
     statusLine,
     termsOutcome,
+    toggleFavorite,
     toggleMarked,
     toggleShown,
     unreadEntries,
@@ -185,7 +187,8 @@
   // barra de status: erro do motor em uma linha (statusLine); o texto inteiro fica no log
   let statusText = $derived(t(...status));
   let errorText = $derived(error ? errorLine(error.err, error.context) : '');
-  let statusMenu = $state.raw(null); // { x, y } do menu Copiar da barra de status
+  // menu de clique direito: { x, y } da barra de status (Copiar) ou { x, y, table } da lista de tabelas (favoritar)
+  let contextMenu = $state.raw(null);
   // log da sessao: { time, level: 'error' | 'warning' | 'info', key, values } | { ..., err, context } | { ..., render }
   let log = $state.raw([]);
   let logOpen = $state(loadSetting(LOG_KEY) === 'open');
@@ -213,9 +216,12 @@
   let accessKey = null; // chave do Access aberto (file_key ao abrir): o arquivo salvo dele fica lembrado
   let readFile = ''; // arquivo lido de fato (o arquivo salvo, quando o Access abriu por ele): Salvar nao o sugere
 
+  // tabelas favoritas, pelo nome, so enquanto o programa estiver aberto (fechar, abrir outro e F5 mantem)
+  let favorites = $state.raw(new Set());
+  // lista de tabelas: o filtro, e as favoritas no topo em ordem alfabetica
   let visibleTables = $derived.by(() => {
     const words = searchWords(tableFilter);
-    return tables.filter((name) => hasAllWords(fold(name), words));
+    return favoritesFirst(tables.filter((name) => hasAllWords(fold(name), words)), favorites);
   });
   let shownColumns = $derived(visibleColumns(columns, hidden));
   let columnSearch = $state(''); // busca do dialogo Colunas...
@@ -338,6 +344,7 @@
       scope: {},
       onlyMarked: { run: () => (onlyMarked = !showOnly), on: showOnly, off: !markedRows.length },
       goTables: { run: focusTables, off: !tables.length },
+      favorite: { run: () => setFavorite(selectedTable), off: !selectedTable },
       runSql: { run: () => ((tab = 'sql'), runSql()), off: busy || !open || !sql.trim() },
       runTerms: { run: () => ((tab = 'terms'), runTerms()), off: !canRunTerms },
       log: { run: () => setLog(!logOpen), on: logOpen },
@@ -378,7 +385,7 @@
 
   function toggleMenu(event, name) {
     event.stopPropagation();
-    statusMenu = null;
+    contextMenu = null;
     subPath = [];
     openMenu = openMenu === name ? null : name;
   }
@@ -1122,16 +1129,23 @@
     }
   }
 
-  // barra de status: clique direito > Copiar (o texto tambem pode ser selecionado com o mouse)
-  function openStatusMenu(event) {
+  // barra de status: clique direito > Copiar (o texto tambem pode ser selecionado com o mouse); lista de tabelas: clique
+  // direito numa tabela > Favoritar / Desfavoritar (table)
+  function openStatusMenu(event, table) {
     event.preventDefault();
     event.stopPropagation();
     openMenu = null;
-    statusMenu = { x: event.clientX, y: event.clientY };
+    contextMenu = { x: event.clientX, y: event.clientY, table };
+  }
+
+  // Exibir > Favoritar ou desfavoritar tabela (Ctrl+D, tabela atual) e o clique direito na lista
+  function setFavorite(table) {
+    contextMenu = null;
+    favorites = toggleFavorite(favorites, table);
   }
 
   async function copyStatus() {
-    statusMenu = null;
+    contextMenu = null;
     await copyText(headline.text);
   }
 
@@ -1145,7 +1159,7 @@
   // grade, Ctrl+C copia a celula, Ctrl+Shift+C a linha e Espaco marca a linha (Grid.svelte).
   // Com um dialogo aberto so valem as teclas dele; F5 nunca recarrega a pagina do webview (a tela voltaria do zero)
   function shortcut(e) {
-    if (e.key === 'Escape') (openMenu = null), (statusMenu = null);
+    if (e.key === 'Escape') (openMenu = null), (contextMenu = null);
     if (e.key === 'F5') e.preventDefault();
     const key = e.key.toLowerCase();
     if (document.querySelector('dialog[open]') || e.altKey) {
@@ -1162,6 +1176,7 @@
       q: 'exit',
       f: 'find',
       t: 'goTables',
+      d: 'favorite',
       l: 'log',
       1: 'tab.data',
       2: 'tab.schema',
@@ -1479,8 +1494,17 @@
           <div class="table-head" aria-hidden="true"><span>{t('tables.name')}</span><span>{t('tables.rows')}</span></div>
         {/if}
         {#each visibleTables as name, i (name)}
-          <div id="table-{i}" role="option" tabindex="-1" aria-selected={name === selectedTable} class:selected={name === selectedTable} onclick={() => openTable(name)}>
-            <span class="name">{name}</span><span class="rows">{tableRows.get(name) == null ? '' : fmt(tableRows.get(name))}</span>
+          <div
+            id="table-{i}"
+            role="option"
+            tabindex="-1"
+            aria-selected={name === selectedTable}
+            class:selected={name === selectedTable}
+            onclick={() => openTable(name)}
+            oncontextmenu={(e) => openStatusMenu(e, name)}
+          >
+            <!-- favorita: "★ " antes do nome, na cor do texto -->
+            <span class="name">{favorites.has(name) ? '★ ' : ''}{name}</span><span class="rows">{tableRows.get(name) == null ? '' : fmt(tableRows.get(name))}</span>
           </div>
         {/each}
       </div>
@@ -1744,14 +1768,19 @@
     {#if source}<span class="source" title={t('status.viaTip')}>{t('status.via', { source })}</span>{/if}
   </footer>
 
-  {#if statusMenu}
-    <div class="context" role="menu" aria-label={t('status.copy')} style="left: {statusMenu.x}px; top: {statusMenu.y}px" use:keepInside>
+  {#if contextMenu?.table}
+    {@const text = t(favorites.has(contextMenu.table) ? 'fav.remove' : 'fav.add')}
+    <div class="context" role="menu" aria-label={text} style="left: {contextMenu.x}px; top: {contextMenu.y}px" use:keepInside>
+      <button type="button" role="menuitem" use:focusNow onclick={() => setFavorite(contextMenu.table)}>{text}</button>
+    </div>
+  {:else if contextMenu}
+    <div class="context" role="menu" aria-label={t('status.copy')} style="left: {contextMenu.x}px; top: {contextMenu.y}px" use:keepInside>
       <button type="button" role="menuitem" use:focusNow onclick={copyStatus}>{t('status.copy')}</button>
     </div>
   {/if}
 </div>
 
-<svelte:window onclick={() => ((openMenu = null), (statusMenu = null))} onkeydown={shortcut} />
+<svelte:window onclick={() => ((openMenu = null), (contextMenu = null))} onkeydown={shortcut} />
 
 <style>
   /* NIVEL BASICO: Cores em variaveis; o tema (Settings > Theme) troca o esquema da janela */

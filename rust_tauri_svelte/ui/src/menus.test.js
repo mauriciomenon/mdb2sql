@@ -73,6 +73,7 @@ const TREE = [
   '    Todas as tabelas',
   '  Só as linhas marcadas',
   '  Ir para a lista de tabelas  Ctrl+T',
+  '  Favoritar ou desfavoritar tabela  Ctrl+D',
   '  --',
   '  Executar SQL  Ctrl+Enter',
   '  Pesquisar termos  Ctrl+Enter',

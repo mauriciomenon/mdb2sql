@@ -87,6 +87,7 @@ export const MENUS = [
       ['scope', 'scope.label', SCOPES.map(([id, key]) => [`scope.${id}`, key])],
       ['onlyMarked', 'view.onlyMarked'],
       ['goTables', 'view.goTables', 'Ctrl+T'],
+      ['favorite', 'view.favorite', 'Ctrl+D'],
       '-',
       ['runSql', 'view.runSql', 'Ctrl+Enter'],
       ['runTerms', 'terms.run', 'Ctrl+Enter'],

@@ -197,6 +197,10 @@ test('new texts of Save, exit, marked rows and Terms are the agreed ones', () =>
     ['terms.status', {}, 'Situação', 'Status', 'Situación'],
     ['terms.found', {}, 'Encontrado', 'Found', 'Encontrado'],
     ['terms.missing', {}, 'Não encontrado', 'Not found', 'No encontrado'],
+    // item 34 (BRIEF secao 11)
+    ['fav.add', {}, 'Favoritar', 'Add to favorites', 'Añadir a favoritas'],
+    ['fav.remove', {}, 'Desfavoritar', 'Remove from favorites', 'Quitar de favoritas'],
+    ['view.favorite', {}, 'Favoritar ou desfavoritar tabela', 'Favorite or unfavorite table', 'Marcar o desmarcar tabla favorita'],
   ];
   const [pt, en, es] = ['pt-BR', 'en', 'es'].map(translator);
   for (const [key, values, inPt, inEn, inEs] of texts) {

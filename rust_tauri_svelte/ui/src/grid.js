@@ -88,6 +88,16 @@ export function termsOutcome(terms, hits) {
   };
 }
 
+// NIVEL BASICO: Tabelas favoritas (so na memoria, pelo nome): a lista mostra as favoritas primeiro, em ordem alfabetica,
+// e depois as outras na ordem de sempre. `names` ja vem filtrada; favorita que nao esta nela nao aparece
+export function favoritesFirst(names, favorites) {
+  const favorite = names.filter((name) => favorites.has(name)).sort((a, b) => a.localeCompare(b));
+  return [...favorite, ...names.filter((name) => !favorites.has(name))];
+}
+
+// favoritar ou desfavoritar: Set novo com o nome trocado de lado (a mesma troca das colunas ocultas)
+export const toggleFavorite = (favorites, name) => toggleHidden(favorites, name);
+
 // NIVEL BASICO: Colunas ocultas: `hidden` e um Set com os nomes; a grade recebe so as visiveis
 // (pesquisa e exportacao continuam com todas)
 export function visibleColumns(columns, hidden) {
