@@ -198,6 +198,10 @@ test('new texts of Save, exit, marked rows and Terms are the agreed ones', () =>
     ['terms.found', {}, 'Encontrado', 'Found', 'Encontrado'],
     ['terms.missing', {}, 'Não encontrado', 'Not found', 'No encontrado'],
     // item 34 (BRIEF secao 11)
+    // BRIEF secao 13 d: a aba Termos vira Pesquisa Avancada (Exibir Ctrl+4 e o relatorio em Exportar); o botao fica
+    ['tabs.terms', {}, 'Pesquisa Avançada', 'Advanced Search', 'Búsqueda Avanzada'],
+    ['export.terms', {}, 'Relatório da Pesquisa Avançada', 'Advanced Search report', 'Informe de la Búsqueda Avanzada'],
+    ['terms.run', {}, 'Pesquisar termos', 'Search terms', 'Buscar términos'],
     // BRIEF secao 13 c: a aba e tudo que dizia esquema na tela viram "Schema"
     ['tabs.schema', {}, 'Schema', 'Schema', 'Schema'],
     ['export.tableSchema', {}, 'Schema da tabela atual', 'Current table schema', 'Schema de la tabla actual'],

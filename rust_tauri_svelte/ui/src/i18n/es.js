@@ -21,7 +21,7 @@ export default {
   'export.tablesCsv': 'Todas las tablas a CSV (un archivo por tabla)...',
   'export.sql': 'Resultado del SQL',
   'export.found': 'Resultado de la búsqueda en todas las tablas (Excel)...',
-  'export.terms': 'Informe de la búsqueda de términos',
+  'export.terms': 'Informe de la Búsqueda Avanzada',
   'format.csv': 'CSV...',
   'format.xlsx': 'Excel (.xlsx)...',
   'format.sqlite': 'SQLite (.sqlite)...',
@@ -121,7 +121,7 @@ export default {
   'tabs.data': 'Datos',
   'tabs.schema': 'Schema',
   'tabs.sql': 'SQL',
-  'tabs.terms': 'Términos',
+  'tabs.terms': 'Búsqueda Avanzada',
   'limit.label': 'Filas',
 
   'terms.hint': 'Pegue los términos, uno por línea (por ejemplo, una columna de Excel)',

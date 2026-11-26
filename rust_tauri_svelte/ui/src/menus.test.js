@@ -24,7 +24,7 @@ const EXPORT = [
   '  CSV...',
   '  Excel (.xlsx)...',
   'Resultado da busca em todas as tabelas (Excel)...',
-  'Relatório da pesquisa de termos >',
+  'Relatório da Pesquisa Avançada >',
   '  Excel (.xlsx)...',
   '  CSV...',
   '  SQLite (.sqlite)...',
@@ -61,7 +61,7 @@ const TREE = [
   '  Dados  Ctrl+1',
   '  Schema  Ctrl+2',
   '  SQL  Ctrl+3',
-  '  Termos  Ctrl+4',
+  '  Pesquisa Avançada  Ctrl+4',
   '  --',
   '  Linhas >',
   '    100',
@@ -106,11 +106,11 @@ test('the menu tree is the agreed one, in this order', () => {
   assert.deepEqual(menuLines(EXPORT_MENU, pt), EXPORT);
   // ingles e espanhol: os itens novos com o texto combinado
   const en = menuLines(MENUS, translator('en'));
-  for (const line of ['  Open the typed path', '  Reopen  F5', '  Save  Ctrl+S', '  Save as...  Ctrl+Shift+S', '  Copy the whole log', '  Mark or unmark row  Space', '  Unmark all rows', '  Only marked rows', '  Go to the table list  Ctrl+T', '  Run SQL  Ctrl+Enter', '  Search terms  Ctrl+Enter', '  Terms  Ctrl+4', '    Whole value', '    Contains', '    Term search report >', '    All tables to CSV (one file per table)...', '    All-tables search result (Excel)...']) {
+  for (const line of ['  Open the typed path', '  Reopen  F5', '  Save  Ctrl+S', '  Save as...  Ctrl+Shift+S', '  Copy the whole log', '  Mark or unmark row  Space', '  Unmark all rows', '  Only marked rows', '  Go to the table list  Ctrl+T', '  Run SQL  Ctrl+Enter', '  Search terms  Ctrl+Enter', '  Advanced Search  Ctrl+4', '    Whole value', '    Contains', '    Advanced Search report >', '    All tables to CSV (one file per table)...', '    All-tables search result (Excel)...']) {
     assert.ok(en.includes(line), `en: ${line}`);
   }
   const es = menuLines(MENUS, translator('es'));
-  for (const line of ['  Abrir la ruta escrita', '  Guardar como...  Ctrl+Shift+S', '  Copiar todo el registro', '  Marcar o desmarcar fila  Espacio', '  Desmarcar todas las filas', '  Solo las filas marcadas', '  Ir a la lista de tablas  Ctrl+T', '  Ejecutar SQL  Ctrl+Enter', '  Buscar términos  Ctrl+Enter', '  Términos  Ctrl+4', '  Comparación de términos >', '    Informe de la búsqueda de términos >']) {
+  for (const line of ['  Abrir la ruta escrita', '  Guardar como...  Ctrl+Shift+S', '  Copiar todo el registro', '  Marcar o desmarcar fila  Espacio', '  Desmarcar todas las filas', '  Solo las filas marcadas', '  Ir a la lista de tablas  Ctrl+T', '  Ejecutar SQL  Ctrl+Enter', '  Buscar términos  Ctrl+Enter', '  Búsqueda Avanzada  Ctrl+4', '  Comparación de términos >', '    Informe de la Búsqueda Avanzada >']) {
     assert.ok(es.includes(line), `es: ${line}`);
   }
 });

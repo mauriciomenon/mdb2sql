@@ -21,7 +21,7 @@ export default {
   'export.tablesCsv': 'All tables to CSV (one file per table)...',
   'export.sql': 'SQL result',
   'export.found': 'All-tables search result (Excel)...',
-  'export.terms': 'Term search report',
+  'export.terms': 'Advanced Search report',
   'format.csv': 'CSV...',
   'format.xlsx': 'Excel (.xlsx)...',
   'format.sqlite': 'SQLite (.sqlite)...',
@@ -121,7 +121,7 @@ export default {
   'tabs.data': 'Data',
   'tabs.schema': 'Schema',
   'tabs.sql': 'SQL',
-  'tabs.terms': 'Terms',
+  'tabs.terms': 'Advanced Search',
   'limit.label': 'Rows',
 
   'terms.hint': 'Paste the terms, one per line (for example, an Excel column)',
