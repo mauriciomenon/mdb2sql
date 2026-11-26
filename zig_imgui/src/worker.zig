@@ -890,7 +890,7 @@ test "term search jobs (item 32): result with the first table's grid, another ta
     defer db.close();
     try db.openReadOnly(path);
     var slot: Slot = .{ .db = &db, .gpa = t.allocator, .env = .{ .io = t.io } };
-    const titles: terms.Titles = .{ .term = "Termo", .status = "Situação", .table = "Tabela", .rows = "Linhas", .found = "Encontrado", .not_found = "Não encontrado", .sheet_summary = "Resumo", .sheet_not_found = "Não encontrados" };
+    const titles: terms.Titles = .{ .term = "Termo", .status = "Situação", .table = "Tabela", .rows = "Linhas", .found = "Encontrado", .not_found = "Não encontrado", .sheet_result = "Resultado Filtro" };
     slot.req = .{ .kind = .terms, .terms_text = "nada\n149\nZé\nacao", .terms_titles = titles, .limit = 100 };
     try slot.start();
     var out = slot.wait().?;
@@ -928,7 +928,9 @@ test "term search jobs (item 32): result with the first table's grid, another ta
     out.deinit(t.allocator);
     var b3: [300]u8 = undefined;
     var cbuf: [256]u8 = undefined;
-    try t.expectEqualStrings("\xEF\xBB\xBFTermo\r\nnada\r\n", try std.Io.Dir.cwd().readFile(t.io, try exporter.csvPath(&b3, dbm.tmpPath(&b2, &tmp, ""), "Não encontrados"), &cbuf));
+    // a aba Resultado Filtro tem os nao encontrados tambem
+    const csv = try std.Io.Dir.cwd().readFile(t.io, try exporter.csvPath(&b3, dbm.tmpPath(&b2, &tmp, ""), "Resultado Filtro"), &cbuf);
+    try t.expect(std.mem.startsWith(u8, csv, "\xEF\xBB\xBFTermo") and std.mem.indexOf(u8, csv, "nada") != null);
 }
 
 test "Export list (item 28): every table to CSV in a folder, the all-tables search to Excel, the database schema" {

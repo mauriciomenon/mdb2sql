@@ -170,8 +170,8 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   tab with `showing X of Y rows`. Below, **Not found (<n>)**: a read-only box, one term per line in the pasted order,
   with **Copy**. Grid menu: the three copies (rows without the Term column), **Copy the rows found in this table**
   (every row found, with the header, TAB separated, no Term column) and **Advanced Search report** > Excel / CSV /
-  SQLite / DuckDB (`<database>_termos`): a **Summary** (term, status, table, rows: one line per term and table; a term
-  not found has an empty table and 0), one sheet per table with rows (Term + the table's columns) and **Not found**;
+  SQLite / DuckDB (`<database>_termos`): a **Filter Result** sheet (term, status, table, rows: one line per term and table; a term
+  not found has an empty table and 0), then one sheet per table with rows (Term + the table's columns), named after the table;
   SQLite and DuckDB hold the same tables, CSV is a folder with one file per sheet.
 - **Search rule**: the text is split into words; a row matches when one cell holds every word, in any order,
   ignoring case and accents (`Tensión campo` finds `EXCITACION TENSION DE CAMPO`; `tensao` does not: there is no

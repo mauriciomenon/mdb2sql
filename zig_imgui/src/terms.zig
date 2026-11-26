@@ -300,15 +300,15 @@ pub const Titles = struct {
     rows: []const u8,
     found: []const u8,
     not_found: []const u8,
-    sheet_summary: []const u8,
-    sheet_not_found: []const u8,
+    sheet_result: []const u8,
 };
 
-// !T: Report of the term search, as a list of (name, query) for exporter.bundle: the summary (one row per term and
-// table; a term not found has an empty table and 0 rows), one item per table with rows found (term + the table's
-// columns) and the terms not found. Everything is allocated in `a` (an arena).
+// !T: Report of the term search, as a list of (name, query) for exporter.bundle: "Resultado Filtro" (one row per term
+// and table, in the pasted order; a term not found has an empty table and 0 rows), then one item per table with rows
+// found (term + the table's columns) named after the table. No numbered names or suffixes (owner, 26/11). Everything
+// is allocated in `a` (an arena).
 pub fn reportItems(a: Allocator, names: []const []const u8, res: *const Result, titles: Titles) Allocator.Error![]exporter.Select {
-    const items = try a.alloc(exporter.Select, res.tables.len + 2);
+    const items = try a.alloc(exporter.Select, res.tables.len + 1);
     var sql: std.ArrayList(u8) = .empty;
     try sql.appendSlice(a, "SELECT t.term AS ");
     try query.writeIdent(&sql, a, titles.term);
@@ -323,26 +323,10 @@ pub fn reportItems(a: Allocator, names: []const []const u8, res: *const Result, 
     try sql.appendSlice(a, ", COALESCE(p.n, 0) AS ");
     try query.writeIdent(&sql, a, titles.rows);
     try sql.appendSlice(a, " FROM " ++ terms_table ++ " t LEFT JOIN " ++ pairs_table ++ " p ON p.ord = t.ord ORDER BY t.ord, p.tbl_index");
-    items[0] = .{ .sql = try sql.toOwnedSliceSentinel(a, 0), .sheet = try freeName(a, titles.sheet_summary, names, res) };
-    for (res.tables, items[1 .. items.len - 1]) |hit, *item|
+    items[0] = .{ .sql = try sql.toOwnedSliceSentinel(a, 0), .sheet = titles.sheet_result };
+    for (res.tables, items[1..]) |hit, *item|
         item.* = .{ .sql = try buildRows(a, names[hit.table], hit, res.match, titles.term, 0), .sheet = names[hit.table] };
-    try sql.appendSlice(a, "SELECT t.term AS ");
-    try query.writeIdent(&sql, a, titles.term);
-    try sql.appendSlice(a, " FROM " ++ terms_table ++ " t WHERE t.ord NOT IN (SELECT ord FROM " ++ pairs_table ++ ") ORDER BY t.ord");
-    items[items.len - 1] = .{ .sql = try sql.toOwnedSliceSentinel(a, 0), .sheet = try freeName(a, titles.sheet_not_found, names, res) };
     return items;
-}
-
-// "Resumo"; se uma tabela com acerto ja tem esse nome, "Resumo (2)"...
-fn freeName(a: Allocator, want: []const u8, names: []const []const u8, res: *const Result) Allocator.Error![]const u8 {
-    var name = want;
-    var n: usize = 2;
-    while (true) : (n += 1) {
-        for (res.tables) |hit| {
-            if (std.ascii.eqlIgnoreCase(names[hit.table], name)) break;
-        } else return name;
-        name = try std.fmt.allocPrint(a, "{s} ({d})", .{ want, n });
-    }
 }
 
 // As tabelas temporarias da pesquisa saem com o arquivo: o SHOW TABLES do proximo arquivo as listaria
@@ -602,11 +586,11 @@ test "a table column named like the term column (Termo) breaks neither the grid,
     try t.expectEqualStrings("TERMO\tTermo (2)\r\nbomba 1\ta\r\nx\tbomba 1", copied);
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
-    const items = try reportItems(arena.allocator(), db.table_names, &res, .{ .term = "Termo", .status = "Situação", .table = "Tabela", .rows = "Linhas", .found = "Encontrado", .not_found = "Não encontrado", .sheet_summary = "Resumo", .sheet_not_found = "Não encontrados" });
-    try t.expectEqual(3, try exporter.bundle(&db, t.io, .duckdb, items, out, &p, 0));
+    const items = try reportItems(arena.allocator(), db.table_names, &res, .{ .term = "Termo", .status = "Situação", .table = "Tabela", .rows = "Linhas", .found = "Encontrado", .not_found = "Não encontrado", .sheet_result = "Resultado Filtro" });
+    try t.expectEqual(2, try exporter.bundle(&db, t.io, .duckdb, items, out, &p, 0));
 }
 
-test "term search report: summary, one table per table with rows, not found; into a new DuckDB file" {
+test "item 13 i: term search report: Resultado Filtro (found and not found), then one sheet per table, no numbers or suffixes; into a new DuckDB file" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var b1: [256]u8 = undefined;
@@ -617,7 +601,6 @@ test "term search report: summary, one table per table with rows, not found; int
     defer db.close();
     try db.open(duck, false);
     for (sample_ddl) |sql| try db.exec(sql);
-    try db.exec("CREATE TABLE \"Resumo\" AS SELECT 'bomba 1' AS x"); // nome igual ao da aba do resumo
     try db.open(":memory:", false);
     try db.openReadOnly(duck);
     var p: Progress = .{};
@@ -625,31 +608,32 @@ test "term search report: summary, one table per table with rows, not found; int
     defer res.deinit();
     var arena: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena.deinit();
-    const items = try reportItems(arena.allocator(), db.table_names, &res, .{ .term = "Termo", .status = "Situação", .table = "Tabela", .rows = "Linhas", .found = "Encontrado", .not_found = "Não encontrado", .sheet_summary = "Resumo", .sheet_not_found = "Não encontrados" });
-    // resumo, as 4 tabelas com acerto (Resumo, other, points, seen) e os nao encontrados
-    try t.expectEqual(6, items.len);
-    try t.expectEqualStrings("Resumo (2)", items[0].sheet);
-    try t.expectEqual(6, try exporter.bundle(&db, t.io, .duckdb, items, out, &p, 0));
+    const items = try reportItems(arena.allocator(), db.table_names, &res, .{ .term = "Termo", .status = "Situação", .table = "Tabela", .rows = "Linhas", .found = "Encontrado", .not_found = "Não encontrado", .sheet_result = "Resultado Filtro" });
+    // Resultado Filtro e as 3 tabelas com acerto (other, points, seen), com o nome delas; nada mais
+    try t.expectEqual(4, items.len);
+    try t.expectEqualStrings("Resultado Filtro", items[0].sheet);
+    for (items[1..], [_][]const u8{ "other", "points", "seen" }) |item, name| try t.expectEqualStrings(name, item.sheet);
+    try t.expectEqual(4, try exporter.bundle(&db, t.io, .duckdb, items, out, &p, 0));
     var check = dbm.testDb();
     defer check.close();
     try check.openReadOnly(out);
-    var g = try check.run("SELECT \"Termo\", \"Situação\", \"Tabela\", \"Linhas\" FROM \"Resumo (2)\"", &.{});
+    var g = try check.run("SELECT \"Termo\", \"Situação\", \"Tabela\", \"Linhas\" FROM \"Resultado Filtro\"", &.{});
     defer g.deinit();
-    // um por termo x tabela, na ordem dos termos; o nao encontrado com a tabela vazia e 0
-    try t.expectEqual(1 + 4 + 2, g.rows.len);
+    // um por termo x tabela, na ordem dos termos; o nao encontrado na mesma aba, com a tabela vazia e 0
+    try t.expectEqual(1 + 3 + 2, g.rows.len);
     try t.expectEqualStrings("nada", g.rows[0][0].?);
     try t.expectEqualStrings("Não encontrado", g.rows[0][1].?);
     try t.expectEqualStrings("", g.rows[0][2].?);
     try t.expectEqualStrings("0", g.rows[0][3].?);
     try t.expectEqualStrings("bomba 1", g.rows[1][0].?);
     try t.expectEqualStrings("Encontrado", g.rows[1][1].?);
-    try t.expectEqualStrings("238", g.rows[6][0].?);
-    var two = try check.run("SELECT \"Linhas\" FROM \"Resumo (2)\" WHERE \"Termo\" = 'bomba 1' AND \"Tabela\" = 'points'", &.{});
+    try t.expectEqualStrings("238", g.rows[5][0].?);
+    var two = try check.run("SELECT \"Linhas\" FROM \"Resultado Filtro\" WHERE \"Termo\" = 'bomba 1' AND \"Tabela\" = 'points'", &.{});
     defer two.deinit();
     try t.expectEqualStrings("2", two.rows[0][0].?);
-    var nf = try check.run("SELECT * FROM \"Não encontrados\"", &.{});
-    defer nf.deinit();
-    try t.expect(nf.rows.len == 1 and std.mem.eql(u8, nf.rows[0][0].?, "nada"));
+    var all = try check.run("SELECT count(*) FROM duckdb_tables()", &.{});
+    defer all.deinit();
+    try t.expectEqualStrings("4", all.rows[0][0].?);
     var pts = try check.run("SELECT \"Termo\", id FROM points", &.{});
     defer pts.deinit();
     try t.expectEqual(3, pts.rows.len);

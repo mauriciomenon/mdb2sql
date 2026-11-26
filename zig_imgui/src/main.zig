@@ -3265,8 +3265,7 @@ fn termsTitles() dbm.terms.Titles {
         .rows = tr("col_rows"),
         .found = tr("term_found"),
         .not_found = tr("term_not_found"),
-        .sheet_summary = tr("sheet_summary"),
-        .sheet_not_found = tr("sheet_not_found"),
+        .sheet_result = tr("sheet_result"),
     };
 }
 
