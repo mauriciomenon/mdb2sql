@@ -38,13 +38,15 @@ O exe do Windows nao e assinado digitalmente: na primeira execucao o SmartScreen
 ## Como usar
 
 **Abrir um banco** (qualquer um dos jeitos):
-- botao **Browse...**: dialogo do sistema, com os filtros Access, SQLite e DuckDB (abre na pasta do ultimo banco);
-- digitar ou colar o caminho no campo do topo e **Open** (aspas do "Copiar como caminho" sao aceitas); caminho maior
-  que o campo mostra o fim (o nome do arquivo) e o comeco sai com "...";
+- botao **Open...** (= File > Open..., `Ctrl+O`): dialogo do sistema, com os filtros Access, SQLite e DuckDB (abre na
+  pasta do ultimo banco);
+- digitar ou colar o caminho completo no campo do topo e **Enter** (ou File > Open the typed path; campo vazio: o
+  dialogo; aspas do "Copiar como caminho" sao aceitas); caminho maior que o campo mostra o fim (o nome do arquivo) e o
+  comeco sai com "...". Arquivo que nao existe (ou caminho relativo): so "File not found: <caminho>";
 - arrastar o arquivo para a janela;
 - linha de comando: `mdb2sql.exe "D:\dados\banco.accdb"`; ou a variavel `MDB2SQL_DB_PATH` com o caminho.
 
-O botao **Export...** ao lado de **Open** abre a mesma lista de exportacao do menu File.
+O botao **Export...** ao lado de **Open...** abre a mesma lista de exportacao do menu File.
 
 **Access**: o arquivo e lido uma vez (num DuckDB em memoria, que e o motor da tela) e gravado uma vez num **SQLite
 temporario** com os mesmos dados e tipos (inteiro, decimal exato, texto, data, booleano e binario, e os NULL); nada e

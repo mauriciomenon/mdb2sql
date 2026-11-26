@@ -16,7 +16,7 @@ use backend::display::DisplayWarning;
 use backend::export::{self, Source, Summary};
 use backend::terms::{self, TermHit};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -93,32 +93,26 @@ struct OpenProgress<'a> {
     item: &'a str,
 }
 
-// NIVEL BASICO: Caminho passado na linha de comando (ou "Abrir com" do Windows), senao MDB2SQL_DB_PATH
+// NIVEL BASICO: Caminho passado na linha de comando (ou "Abrir com" do Windows), senao MDB2SQL_DB_PATH; relativo vale
+// contra a pasta de onde o programa foi chamado (o campo do caminho so abre caminho completo)
 #[tauri::command]
 fn startup_path() -> String {
-    std::env::args()
-        .nth(1)
-        .or_else(|| std::env::var("MDB2SQL_DB_PATH").ok())
-        .unwrap_or_default()
+    let path = std::env::args().nth(1).or_else(|| std::env::var("MDB2SQL_DB_PATH").ok()).unwrap_or_default();
+    if path.is_empty() {
+        return path;
+    }
+    std::path::absolute(&path).map(|p| p.to_string_lossy().into_owned()).unwrap_or(path)
 }
 
-// NIVEL BASICO: LoadDatabase abre o banco (.accdb/.mdb, .sqlite/.sqlite3/.db, .duckdb)
-// Caminho vazio: MDB2SQL_DB_PATH ou data/sample.duckdb. O SQLite convertido e nao salvo do banco anterior e apagado
-// quando o novo banco abre (a interface poe a linha no Log).
+// NIVEL BASICO: LoadDatabase abre o banco (.accdb/.mdb, .sqlite/.sqlite3/.db, .duckdb). O SQLite convertido e nao
+// salvo do banco anterior e apagado quando o novo banco abre (a interface poe a linha no Log).
 // saved: o arquivo salvo deste mesmo Access (SQLite ou DuckDB), sem mudanca nos dois (a interface conferiu as chaves de
 // file_key): e ele que abre, sem converter de novo nem perguntar ao sair; titulo e caminho na tela continuam os do Access
 // NIVEL TECNICO: async so a long Access import runs off the main thread; progress goes as events
 #[tauri::command(async)]
 fn load_database(app: AppHandle, db_path: String, saved: Option<String>, state: State<'_, AppState>) -> Result<Opened, String> {
     let manager = state.db_manager.lock().unwrap();
-    let path = if db_path.is_empty() {
-        match std::env::var("MDB2SQL_DB_PATH") {
-            Ok(env_path) if !env_path.is_empty() => env_path,
-            _ => PathBuf::from("data").join("sample.duckdb").to_string_lossy().to_string(),
-        }
-    } else {
-        db_path
-    };
+    let path = db_path; // vazio ou relativo: "Arquivo nao encontrado" (a interface manda o vazio para a caixa de escolher)
     let connected = manager.connect(saved.as_deref().unwrap_or(&path), &mut |step, done, total, item| {
         let _ = app.emit("open-progress", OpenProgress { step, done, total, item });
     })?;

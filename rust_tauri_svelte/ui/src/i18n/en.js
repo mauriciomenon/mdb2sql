@@ -69,8 +69,6 @@ export default {
   'open.any': 'All files',
   'header.database': 'Database file',
   'header.placeholder': 'Database file (.accdb, .mdb, .sqlite, .sqlite3, .db, .duckdb)',
-  'header.browse': 'Browse...',
-  'header.open': 'Open',
   'header.export': 'Export...',
 
   'about.description': 'Opens Access, SQLite and DuckDB databases and exports to SQLite, DuckDB, Excel and CSV.',
@@ -247,7 +245,7 @@ export default {
   'err.sqlReadOnly': 'The SQL tab only reads the database: this command is not allowed',
   'err.noDatabase': 'No database open',
   'err.unsupported': 'Unsupported database format:',
-  'err.badPath': 'Database file not found:',
+  'err.badPath': 'File not found:',
   'err.sameFile': 'Choose another file: this one is the open database',
   'err.noConverted': 'There is no converted SQLite',
   'err.exportCancelled': 'Export cancelled',

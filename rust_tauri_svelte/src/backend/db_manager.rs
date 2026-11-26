@@ -593,17 +593,20 @@ impl DBManager {
     // NIVEL BASICO: Valida caminho do banco de dados
     // NIVEL TECNICO: Prevents path traversal and validates file extension
     pub(crate) fn validate_database_path(&self, db_path: &str) -> Result<String, String> {
-        let abs_path = Path::new(db_path)
-            .canonicalize()
-            .map_err(|e| format!("[[err.badPath]] {db_path} ({e})"))?;
-
-        // [[chave]]: a interface troca pela frase do catalogo do idioma escolhido
+        // [[chave]]: a interface troca pela frase do catalogo do idioma escolhido. Arquivo que nao existe (ou pasta, ou
+        // caminho relativo: nunca resolvido contra a pasta do exe): so "Arquivo nao encontrado: {caminho}", sem o texto
+        // do sistema (BRIEF secao 14)
+        let not_found = || format!("[[err.badPath]] {db_path}");
+        if !Path::new(db_path).is_absolute() {
+            return Err(not_found());
+        }
+        let abs_path = Path::new(db_path).canonicalize().map_err(|_| not_found())?;
+        if !abs_path.is_file() {
+            return Err(not_found());
+        }
         if format_of(&abs_path).is_none() {
             let ext = abs_path.extension().and_then(|s| s.to_str()).unwrap_or("");
             return Err(format!("[[err.unsupported]] .{ext}"));
-        }
-        if !abs_path.is_file() {
-            return Err(format!("[[err.badPath]] {}", abs_path.display()));
         }
 
         // canonicalize no Windows devolve \\?\C:\...; o driver ODBC e o mdbtools nao entendem esse prefixo

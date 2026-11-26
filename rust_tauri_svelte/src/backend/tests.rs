@@ -45,6 +45,21 @@ mod tests {
         assert!(err.unwrap_err().contains("[[err.unsupported]] ."));
     }
 
+    // BRIEF secao 14: arquivo que nao existe, pasta ou caminho relativo (nunca resolvido contra a pasta do exe): so
+    // "Arquivo nao encontrado: {caminho}", sem o texto do sistema (GetFileAttributesEx, os error...)
+    #[test]
+    fn missing_file_gives_only_the_short_not_found_message() {
+        let manager = DBManager::new();
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("nao_existe.sqlite").to_string_lossy().into_owned();
+        let folder = dir.path().join("data");
+        std::fs::create_dir(&folder).unwrap();
+        let folder = folder.to_string_lossy().into_owned();
+        for path in [missing.as_str(), folder.as_str(), "data", r"data\sample.duckdb"] {
+            assert_eq!(manager.connect(path, &mut no_progress()).err(), Some(format!("[[err.badPath]] {path}")), "{path}");
+        }
+    }
+
     #[test]
     fn load_sample_duckdb_lists_tables_and_rows() {
         let manager = DBManager::new();
@@ -53,6 +68,7 @@ mod tests {
             eprintln!("sample.duckdb not found, skipping");
             return;
         }
+        let path = path.canonicalize().unwrap(); // caminho relativo nao abre (secao 14)
         manager.connect(path.to_str().unwrap(), &mut no_progress()).expect("connect sample");
         let tables = manager.list_tables().expect("list tables");
         assert!(!tables.is_empty(), "expected tables in sample.duckdb, got none");

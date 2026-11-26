@@ -602,7 +602,7 @@
     dropTerms();
   }
 
-  // NIVEL BASICO: Abre o banco; caminho vazio usa MDB2SQL_DB_PATH ou data/sample.duckdb
+  // NIVEL BASICO: Abre o banco; caminho vazio (Enter no campo vazio): a caixa de escolher arquivo
   // chosen: arquivo do dialogo Abrir ou arrastado para a janela. O Access convertido e nao salvo que estava aberto e
   // apagado sem pergunta quando o outro abre (linha no Log)
   async function openDatabase(event, chosen) {
@@ -610,6 +610,7 @@
     openMenu = null;
     // "Copiar como caminho" do Windows cola o caminho entre aspas
     const path = (chosen ?? dbPath).trim().replace(/^"(.*)"$/, '$1');
+    if (!path) return browse();
     dbPath = path;
     busy = true;
     const discarded = converted ? baseName(openedPath) : '';
@@ -643,7 +644,8 @@
       resetTable();
       if (tables.length > 0) await openTable(tables[0]);
     } catch (err) {
-      showError(err, 'status.openFailed');
+      // arquivo que nao existe: so 'Arquivo nao encontrado: {caminho}' (secao 14), sem o 'Nao foi possivel abrir'
+      showError(err, String(err).startsWith('[[err.badPath]]') ? undefined : 'status.openFailed');
     } finally {
       busy = false;
     }
@@ -1309,8 +1311,8 @@
     {/each}
   </div>
 
-  <!-- topo como o do Zig: o caminho ocupa a linha, Procurar... Abrir Exportar... a direita; arrastar um arquivo para a
-       janela tambem abre -->
+  <!-- topo (BRIEF secao 14): o caminho ocupa a linha, Abrir... (a caixa de escolher arquivo, = Arquivo > Abrir...) e
+       Exportar... a direita; Enter no campo abre o caminho digitado (vazio: a caixa); arrastar um arquivo tambem abre -->
   <header>
     <form onsubmit={openDatabase}>
       <div class="path">
@@ -1331,8 +1333,7 @@
           <span class="path-view" aria-hidden="true"><bdi dir="ltr">{dbPath}</bdi></span>
         {/if}
       </div>
-      <button type="button" class="secondary" onclick={browse} disabled={busy}>{t('header.browse')}</button>
-      <button type="submit" disabled={busy}>{t('header.open')}</button>
+      <button type="button" onclick={browse} disabled={busy}>{t('file.open')}</button>
       <div class="menu-root">
         <button
           type="button"

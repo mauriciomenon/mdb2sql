@@ -45,7 +45,7 @@ const repeated = (labels) => labels.filter((label, i) => labels.indexOf(label) !
 test('the main window has no repeated button or menu item', () => {
   const app = markup('./App.svelte');
   const labels = buttonLabels(app);
-  for (const label of ['Browse...', 'Open', 'Export...', 'Columns...', 'Run', 'Search terms', 'Copy all']) {
+  for (const label of ['Open...', 'Export...', 'Columns...', 'Run', 'Search terms', 'Copy all']) {
     assert.ok(labels.includes(label), `${label} in ${labels.join(', ')}`);
   }
   assert.deepEqual(repeated(labels), []);
@@ -57,9 +57,9 @@ test('the main window has no repeated button or menu item', () => {
   assert.match(app, /\{#each MENUS as \[id, text, items\]\}/);
   const code = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
   // cada botao da tela tem o seu item de menu com a mesma acao
-  assert.equal(count(app, 'onclick={browse}'), 1); // Procurar... do topo = Arquivo > Abrir...
+  assert.equal(count(app, 'onclick={browse}'), 1); // Abrir... do topo = Arquivo > Abrir...
   assert.match(code, /\n {6}open: \{ run: browse, off: busy \},/);
-  assert.match(app, /<form onsubmit=\{openDatabase\}>/); // Abrir do topo = Arquivo > Abrir o caminho digitado
+  assert.match(app, /<form onsubmit=\{openDatabase\}>/); // Enter no campo = Arquivo > Abrir o caminho digitado
   assert.match(code, /\n {6}openPath: \{ run: \(\) => openDatabase\(\), off: busy \|\| !dbPath\.trim\(\) \},/);
   assert.match(code, /\n {6}close: \{ run: closeDatabase, off: busy \|\| !open \},/);
   assert.equal(count(app, 'onclick={copyLog}'), 1); // Copiar tudo do Log = Editar > Copiar todo o Log
@@ -226,13 +226,13 @@ test('keyboard shortcuts are those of the menu items', () => {
   assert.match(grid, /if \(event\.key === ' ' && marks && selected && event\.target\.tagName !== 'INPUT'\) \{\s*event\.preventDefault\(\);\s*marks\.toggle\(selected\.row\);/);
 });
 
-// padrao item 1 (topo = Zig): so o campo do caminho e Procurar... Abrir Exportar... (sem titulo nem rotulo); caminho
-// longo mostra o fim (o comeco sai com "..."); arquivo arrastado para a janela abre
-test('top bar: path field, Browse..., Open, Export... and drag and drop', () => {
+// padrao item 1 (topo = Zig) com a secao 14: so o campo do caminho, Abrir... e Exportar... (sem titulo nem rotulo);
+// caminho longo mostra o fim (o comeco sai com "..."); arquivo arrastado para a janela abre
+test('top bar: path field, Open..., Export... and drag and drop', () => {
   const header = markup('./App.svelte').match(/<header>[\s\S]*?<\/header>/)[0];
   assert.doesNotMatch(header, /<h1|<label/);
-  assert.deepEqual(buttonLabels(header), ['Browse...', 'Open', 'Export...']);
-  assert.ok(header.indexOf('id="db-path"') < header.indexOf("t('header.browse')"));
+  assert.deepEqual(buttonLabels(header), ['Open...', 'Export...']);
+  assert.ok(header.indexOf('id="db-path"') < header.indexOf("t('file.open')"));
   assert.match(header, /aria-label=\{t\('header\.database'\)\}/);
   assert.match(header, /<span class="path-view" aria-hidden="true"><bdi dir="ltr">\{dbPath\}<\/bdi><\/span>/);
   const code = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8');
@@ -241,9 +241,26 @@ test('top bar: path field, Browse..., Open, Export... and drag and drop', () => 
   assert.match(code, /\.path input\.elided \{\s*color: transparent;/);
   assert.match(code, /onDragDropEvent\(\(\{ payload \}\) => \{\s*if \(payload\.type !== 'drop'[^\n]*\n\s*openDatabase\(null, payload\.paths\[0\]\);/);
   // arquivo escolhido ou arrastado vai para o campo e abre (abrir outro nao pergunta mais nada)
-  assert.match(appFunction('openDatabase'), /const path = \(chosen \?\? dbPath\)\.trim\(\)[^\n]*\n\s*dbPath = path;/);
+  assert.match(appFunction('openDatabase'), /const path = \(chosen \?\? dbPath\)\.trim\(\)[^\n]*\n\s*if \(!path\) return browse\(\);\n\s*dbPath = path;/);
   assert.match(appFunction('browse'), /await openDatabase\(null, String\(picked\)\);/);
-  assert.equal(en['header.open'], 'Open');
+});
+
+// BRIEF secao 14 (Abrir): o botao Abrir... chama a caixa de escolher arquivo; Enter com o campo vazio tambem; o caminho
+// digitado abre com Enter; arquivo que nao existe da so "Arquivo nao encontrado: {caminho}" (sem "Nao foi possivel abrir")
+test('Open... opens the file box, empty Enter too, missing file gives the short message', () => {
+  const header = markup('./App.svelte').match(/<header>[\s\S]*?<\/header>/)[0];
+  assert.match(header, /<button type="button" onclick=\{browse\} disabled=\{busy\}>\{t\('file\.open'\)\}<\/button>/);
+  assert.doesNotMatch(header, /type="submit"|header\.browse|header\.open/);
+  assert.match(header, /<form onsubmit=\{openDatabase\}>/);
+  const open = appFunction('openDatabase');
+  assert.match(open, /const path = \(chosen \?\? dbPath\)\.trim\(\)[^\n]*\n\s*if \(!path\) return browse\(\);/);
+  assert.match(open, /showError\(err, String\(err\)\.startsWith\('\[\[err\.badPath\]\]'\) \? undefined : 'status\.openFailed'\);/);
+  const backend = readFileSync(new URL('../../src/backend/db_manager.rs', import.meta.url), 'utf8');
+  assert.doesNotMatch(backend, /err\.badPath\]\][^"\n]*\(\{e\}\)/); // nunca o texto do sistema
+  assert.deepEqual(
+    [CATALOG_PT, en, CATALOG_ES].map((c) => [c['err.badPath'], c['file.open']]),
+    [['Arquivo não encontrado:', 'Abrir...'], ['File not found:', 'Open...'], ['Archivo no encontrado:', 'Abrir...']],
+  );
 });
 
 // ordem do app em tudo que o usuario ve: Access, SQLite, DuckDB

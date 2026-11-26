@@ -69,8 +69,6 @@ export default {
   'open.any': 'Todos los archivos',
   'header.database': 'Archivo de base de datos',
   'header.placeholder': 'Archivo de base de datos (.accdb, .mdb, .sqlite, .sqlite3, .db, .duckdb)',
-  'header.browse': 'Examinar...',
-  'header.open': 'Abrir',
   'header.export': 'Exportar...',
 
   'about.description': 'Abre bases de datos Access, SQLite y DuckDB y exporta a SQLite, DuckDB, Excel y CSV.',
@@ -249,7 +247,7 @@ export default {
   'err.sqlReadOnly': 'La pestaña SQL solo lee la base de datos: este comando no está permitido',
   'err.noDatabase': 'Ninguna base de datos abierta',
   'err.unsupported': 'Formato de base de datos no compatible:',
-  'err.badPath': 'Archivo de base de datos no encontrado:',
+  'err.badPath': 'Archivo no encontrado:',
   'err.sameFile': 'Elija otro archivo: este es la base de datos abierta',
   'err.noConverted': 'No hay SQLite convertido',
   'err.exportCancelled': 'Exportación cancelada',

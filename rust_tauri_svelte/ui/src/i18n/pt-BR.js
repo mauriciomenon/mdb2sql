@@ -69,8 +69,6 @@ export default {
   'open.any': 'Todos os arquivos',
   'header.database': 'Arquivo do banco',
   'header.placeholder': 'Arquivo do banco (.accdb, .mdb, .sqlite, .sqlite3, .db, .duckdb)',
-  'header.browse': 'Procurar...',
-  'header.open': 'Abrir',
   'header.export': 'Exportar...',
 
   'about.description': 'Abre bancos Access, SQLite e DuckDB e exporta para SQLite, DuckDB, Excel e CSV.',
@@ -249,7 +247,7 @@ export default {
   'err.sqlReadOnly': 'A aba SQL só lê o banco: este comando não é permitido',
   'err.noDatabase': 'Nenhum banco aberto',
   'err.unsupported': 'Formato de banco não suportado:',
-  'err.badPath': 'Arquivo de banco não encontrado:',
+  'err.badPath': 'Arquivo não encontrado:',
   'err.sameFile': 'Escolha outro arquivo: este é o banco aberto',
   'err.noConverted': 'Não há SQLite convertido',
   'err.exportCancelled': 'Exportação cancelada',
