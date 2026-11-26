@@ -257,6 +257,8 @@ class MainWindow(QMainWindow):
         self.loaded_table: tuple[str, int] | None = None  # (name, total rows in the table)
         self.loaded_schema: list[dict[str, Any]] = []  # schema da tabela carregada, como o backend devolve
         self.table_counts: dict[str, int | None] = {}  # linhas de cada tabela (lista de tabelas)
+        self.table_order: list[str] = []  # tabelas na ordem do arquivo
+        self.favorites: set[str] = set()  # tabelas favoritas, pelo nome, enquanto o programa estiver aberto
         self.sql_query: str | None = None  # ultima consulta da aba SQL que deu certo (para exportar)
         # filtros coluna = valor (clique direito) e colunas ocultas: valem para view_table, ate trocar de tabela
         self.view_table: str | None = None
@@ -395,6 +397,7 @@ class MainWindow(QMainWindow):
 
         self.find_action = self._action("action.find", self._focus_search, QKeySequence.StandardKey.Find)
         self.tables_action = self._action("action.go_tables", self._focus_tables, "Ctrl+T")
+        self.favorite_action = self._action("action.fav_toggle", lambda: self.toggle_favorite(), "Ctrl+D")
         self.data_tab_action = self._action("tab.data_menu", lambda: self.tabs.setCurrentIndex(0), "Ctrl+1")
         self.schema_tab_action = self._action("tab.schema_menu", lambda: self.tabs.setCurrentIndex(1), "Ctrl+2")
         self.sql_tab_action = self._action("tab.sql_menu", self._focus_sql, "Ctrl+3")
@@ -829,9 +832,11 @@ class MainWindow(QMainWindow):
         self.table_list.setHorizontalScrollMode(QTreeWidget.ScrollMode.ScrollPerPixel)
         # !T: Signal emitido quando usuario seleciona outra tabela
         self.table_list.currentItemChanged.connect(
-            lambda current, _previous: self.on_table_selected(current.text(0) if current is not None else "")
+            lambda current, _previous: self.on_table_selected(self._table_of(current) if current is not None else "")
         )
         self.table_list.itemSelectionChanged.connect(self._sync_current_table)
+        self.table_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table_list.customContextMenuRequested.connect(self._popup_tables_menu)
 
         panel = QWidget()
         layout = QVBoxLayout(panel)
@@ -1138,7 +1143,8 @@ class MainWindow(QMainWindow):
         self._t(scope_menu.setTitle, "scope.name")
         scope_menu.addActions(list(self.scope_actions.values()))
         for item in (self.data_tab_action, self.schema_tab_action, self.sql_tab_action, self.terms_tab_action, None,
-                     rows_menu, self.columns_action, scope_menu, self.only_marked_action, self.tables_action, None,
+                     rows_menu, self.columns_action, scope_menu, self.only_marked_action, self.tables_action,
+                     self.favorite_action, None,
                      self.run_sql_action, self.run_terms_action, None, self.log_action):
             self._add_item(view_menu, item)
 
@@ -1220,7 +1226,7 @@ class MainWindow(QMainWindow):
         self._fit_search_minimum()  # a dica tem outro tamanho
         for row in range(self.table_list.topLevelItemCount()):
             item = self.table_list.topLevelItem(row)
-            count = self.table_counts.get(item.text(0))
+            count = self.table_counts.get(self._table_of(item))
             item.setText(1, num(count) if count is not None else "")
         if self.loaded_schema:
             self._show_schema()
@@ -1350,20 +1356,36 @@ class MainWindow(QMainWindow):
         words = search_words(text)
         for row in range(self.table_list.topLevelItemCount()):
             item = self.table_list.topLevelItem(row)
-            name = fold(item.text(0))
+            name = fold(self._table_of(item))  # o nome, sem a estrela da favorita
             item.setHidden(not all(word in name for word in words))
 
+    @staticmethod
+    def _table_of(item: QTreeWidgetItem) -> str:
+        """O nome da tabela de um item da lista (o texto mostrado leva "★ " nas favoritas)."""
+        return item.data(0, Qt.ItemDataRole.UserRole)
+
+    def _table_item(self, name: str | None) -> QTreeWidgetItem | None:
+        for row in range(self.table_list.topLevelItemCount()):
+            item = self.table_list.topLevelItem(row)
+            if self._table_of(item) == name:
+                return item
+        return None
+
     def table_names(self) -> list[str]:
-        """Nomes da lista de tabelas, na ordem."""
-        return [self.table_list.topLevelItem(row).text(0) for row in range(self.table_list.topLevelItemCount())]
+        """Nomes da lista de tabelas, na ordem (as favoritas primeiro)."""
+        return [self._table_of(self.table_list.topLevelItem(row)) for row in range(self.table_list.topLevelItemCount())]
 
     def _fill_tables(self, tables: list[str], counts: dict[str, int | None]) -> None:
-        # Tabela | Linhas (numero a direita, com o separador de milhar do idioma; vazio se nao deu para contar)
-        self.table_counts = counts
+        # Tabela | Linhas (numero a direita, com o separador de milhar do idioma; vazio se nao deu para contar);
+        # favoritas primeiro, em ordem alfabetica, com "★ " antes do nome; as demais na ordem do arquivo
+        self.table_order, self.table_counts = list(tables), counts
+        favorites = sorted((name for name in tables if name in self.favorites), key=str.casefold)
         items = []
-        for name in tables:
+        for name in favorites + [name for name in tables if name not in self.favorites]:
             count = counts.get(name)
-            item = QTreeWidgetItem([name, num(count) if count is not None else ""])
+            item = QTreeWidgetItem([f"★ {name}" if name in self.favorites else name,
+                                    num(count) if count is not None else ""])
+            item.setData(0, Qt.ItemDataRole.UserRole, name)
             item.setToolTip(0, name)  # nome inteiro tambem na dica
             item.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             items.append(item)
@@ -1371,6 +1393,39 @@ class MainWindow(QMainWindow):
         self.table_list.clear()
         self.table_list.addTopLevelItems(items)
         self.table_list.blockSignals(False)
+
+    # ------------------------------------------------------ tabelas favoritas
+
+    def toggle_favorite(self, name: str | None = None) -> None:
+        """Favoritar ou desfavoritar a tabela `name` (sem ela, a tabela atual). Guardadas pelo nome, so na memoria:
+        fechar, abrir outro arquivo e F5 mantem; nome que nao existe no arquivo aberto nao aparece."""
+        name = name or (self.loaded_table[0] if self.loaded_table else None)
+        if not name or self.manager is None:
+            return
+        self.favorites ^= {name}
+        current = self.table_list.currentItem()
+        current_name = self._table_of(current) if current is not None else None
+        self._fill_tables(self.table_order, self.table_counts)
+        self._filter_tables(self.table_filter.text())
+        item = self._table_item(current_name)
+        if item is not None:  # a mesma tabela continua a atual, sem recarregar
+            self.table_list.blockSignals(True)
+            self.table_list.setCurrentItem(item)
+            self.table_list.blockSignals(False)
+
+    def _popup_tables_menu(self, pos) -> None:
+        # clique direito numa tabela da lista: Favoritar / Desfavoritar
+        item = self.table_list.itemAt(pos)
+        if item is None:
+            return
+        self.tables_menu(self._table_of(item)).popup(self.table_list.viewport().mapToGlobal(pos))
+
+    def tables_menu(self, name: str) -> QMenu:
+        menu = QMenu(self)
+        menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        key = "fav.remove" if name in self.favorites else "fav.add"
+        menu.addAction(tr(key), lambda: self.toggle_favorite(name))
+        return menu
 
     def _current_view(self) -> QTableView | None:
         page = self.tabs.currentWidget()
@@ -1499,7 +1554,7 @@ class MainWindow(QMainWindow):
             return
         if saved is not None:
             self.log(tr("log.reused", name=db_path.name, path=saved))
-        previous = self.table_list.currentItem().text(0) if self.table_list.currentItem() else None
+        previous = self._table_of(self.table_list.currentItem()) if self.table_list.currentItem() else None
         if db_path != self.current_db_path:
             self._reset_view(None)  # outro arquivo: filtros e colunas ocultas nao valem mais
             # nem a pesquisa da aba Data e o filtro da lista; o escopo volta ao padrao de Configuracoes (4 versoes)
@@ -1543,7 +1598,7 @@ class MainWindow(QMainWindow):
 
         if tables:
             # !T: Keep the selected table across a reload; setCurrentItem triggers on_table_selected
-            self.table_list.setCurrentItem(self.table_list.topLevelItem(tables.index(previous) if previous in tables else 0))
+            self.table_list.setCurrentItem(self._table_item(previous) or self.table_list.topLevelItem(0))
         else:
             self.loaded_table = None
             self.loaded_schema = []
@@ -1677,7 +1732,7 @@ class MainWindow(QMainWindow):
         # table_load_timer sao so da navegacao pela lista com as setas
         item = self.table_list.currentItem()
         if item is not None:
-            self.on_table_selected(item.text(0))
+            self.on_table_selected(self._table_of(item))
             self._start_table_worker()
 
     def _search_edited(self) -> None:
@@ -1737,9 +1792,9 @@ class MainWindow(QMainWindow):
         self.scope_actions["table"].setChecked(True)
         self.filters.clear()
         self._refresh_filter_bar()
-        found = self.table_list.findItems(item.data(Qt.ItemDataRole.UserRole), Qt.MatchFlag.MatchExactly)
-        if found:
-            self.table_list.setCurrentItem(found[0])
+        found = self._table_item(item.data(Qt.ItemDataRole.UserRole))
+        if found is not None:
+            self.table_list.setCurrentItem(found)
         self._search_now()
 
     def on_table_selected(self, table_name: str):
@@ -1781,7 +1836,9 @@ class MainWindow(QMainWindow):
         rolagem)."""
         tree = self.table_list
         metrics = tree.fontMetrics()
-        longest = max((metrics.horizontalAdvance(name) for name in tables), default=0)
+        # o nome com a estrela de favorita, se for uma
+        longest = max((metrics.horizontalAdvance(f"★ {name}" if name in self.favorites else name) for name in tables),
+                      default=0)
         # margens do item no estilo atual, medidas na propria lista (o windows11 poe mais que o Fusion)
         listed = [tree.topLevelItem(i).text(0) for i in range(tree.topLevelItemCount())]
         shown = max((metrics.horizontalAdvance(name) for name in listed), default=0)
@@ -2321,6 +2378,7 @@ class MainWindow(QMainWindow):
             action.setEnabled(marked)
         self.marked_menu.setEnabled(marked)
         self.mark_action.setEnabled(self.manager is not None and self.loaded_table is not None)
+        self.favorite_action.setEnabled(self.manager is not None and self.loaded_table is not None)
         report = self.manager is not None and self.terms_result is not None
         for action in (*self.export_terms_actions, self.copy_hits_action):
             action.setEnabled(report)

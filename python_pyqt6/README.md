@@ -65,6 +65,9 @@ removed on exit, and the leftovers of a session that crashed are removed at the 
 Left panel: list of tables with the row count of each one (Table | Rows), and a filter box (Ctrl+T goes to the
 list); all words, any order, no case or accents, applied 300 ms after the last key or at once with Enter.
 Names are never cut: the panel opens as wide as the longest name (up to 35% of the window, then it scrolls).
+Favorite tables (right-click on a table > Add to favorites / Remove from favorites, or View > Favorite or unfavorite
+table, Ctrl+D, for the current one) stay at the top in alphabetical order, marked `★ `; they are kept by name while
+the program is open (closing, opening another file and F5 keep them; nothing is saved).
 Tabs:
 
 - **Data** (Ctrl+1): first rows of the selected table. Click a header to sort the loaded rows (numbers sort as
@@ -202,7 +205,7 @@ the same files made by another converter as reference.
 - Search beyond the loaded rows, value filters, Save / Save as, the exit question, marked rows, the term search
   (whole value, contains, case, spaces, repeats, list order, not found), the read-only SQL tab, the temporary
   folder fallback, the menu tree, three language catalogs with the same keys and no screen text outside them.
-  179 automatic tests (pytest + pytest-qt); the real-database comparison runs with `MDB2SQL_TEST_ACCDB`.
+  182 automatic tests (pytest + pytest-qt); the real-database comparison runs with `MDB2SQL_TEST_ACCDB`.
 - 2026-11-26: copies of DB3 (`.accdb`, and its `.sqlite` and `.duckdb` conversions), the owner's list of 9 terms,
   whole value, all tables: RANGER_SOSTAT 8 rows (RTUNO 50, PNTNO 238, 242, 254, 256, 260, 304, 308, 2190, SUBNAM
   U9A) in the order of the list, RANGER_SOEQID 8 rows, `PNTNAM` not found; contains adds RANGER_SOTEXT (72 rows of

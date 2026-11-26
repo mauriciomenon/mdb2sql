@@ -381,7 +381,7 @@ def test_menu_tree_is_the_same_in_the_four_versions(window: MainWindow) -> None:
     assert _tree(_menu(window, "&View")) == [
         "Data Ctrl+1", "Schema Ctrl+2", "SQL Ctrl+3", "Terms Ctrl+4", "-", ("Rows", ["100", "500", "1000"]),
         "Columns...", ("Search in", ["This table", "All tables"]), "Only marked rows", "Go to the table list Ctrl+T",
-        "-", "Run SQL Ctrl+Enter", "Search terms Ctrl+Enter", "-", "Log Ctrl+L"]
+        "Favorite or unfavorite table Ctrl+D", "-", "Run SQL Ctrl+Enter", "Search terms Ctrl+Enter", "-", "Log Ctrl+L"]
     assert _tree(_menu(window, "&Settings")) == [
         ("Theme", ["System", "Light", "Dark"]), ("Language", ["English", "Português (Brasil)", "Español"]),
         ("Default search scope", ["This table", "All tables"]), ("Term matching", ["Whole value", "Contains"]),
@@ -793,6 +793,60 @@ def test_overwrite_many_question_has_the_right_plural(qtbot, window: MainWindow)
         assert window.ask_overwrite_many(count) is False
     assert seen == ["1 file already exists in this folder. Replace it?",
                     "3 files already exist in this folder. Replace them?"]
+
+
+def test_favorite_tables_go_to_the_top_in_alphabetical_order(qtbot, tmp_path: Path) -> None:
+    # item 34: clique direito / Exibir (Ctrl+D); "★ " no nome; favoritas no topo, alfabeticas; filtro vale; pelo nome,
+    # so na memoria (outro arquivo e F5 mantem; nome ausente nao aparece)
+    import duckdb
+
+    first, second = tmp_path / "a.duckdb", tmp_path / "b.duckdb"
+    with duckdb.connect(str(first)) as conn:
+        for name in ("t_c", "t_a", "t_d", "t_b"):
+            conn.execute(f"CREATE TABLE {name} (x INTEGER)")
+    with duckdb.connect(str(second)) as conn:
+        for name in ("t_b", "other"):
+            conn.execute(f"CREATE TABLE {name} (x INTEGER)")
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.show()
+    win.open_database(first)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
+
+    def shown() -> list[str]:
+        return [win.table_list.topLevelItem(i).text(0) for i in range(win.table_list.topLevelItemCount())]
+
+    assert shown() == ["t_a", "t_b", "t_c", "t_d"] and win.loaded_table[0] == "t_a"
+    request = win._table_request
+    menu = win.tables_menu("t_d")  # clique direito numa tabela
+    assert [a.text() for a in menu.actions()] == ["Add to favorites"]
+    menu.actions()[0].trigger()
+    win.toggle_favorite("t_b")
+    assert shown() == ["★ t_b", "★ t_d", "t_a", "t_c"] and win.table_names() == ["t_b", "t_d", "t_a", "t_c"]
+    # a tabela atual continua a atual, sem recarregar a grade
+    assert win._table_of(win.table_list.currentItem()) == "t_a" and win._table_request == request
+    assert not win.table_load_timer.isActive()
+    assert [a.text() for a in win.tables_menu("t_b").actions()] == ["Remove from favorites"]
+    assert win.favorite_action.shortcut().toString() == "Ctrl+D"
+    win.favorite_action.trigger()  # Exibir > Favoritar ou desfavoritar tabela: a tabela atual
+    assert shown() == ["★ t_a", "★ t_b", "★ t_d", "t_c"]
+    win.table_filter.setText("d")  # o filtro olha o nome (sem a estrela) e vale para as favoritas
+    win._filter_tables_now()
+    assert [win.table_list.topLevelItem(i).isHidden() for i in range(4)] == [True, True, False, True]
+
+    win.open_database(second)  # outro arquivo: as favoritas pelo nome; t_a e t_d nao existem nele
+    qtbot.waitUntil(lambda: win.current_db_path == second and win.loaded_table is not None and win._busy == 0,
+                    timeout=30000)
+    assert shown() == ["★ t_b", "other"] and win.loaded_table[0] == "t_b"  # a primeira da lista abre
+    win.reload_action.trigger()  # F5 mantem
+    qtbot.waitUntil(lambda: win._busy == 0 and win.loaded_table is not None, timeout=30000)
+    assert shown() == ["★ t_b", "other"]
+    win.release_database()
+    win.open_database(first)
+    qtbot.waitUntil(lambda: win.current_db_path == first and win.loaded_table is not None and win._busy == 0,
+                    timeout=30000)
+    assert shown() == ["★ t_a", "★ t_b", "★ t_d", "t_c"]
+    assert not [key for key in QSettings().allKeys() if "fav" in key.lower()]  # nada nas configuracoes
 
 
 def test_marked_rows_stay_on_top_during_other_searches(qtbot, tmp_path: Path, monkeypatch) -> None:
