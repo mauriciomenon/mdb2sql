@@ -106,9 +106,12 @@ next start (in the temporary folders; next to the source when that Access file i
 
 ### Opening a file
 
-- **File > Open...** (Ctrl+O) or **Browse...**: open dialog filtered by type (Access first, then SQLite and DuckDB);
+- The top bar is the path box, **Open...** and **Export...**. **Open...** (= **File > Open...**, Ctrl+O): open dialog
+  filtered by type (Access first, then SQLite and DuckDB);
   Windows dialog on Windows, `zenity` on Linux.
-- Type or paste the path in the box and press **Open** (or Enter). Drag the file onto the window.
+- Type or paste the full path in the box and press Enter (or **File > Open the typed path**); an empty box opens the
+  dialog, a relative path is never resolved against the program folder, and a file that does not exist gives only
+  `File not found: <path>` in the status bar and the Log. Drag the file onto the window.
 - Command line: `mdb2sql-zig "C:\data\file.accdb"`; environment variable `MDB2SQL_DB_PATH` when no file is given.
 
 While a file opens, the status line shows the time, a progress bar (tables converted or counted) and **Cancel**.
@@ -190,7 +193,7 @@ While a file opens, the status line shows the time, a progress bar (tables conve
 
 ### Menus
 
-- **File**: **Open...** (Ctrl+O, the **Browse...** button), **Open the typed path** (the **Open** button), **Reopen**
+- **File**: **Open...** (Ctrl+O, the **Open...** button), **Open the typed path** (Enter in the path box), **Reopen**
   (F5), **Save** (Ctrl+S), **Save as...** (Ctrl+Shift+S), **Export**, **Close** (Ctrl+W), **Exit** (Ctrl+Q).
 - **Export** (also the **Export...** button), a fixed list where what does not apply is disabled: **Current table** >
   CSV / Excel (the Data table; with a search or value filter it asks first: **Whole table** or **Only the <n> rows

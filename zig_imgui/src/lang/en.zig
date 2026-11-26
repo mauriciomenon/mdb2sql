@@ -2,8 +2,7 @@
 
 // main window
 pub const path_hint = "database file (.accdb, .mdb, .sqlite, .duckdb)";
-pub const browse = "Browse...";
-pub const open = "Open";
+pub const open = "Open...";
 pub const export_button = "Export...";
 pub const no_db = "No database loaded";
 pub const filter_tables = "Filter {d} tables";
@@ -246,7 +245,7 @@ pub const err_choose_other = "Choose another file: this one is the database that
 pub const err_table_name_long = "Table name too long";
 pub const err_save_sqlite = "Could not save the SQLite file: {t}";
 pub const err_no_dialog = "File dialog not available (zenity is missing): type the path in the box";
-pub const err_file_not_found = "File not found";
+pub const err_file_not_found = "File not found: {s}";
 pub const err_reader_name = "MDB2SQL_ACCESS_READER must be odbc, mdbtools or auto";
 pub const err_reader_forced = "The Access reader set by MDB2SQL_ACCESS_READER is not available on this computer";
 pub const err_no_reader = "Cannot open Access files: the mdbtools folder next to the program is missing";

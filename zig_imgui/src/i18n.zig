@@ -147,6 +147,9 @@ test "texts as in the Go catalog (the reference wording), in the three languages
         .{ "copy_name", "{s} (copy)", "{s} (cópia)", "{s} (copia)" },
         .{ "about_write", "Writing", "Gravação", "Escritura" },
         .{ "menu_open_typed", "Open the typed path", "Abrir o caminho digitado", "Abrir la ruta escrita" },
+        // item 14: o botao Abrir... escolhe o arquivo; arquivo que nao existe, so a mensagem curta com o caminho
+        .{ "open", "Open...", "Abrir...", "Abrir..." },
+        .{ "err_file_not_found", "File not found: {s}", "Arquivo não encontrado: {s}", "Archivo no encontrado: {s}" },
         .{ "menu_save_as", "Save as...", "Salvar como...", "Guardar como..." },
         // itens 31 e 32
         .{ "only_marked", "Only marked", "Só as marcadas", "Solo las marcadas" },

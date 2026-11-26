@@ -162,7 +162,10 @@ fn exec(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *expor
     switch (req.kind) {
         .open => {
             const path = std.mem.sliceTo(&req.path, 0);
-            if (try query.sourceKind(path) == .access) {
+            const kind = try query.sourceKind(path);
+            // arquivo que nao existe: so "Arquivo nao encontrado: <caminho>" (nunca o texto do sistema nem do motor)
+            std.Io.Dir.cwd().access(env.io, path, .{}) catch return error.FileNotFound;
+            if (kind == .access) {
                 out.source = try access.open(db, env.io, path, env.access, progress, &out.converted);
             } else {
                 try db.openReadOnly(path);
@@ -641,6 +644,17 @@ test "jobs run on a worker thread: open, select, reload, sql, export, errors" {
     out = slot.wait().?;
     try t.expectEqual(error.UnsupportedExtension, out.err.?);
     out.deinit(t.allocator);
+
+    // banco que nao existe (item 14): error.FileNotFound, que a tela mostra como "Arquivo nao encontrado: <caminho>",
+    // nunca o texto do sistema ou do motor
+    for ([_][]const u8{ "nao_existe.duckdb", "nao_existe.sqlite", "nao_existe.accdb" }) |missing| {
+        slot.req = .{ .kind = .open };
+        setZ(&slot.req.path, missing);
+        try slot.start();
+        out = slot.wait().?;
+        try t.expectEqual(error.FileNotFound, out.err.?);
+        out.deinit(t.allocator);
+    }
 }
 
 test "cancel interrupts a long query and the next job still works" {

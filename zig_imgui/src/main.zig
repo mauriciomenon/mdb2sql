@@ -1388,6 +1388,8 @@ const App = struct {
             error.Canceled => msg.set(true, "canceled", .{}),
             error.SqlReadOnly => msg.set(true, "sql_read_only", .{}),
             error.UnsupportedExtension => msg.set(true, "err_not_db", .{}),
+            // abrir um arquivo que nao existe: so "Arquivo nao encontrado: <caminho>", nunca o texto do sistema
+            error.FileNotFound => if (app.slot.req.kind == .open) msg.set(true, "err_file_not_found", .{zstr(&app.slot.req.path)}) else msg.set(true, "err_generic", .{err}),
             error.AccessDenied, error.FileBusy, error.PermissionDenied => msg.set(true, "err_cannot_write", .{err}),
             else => msg.set(true, "err_generic", .{err}),
         }
@@ -1395,6 +1397,16 @@ const App = struct {
 
     fn setPath(app: *App, p: []const u8) void {
         copyZ(&app.path, p);
+    }
+
+    // Enter na caixa do caminho e Arquivo > Abrir o caminho digitado (item 14): vazio = a caixa de escolher arquivo;
+    // caminho relativo = "Arquivo nao encontrado" (nunca resolvido contra a pasta do exe)
+    fn openTyped(app: *App) void {
+        switch (query.typedPath(zstr(&app.path))) {
+            .pick => app.want_browse = true,
+            .not_found => app.status.set(true, "err_file_not_found", .{std.mem.trim(u8, zstr(&app.path), &std.ascii.whitespace)}),
+            .open => app.want_open = true,
+        }
     }
 
     // Enquanto o banco esta sendo aberto a outra thread troca db.table_names: nao desenhar o banco
@@ -2110,17 +2122,15 @@ const App = struct {
         app.drawExportScope();
         app.drawDisplayWarning();
 
-        // Barra superior: caminho + Procurar + Abrir + Exportar (tambem aceita arrastar o arquivo para a janela). O caminho
-        // ocupa a linha toda menos os 3 botoes: o status foi para a barra de baixo, e com 40% cortava caminho longo
-        const buttons = buttonWidth(tr("browse")) + buttonWidth(tr("open")) + buttonWidth(tr("export_button")) +
-            3 * ig.igGetStyle().*.ItemSpacing.x;
+        // Barra superior (item 14): caminho | Abrir... | Exportar... (tambem aceita arrastar o arquivo para a janela).
+        // Abrir... escolhe o arquivo na caixa (= Arquivo > Abrir..., Ctrl+O); o caminho digitado abre com Enter. O
+        // caminho ocupa a linha toda menos os 2 botoes: o status foi para a barra de baixo
+        const buttons = buttonWidth(tr("open")) + buttonWidth(tr("export_button")) + 2 * ig.igGetStyle().*.ItemSpacing.x;
         ig.igSetNextItemWidth(ig.igGetContentRegionAvail().x - buttons);
         // ElideLeft: caminho maior que a linha perde o comeco (com ...), nunca o nome do arquivo
-        const enter = ig.igInputTextWithHint("##path", tr("path_hint"), &app.path, app.path.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue | ig.ImGuiInputTextFlags_ElideLeft, null, null);
+        if (ig.igInputTextWithHint("##path", tr("path_hint"), &app.path, app.path.len + 1, ig.ImGuiInputTextFlags_EnterReturnsTrue | ig.ImGuiInputTextFlags_ElideLeft, null, null)) app.openTyped();
         ig.igSameLine(0, -1);
-        if (button(tr("browse"))) app.want_browse = true;
-        ig.igSameLine(0, -1);
-        if (button(tr("open")) or enter) app.want_open = true;
+        if (button(tr("open"))) app.want_browse = true;
         ig.igSameLine(0, -1);
         ig.igBeginDisabled(app.opening() or !app.db.isOpen());
         if (button(tr("export_button")) or app.takeStartMenu(.Export)) _ = ig.igOpenPopup_Str("##export_menu", 0);
@@ -2241,7 +2251,7 @@ const App = struct {
         if (ig.igBeginMenu(file_l, true)) {
             defer ig.igEndMenu();
             if (ig.igMenuItem_Bool(tr("menu_open"), "Ctrl+O", false, true)) app.want_browse = true;
-            if (ig.igMenuItem_Bool(tr("menu_open_typed"), null, false, true)) app.want_open = true;
+            if (ig.igMenuItem_Bool(tr("menu_open_typed"), null, false, true)) app.openTyped();
             if (ig.igMenuItem_Bool(tr("menu_reopen"), "F5", false, has_db)) app.want_refresh = true;
             ig.igSeparator();
             if (ig.igMenuItem_Bool(tr("menu_save"), "Ctrl+S", false, has_db)) app.want_save = .save;
