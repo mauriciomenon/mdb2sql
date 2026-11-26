@@ -1648,6 +1648,11 @@ describe('App IPC flow', () => {
 
 // one catalog per language with the same keys; every text of the screen comes from them
 describe('language catalogs', () => {
+  // owner 26/11 (13g): the Log is called Log in the 3 languages; in Spanish its copy is "Copiar todo el log"
+  it('call the Log Log in the 3 languages', () => {
+    expect(LANGS.map((l) => translate(l, 'log.title'))).toEqual(['Log', 'Log', 'Log']);
+    expect(translate('es', 'menu.copyLog')).toBe('Copiar todo el log');
+  });
 
   const source = readFileSync('src/App.tsx', 'utf8');
 
