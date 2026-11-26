@@ -151,12 +151,12 @@ fn isNumericType(ty: []const u8) bool {
     return false;
 }
 
-// !T: Whole value with numbers (item 13 a, the loose rule): a term and a cell that read as numbers match when some
-// reading of one equals some reading of the other. A number text has up to two readings, the same as the Python
+// !T: Whole value with numbers (items 13 a and 20): the loose reading is for the TERM only, compared by value with the
+// columns that are numeric in the schema (a text column compares as text). A term has up to two readings, as the Python
 // version (python_pyqt6/src/backend/terms.py, _DOT and _COMMA): n1 = "." decimal with "," thousands, n2 = ","
 // decimal with "." thousands; a thousands mark only before groups of exactly 3 digits. So 1.234,5 and 1,234.5 =
-// 1234.5, 1.234.567 = 1234567, 1,234 = 1.234 or 1234, 216,0 = 216 (never 2160), 0,1 = 0.1 (never 1). A numeric
-// cell (integer, decimal, double) reads as its value. Each reading is the key chr(1) || the DOUBLE as text (chr(1)
+// 1234.5, 1.234.567 = 1234567, 1,234 = 1.234 or 1234, 216,0 = 216 (never 2160), 0,1 = 0.1 (never 1). A cell of a
+// numeric column (integer, decimal, double) reads as its value. Each reading is the key chr(1) || the DOUBLE as text (chr(1)
 // never equals a text key; + 0 turns -0 into 0). The first character filters out most text before the regex.
 const number_macros = [_][:0]const u8{
     "CREATE OR REPLACE TEMP MACRO mdb2sql_n1(s) AS CASE WHEN left(s, 1) BETWEEN '+' AND '9' THEN " ++
@@ -264,8 +264,7 @@ fn tableCounts(db: *Db, gpa: Allocator, table: []const u8, columns: []const []co
 // terms table in a join; DISTINCT ON: a term in two columns of the same row counts once. With `whole_row` the row
 // itself goes along as the struct mdb2sql_r, so the grid, the copy and the report come from this one scan: joining
 // the table again by rowid gave no rows at random on SQLite files (DB3/DB5 through the sqlite extension).
-// `numeric` (Valor inteiro com numeros): a coluna numerica entra pelo valor; a de texto, pelo texto e pelas leituras
-// dele como numero (number_macros).
+// `numeric` (Valor inteiro com numeros): a coluna numerica do schema entra pelo valor; a de texto, so pelo texto.
 fn writeMatches(out: *std.ArrayList(u8), a: Allocator, table: []const u8, columns: []const []const u8, numeric: ?[]const bool, match: Match, key_sql: []const u8, whole_row: bool) Allocator.Error!void {
     try out.print(a, "(SELECT DISTINCT ON (c.k, t.ord) c.k, t.ord, t.term{s} FROM (SELECT {s} AS k, {s}unnest([", .{
         if (whole_row) ", c.mdb2sql_r" else "", key_sql, if (whole_row) row ++ " AS mdb2sql_r, " else "",
@@ -284,13 +283,10 @@ fn writeMatches(out: *std.ArrayList(u8), a: Allocator, table: []const u8, column
             try out.appendSlice(a, " AS DOUBLE) + 0 AS VARCHAR)");
             continue;
         }
-        for ([_][]const u8{ "lower(", "mdb2sql_n1(", "mdb2sql_n2(" }, 0..) |f, n| {
-            if (n > 0) try out.appendSlice(a, ", ");
-            try out.appendSlice(a, f);
-            try out.appendSlice(a, "trim(CAST(" ++ row ++ ".");
-            try query.writeIdent(out, a, col);
-            try out.appendSlice(a, " AS VARCHAR)))");
-        }
+        // coluna de texto e texto (item 20): compara como texto, sem ler numero dentro da celula
+        try out.appendSlice(a, "lower(trim(CAST(" ++ row ++ ".");
+        try query.writeIdent(out, a, col);
+        try out.appendSlice(a, " AS VARCHAR)))");
     }
     try out.appendSlice(a, "]) AS v FROM ");
     try query.writeIdent(out, a, table);
@@ -593,9 +589,10 @@ test "term search on a real database: every table's grid has the rows counted (o
     };
 }
 
-// Valor inteiro com numeros (item 13 a): 216 acha 216.0 (DOUBLE), "216,0" (texto) e 216 (INTEGER), nao 2160 nem
-// 216.5; 0,1 acha 0.1 (DECIMAL); 1234.5 acha 1234.5 (DECIMAL) e "1.234,5"; 2160 acha "2160" e 2160.0, nunca "216,0"
-// (milhar so antes de grupos de 3 digitos); texto segue como texto
+// Valor inteiro com numeros (itens 13 a e 20): o termo e lido como numero e comparado pelo valor com as colunas
+// numericas do schema; coluna de texto compara como texto. 216 acha 216.0 (DOUBLE) e 216 (INTEGER), nao o texto
+// "216,0" nem 2160 nem 216.5; 0,1 acha 0.1 (DECIMAL); 1234.5 acha 1234.5 (DECIMAL), nao o texto "1.234,5"; 2160 acha
+// 2160.0 e o texto "2160" (texto igual); texto segue como texto
 fn expectNumbers(db: *Db) !void {
     var p: Progress = .{};
     var res = try search(db, t.allocator, "216\n0,1\n1234.5\n216.5\n2160\nx", .whole, null, &p);
@@ -603,13 +600,13 @@ fn expectNumbers(db: *Db) !void {
     try t.expectEqual(1, res.tables.len);
     var per: [6]u64 = @splat(0);
     for (res.pairs) |pair| per[pair.term] = pair.rows;
-    try t.expectEqualSlices(u64, &.{ 3, 1, 2, 0, 2, 1 }, &per);
+    try t.expectEqualSlices(u64, &.{ 2, 1, 1, 0, 2, 1 }, &per);
     try t.expectEqualStrings("216.5", res.not_found);
-    // cada linha uma vez (item 19 d): as 6 linhas da tabela foram achadas por algum termo
+    // cada linha uma vez (item 19 d): as linhas 1, 3, 5 (id 216) e 6
     var g = try page(db, t.allocator, &res, res.tables[0], 0);
     defer g.deinit();
-    try t.expectEqual(6, g.rows.len);
-    try t.expectEqual(6, res.tables[0].rows);
+    try t.expectEqual(4, g.rows.len);
+    try t.expectEqual(4, res.tables[0].rows);
     // as leituras de cada texto, as mesmas do Python (_DOT e _COMMA): ponto decimal | virgula decimal
     var r = try db.run("SELECT replace(coalesce(mdb2sql_n1(s), '-'), chr(1), '') || ' ' || replace(coalesce(mdb2sql_n2(s), '-'), chr(1), '') " ++
         "FROM (VALUES ('216,0'), ('0,1'), ('1,234'), ('1.234,5'), ('1,234.5'), ('1.234.567'), ('216'), ('abc'), ('1,2345')) v(s)", &.{});
@@ -623,25 +620,28 @@ fn expectNumbers(db: *Db) !void {
     try t.expectEqual(0, c.found);
 }
 
-test "item 13 a: whole value with numbers, the loose rule: DOUBLE, DECIMAL, INTEGER and text, in DuckDB and SQLite" {
+test "items 13 a and 20: whole value with numbers: the term by value against numeric columns of the schema, text as text, in DuckDB and SQLite" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var b1: [256]u8 = undefined;
     var b2: [256]u8 = undefined;
     const duck = dbm.tmpPath(&b1, &tmp, "num.duckdb");
     const lite = dbm.tmpPath(&b2, &tmp, "num.sqlite");
-    const rows = " AS SELECT * FROM (VALUES (1, 216.0::DOUBLE, 0.1::DECIMAL(6,1), 'x'), (2, 5.5, 0.2, '216,0'), " ++
-        "(3, 7.0, 1234.5, 'abc'), (4, 8.0, 0.3, '1.234,5'), (216, 9.0, 0.4, '2160'), (6, 2160.0, 0.5, 'y')) v(id, d, m, s)";
     var db = dbm.testDb();
     defer db.close();
     try db.open(duck, false);
-    try db.exec("CREATE TABLE nums" ++ rows);
+    try db.exec("CREATE TABLE nums AS SELECT * FROM (VALUES (1, 216.0::DOUBLE, 0.1::DECIMAL(6,1), 'x'), (2, 5.5, 0.2, '216,0'), " ++
+        "(3, 7.0, 1234.5, 'abc'), (4, 8.0, 0.3, '1.234,5'), (216, 9.0, 0.4, '2160'), (6, 2160.0, 0.5, 'y')) v(id, d, m, s)");
     try db.open(":memory:", false);
-    try db.loadSqlite();
-    var sb: [400]u8 = undefined;
-    try db.exec(try std.fmt.bufPrintSentinel(&sb, "ATTACH '{s}' AS w (TYPE sqlite)", .{lite}, 0));
-    try db.exec("CREATE TABLE w.nums" ++ rows);
-    try db.exec("DETACH w");
+    // o SQLite pelo Salvar como: o schema guarda o tipo de cada coluna (DECIMAL continua DECIMAL)
+    try db.openReadOnly(duck);
+    var p: Progress = .{};
+    try exporter.database(&db, t.io, .sqlite, lite, &p);
+    try db.open(":memory:", false);
+    try db.openReadOnly(lite);
+    var decl = try db.run("SELECT string_agg(name || ' ' || type, ', ' ORDER BY cid) FROM sqlite_query('src', 'SELECT cid, name, type FROM pragma_table_info(''nums'')')", &.{});
+    defer decl.deinit();
+    try t.expectEqualStrings("id INTEGER, d DOUBLE, m DECIMAL(6,1), s TEXT", decl.rows[0][0].?);
     for ([_][:0]const u8{ duck, lite }) |path| {
         try db.open(":memory:", false);
         try db.openReadOnly(path);

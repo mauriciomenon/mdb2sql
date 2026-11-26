@@ -146,7 +146,8 @@ fn copyToSqlite(db: *Db, gpa: std.mem.Allocator, out_table: []const u8, schema_t
     defer gpa.free(types);
     for (cols.rows, names, types) |r, *n, *ty| {
         n.* = r[0] orelse "";
-        ty.* = if (declared) r[1] orelse "" else query.sqliteType(r[1] orelse "");
+        const raw = r[1] orelse "";
+        ty.* = if (declared) raw else query.sqliteType(raw);
     }
     try db.createSqliteTable("mdb2sql_out", out_table, names, types);
     var sql: std.ArrayList(u8) = .empty;
