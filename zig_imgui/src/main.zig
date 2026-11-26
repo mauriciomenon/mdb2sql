@@ -3785,6 +3785,8 @@ fn run(init: std.process.Init) !void {
         app.prefs = settings.Settings.load(init.io, app.prefs_path);
     };
     i18n.lang = app.prefs.lang;
+    // o Log abre sempre fechado (item 18 d), mesmo que tenha ficado aberto na execucao anterior
+    app.prefs.log_open = false;
     app.scope = app.prefs.search_scope;
     // aba Pesquisa Avançada: a comparacao padrao das configuracoes; o escopo comeca em Todas as tabelas; a caixa vazia
     app.terms_match = app.prefs.term_match;

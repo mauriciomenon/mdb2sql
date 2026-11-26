@@ -238,8 +238,9 @@ While a file opens, the status line shows the time, a progress bar (tables conve
 ### Saved settings
 
 Windows: `%APPDATA%\mdb2sql\zig-imgui.ini`; Linux: `~/.config/mdb2sql/zig-imgui.ini` (`$XDG_CONFIG_HOME` if set).
-Theme, language, Log panel, default search scope, term matching, Show NULL, the last folder used and the last 8
-Access files saved as SQLite or DuckDB (path, size and date of both files).
+Theme, language, Log panel height, default search scope, term matching, Show NULL, the last folder used and the last 8
+Access files saved as SQLite or DuckDB (converter version, path, size and date of both files: a file saved by an
+older converter is converted again). The Log panel always starts closed.
 
 ### Command line
 

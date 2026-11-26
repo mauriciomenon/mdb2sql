@@ -170,6 +170,13 @@ test "item 13 f: every button has the height of its line (none taller to show hi
     try std.testing.expectEqual(1, std.mem.count(u8, ui, "ImGuiStyleVar_FramePadding"));
 }
 
+test "item 18 d: the Log starts closed, whatever was saved by the last run" {
+    try expectOrder("app.prefs = settings.Settings.load(init.io, app.prefs_path);", &.{ "i18n.lang = app.prefs.lang;", "app.prefs.log_open = false;" });
+    try std.testing.expect(!(settings_defaults.log_open));
+}
+
+const settings_defaults: @import("settings.zig").Settings = .{};
+
 test "item 19 e: the Advanced Search report is suggested as \"<database> - Pesquisa Avançada.xlsx\" (the tab name), never _termos or .xls" {
     try expectOrder("// item 19 e:", &.{ ".terms_xlsx, .terms_csv, .terms_sqlite, .terms_duckdb => std.fmt.bufPrint(&name_buf, \"{s} - {s}\"", "tr(\"tab_terms\")" });
     const ui = @embedFile("main.zig");
