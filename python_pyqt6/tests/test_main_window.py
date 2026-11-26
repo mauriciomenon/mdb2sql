@@ -766,6 +766,97 @@ def test_marked_rows_stay_on_top_during_other_searches(qtbot, tmp_path: Path, mo
     assert win.marks.get("t", set()) == set() and win.table_model.marks == set()
 
 
+def test_terms_tab_lists_hits_in_list_order_copies_and_reports(qtbot, tmp_path: Path, monkeypatch) -> None:
+    # item 32: lista colada, Valor inteiro, Todas as tabelas; tabelas com acerto, grade, nao encontrados, copiar,
+    # relatorio
+    import duckdb
+    import openpyxl
+
+    db_file = tmp_path / "pts.duckdb"
+    with duckdb.connect(str(db_file)) as conn:
+        conn.execute("CREATE TABLE pts (RTUNO INTEGER, PNTNO INTEGER, SUBNAM VARCHAR, PNTNAM VARCHAR)")
+        conn.execute("INSERT INTO pts VALUES (50, 238, 'U9A', ' GENERADOR CGS '), (50, 242, 'U9A', 'turbina cgi'),"
+                     " (51, 7, 'U18A', 'Generador cgs x'), (52, 8, 'u9a', NULL)")
+        conn.execute("CREATE TABLE other AS SELECT * FROM (VALUES ('turbina CGI'), ('nada')) v(txt)")
+        conn.execute("CREATE TABLE blank (txt VARCHAR)")
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.show()
+    win.open_database(db_file)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
+    assert win.tabs.tabText(3) == "Terms" and win.terms_tab_action.shortcut().toString() == "Ctrl+4"
+    win.terms_tab_action.trigger()
+    assert win.tabs.currentWidget() is win.terms_page
+    # Ctrl+Enter na aba Termos pesquisa os termos; o do SQL so vale fora dela
+    assert win.run_terms_action.shortcut().toString() == win.run_sql_action.shortcut().toString() == "Ctrl+Return"
+    assert not win.run_sql_action.isEnabled() and not win.run_terms_action.isEnabled()  # caixa vazia
+    win.terms_edit.setPlainText("PNTNAM\nu9a\n\n turbina cgi \nU9A\n")
+    assert win.terms_count.text() == "3 terms, 1 repeated"
+    assert win.run_terms_action.isEnabled() and win.terms_run_button.isEnabled()
+    assert win.match_actions["whole"].isChecked() and win.match_actions["whole"].toolTip().startswith("Whole value:")
+    win.terms_scope_actions["all"].trigger()
+    win.run_terms_action.trigger()
+    qtbot.waitUntil(lambda: win._job is None and win._busy == 0 and win.terms_model.rowCount() > 0, timeout=30000)
+
+    assert [win.terms_found.item(i).text() for i in range(win.terms_found.count())] == ["other (1)", "pts (4)"]
+    assert win.terms_summary.text() == "2 of 3 terms found: 5 rows in 2 tables"
+    assert win.not_found_title.text() == "Not found (1)" and win.not_found_edit.toPlainText() == "PNTNAM"
+    assert win.terms_found.currentRow() == 0 and win.terms_model.columns == ["Term", "txt"]  # a primeira escolhida
+    win.terms_found.setCurrentRow(1)
+    qtbot.waitUntil(lambda: win._busy == 0 and win.terms_model.columns[1:2] == ["RTUNO"], timeout=30000)
+    proxy = win.terms_proxy
+    assert [(proxy.index(r, 0).data(), proxy.index(r, 2).data()) for r in range(proxy.rowCount())] == [
+        ("u9a", "238"), ("u9a", "242"), ("u9a", "8"), ("turbina cgi", "242")]  # ordem da lista, depois da tabela
+    assert win.terms_info.text() == "pts: showing 4 of 4 rows"
+
+    # copiar: as linhas achadas com cabecalho, sem a coluna Termo; copiar linha tambem sem ela
+    clipboard = QApplication.clipboard()
+    win.copy_hits_action.trigger()
+    assert clipboard.text() == ("RTUNO\tPNTNO\tSUBNAM\tPNTNAM\n50\t238\tU9A\t GENERADOR CGS \n50\t242\tU9A\tturbina cgi\n"
+                                "52\t8\tu9a\t\n50\t242\tU9A\tturbina cgi")
+    win.terms_table.selectRow(3)
+    win.copy_row_action.trigger()
+    assert clipboard.text() == "50\t242\tU9A\tturbina cgi"
+    assert win.copy_hits_action in win.terms_table.actions()
+    assert win.terms_table.actions()[-1].menu() is win.terms_report_menu
+
+    # relatorio: Excel (<banco>_termos) e CSV (pasta; os que ja existem: uma pergunta so)
+    asked = []
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        lambda *a: asked.append(Path(a[2]).name) or (str(tmp_path / "rep.xlsx"), ""))
+    win.export_terms_actions[0].trigger()
+    qtbot.waitUntil(lambda: win._job is None and (tmp_path / "rep.xlsx").exists(), timeout=30000)
+    assert asked == ["pts_termos.xlsx"]
+    book = openpyxl.load_workbook(tmp_path / "rep.xlsx", read_only=True)
+    assert book.sheetnames == ["Summary", "other", "pts", "Not found"]
+    book.close()
+    folder = tmp_path / "csv"
+    folder.mkdir()
+    (folder / "pts.csv").write_text("old", encoding="utf-8")
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a: str(folder))
+    answers = [False, True]
+    monkeypatch.setattr(win, "ask_overwrite_many", lambda count: answers.pop(0) if count == 1 else None)
+    win.export_terms_actions[1].trigger()
+    assert sorted(p.name for p in folder.iterdir()) == ["pts.csv"]  # nao: nada gravado
+    win.export_terms_actions[1].trigger()
+    qtbot.waitUntil(lambda: win._job is None and len(list(folder.iterdir())) == 4, timeout=30000)
+    assert (folder / "pts.csv").read_text(encoding="utf-8-sig").startswith("Term,RTUNO")
+
+    # Configuracoes > Comparacao dos termos: Contem (gravado, ja vale na aba); "cgs" acha 2 linhas em pts
+    win.default_match_actions["contains"].trigger()
+    assert win.match_actions["contains"].isChecked() and QSettings().value("terms_match") == "contains"
+    win.terms_edit.setPlainText("cgs")
+    win.run_terms_action.trigger()
+    qtbot.waitUntil(lambda: win._job is None and win._busy == 0 and win.terms_result is not None, timeout=30000)
+    assert win.terms_summary.text() == "1 of 1 term found: 2 rows in 1 table"
+    assert win.not_found_title.text() == "Not found (0)" and win.not_found_edit.toPlainText() == ""
+    # outro arquivo: o resultado sai, a lista colada fica
+    win.open_database(db_file)
+    qtbot.waitUntil(lambda: win._busy == 0 and win.terms_result is None, timeout=30000)
+    assert win.terms_found.count() == 0 and win.terms_edit.toPlainText() == "cgs"
+    assert not win.export_terms_actions[0].isEnabled()
+
+
 def test_export_of_a_subset_asks_whole_table_or_found_rows(qtbot, window: MainWindow, people_db: Path,
                                                            monkeypatch) -> None:
     # igual nas 4 versoes: a grade mostra parte da tabela (pesquisa ou filtro por valor): "Tabela inteira" ou "So as N
@@ -952,7 +1043,12 @@ def test_nothing_duplicated(qtbot, points_window: MainWindow) -> None:
     assert _repeated(buttons) == []
     assert buttons.count("Export...") == 1 and buttons.count("Columns...") == 1 and buttons.count("Clear filters") == 1
     assert {"Browse...", "Open"} <= set(buttons)  # linha de cima igual ao Zig
-    assert _repeated(_menu_texts(win.menuBar())) == []
+    # nenhum item repetido dentro de um menu (os formatos CSV... / Excel (.xlsx)... se repetem em submenus diferentes)
+    menus = [a.menu() for a in win.menuBar().actions()]
+    while menus:
+        menu = menus.pop()
+        assert _repeated(_texts(a for a in menu.actions() if not a.isSeparator())) == [], menu.title()
+        menus += [a.menu() for a in menu.actions() if a.menu()]
     assert _menu_texts(win.menuBar()).count("Export") == 1
     assert _repeated(_texts(win.data_table.actions())) == []
     assert _repeated(_texts(win.header_menu(0).actions())) == []

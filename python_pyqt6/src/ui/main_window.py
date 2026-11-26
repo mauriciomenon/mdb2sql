@@ -70,8 +70,18 @@ from backend.database_tasks import (
     open_database,
 )
 from backend.db_manager import ACCESS_EXT, DBManager, sql_string
-from backend.export import Cancelled, default_save_dir, export_database, export_result
+from backend.export import (
+    Cancelled,
+    Sheet,
+    csv_name,
+    default_save_dir,
+    export_csv_folder,
+    export_database,
+    export_result,
+    export_sheets,
+)
 from backend import temp_store
+from backend.terms import not_found, parse_terms, report_sheets, search_terms, table_hits
 from shared import i18n
 from shared.about import app_title
 from shared.bundle import resource
@@ -91,6 +101,8 @@ SEARCH_DELAY_MS = 300
 SCHEMA_PAD = 6
 # onde a pesquisa da aba Data procura (valor gravado em QSettings "search_scope" -> texto)
 SCOPES = {"table": "scope.table", "all": "scope.all"}
+# comparacao da pesquisa de termos (valor gravado em QSettings "terms_match" -> texto)
+MATCHES = {"whole": "terms.whole", "contains": "terms.contains"}
 # Configuracoes > Tema: valor gravado em QSettings -> esquema de cores do Qt
 THEMES = {"system": Qt.ColorScheme.Unknown, "light": Qt.ColorScheme.Light, "dark": Qt.ColorScheme.Dark}
 # lista de tabelas: linha selecionada com o destaque da paleta (claro e escuro)
@@ -261,6 +273,8 @@ class MainWindow(QMainWindow):
         self._sql_request = 0
         self._db_request = 0
         self._found_request = 0  # pesquisa em todas as tabelas
+        self._terms_request = 0  # grade da aba Termos
+        self.terms_result: dict[str, Any] | None = None  # ultima pesquisa de termos (backend.terms.search_terms)
         self._busy = 0
         self.thread_pool: QThreadPool = QThreadPool.globalInstance() or QThreadPool(self)
         # pasta temporaria da sessao (SQLite convertidos): a do usuario, senao a do sistema; sem nenhuma das duas, a
@@ -374,6 +388,31 @@ class MainWindow(QMainWindow):
         self.sql_tab_action = self._action("tab.sql_menu", self._focus_sql, "Ctrl+3")
         self.run_sql_action = self._action("action.run_sql", self.run_sql, "Ctrl+Return")
         self._t(self.run_sql_action.setToolTip, "tip.run_sql")
+        # aba Termos (Ctrl+4); Ctrl+Enter nela pesquisa os termos (a acao do SQL fica desabilitada na aba Termos e a
+        # dos termos fora dela: um atalho so valendo de cada vez)
+        self.terms_tab_action = self._action("tab.terms_menu", self._focus_terms, "Ctrl+4")
+        self.run_terms_action = self._action("terms.run", self.run_terms, "Ctrl+Return")
+        self.copy_hits_action = self._action("terms.copy_hits", self.copy_term_hits)
+        self.export_terms_actions = []
+        for suffix, key in ((".xlsx", "export.xlsx"), (".csv", "export.csv"), (".sqlite", "export.sqlite"),
+                            (".duckdb", "export.duckdb")):
+            self.export_terms_actions.append(self._action(key, lambda _c=False, s=suffix: self.export_terms_as(s)))
+        # Valor inteiro | Contem na aba Termos; o padrao em Configuracoes > Comparacao dos termos (gravado)
+        match = self.default_match()
+        self.match_group = QActionGroup(self)
+        self.match_actions: dict[str, QAction] = {}
+        self.default_match_group = QActionGroup(self)
+        self.default_match_actions: dict[str, QAction] = {}
+        for name, key in MATCHES.items():
+            action = self._action(key, lambda _checked=False: None, checkable=True)
+            self._t(action.setToolTip, "terms.match_tip")
+            action.setChecked(name == match)
+            self.match_group.addAction(action)
+            self.match_actions[name] = action
+            default = self._action(key, lambda _checked=False, n=name: self.set_default_match(n), checkable=True)
+            default.setChecked(name == match)
+            self.default_match_group.addAction(default)
+            self.default_match_actions[name] = default
 
         # Configuracoes > Tema: Sistema, Claro, Escuro (gravado entre execucoes)
         self.theme_group = QActionGroup(self)
@@ -402,11 +441,17 @@ class MainWindow(QMainWindow):
         self.scope_actions: dict[str, QAction] = {}
         self.default_scope_group = QActionGroup(self)
         self.default_scope_actions: dict[str, QAction] = {}
+        self.terms_scope_group = QActionGroup(self)  # o mesmo par na aba Termos, com o mesmo padrao
+        self.terms_scope_actions: dict[str, QAction] = {}
         for name, key in SCOPES.items():
             action = self._action(key, lambda _checked=False: self._search_now(), checkable=True)
             action.setChecked(name == scope)
             self.scope_group.addAction(action)
             self.scope_actions[name] = action
+            terms = self._action(key, lambda _checked=False: None, checkable=True)
+            terms.setChecked(name == scope)
+            self.terms_scope_group.addAction(terms)
+            self.terms_scope_actions[name] = terms
             default = self._action(key, lambda _checked=False, n=name: self.set_default_scope(n), checkable=True)
             default.setChecked(name == scope)
             self.default_scope_group.addAction(default)
@@ -470,9 +515,21 @@ class MainWindow(QMainWindow):
         self._t(lambda text: self.tabs.setTabText(0, text), "tab.data")
         self._t(lambda text: self.tabs.setTabText(1, text), "tab.schema")
         self.tabs.addTab(self.sql_page, "SQL")
+        self.tabs.addTab(self._create_terms_page(), "")
+        self._t(lambda text: self.tabs.setTabText(3, text), "tab.terms")
+        self.tabs.currentChanged.connect(lambda _index: self._update_run_actions())
         # !T: On the tabs for the shortcut scope, on each view for its right-click menu
         copy_actions = [self.copy_action, self.copy_row_action, self.copy_row_header_action]
         self.tabs.addActions(copy_actions)
+        # grade da aba Termos: os 3 copiar (sem a coluna Termo nas linhas), copiar os acertos e o relatorio
+        self.terms_report_menu = QMenu(self)
+        self._t(self.terms_report_menu.setTitle, "export.terms")
+        self.terms_report_menu.addActions(self.export_terms_actions)
+        separator = QAction(self)
+        separator.setSeparator(True)
+        self.terms_table.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
+        self.terms_table.addActions([*copy_actions, self.copy_hits_action, separator,
+                                     self.terms_report_menu.menuAction()])
         # menu da celula igual nas 4 versoes (Go): na aba Data primeiro os filtros por valor, depois copiar e as linhas
         # marcadas
         separators = [QAction(self) for _ in range(2)]
@@ -600,6 +657,92 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.data_stack)
         layout.addLayout(self.info_row)
         return self.data_page
+
+    def _toggle_pair(self, actions: dict[str, QAction], name_key: str) -> QWidget:
+        # dois botoes de alternar juntos, um marcado (como Esta tabela | Todas as tabelas da aba Dados)
+        pair = QWidget()
+        self._t(pair.setAccessibleName, name_key, plain=True)
+        row = QHBoxLayout(pair)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        for action in actions.values():
+            button = QToolButton()
+            button.setDefaultAction(action)
+            row.addWidget(button)
+        return pair
+
+    def _create_terms_page(self) -> QWidget:
+        # aba Termos (item 32), de cima para baixo: a caixa dos termos; Valor inteiro | Contem, Esta tabela | Todas as
+        # tabelas, Pesquisar termos e a contagem; o resumo; as tabelas com acerto e a grade da escolhida; os nao
+        # encontrados
+        self.terms_edit = QPlainTextEdit()
+        self._t(self.terms_edit.setPlaceholderText, "terms.hint")
+        self._t(self.terms_edit.setAccessibleName, "tab.terms")
+        lines = self.terms_edit.fontMetrics().lineSpacing()
+        self.terms_edit.setFixedHeight(8 * lines + 2 * self.terms_edit.frameWidth() + 8)  # ~8 linhas, com rolagem
+        self.terms_edit.textChanged.connect(self._count_terms)
+        self.terms_edit.addAction(self.run_terms_action)  # Ctrl+Enter na caixa
+
+        self.terms_run_button = QPushButton()
+        self._t(self.terms_run_button.setText, "terms.run")
+        self.terms_run_button.clicked.connect(self.run_terms)
+        self.terms_count = QLabel()
+        bar = FlowLayout()
+        bar.addWidget(self._toggle_pair(self.match_actions, "menu.terms_match"))
+        bar.addWidget(self._toggle_pair(self.terms_scope_actions, "scope.name"))
+        bar.addWidget(self.terms_run_button)
+        bar.addWidget(self.terms_count)
+
+        self.terms_summary = QLabel()
+        self.terms_summary.setWordWrap(True)
+        self._copy_menu_on(self.terms_summary)
+        # tabelas com acerto "tabela (n)" (como a busca em todas as tabelas) e a grade da escolhida
+        self.terms_found = QListWidget()
+        self._t(self.terms_found.setAccessibleName, "search.found_name")
+        self.terms_found.currentItemChanged.connect(
+            lambda item, _previous: self._show_term_table(item.data(Qt.ItemDataRole.UserRole) if item else "")
+        )
+        self.terms_model = TableModel(self)
+        self.terms_proxy, self.terms_table = self._create_table_view(self.terms_model, "a11y.terms")
+        self.terms_info = QLabel()
+        self.terms_info.setContentsMargins(6, 0, 6, 2)
+        self._copy_menu_on(self.terms_info)
+        grid = QWidget()
+        grid_layout = QVBoxLayout(grid)
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        grid_layout.addWidget(self.terms_table)
+        grid_layout.addWidget(self.terms_info)
+        results = QSplitter(Qt.Orientation.Horizontal)
+        results.addWidget(self.terms_found)
+        results.addWidget(grid)
+        results.setStretchFactor(1, 1)
+        results.setSizes([260, 900])
+        self.limit_combo.currentIndexChanged.connect(lambda _index: self._show_term_table(self._term_table()))
+
+        # nao encontrados: texto so leitura, copiavel, um termo por linha, na ordem colada
+        self.not_found_title = QLabel()
+        copy = QPushButton()
+        self._t(copy.setText, "action.copy", plain=True)
+        copy.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.not_found_edit.toPlainText()))
+        title_row = QHBoxLayout()
+        title_row.addWidget(self.not_found_title, 1)
+        title_row.addWidget(copy)
+        self.not_found_edit = QPlainTextEdit()
+        self.not_found_edit.setReadOnly(True)
+        self.not_found_edit.setFixedHeight(4 * lines + 2 * self.not_found_edit.frameWidth() + 8)
+
+        self.terms_page = QWidget()
+        layout = QVBoxLayout(self.terms_page)
+        layout.setContentsMargins(6, 6, 6, 4)
+        layout.setSpacing(6)
+        layout.addWidget(self.terms_edit)
+        layout.addLayout(bar)
+        layout.addWidget(self.terms_summary)
+        layout.addWidget(results, 1)
+        layout.addLayout(title_row)
+        layout.addWidget(self.not_found_edit)
+        self._clear_terms()
+        return self.terms_page
 
     def _fit_search_minimum(self) -> None:
         # nunca menor que a dica inteira (nada cortado) nem que 160 px; acima disso estica com a janela
@@ -863,6 +1006,7 @@ class MainWindow(QMainWindow):
         marked.addActions(self.export_marked_actions)
         self.export_menu.addSeparator()
         self.export_menu.addActions(self.export_sql_actions)
+        self.export_menu.addMenu(self.terms_report_menu)
         self.export_button = QPushButton()
         self._t(self.export_button.setText, "button.export")
         self._t(self.export_button.setToolTip, "tip.export")
@@ -962,12 +1106,14 @@ class MainWindow(QMainWindow):
         toggle_tables.setShortcut(QKeySequence("Ctrl+B"))
         view_menu.addActions([toggle_tables, self.log_action, self.tables_action, self.only_marked_action])
         view_menu.addSeparator()
-        view_menu.addActions([self.data_tab_action, self.schema_tab_action, self.sql_tab_action, self.run_sql_action])
+        view_menu.addActions([self.data_tab_action, self.schema_tab_action, self.sql_tab_action, self.terms_tab_action,
+                              self.run_sql_action, self.run_terms_action])
 
         self.settings_menu = menu_bar.addMenu("")
         self._t(self.settings_menu.setTitle, "menu.settings")
         for key, actions in (("menu.theme", self.theme_actions), ("menu.language", self.language_actions),
-                             ("menu.search_scope", self.default_scope_actions)):
+                             ("menu.search_scope", self.default_scope_actions),
+                             ("menu.terms_match", self.default_match_actions)):
             submenu = self.settings_menu.addMenu("")
             self._t(submenu.setTitle, key)
             submenu.addActions(list(actions.values()))
@@ -993,11 +1139,22 @@ class MainWindow(QMainWindow):
         return scope if scope in SCOPES else "table"
 
     def set_default_scope(self, name: str) -> None:
-        # grava o padrao e ja vale na tela
+        # grava o padrao e ja vale na tela (aba Dados e aba Termos)
         self.settings.setValue("search_scope", name)
         self.default_scope_actions[name].setChecked(True)
         self.scope_actions[name].setChecked(True)
+        self.terms_scope_actions[name].setChecked(True)
         self._search_now()
+
+    def default_match(self) -> str:
+        match = str(self.settings.value("terms_match", "whole"))
+        return match if match in MATCHES else "whole"
+
+    def set_default_match(self, name: str) -> None:
+        # Configuracoes > Comparacao dos termos: grava e ja vale na aba Termos
+        self.settings.setValue("terms_match", name)
+        self.default_match_actions[name].setChecked(True)
+        self.match_actions[name].setChecked(True)
 
     def set_show_null(self, show: bool) -> None:
         # so a grade: ligado mostra o texto NULL, desligado a celula fica vazia; copiar, filtrar e exportar nao mudam
@@ -1029,6 +1186,8 @@ class MainWindow(QMainWindow):
         self._refresh_filter_bar()
         self._show_reader()
         self._apply_search()
+        self._count_terms()
+        self._show_terms_summary()
         if self.manager is not None and not self.table_list.topLevelItemCount():
             self._set_message(self.info_label, tr("status.no_tables"), log=False)
         if self.data_stack.currentWidget() is self.found_list and self._found_summary is not None:
@@ -1176,6 +1335,8 @@ class MainWindow(QMainWindow):
             return self.sql_table
         if page is self.data_page:
             return self.data_table
+        if page is self.terms_page:
+            return self.terms_table
         return page if isinstance(page, QTableView) else None
 
     def copy_selection(self) -> None:
@@ -1200,7 +1361,8 @@ class MainWindow(QMainWindow):
         if view is None:
             return
         model = view.model()
-        columns = range(len(model.sourceModel().columns))  # sem a caixa de marcar
+        # sem a caixa de marcar; na grade de Termos, sem a coluna Termo
+        columns = range(1 if view is self.terms_table else 0, len(model.sourceModel().columns))
         rows = sorted({index.row() for index in view.selectedIndexes()})
         if not rows:
             return
@@ -1314,6 +1476,7 @@ class MainWindow(QMainWindow):
         # descartado (Log) e substituido pelo novo, sem pergunta
         self._drop_manager()
         self._reset_marks()
+        self._clear_terms()  # a lista colada fica; o resultado era do banco anterior
         self.manager = manager
         self.current_db_path = db_path
         self.current_db_key = source_key
@@ -1394,6 +1557,7 @@ class MainWindow(QMainWindow):
         self.current_db_path = None
         self.converted_saved = False
         self._reset_marks()
+        self._clear_terms()
         self.loaded_table = None
         self.loaded_schema = []
         self.sql_query = None
@@ -1909,6 +2073,164 @@ class MainWindow(QMainWindow):
         self._set_message(self.sql_info, text, error=True, log=False)  # na linha do botao Executar
         self._set_message(self.status_label, text, error=True)
 
+    # ---------------------------------------------------- pesquisa de termos
+
+    def _focus_terms(self) -> None:
+        self.tabs.setCurrentWidget(self.terms_page)
+        self.terms_edit.setFocus()
+
+    def _count_terms(self) -> None:
+        # "8 termos, 2 repetidos" enquanto o texto muda
+        terms, repeated = parse_terms(self.terms_edit.toPlainText())
+        text = counted("terms.count", len(terms)) if terms else ""
+        if repeated:
+            text += counted("terms.repeated", repeated)
+        self.terms_count.setText(text)
+        self._update_run_actions()
+
+    def _update_run_actions(self) -> None:
+        # Ctrl+Enter: na aba Termos pesquisa os termos, nas outras roda o SQL
+        terms_tab = self.tabs.currentWidget() is self.terms_page
+        ready = self.manager is not None and bool(parse_terms(self.terms_edit.toPlainText())[0])
+        self.run_sql_action.setEnabled(not terms_tab)
+        self.run_terms_action.setEnabled(terms_tab and ready)
+        self.terms_run_button.setEnabled(ready)
+
+    def run_terms(self) -> None:
+        """Pesquisar termos: cada termo da caixa em todas as colunas das tabelas do escopo, no motor, com progresso e
+        Cancelar; o resultado anterior sai na hora (nunca aparece um resultado velho)."""
+        terms, _repeated = parse_terms(self.terms_edit.toPlainText())
+        if self.manager is None or not terms or self._job is not None:
+            return
+        if self.terms_scope_actions["all"].isChecked():
+            tables = [table for table in self.table_names() if self.table_counts.get(table) != 0]  # vazias: nada
+        else:
+            tables = [self.loaded_table[0]] if self.loaded_table else []
+        self._clear_terms()
+        if not tables:
+            return
+        manager, contains = self.manager, self.match_actions["contains"].isChecked()
+
+        def progress(report):
+            return lambda done, total, table: report(done, total, tr(
+                "terms.progress", done=num(done + 1), total=num(total), table=table) if table else "")
+
+        self._start_job(tr("terms.run"), tr("terms.progress", done=num(1), total=num(len(tables)), table=tables[0]),
+                        lambda report, cancel: search_terms(manager, terms, contains, tables, progress(report), cancel),
+                        self._on_terms_done, "")
+
+    def _on_terms_done(self, result: object) -> None:
+        self.terms_result = result  # type: ignore[assignment]
+        for table, counts in self.terms_result["hits"]:  # type: ignore[index]
+            item = QListWidgetItem(tr("search.found_item", table=table, count=num(sum(counts.values()))))
+            item.setData(Qt.ItemDataRole.UserRole, table)
+            self.terms_found.addItem(item)
+        self._show_terms_summary()
+        self._update_export_actions()
+        if self.terms_found.count():
+            self.terms_found.setCurrentRow(0)  # a primeira ja escolhida
+
+    def _show_terms_summary(self) -> None:
+        result = self.terms_result
+        if result is None:
+            self.terms_summary.clear()
+            self.not_found_title.setText(tr("terms.not_found", count=num(0)))
+            return
+        missing = not_found(result)
+        rows = sum(sum(counts.values()) for _table, counts in result["hits"])
+        found = counted("terms.found", len(result["terms"]), found=num(len(result["terms"]) - len(missing)))
+        self.terms_summary.setText(tr("terms.summary", found=found, rows=counted("terms.rows", rows),
+                                      tables=counted("terms.tables", len(result["hits"]))))
+        self.not_found_title.setText(tr("terms.not_found", count=num(len(missing))))
+        self.not_found_edit.setPlainText("\n".join(missing))
+
+    def _clear_terms(self) -> None:
+        # sem resultado: lista, grade, resumo e nao encontrados vazios (a caixa dos termos fica)
+        self.terms_result = None
+        self._terms_request += 1
+        self.terms_found.blockSignals(True)
+        self.terms_found.clear()
+        self.terms_found.blockSignals(False)
+        self.terms_model.set_rows([])
+        self.terms_info.clear()
+        self.not_found_edit.clear()
+        self._show_terms_summary()
+
+    def _term_table(self) -> str:
+        item = self.terms_found.currentItem()
+        return item.data(Qt.ItemDataRole.UserRole) if item is not None else ""
+
+    def _show_term_table(self, table: str) -> None:
+        # a grade da tabela escolhida, limitada como a aba Dados (Linhas 100/500/1000); copiar e o relatorio usam todas
+        if self.manager is None or self.terms_result is None or not table:
+            return
+        query, params = table_hits(self.terms_result, table)
+        manager, limit = self.manager, self.limit_combo.currentData()
+        self._terms_request += 1
+        self._run(self._terms_request, lambda _report: (table, manager.fetch_rows(query, params, limit)),
+                  self._on_term_rows, self._on_term_rows_error)
+
+    def _on_term_rows(self, request_id: int, result: object) -> None:
+        if request_id != self._terms_request or self.terms_result is None:
+            return
+        table, rows = result  # type: ignore[misc]
+        self.terms_model.set_rows(rows, [tr("terms.column"), *self.terms_result["columns"][table]])
+        self.terms_table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
+        self._fit_columns(self.terms_table)
+        total = dict(self.terms_result["hits"])[table]
+        self._set_message(self.terms_info, counted("status.showing", sum(total.values()), table=table,
+                                                   loaded=num(len(rows))), log=False)
+
+    def _on_term_rows_error(self, request_id: int, message: str) -> None:
+        if request_id == self._terms_request:
+            self._set_message(self.status_label, tr("status.error", message=message), error=True)
+
+    def copy_term_hits(self) -> None:
+        """Todas as linhas achadas da tabela escolhida, com cabecalho, separadas por TAB, sem a coluna Termo: colar no
+        Excel da exatamente as linhas achadas."""
+        table = self._term_table()
+        if self.manager is None or self.terms_result is None or not table:
+            return
+        # shortcut: reads all hits in the UI thread (a few thousand rows at most in the real tables); move to a worker
+        # if a table with hundreds of thousands of hits shows up
+        rows = self.manager.fetch_rows(*table_hits(self.terms_result, table))
+        columns = self.terms_result["columns"][table]
+        QGuiApplication.clipboard().setText(rows_to_tsv([list(row.values())[1:] for row in rows], columns))
+
+    def export_terms_as(self, suffix: str) -> None:
+        # o relatorio: Resumo, uma aba por tabela com acerto e Nao encontrados; CSV = uma pasta, um arquivo por aba
+        if self.manager is None or self.terms_result is None or self.current_db_path is None:
+            return
+        manager, sheets = self.manager, report_sheets(self.terms_result)
+        if suffix == ".csv":
+            self._export_csv_folder(tr("export.terms"), sheets)
+            return
+        out = self._ask_save_path(tr("export.terms"), f"{self.current_db_path.stem}_termos", (suffix,))
+        if out is not None:
+            self._start_export(out, lambda report, cancel: export_sheets(manager, sheets, out, report, cancel), "tables")
+
+    def ask_overwrite_many(self, count: int) -> bool:
+        """Uma pergunta so para os arquivos que ja existem na pasta escolhida: substituir (True) ou nao gravar nada."""
+        answer = QMessageBox.question(self, tr("export.title"), counted("export.overwrite_many", count))
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _export_csv_folder(self, title: str, sheets: list[Sheet]) -> None:
+        # seletor de PASTA nativo; um <nome>.csv por item; os que ja existem: uma pergunta so
+        if self.manager is None:
+            return
+        start = default_save_dir(self.current_db_path, self.settings.value("last_dir"))
+        chosen = QFileDialog.getExistingDirectory(self, title, str(start))
+        if not chosen:
+            return
+        folder, manager = Path(chosen), self.manager
+        existing = sum((folder / csv_name(name)).exists() for name, _query, _params in sheets)
+        if existing and not self.ask_overwrite_many(existing):
+            return
+        self.settings.setValue("last_dir", str(folder))
+        self.settings.setValue("save_dir", str(folder))
+        self._start_export(folder, lambda report, cancel: export_csv_folder(manager, sheets, folder, report, cancel),
+                           "tables")
+
     # -------------------------------------------------------------- export
 
     def _update_export_actions(self) -> None:
@@ -1923,6 +2245,11 @@ class MainWindow(QMainWindow):
             action.setEnabled(marked)
         self.marked_menu.setEnabled(marked)
         self.mark_action.setEnabled(self.manager is not None and self.loaded_table is not None)
+        report = self.manager is not None and self.terms_result is not None
+        for action in (*self.export_terms_actions, self.copy_hits_action):
+            action.setEnabled(report)
+        self.terms_report_menu.setEnabled(report)
+        self._update_run_actions()
         self.export_button.setEnabled(self.manager is not None)
         self.close_db_action.setEnabled(self.manager is not None)
 
@@ -2094,7 +2421,8 @@ class MainWindow(QMainWindow):
         def succeeded(_request_id: int, result: object) -> None:
             close_dialog()
             if result is None:
-                self._set_message(self.status_label, cancelled, warning=True)
+                if cancelled:
+                    self._set_message(self.status_label, cancelled, warning=True)
             else:
                 done(result)
 
