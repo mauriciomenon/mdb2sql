@@ -70,8 +70,8 @@ pub const fmt_xlsx = "Excel (.xlsx)...";
 pub const fmt_sqlite = "SQLite (.sqlite)...";
 pub const fmt_duckdb = "DuckDB (.duckdb)...";
 
-// aba Termos (pesquisa de termos)
-pub const tab_terms = "Termos";
+// aba Pesquisa Avançada (pesquisa de termos)
+pub const tab_terms = "Pesquisa Avançada";
 pub const terms_hint = "Cole os termos, um por linha (por exemplo, uma coluna do Excel)";
 pub const match_whole = "Valor inteiro";
 pub const match_contains = "Contém";
@@ -98,7 +98,7 @@ pub const not_found_title = "Não encontrados ({d})";
 pub const copy_hits = "Copiar as linhas encontradas desta tabela";
 pub const sheet_summary = "Resumo";
 pub const sheet_not_found = "Não encontrados";
-pub const export_terms = "Relatório da pesquisa de termos";
+pub const export_terms = "Relatório da Pesquisa Avançada";
 pub const overwrite_many = "{d} arquivos já existem nesta pasta. Substituir?";
 pub const overwrite_many_one = "{d} arquivo já existe nesta pasta. Substituir?";
 pub const find_column = "Filtrar colunas";

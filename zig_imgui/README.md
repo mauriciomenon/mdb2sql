@@ -157,7 +157,7 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   is not allowed` (the file, the converted copy and the memory database never change). The empty box shows
   `SELECT * FROM ...`; **Run** (Ctrl+Enter), first 10,000 rows shown; a run that works clears the previous error next
   to the button and in the status bar, an error clears the old grid.
-- **Terms** tab (Ctrl+4): paste a list (one term per line, for example an Excel column) in the box; **Whole value** |
+- **Advanced Search** tab (Ctrl+4): paste a list (one term per line, for example an Excel column) in the box; **Whole value** |
   **Contains** (default in **Settings > Term matching**: whole value), **This table** | **All tables** (default: the
   default search scope), **Search terms** (Ctrl+Enter) and the count `<n> terms, <n> repeated` (empty lines and the
   spaces at the ends do not count; a repeated term is searched once). Whole value: the cell as text, without the spaces
@@ -169,7 +169,7 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   the order of the pasted list and then of the table (a row found by two terms shows twice), limited like the Data
   tab with `showing X of Y rows`. Below, **Not found (<n>)**: a read-only box, one term per line in the pasted order,
   with **Copy**. Grid menu: the three copies (rows without the Term column), **Copy the rows found in this table**
-  (every row found, with the header, TAB separated, no Term column) and **Term search report** > Excel / CSV /
+  (every row found, with the header, TAB separated, no Term column) and **Advanced Search report** > Excel / CSV /
   SQLite / DuckDB (`<database>_termos`): a **Summary** (term, status, table, rows: one line per term and table; a term
   not found has an empty table and 0), one sheet per table with rows (Term + the table's columns) and **Not found**;
   SQLite and DuckDB hold the same tables, CSV is a folder with one file per sheet.
@@ -192,11 +192,11 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   (table, column, type, nullable; `<database>_schema`), **All tables to CSV (one file per table)...** (a native folder
   picker; when some files already exist, one Yes/No question), **SQL result** > CSV / Excel, **All-tables search
   result (Excel)...** (one sheet per table with rows: the rows the search finds, every column; `<database>_busca`),
-  **Term search report** > Excel / CSV / SQLite / DuckDB.
+  **Advanced Search report** > Excel / CSV / SQLite / DuckDB.
 - **Edit**: **Copy value** (Ctrl+C), **Copy row** (Ctrl+Shift+C), **Copy row with header** (the grid of the current
   tab), **Copy the whole log**; **Search** (Ctrl+F), **Filter by this value**, **Clear filters**; **Mark or unmark
   row** (Space), **Unmark all rows**.
-- **View**: **Data** (Ctrl+1), **Schema** (Ctrl+2), **SQL** (Ctrl+3), **Terms** (Ctrl+4); **Rows** > 100 / 500 /
+- **View**: **Data** (Ctrl+1), **Schema** (Ctrl+2), **SQL** (Ctrl+3), **Advanced Search** (Ctrl+4); **Rows** > 100 / 500 /
   1000, **Columns...**, **Search in** > This table / All tables, **Only marked rows**, **Go to the table list**
   (Ctrl+T), **Favorite or unfavorite table** (Ctrl+D); **Run SQL** and **Search terms** (Ctrl+Enter); **Log**
   (Ctrl+L).
@@ -211,7 +211,7 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   `Opened via DuckDB`). Opening a file says `Loaded: <file> (<n> tables)`.
 - Shortcuts (the same in the 4 versions): Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+W close, Ctrl+Q exit,
   F5 open the file again, Ctrl+F Data search, Ctrl+T table list, Ctrl+1 / Ctrl+2 / Ctrl+3 / Ctrl+4 Data / Schema /
-  SQL / Terms tab, Ctrl+L Log, Ctrl+Enter run the SQL (in the Terms tab: search the terms), Ctrl+C copy the cell,
+  SQL / Advanced Search tab, Ctrl+L Log, Ctrl+Enter run the SQL (in the Advanced Search tab: search the terms), Ctrl+C copy the cell,
   Ctrl+Shift+C copy the row, Space mark the row, Ctrl+D favorite the open table.
 - Dialogs with more than one button (exit question, export in progress, whole table or rows found, Columns): every
   button has the same width and height, the width of the longest of their texts in the three languages.
@@ -283,7 +283,7 @@ the public mdbtools test data, and the small `testdata/mdb2sql_test.mdb` kept in
   all-tables search result, term search report), Edit and View; new shortcuts Ctrl+S, Ctrl+Shift+S, Ctrl+W, Ctrl+T,
   Ctrl+4, Ctrl+Shift+C, Space.
 - Marked rows in the Data tab, kept on top during other searches; **Only marked**; export of the marked rows.
-- **Terms** tab: search a pasted list in every column of every table, whole value or contains; report in Excel, CSV,
+- **Advanced Search** tab: search a pasted list in every column of every table, whole value or contains; report in Excel, CSV,
   SQLite or DuckDB.
 - The SQL tab only reads (the statement type decides; writes are refused before running).
 - Favorite tables on top of the table list (right-click, View, Ctrl+D), kept by name for the session.

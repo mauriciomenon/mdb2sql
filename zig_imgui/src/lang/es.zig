@@ -70,7 +70,7 @@ pub const fmt_sqlite = "SQLite (.sqlite)...";
 pub const fmt_duckdb = "DuckDB (.duckdb)...";
 
 // pestaña Términos (búsqueda de términos)
-pub const tab_terms = "Términos";
+pub const tab_terms = "Búsqueda Avanzada";
 pub const terms_hint = "Pegue los términos, uno por línea (por ejemplo, una columna de Excel)";
 pub const match_whole = "Valor completo";
 pub const match_contains = "Contiene";
@@ -97,7 +97,7 @@ pub const not_found_title = "No encontrados ({d})";
 pub const copy_hits = "Copiar las filas encontradas en esta tabla";
 pub const sheet_summary = "Resumen";
 pub const sheet_not_found = "No encontrados";
-pub const export_terms = "Informe de la búsqueda de términos";
+pub const export_terms = "Informe de la Búsqueda Avanzada";
 pub const overwrite_many = "{d} archivos ya existen en esta carpeta. ¿Reemplazarlos?";
 pub const overwrite_many_one = "{d} archivo ya existe en esta carpeta. ¿Reemplazarlo?";
 pub const sql_result ="Resultado SQL";

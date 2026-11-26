@@ -70,7 +70,7 @@ pub const fmt_sqlite = "SQLite (.sqlite)...";
 pub const fmt_duckdb = "DuckDB (.duckdb)...";
 
 // Terms tab (term search)
-pub const tab_terms = "Terms";
+pub const tab_terms = "Advanced Search";
 pub const terms_hint = "Paste the terms, one per line (for example, an Excel column)";
 pub const match_whole = "Whole value";
 pub const match_contains = "Contains";
@@ -97,7 +97,7 @@ pub const not_found_title = "Not found ({d})";
 pub const copy_hits = "Copy the rows found in this table";
 pub const sheet_summary = "Summary";
 pub const sheet_not_found = "Not found";
-pub const export_terms = "Term search report";
+pub const export_terms = "Advanced Search report";
 pub const overwrite_many = "{d} files already exist in this folder. Replace them?";
 pub const overwrite_many_one = "{d} file already exists in this folder. Replace it?";
 pub const sql_result ="SQL result";
