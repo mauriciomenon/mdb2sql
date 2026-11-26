@@ -71,7 +71,7 @@ pub const Settings = struct {
     lang: Lang = .en,
     log_open: bool = false, // painel de Log aberto (padrao: recolhido)
     log_frac: f32 = default_log_frac, // altura do painel de Log, fracao da janela
-    search_scope: SearchScope = .table, // escopo padrao da busca
+    search_scope: SearchScope = .all, // escopo padrao da busca da aba Dados: Todas as tabelas (item 18 a)
     term_match: TermMatch = .whole, // comparacao padrao da pesquisa de termos
     show_null: bool = false, // ligado, NULL aparece como "NULL"; desligado (padrao), celula vazia
     last_dir_buf: [2048]u8 = undefined,
@@ -135,7 +135,7 @@ pub const Settings = struct {
             if (std.mem.eql(u8, key, "last_dir")) s.setLastDir(value);
             if (std.mem.eql(u8, key, "log_open")) s.log_open = std.mem.eql(u8, value, "1");
             if (std.mem.eql(u8, key, "log_frac")) s.log_frac = clampLogFrac(std.fmt.parseFloat(f32, value) catch default_log_frac);
-            if (std.mem.eql(u8, key, "search_scope")) s.search_scope = std.meta.stringToEnum(SearchScope, value) orelse .table;
+            if (std.mem.eql(u8, key, "search_scope")) s.search_scope = std.meta.stringToEnum(SearchScope, value) orelse .all;
             if (std.mem.eql(u8, key, "term_match")) s.term_match = std.meta.stringToEnum(TermMatch, value) orelse .whole;
             if (std.mem.eql(u8, key, "show_null")) s.show_null = std.mem.eql(u8, value, "1");
             // saved=<tamanho>|<data>|<tamanho do sqlite>|<data do sqlite>|<access>TAB<sqlite> (na ordem: mais recente primeiro)
@@ -307,8 +307,9 @@ test "settings round trip through the file" {
     try t.expectEqual(.contains, back.term_match);
     try t.expectEqual(.whole, Settings.parse("term_match=x\n").term_match); // padrao: valor inteiro
     try t.expect(back.show_null);
-    // padrao: busca na tabela aberta, NULL como celula vazia (arquivo de versao anterior tambem)
-    try t.expectEqual(.table, Settings.parse("theme=dark\n").search_scope);
+    // padrao: busca em Todas as tabelas (item 18 a), NULL como celula vazia (arquivo de versao anterior tambem)
+    try t.expectEqual(.all, Settings.parse("theme=dark\n").search_scope);
+    try t.expectEqual(.table, Settings.parse("search_scope=table\n").search_scope); // a escolha salva continua valendo
     try t.expect(!Settings.parse("theme=dark\n").show_null);
     // a opcao "copiar com cabecalho" saiu (o menu da celula tem os dois itens): arquivo antigo com ela abre igual
     // e ela nao volta a ser gravada
@@ -319,7 +320,7 @@ test "settings round trip through the file" {
     var w: Io.Writer = .fixed(&wb);
     try old.write(&w);
     try t.expect(std.mem.indexOf(u8, w.buffered(), "copy_header") == null);
-    try t.expectEqual(.table, Settings.parse("search_scope=x\n").search_scope);
+    try t.expectEqual(.all, Settings.parse("search_scope=x\n").search_scope);
     // padrao: Log recolhido, 10%; fracao fora do limite volta para dentro
     try t.expect(!Settings.parse("").log_open);
     try t.expectEqual(default_log_frac, Settings.parse("").log_frac);

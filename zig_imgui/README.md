@@ -136,7 +136,7 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   (same rule and same query as the table search) and the Data tab shows `<n> tables with rows matching "<text>"` and
   the list `<table> (<rows found>)`; clicking one opens that table with the same search and without value filters, showing that same number of rows.
   Changing the term, the scope, the table or the file stops the running search and its result is dropped. The default
-  is in **Settings > Default search scope**; opening a file clears the search and the table filter and goes back to
+  is in **Settings > Default search scope** (All tables unless changed there); opening a file clears the search and the table filter and goes back to
   it.
 - **Columns...** (Data tab and SQL result; dialog "Columns of <table>"): one check box per column, a box to find a
   column by name, **Show all** and **Hide all** (with text in the find box they act only on the columns listed).

@@ -1004,6 +1004,27 @@ test "marked rows come in table order on a big table too (several row groups rea
     try t.expectEqualStrings("7,120000,250000,299999", idsOf(&buf, g, 0));
 }
 
+test "item 18 a: the Data search in All tables (the default scope) finds the owner's term in DB3 (optional)" {
+    const path = t.environ.getAlloc(t.allocator, "MDB2SQL_TEST_TERMS_DB") catch return error.SkipZigTest;
+    defer t.allocator.free(path);
+    if (std.mem.indexOf(u8, path, "DB3") == null) return error.SkipZigTest;
+    var db = dbm.testDb();
+    defer db.close();
+    try db.openReadOnly(path);
+    var p: exporter.Progress = .{};
+    const hits = try searchAll(&db, t.allocator, "GENERADOR CGS VIBRACION ANORMAL 1 CANAL 1", &p);
+    defer t.allocator.free(hits);
+    var eqid: u64 = 0;
+    var stat: u64 = 0;
+    for (hits) |h| {
+        std.debug.print("search all: {s} {d}\n", .{ db.table_names[h.table], h.rows });
+        if (std.mem.eql(u8, db.table_names[h.table], "RANGER_SOEQID")) eqid = h.rows;
+        if (std.mem.eql(u8, db.table_names[h.table], "RANGER_SOSTAT")) stat = h.rows;
+    }
+    try t.expectEqual(2, eqid);
+    try t.expectEqual(2, stat);
+}
+
 test "item 13 h: pages of the Data tab: 2,500 rows in pages of 1000, the last one incomplete; marked rows on top of every page" {
     var db = dbm.testDb();
     defer db.close();
