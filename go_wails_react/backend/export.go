@@ -163,6 +163,42 @@ func tableItems(tables []string) []exportItem {
 }
 
 // ExportDatabase writes every table to out; format is "duckdb", "sqlite" or "xlsx"
+// savedSelect is the SELECT of a whole table for Save as: from a SQLite file (also a converted Access) a column
+// declared DECIMAL(p,s) or BOOLEAN comes back as that type (DuckDB reads them as DOUBLE and BIGINT), so a DuckDB file
+// saved keeps DECIMAL and a SQLite one keeps the declared type (standard 19h)
+func (m *DBManager) savedSelect(table string) string {
+	all := "SELECT * FROM " + quoteIdent(table)
+	if m.source == SourceDuckDB {
+		return all
+	}
+	pragma := "SELECT name, type FROM pragma_table_info(" + quoteLiteral(table) + ")"
+	rows, err := m.conn.Query("SELECT * FROM sqlite_query('src', " + quoteLiteral(pragma) + ")")
+	if err != nil {
+		return all
+	}
+	defer rows.Close()
+	var cols []string
+	cast := false
+	for rows.Next() {
+		var name, typ string
+		if err := rows.Scan(&name, &typ); err != nil {
+			return all
+		}
+		col, t := quoteIdent(name), strings.ToUpper(strings.TrimSpace(typ))
+		var p, s int
+		if _, err := fmt.Sscanf(t, "DECIMAL(%d,%d)", &p, &s); err == nil && decimalType(p, s) != "DOUBLE" {
+			col, cast = "CAST("+col+" AS "+decimalType(p, s)+") AS "+col, true
+		} else if t == "BOOLEAN" {
+			col, cast = "CAST("+col+" AS BOOLEAN) AS "+col, true
+		}
+		cols = append(cols, col)
+	}
+	if !cast || rows.Err() != nil {
+		return all
+	}
+	return "SELECT " + strings.Join(cols, ", ") + " FROM " + quoteIdent(table)
+}
+
 func (m *DBManager) ExportDatabase(ctx context.Context, format, out string, progress Progress) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -170,6 +206,9 @@ func (m *DBManager) ExportDatabase(ctx context.Context, format, out string, prog
 		return fmt.Errorf("no database connected")
 	}
 	items := tableItems(m.tableList)
+	for i := range items {
+		items[i].query = m.savedSelect(items[i].name)
+	}
 	return m.writeAtomically(out, func(tmp string) error {
 		switch format {
 		case "duckdb", "sqlite":
@@ -383,9 +422,10 @@ func (m *DBManager) writeAtomically(out string, write func(tmp string) error) er
 	return os.Rename(tmp, out)
 }
 
-// sqliteColumn gives the declared SQLite type of a DuckDB column and the expression that writes it. SQLite has no
-// boolean, decimal or date types: the declared name keeps the type for readers (DuckDB reads DATETIME as TIMESTAMP),
-// booleans are stored 0/1, dates as ISO text, decimals as REAL (exact up to 15 significant digits).
+// sqliteColumn gives the declared SQLite type of a DuckDB column and the expression that writes it (the conversion of
+// Access and Save as SQLite). Nothing numeric reaches SQLite as text (standard 19h): an integer is stored INTEGER, any
+// other number REAL. SQLite has no boolean, decimal or date types: the declared name keeps the type for readers
+// (DuckDB reads DATETIME as TIMESTAMP, a declared DECIMAL as DOUBLE), booleans are stored 0/1, dates as ISO text.
 func sqliteColumn(name, duckType string) (decl, expr string) {
 	col := quoteIdent(name)
 	t := strings.ToUpper(duckType)
@@ -397,6 +437,9 @@ func sqliteColumn(name, duckType string) (decl, expr string) {
 	case "FLOAT", "REAL":
 		// through text: Access Single 0.1 must stay 0.1, not 0.10000000149011612
 		return "REAL", "CAST(CAST(" + col + " AS VARCHAR) AS DOUBLE)"
+	case "HUGEINT", "UBIGINT", "UHUGEINT":
+		// wider than SQLite's 64-bit integer: a number all the same (REAL, exact up to 2^53)
+		return "REAL", "CAST(" + col + " AS DOUBLE)"
 	case "TIMESTAMP", "TIMESTAMP_S", "TIMESTAMP_MS", "TIMESTAMP_NS":
 		return "DATETIME", col
 	}
@@ -407,9 +450,10 @@ func sqliteColumn(name, duckType string) (decl, expr string) {
 		if _, err := fmt.Sscanf(t, "DECIMAL(%d,%d)", &p, &s); err == nil && s == 0 && p <= 18 {
 			return "INTEGER", col
 		}
-		return t, col
+		// with places (Currency, Numeric(p,s>0)) or wider: REAL, exact up to 15 significant digits (standard 19h)
+		return t, "CAST(" + col + " AS DOUBLE)"
 	}
-	// VARCHAR, UUID, TIME, HUGEINT, UBIGINT, lists...: text keeps every digit and character
+	// VARCHAR, UUID, TIME, lists...: text keeps every character
 	return "TEXT", "CAST(" + col + " AS VARCHAR)"
 }
 

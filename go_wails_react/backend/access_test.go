@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,6 +15,11 @@ const typesMDB = "testdata/types.mdb"
 // declared SQLite types of the converted Tipos table, in column order
 var wantDecl = []string{"ID INTEGER", "Flag BOOLEAN", "B INTEGER", "S INTEGER", "L INTEGER", "Money DECIMAL(19,4)",
 	"Dec DECIMAL(10,2)", "Sng REAL", "Dbl DOUBLE", "When DATETIME", "Txt TEXT", "Note TEXT", "Bin BLOB"}
+
+// how SQLite stores the numbers of Tipos row 1 (standard 19h: an integer INTEGER, any other number REAL, never text)
+const typeofQuery = `SELECT * FROM sqlite_query('src', 'SELECT typeof(Money), typeof("Dec"), typeof(Sng), typeof(Dbl), typeof(B), typeof(L) FROM Tipos WHERE ID = 1')`
+
+var wantTypeof = [][]string{{"real", "real", "real", "real", "integer", "integer"}}
 
 // rows of Tipos by ID as cellString text; NULL stays NULL
 var wantRows = [][]string{
@@ -83,6 +89,28 @@ func TestAccessConvertsToSQLite(t *testing.T) {
 			if !reflect.DeepEqual(decl, wantDecl) {
 				t.Errorf("declared types\n got %q\nwant %q", decl, wantDecl)
 			}
+			// standard 19h: Currency, Numeric(p,s>0), Single and Double are stored as numbers (REAL), never text
+			if got := queryText(t, m, typeofQuery); !reflect.DeepEqual(got, wantTypeof) {
+				t.Errorf("converted storage %q, want %q", got, wantTypeof)
+			}
+			// Save as DuckDB keeps DECIMAL and BOOLEAN (DuckDB reads them from SQLite as DOUBLE and BIGINT)
+			duck := filepath.Join(t.TempDir(), "saved.duckdb")
+			if err := m.ExportDatabase(context.Background(), "duckdb", duck, func(int, int, string) {}); err != nil {
+				t.Fatal(err)
+			}
+			saved := NewDBManager()
+			if err := saved.Connect(duck); err != nil {
+				t.Fatal(err)
+			}
+			types := map[string]string{}
+			schema, _ := saved.GetTableSchema("Tipos")
+			for _, c := range schema {
+				types[c.Name] = c.Type
+			}
+			saved.Close()
+			if types["Money"] != "DECIMAL(19,4)" || types["Dec"] != "DECIMAL(10,2)" || types["Flag"] != "BOOLEAN" || types["Dbl"] != "DOUBLE" {
+				t.Errorf("saved DuckDB types %v", types)
+			}
 			want := wantRows
 			if source == SourceODBC {
 				// row 3 has zero-length Txt and Note: ODBC sees ""; mdbtools 1.0.1 exports a zero-length text as NULL
@@ -126,6 +154,22 @@ func TestAccessConvertsToSQLite(t *testing.T) {
 			}
 			if n, _ := back.GetRowCount("Tipos", ""); n != 3 {
 				t.Errorf("saved file: %d rows", n)
+			}
+			if got := queryText(t, back, typeofQuery); !reflect.DeepEqual(got, wantTypeof) {
+				t.Errorf("saved storage %q, want %q", got, wantTypeof)
+			}
+			// Save as SQLite of the open file keeps the declared types and stores numbers (standard 19h)
+			lite := filepath.Join(t.TempDir(), "again.sqlite")
+			if err := back.ExportDatabase(context.Background(), "sqlite", lite, func(int, int, string) {}); err != nil {
+				t.Fatal(err)
+			}
+			again := NewDBManager()
+			defer again.Close()
+			if err := again.Connect(lite); err != nil {
+				t.Fatal(err)
+			}
+			if got := queryText(t, again, typeofQuery); !reflect.DeepEqual(got, wantTypeof) {
+				t.Errorf("Save as SQLite storage %q, want %q", got, wantTypeof)
 			}
 		})
 	}
