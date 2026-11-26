@@ -1138,7 +1138,7 @@ mod tests {
                 "PRAGMA show_tables".to_string(),
                 format!("EXPLAIN SELECT * FROM {table}"),
                 format!("EXPLAIN ANALYZE SELECT * FROM {table}"),
-                format!("-- c\n explain /* c */ analyze FROM {table};"),
+                format!("  explain   analyze FROM {table};"),
                 format!("EXPLAIN (ANALYZE) SELECT * FROM {table}"),
                 format!("SELECT 1; SELECT count(*) FROM {table}"),
             ];
@@ -1176,6 +1176,11 @@ mod tests {
                 format!("/* x */ EXPLAIN -- y\n ANALYZE /* z */ COPY {table} TO '{copy_sql}';"),
                 format!("EXPLAIN COPY {table} TO '{copy_sql}'"),
                 format!("EXPLAIN SELECT 1; EXPLAIN ANALYZE COPY {table} TO '{copy_sql}'"),
+                // o DuckDB aninha /* */: comentario num EXPLAIN e recusado (revisao: estes passavam como SELECT 1)
+                format!("EXPLAIN ANALYZE /* /* */ SELECT 1 -- */ COPY {table} TO '{copy_sql}'"),
+                format!("EXPLAIN (ANALYZE /* ) SELECT 1 -- */) COPY {table} TO '{copy_sql}'"),
+                format!("EXPLAIN (ANALYZE /* ) -- */) COPY {table} TO '{copy_sql}'"),
+                format!("-- c\n explain /* c */ analyze FROM {table};"),
             ];
             for sql in &writes {
                 assert_eq!(manager.run_sql(sql, 10).err().as_deref(), Some("[[err.sqlReadOnly]]"), "{sql}");

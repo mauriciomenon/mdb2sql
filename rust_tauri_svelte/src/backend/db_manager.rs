@@ -307,20 +307,6 @@ impl Drop for Probe {
 const EXPLAIN: ffi::duckdb_statement_type = ffi::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_EXPLAIN;
 const READ_STATEMENTS: [ffi::duckdb_statement_type; 2] = [ffi::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_SELECT, EXPLAIN];
 
-// pula espacos e comentarios (-- ate o fim da linha, /* ... */)
-fn blank(mut text: &str) -> &str {
-    loop {
-        text = text.trim_start();
-        if let Some(rest) = text.strip_prefix("--") {
-            text = rest.find('\n').map_or("", |end| &rest[end..]);
-        } else if let Some(rest) = text.strip_prefix("/*") {
-            text = rest.find("*/").map_or("", |end| &rest[end + 2..]);
-        } else {
-            return text;
-        }
-    }
-}
-
 // o texto depois da palavra-chave (sem diferenciar maiusculas), se ele comeca com ela
 fn keyword<'a>(text: &'a str, word: &str) -> Option<&'a str> {
     let rest = text.get(word.len()..)?;
@@ -329,22 +315,27 @@ fn keyword<'a>(text: &'a str, word: &str) -> Option<&'a str> {
 }
 
 // NIVEL BASICO: O comando que um EXPLAIN explica: o texto depois de EXPLAIN [ANALYZE | ANALYSE | (opcoes)]. None se o
-// texto nao comeca assim (a aba SQL recusa)
+// texto nao comeca assim ou se as opcoes tem algo alem de palavras e virgulas (a aba SQL recusa)
 // NIVEL TECNICO: the C API gives the statement type but not the explained statement; DuckDB still classifies the
-// text found here, the text only tells where it starts
+// text found here, the text only tells where it starts. Comments are refused by the caller (DuckDB nests /* */, so
+// skipping them here could point at another statement than the one DuckDB runs)
 fn explained(sql: &str) -> Option<&str> {
-    let rest = blank(keyword(blank(sql), "EXPLAIN")?);
+    let rest = keyword(sql.trim_start(), "EXPLAIN")?.trim_start();
     let rest = match keyword(rest, "ANALYZE").or_else(|| keyword(rest, "ANALYSE")) {
         Some(after) => after,
-        None if rest.starts_with('(') => &rest[rest.find(')')? + 1..],
+        None if rest.starts_with('(') => {
+            let end = rest.find(')')?;
+            let plain = rest[1..end].chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ',' || c.is_whitespace());
+            plain.then(|| &rest[end + 1..])?
+        }
         None => rest,
     };
-    Some(blank(rest))
+    Some(rest.trim_start())
 }
 
 impl Probe {
-    // NIVEL BASICO: true se todo comando de `sql` so le. EXPLAIN so com uma consulta: EXPLAIN ANALYZE roda o comando
-    // que explica, e um COPY ... TO gravaria um arquivo (a transacao so de leitura nao impede)
+    // NIVEL BASICO: true se todo comando de `sql` so le. EXPLAIN so de uma consulta, sozinho e sem comentario: EXPLAIN
+    // ANALYZE roda o comando que explica, e um COPY ... TO gravaria um arquivo (a transacao so de leitura nao impede)
     fn reads_only(&self, sql: &str) -> Result<bool, String> {
         let kinds = self.statement_types(sql)?;
         if kinds.iter().any(|kind| !READ_STATEMENTS.contains(kind)) {
@@ -353,9 +344,11 @@ impl Probe {
         if !kinds.contains(&EXPLAIN) {
             return Ok(true);
         }
-        // o texto do comando explicado so se acha quando ele e o unico
-        match (kinds.len(), explained(sql)) {
-            (1, Some(inner)) => self.reads_only(inner),
+        if kinds.len() != 1 || sql.contains("/*") || sql.contains("--") {
+            return Ok(false);
+        }
+        match explained(sql) {
+            Some(inner) if self.statement_types(inner)?.len() == 1 => self.reads_only(inner),
             _ => Ok(false),
         }
     }
