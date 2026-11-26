@@ -2,6 +2,8 @@
 import json
 import re
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -81,6 +83,52 @@ def test_access_opens_through_one_sqlite_conversion(access_window: MainWindow) -
     assert win.reader_label.text() == "Opened via mdbtools, converted to SQLite"
     assert win.table_names() == ["empty table", "points"]
     assert [p.name for p in _converted_files(win)] == ["sample.sqlite"]
+
+
+@needs_mdbtools
+def test_without_a_temp_folder_the_conversion_goes_next_to_the_file_and_leaves_nothing(qtbot, tmp_path: Path,
+                                                                                       monkeypatch) -> None:
+    # item 29: pasta temporaria do usuario, senao a do sistema e so por ultimo a pasta do arquivo aberto
+    from backend import temp_store
+
+    monkeypatch.setenv("MDB2SQL_ACCESS_READER", "mdbtools")
+    blocked = tmp_path / "no temp"
+    blocked.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(temp_store, "temp_folders", lambda: [blocked])
+    folder = tmp_path / "source"
+    folder.mkdir()
+    copy = folder / "sample.mdb"
+    shutil.copy2(SAMPLE, copy)
+    # sobra de uma sessao que caiu nessa pasta: sai ao abrir o arquivo, com a linha do Log
+    stale = folder / temp_store.NAME / "dead"
+    stale.mkdir(parents=True)
+    (stale / "old.sqlite").write_bytes(b"x")
+    crashed = ("import os, sys; from PyQt6.QtCore import QLockFile; lock = QLockFile(sys.argv[1]);"
+               "assert lock.tryLock(0); os._exit(0)")  # trava gravada, processo morto sem soltar
+    subprocess.run([sys.executable, "-c", crashed, str(stale.with_suffix(".lock"))], check=True)
+    win = MainWindow()
+    qtbot.addWidget(win)
+    assert win.session is None
+    win.open_database(copy)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=60000)
+
+    assert win.session.path.parent == folder / temp_store.NAME and not stale.exists()
+    assert [p.name for p in _converted_files(win)] == ["sample.sqlite"]
+    assert "Removed 1 converted file left by a previous session" in win.log_view.toPlainText()
+    win.close()
+    assert [p.name for p in folder.iterdir()] == ["sample.mdb"]  # nada fica na pasta do original
+
+
+def test_settings_file_from_the_environment_replaces_the_registry(qtbot, tmp_path: Path, monkeypatch) -> None:
+    # MDB2SQL_SETTINGS=<arquivo.ini>: capturas e testes do exe nunca tocam nas configuracoes do usuario
+    ini = tmp_path / "isolated.ini"
+    monkeypatch.setenv("MDB2SQL_SETTINGS", str(ini))
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.set_default_scope("all")
+    win.settings.sync()
+    assert "search_scope=all" in ini.read_text(encoding="utf-8")
+    assert QSettings().value("search_scope") is None and mw.app_settings().value("search_scope") == "all"
 
 
 @needs_mdbtools

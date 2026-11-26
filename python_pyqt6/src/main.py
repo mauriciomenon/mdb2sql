@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QCoreApplication, QSettings, Qt
+from PyQt6.QtCore import QCoreApplication, Qt
 from PyQt6.QtWidgets import QApplication
 
 from backend.database_tasks import database_path_from_env
@@ -16,7 +16,7 @@ from shared import i18n
 from shared.display import Notice, linux_choice
 from shared.i18n import tr
 from ui.dialogs import DisplayWarning
-from ui.main_window import MainWindow, apply_theme, load_qt_texts
+from ui.main_window import MainWindow, app_settings, apply_theme, load_qt_texts
 
 # !T: sys.argv permite passar argumentos via linha de comando
 # !T: QApplication gerencia event loop, temas, recursos do sistema
@@ -36,7 +36,7 @@ def main():
     QCoreApplication.setOrganizationName("MDB2SQL")
     QCoreApplication.setOrganizationDomain("mdb2sql.local")
     # Configuracoes > Idioma (padrao ingles)
-    language = i18n.set_language(str(QSettings().value("language", i18n.DEFAULT)))
+    language = i18n.set_language(str(app_settings().value("language", i18n.DEFAULT)))
 
     # Linux: X11 primeiro, Wayland so como reserva (com aviso); sem nenhum dos dois, erro no stderr
     display_warning, ours = None, False
@@ -59,7 +59,7 @@ def main():
     if app.style().objectName() == "windowsvista":
         app.setStyle("Fusion")
     # Configuracoes > Tema gravado na execucao anterior (sistema, claro ou escuro)
-    apply_theme(str(QSettings().value("theme", "system")))
+    apply_theme(str(app_settings().value("theme", "system")))
     # os textos do proprio Qt (menu de contexto dos campos) no idioma escolhido; trocam junto com Configuracoes > Idioma
     load_qt_texts(language)
 

@@ -11,7 +11,7 @@ import pytest
 
 from backend import access
 from backend.db_manager import DBManager, column_expr
-from backend.temp_store import SessionDir
+from backend.temp_store import NAME, open_session, remove_stale, temp_folders
 
 SCHEMA = """-- That file uses encoding ISO-8859-1
 
@@ -235,24 +235,37 @@ def test_failed_conversion_leaves_no_temporary_file(monkeypatch, tmp_path: Path)
     assert list(tmp_path.iterdir()) == []
 
 
-def test_session_dir_removes_only_orphans(tmp_path: Path) -> None:
-    alive = SessionDir(tmp_path)  # outra janela aberta: fica
-    # sessao de um processo que caiu: trava gravada, processo morto sem soltar
+def test_stale_sessions_are_removed_and_their_converted_files_counted(tmp_path: Path) -> None:
+    base = tmp_path / NAME
+    alive = open_session([tmp_path])  # outra janela aberta: fica
+    # sessao de um processo que caiu: trava gravada, processo morto sem soltar (2 conversoes ficaram)
     crashed = (
         "import os, sys; from pathlib import Path; from PyQt6.QtCore import QLockFile;"
-        "base = Path(sys.argv[1]); (base / 'dead').mkdir(); (base / 'dead' / 'x.sqlite').write_bytes(b'x');"
+        "base = Path(sys.argv[1]); (base / 'dead' / 'conv-1').mkdir(parents=True);"
+        "(base / 'dead' / 'conv-1' / 'x.sqlite').write_bytes(b'x'); (base / 'dead' / 'y.sqlite').write_bytes(b'y');"
         "lock = QLockFile(str(base / 'dead.lock')); assert lock.tryLock(0); os._exit(0)"
     )
-    subprocess.run([sys.executable, "-c", crashed, str(tmp_path)], check=True)
-    assert (tmp_path / "dead.lock").exists()
+    subprocess.run([sys.executable, "-c", crashed, str(base)], check=True)
+    assert (base / "dead.lock").exists()
 
-    session = SessionDir(tmp_path)
-
-    assert session.removed == [tmp_path / "dead"]
-    assert not (tmp_path / "dead").exists() and alive.path.is_dir()
-    session.close()
+    assert remove_stale(tmp_path) == 2  # os arquivos convertidos, como a linha do Log conta
+    assert not (base / "dead").exists() and alive.path.is_dir()
+    assert remove_stale(tmp_path) == 0 and remove_stale(tmp_path / "no such folder") == 0
     alive.close()
-    assert list(tmp_path.iterdir()) == []
+    assert list(tmp_path.iterdir()) == []  # sem sessao, a pasta do app tambem sai
+
+
+def test_session_goes_to_the_first_folder_where_a_file_can_be_created(tmp_path: Path) -> None:
+    # pasta temporaria do usuario, senao a do sistema, por ultimo a do arquivo aberto
+    blocked = tmp_path / "user temp"
+    blocked.write_text("a file: no folder can be created inside it", encoding="utf-8")
+    session = open_session([blocked, tmp_path / "system temp", tmp_path / "source"])
+    assert session.path.parent == tmp_path / "system temp" / NAME and session.path.is_dir()
+    session.close()
+    assert not (tmp_path / "system temp" / NAME).exists() and not (tmp_path / "source").exists()
+    assert open_session([blocked]) is None
+    folders = temp_folders()
+    assert len(folders) == len(set(folders)) >= 1 and all(folder.is_absolute() for folder in folders)
 
 
 # Bancos Access reais (copias): MDB2SQL_TEST_ACCDB=<copia.accdb> e, opcional, MDB2SQL_TEST_REFERENCE=<referencia.sqlite>

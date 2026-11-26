@@ -18,8 +18,10 @@ def isolated_settings(tmp_path_factory, monkeypatch):
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path_factory.mktemp("settings")))
     monkeypatch.delenv("MDB2SQL_ACCESS_READER", raising=False)
-    # pasta temporaria das sessoes (SQLite convertidos) dentro do tmp do teste; textos em ingles (padrao)
-    monkeypatch.setattr(temp_store, "BASE", tmp_path_factory.mktemp("sessions"))
+    # pastas temporarias das sessoes (SQLite convertidos) dentro do tmp do teste; textos em ingles (padrao)
+    sessions = tmp_path_factory.mktemp("sessions")
+    monkeypatch.setattr(temp_store, "temp_folders", lambda: [sessions])
+    monkeypatch.delenv("MDB2SQL_SETTINGS", raising=False)
     i18n.set_language("en")
     # a pergunta do SQLite convertido e modal (exec): nos testes responde "Apagar", salvo quando o teste troca
     from ui.main_window import DELETE, MainWindow

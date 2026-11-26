@@ -3,6 +3,7 @@
 # !T: Every visible text comes from the language catalog (shared.i18n.tr)
 
 import json
+import os
 import re
 import threading
 from datetime import datetime
@@ -68,9 +69,9 @@ from backend.database_tasks import (
     load_table_payload,
     open_database,
 )
-from backend.db_manager import DBManager, sql_string
+from backend.db_manager import ACCESS_EXT, DBManager, sql_string
 from backend.export import Cancelled, default_save_dir, export_database, export_result
-from backend.temp_store import SessionDir
+from backend import temp_store
 from shared import i18n
 from shared.about import app_title
 from shared.bundle import resource
@@ -113,6 +114,12 @@ def open_filter() -> str:
 
 def file_type(suffix: str) -> str:
     return tr(f"filter{suffix}") + f" (*{suffix})"
+
+
+def app_settings() -> QSettings:
+    """Configuracoes do usuario (no Windows, o registro); MDB2SQL_SETTINGS=<arquivo.ini> usa esse arquivo no lugar."""
+    path = os.environ.get("MDB2SQL_SETTINGS")
+    return QSettings(path, QSettings.Format.IniFormat) if path else QSettings()
 
 
 _qt_texts: QTranslator | None = None
@@ -225,7 +232,7 @@ class MainWindow(QMainWindow):
         icon = QIcon(str(resource("mdb2sql.ico")))
         icon.addFile(str(resource("mdb2sql.png")))
         QGuiApplication.setWindowIcon(icon)
-        self.settings = QSettings()
+        self.settings = app_settings()
         # textos fixos da tela (aplicar, chave, sem &): Configuracoes > Idioma troca todos na hora
         self._texts: list[tuple[Callable[[str], object], str, bool]] = []
         self.manager: DBManager | None = None
@@ -250,8 +257,11 @@ class MainWindow(QMainWindow):
         self._found_request = 0  # pesquisa em todas as tabelas
         self._busy = 0
         self.thread_pool: QThreadPool = QThreadPool.globalInstance() or QThreadPool(self)
-        # pasta temporaria da sessao (SQLite convertidos); apaga a de uma sessao anterior que caiu
-        self.session = SessionDir()
+        # pasta temporaria da sessao (SQLite convertidos): a do usuario, senao a do sistema; sem nenhuma das duas, a
+        # do arquivo Access, ao abrir. As sobras de uma sessao anterior que caiu sao apagadas
+        folders = temp_store.temp_folders()
+        stale = sum(temp_store.remove_stale(folder) for folder in folders)
+        self.session = temp_store.open_session(folders)
 
         # !T: Debounce so arrow-key navigation in the table list does not start one query per row
         self.table_load_timer = QTimer(self)
@@ -270,8 +280,7 @@ class MainWindow(QMainWindow):
         self.table_filter_timer.timeout.connect(self._filter_tables_now)
 
         self.init_ui()
-        if self.session.removed:
-            self.log(tr("log.orphans_removed", count=len(self.session.removed)))
+        self._log_stale(stale)
 
     # ------------------------------------------------------------------ UI
 
@@ -1192,7 +1201,12 @@ class MainWindow(QMainWindow):
                 self._set_message(self.status_label, text, log=False)  # uma linha por tabela: fora do log
 
         self._db_request += 1  # abrir outro arquivo invalida a abertura anterior ainda em andamento
-        work_dir = self.session.path
+        if db_path.suffix.lower() in ACCESS_EXT:
+            # a pasta do arquivo e o ultimo lugar do SQLite convertido: sobra de uma sessao que caiu sai agora, e
+            # a sessao fica nela so quando nenhuma pasta temporaria deixou criar arquivo
+            self._log_stale(temp_store.remove_stale(db_path.parent))
+            self.session = self.session or temp_store.open_session([db_path.parent])
+        work_dir = self.session.path if self.session else None
         # o mesmo Access (caminho, tamanho, data) ja convertido e salvo: abre o SQLite salvo, sem converter de novo
         saved = self.saved_conversion(db_path)
         def task(report):
@@ -1205,6 +1219,10 @@ class MainWindow(QMainWindow):
             return db_path, saved, manager, tables, counts, source_key
 
         self._run(self._db_request, task, self._on_database_loaded, self._on_database_error, progress)
+
+    def _log_stale(self, count: int) -> None:
+        if count:
+            self.log(counted("log.stale_removed", count))
 
     # --------------------------------- Access convertido e salvo: lembrado entre execucoes (igual nas 4 versoes)
 
@@ -1409,7 +1427,8 @@ class MainWindow(QMainWindow):
             return
         # sobra da sessao (conversao ainda em andamento) some quando as threads terminam
         self.thread_pool.waitForDone()
-        self.session.close()
+        if self.session is not None:
+            self.session.close()
         super().closeEvent(event)
 
     # --------------------------------------------------------------- table
