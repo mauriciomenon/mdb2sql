@@ -348,24 +348,72 @@ def test_decimal_without_scale_shows_as_integer(qtbot, tmp_path: Path) -> None:
     assert win.table_model.numeric == [True, True]
 
 
-def test_menus_have_export_and_settings_theme(window: MainWindow) -> None:
-    titles = [a.text() for a in window.menuBar().actions()]
-    assert titles == ["&File", "&Edit", "&View", "&Settings", "&Help"]  # Exportar fica dentro de File
-    # Arquivo: Abrir... (Ctrl+O), Salvar (Ctrl+S), Salvar como... (Ctrl+Shift+S), Exportar >, Fechar, Sair (Ctrl+Q)
-    from PyQt6.QtGui import QKeySequence
+def _tree(menu) -> list:
+    """Itens de um menu: '-' (separador), 'texto Atalho' ou ('submenu', [itens]); sem os & dos atalhos de letra."""
+    items: list = []
+    for action in menu.actions():
+        text = action.text().replace("&", "")
+        if action.isSeparator():
+            items.append("-")
+        elif action.menu():
+            items.append((text, _tree(action.menu())))
+        else:
+            items.append(f"{text} {action.shortcut().toString()}".strip())
+    return items
 
-    file_menu = _menu(window, "&File")
-    close_key = QKeySequence.keyBindings(QKeySequence.StandardKey.Close)[0].toString()  # Ctrl+F4 / Ctrl+W
-    assert [(a.text(), a.shortcut().toString()) for a in file_menu.actions() if not a.isSeparator()] == [
-        ("&Open...", "Ctrl+O"), ("&Save", "Ctrl+S"), ("Save &as...", "Ctrl+Shift+S"), ("&Export", ""),
-        ("&Close", close_key), ("E&xit", "Ctrl+Q")
-    ]
-    assert file_menu.actions()[3].menu() is window.export_menu
-    # F5 (recarregar) continua valendo como atalho da janela, fora dos menus
-    assert window.reload_action in window.actions() and window.reload_action.shortcut().toString() == "F5"
-    theme = _menu(window, "&Settings").actions()[0].menu()
-    assert [a.text() for a in theme.actions()] == ["&System", "&Light", "&Dark"]
+
+def test_menu_tree_is_the_same_in_the_four_versions(window: MainWindow) -> None:
+    # secao 4 do brief 27-33: todo botao tem menu; arvore igual nas 4 versoes, nesta ordem
+    titles = [a.text() for a in window.menuBar().actions()]
+    assert titles == ["&File", "&Edit", "&View", "&Settings", "&Help"]
+    formats = ["CSV...", "Excel (.xlsx)..."]
+    export = [("Current table", formats), ("Marked rows", formats), ("Current table schema", formats),
+              ("Database schema", formats), "All tables to CSV (one file per table)...", ("SQL result", formats),
+              "All-tables search result (Excel)...",
+              ("Term search report", ["Excel (.xlsx)...", "CSV...", "SQLite (.sqlite)...", "DuckDB (.duckdb)..."])]
+    assert _tree(_menu(window, "&File")) == [
+        "Open... Ctrl+O", "Open the typed path", "Reopen F5", "-", "Save Ctrl+S", "Save as... Ctrl+Shift+S",
+        ("Export", export), "-", "Close Ctrl+W", "-", "Exit Ctrl+Q"]
+    assert _tree(window.export_menu) == export  # o botao Exportar... abre o mesmo menu
+    assert _tree(_menu(window, "&Edit")) == [
+        "Copy value Ctrl+C", "Copy row Ctrl+Shift+C", "Copy row with header", "Copy the whole log", "-",
+        "Search Ctrl+F", "Filter by this value", "Clear filters", "-", "Mark or unmark row Space", "Unmark all rows"]
+    assert _tree(_menu(window, "&View")) == [
+        "Data Ctrl+1", "Schema Ctrl+2", "SQL Ctrl+3", "Terms Ctrl+4", "-", ("Rows", ["100", "500", "1000"]),
+        "Columns...", ("Search in", ["This table", "All tables"]), "Only marked rows", "Go to the table list Ctrl+T",
+        "-", "Run SQL Ctrl+Return", "Search terms Ctrl+Return", "-", "Log Ctrl+L"]
+    assert _tree(_menu(window, "&Settings")) == [
+        ("Theme", ["System", "Light", "Dark"]), ("Language", ["English", "Português (Brasil)", "Español"]),
+        ("Default search scope", ["This table", "All tables"]), ("Term matching", ["Whole value", "Contains"]),
+        "Show NULL"]
+    assert _tree(_menu(window, "&Help")) == ["About mdb2sql"]
+    # sai o "Painel de tabelas" (Ctrl+B) e o X do painel: ele nao fecha
+    from PyQt6.QtWidgets import QDockWidget
+
+    assert window.tables_dock.features() == QDockWidget.DockWidgetFeature.NoDockWidgetFeatures
     assert window.export_button.isEnabled()
+
+
+def test_menu_items_are_disabled_like_their_buttons(qtbot, window: MainWindow) -> None:
+    # Linhas do menu = lista Linhas da aba Dados; Pesquisar em = Esta tabela | Todas as tabelas
+    window.rows_actions[2].trigger()
+    assert window.limit_combo.currentData() == 1000
+    window.limit_combo.setCurrentIndex(0)
+    assert window.rows_actions[0].isChecked()
+    assert window.scope_actions["table"].isChecked()
+    # sem consulta SQL, marcas, busca em todas as tabelas ou termos: os submenus e itens ficam desabilitados
+    disabled = [a.text().replace("&", "") for a in window.export_menu.actions() if not a.isEnabled()]
+    assert disabled == ["Marked rows", "SQL result", "All-tables search result (Excel)...", "Term search report"]
+    window.scope_actions["all"].trigger()
+    window.search_edit.setText("ana")
+    qtbot.waitUntil(lambda: window.found_list.count() == 1 and window._busy == 0, timeout=30000)
+    assert window.export_search_action.isEnabled()
+    window.log("line one")
+    window.copy_log_action.trigger()
+    assert QApplication.clipboard().text().endswith("line one")
+    window.release_database()  # sem banco: so Abrir, Abrir o caminho digitado, Reabrir e Sair
+    assert not window.export_button.isEnabled() and not any(a.isEnabled() for a in window.export_menu.actions())
+    assert window.open_typed_action.isEnabled() and not window.save_action.isEnabled()
 
 
 def test_theme_is_saved(qtbot, window: MainWindow, monkeypatch) -> None:
@@ -662,10 +710,7 @@ def test_save_and_export_actions_write_files_next_to_source(qtbot, window: MainW
     asked.clear()
     picked.clear()
     actions = window.export_table_actions + window.export_sql_actions
-    assert [a.text().replace("&", "") for a in actions] == [
-        "Current table to CSV...", "Current table to Excel (.xlsx)...", "SQL result to CSV...",
-        "SQL result to Excel (.xlsx)...",
-    ]
+    assert [a.text().replace("&", "") for a in actions] == ["CSV...", "Excel (.xlsx)..."] * 2
     for action in actions:
         action.trigger()
         done()
@@ -677,6 +722,70 @@ def test_save_and_export_actions_write_files_next_to_source(qtbot, window: MainW
     assert QSettings().value("last_dir") == str(people_db.parent)
     # cada exportacao fecha e apaga o seu dialogo "Export": nenhum fica acumulado na janela
     qtbot.waitUntil(lambda: not window.findChildren(QProgressDialog), timeout=5000)
+
+
+def test_schema_all_tables_csv_and_search_result_exports(qtbot, window: MainWindow, people_db: Path,
+                                                         monkeypatch) -> None:
+    # Exportar: esquema da tabela (<tabela>_schema), do banco (<banco>_schema), todas as tabelas em CSV (pasta, uma
+    # pergunta para os que ja existem) e o resultado da busca em todas as tabelas (<banco>_busca.xlsx)
+    import openpyxl
+
+    out_dir = people_db.parent
+    asked = []
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        lambda *a: asked.append((a[1], Path(a[2]).name)) or (str(out_dir / Path(a[2]).name), ""))
+    _select_table(qtbot, window, "people")
+
+    def exported(action) -> None:
+        action.trigger()
+        qtbot.waitUntil(lambda: window._job is None and window._busy == 0, timeout=30000)
+
+    exported(window.export_table_schema_actions[0])
+    exported(window.export_db_schema_actions[1])
+    assert asked == [("Current table schema", "people_schema.csv"), ("Database schema", "people_schema.xlsx")]
+    assert (out_dir / "people_schema.csv").read_text(encoding="utf-8-sig").splitlines()[:2] == [
+        "Column,Type,Nullable", "id,INTEGER,No"]
+    book = openpyxl.load_workbook(out_dir / "people_schema.xlsx", read_only=True)
+    assert next(book.active.iter_rows(values_only=True)) == ("Table", "Column", "Type", "Nullable")
+    book.close()
+
+    folder = out_dir / "all"
+    folder.mkdir()
+    (folder / "people.csv").write_text("old", encoding="utf-8")
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a: str(folder))
+    counts = []
+    monkeypatch.setattr(window, "ask_overwrite_many", lambda count: counts.append(count) or True)
+    exported(window.export_all_csv_action)
+    assert counts == [1] and sorted(p.name for p in folder.iterdir()) == ["empty_table.csv", "people.csv"]
+    assert (folder / "people.csv").read_text(encoding="utf-8-sig").startswith("id,name,score")
+
+    window.scope_actions["all"].trigger()
+    window.search_edit.setText("ana")
+    qtbot.waitUntil(lambda: window.found_list.count() == 1 and window._busy == 0, timeout=30000)
+    exported(window.export_search_action)
+    assert asked[-1] == ("All-tables search result (Excel)", "people_busca.xlsx")
+    book = openpyxl.load_workbook(out_dir / "people_busca.xlsx", read_only=True)
+    assert book.sheetnames == ["people"]
+    assert list(book["people"].iter_rows(values_only=True)) == [("id", "name", "score"), (1, "Ana", 9.5)]
+    book.close()
+
+
+def test_overwrite_many_question_has_the_right_plural(qtbot, window: MainWindow) -> None:
+    from PyQt6.QtCore import QTimer
+    from PyQt6.QtWidgets import QMessageBox
+
+    seen = []
+
+    def answer() -> None:
+        box = QApplication.activeModalWidget()
+        seen.append(box.text())
+        box.button(QMessageBox.StandardButton.No).click()
+
+    for count in (1, 3):
+        QTimer.singleShot(0, answer)
+        assert window.ask_overwrite_many(count) is False
+    assert seen == ["1 file already exists in this folder. Replace it?",
+                    "3 files already exist in this folder. Replace them?"]
 
 
 def test_marked_rows_stay_on_top_during_other_searches(qtbot, tmp_path: Path, monkeypatch) -> None:

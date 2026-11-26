@@ -74,12 +74,15 @@ from backend.export import (
     Cancelled,
     Sheet,
     csv_name,
+    database_schema_query,
     default_save_dir,
     export_csv_folder,
     export_database,
     export_result,
     export_sheets,
+    table_schema_query,
 )
+from backend.access import quote
 from backend import temp_store
 from backend.terms import not_found, parse_terms, report_sheets, search_terms, table_hits
 from shared import i18n
@@ -340,24 +343,33 @@ class MainWindow(QMainWindow):
     def _create_actions(self) -> None:
         self.open_action = self._action("action.open", self.choose_database, QKeySequence.StandardKey.Open)
         self._t(self.open_action.setToolTip, "tip.open")
+        self.open_typed_action = self._action("action.open_typed", self.open_typed_path)  # = botao Abrir
+        self._t(self.open_typed_action.setToolTip, "tip.open_path")
         self.reload_action = self._action("action.reload", self.load_database, "F5")
         self._t(self.reload_action.setToolTip, "tip.reload")
-        self.close_db_action = self._action("action.close", self.release_database, QKeySequence.StandardKey.Close)
+        self.close_db_action = self._action("action.close", self.release_database, "Ctrl+W")
         self.quit_action = self._action("action.quit", self.close, "Ctrl+Q")
 
         # Salvar / Salvar como...: o banco inteiro em SQLite, DuckDB ou Excel (uma aba por tabela), com qualquer
-        # banco aberto; Exportar fica com o que e mais especifico (tabela atual e resultado do SQL para CSV e Excel)
+        # banco aberto; Exportar fica com o que e mais especifico
         self.save_action = self._action("action.save", lambda: self.save_database(), QKeySequence.StandardKey.Save)
         self.save_as_action = self._action("action.save_as", lambda: self.save_database(save_as=True), "Ctrl+Shift+S")
-        self.export_table_actions = []
-        for suffix, key in ((".csv", "export.table_csv"), (".xlsx", "export.table_xlsx")):
-            self.export_table_actions.append(self._action(key, lambda _c=False, s=suffix: self.export_table_as(s)))
-        self.export_sql_actions = []
-        for suffix, key in ((".csv", "export.sql_csv"), (".xlsx", "export.sql_xlsx")):
-            self.export_sql_actions.append(self._action(key, lambda _c=False, s=suffix: self.export_sql_as(s)))
-        self.export_marked_actions = []
-        for suffix, key in ((".csv", "export.csv"), (".xlsx", "export.xlsx")):
-            self.export_marked_actions.append(self._action(key, lambda _c=False, s=suffix: self.export_marked_as(s)))
+
+        def formats(slot: Callable[[str], None]) -> list[QAction]:
+            # CSV... / Excel (.xlsx)... de um submenu de Exportar
+            return [self._action(key, lambda _c=False, s=suffix: slot(s))
+                    for suffix, key in ((".csv", "export.csv"), (".xlsx", "export.xlsx"))]
+
+        self.export_table_actions = formats(self.export_table_as)
+        self.export_marked_actions = formats(self.export_marked_as)
+        self.export_table_schema_actions = formats(self.export_table_schema_as)
+        self.export_db_schema_actions = formats(self.export_db_schema_as)
+        self.export_all_csv_action = self._action("export.all_csv", self.export_all_csv)
+        self.export_sql_actions = formats(self.export_sql_as)
+        self.export_search_action = self._action("export.search_all", self.export_search_all)
+        self.copy_log_action = self._action(
+            "action.copy_log", lambda: QGuiApplication.clipboard().setText(self.log_view.toPlainText())
+        )
 
         # linhas marcadas (aba Dados): Espaco na grade, Editar e o menu da celula marcam/desmarcam a linha atual
         self.mark_action = self._action("action.mark", self.toggle_current_mark, "Space")
@@ -826,7 +838,8 @@ class MainWindow(QMainWindow):
         self.tables_dock = QDockWidget(self)
         self._t(self.tables_dock.setWindowTitle, "tables.title")
         self.tables_dock.setObjectName("tablesDock")
-        self.tables_dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        # o painel de tabelas nao fecha (igual nas 4 versoes: sem o X)
+        self.tables_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
         self.tables_dock.setWidget(panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.tables_dock)
         self.resizeDocks([self.tables_dock], [260], Qt.Orientation.Horizontal)
@@ -997,16 +1010,24 @@ class MainWindow(QMainWindow):
         self._t(self.open_button.setToolTip, "tip.open_path")
         self.open_button.clicked.connect(self.open_typed_path)
 
-        # Exportar... abre o mesmo menu de Arquivo > Exportar, logo abaixo do botao
+        # Exportar... abre o mesmo menu de Arquivo > Exportar, logo abaixo do botao. Lista fixa, igual nas 4 versoes;
+        # o que nao se aplica fica desabilitado
         self.export_menu = QMenu(self)
         self._t(self.export_menu.setTitle, "menu.export")
-        self.export_menu.addActions(self.export_table_actions)
-        marked = self.export_menu.addMenu("")
-        self._t(marked.setTitle, "export.marked")
-        marked.addActions(self.export_marked_actions)
-        self.export_menu.addSeparator()
-        self.export_menu.addActions(self.export_sql_actions)
+        self.export_submenus: list[QMenu] = []
+        for key, actions in (("export.table", self.export_table_actions), ("export.marked", self.export_marked_actions),
+                             ("export.table_schema", self.export_table_schema_actions),
+                             ("export.db_schema", self.export_db_schema_actions), ("", [self.export_all_csv_action]),
+                             ("export.sql", self.export_sql_actions), ("", [self.export_search_action])):
+            if not key:
+                self.export_menu.addActions(actions)
+                continue
+            submenu = self.export_menu.addMenu("")
+            self._t(submenu.setTitle, key)
+            submenu.addActions(actions)
+            self.export_submenus.append(submenu)
         self.export_menu.addMenu(self.terms_report_menu)
+        self.export_submenus.append(self.terms_report_menu)
         self.export_button = QPushButton()
         self._t(self.export_button.setText, "button.export")
         self._t(self.export_button.setToolTip, "tip.export")
@@ -1068,7 +1089,8 @@ class MainWindow(QMainWindow):
 
     def _set_opening(self, opening: bool) -> None:
         # abrindo um arquivo: Abrir, Procurar..., Ctrl+O e F5 esperam
-        for item in (self.open_action, self.reload_action, self.browse_button, self.open_button):
+        for item in (self.open_action, self.open_typed_action, self.reload_action, self.browse_button,
+                     self.open_button):
             item.setEnabled(not opening)
 
     def _open_chosen(self, path: Path) -> None:
@@ -1077,37 +1099,44 @@ class MainWindow(QMainWindow):
         self.open_database(path)
 
     def _create_menus(self) -> None:
+        # arvore igual nas 4 versoes (todo botao tem menu); None = separador
         menu_bar = self.menuBar()
-        # Arquivo igual nas 4 versoes (Zig): Abrir... (Ctrl+O), Exportar >, Fechar, Sair (Ctrl+Q); o F5 (recarregar)
-        # continua como atalho da janela
         file_menu = menu_bar.addMenu("")
         self._t(file_menu.setTitle, "menu.file")
-        file_menu.addAction(self.open_action)
-        file_menu.addActions([self.save_action, self.save_as_action])
-        file_menu.addMenu(self.export_menu)
-        file_menu.addAction(self.close_db_action)
-        file_menu.addSeparator()
-        file_menu.addAction(self.quit_action)
+        for item in (self.open_action, self.open_typed_action, self.reload_action, None, self.save_action,
+                     self.save_as_action, self.export_menu, None, self.close_db_action, None, self.quit_action):
+            self._add_item(file_menu, item)
         # !T: Also on the window: Ctrl+Q still works while a job disables the menu bar (closeEvent asks first)
-        self.addActions([self.reload_action, self.quit_action])
+        self.addAction(self.quit_action)
 
         edit_menu = menu_bar.addMenu("")
         self._t(edit_menu.setTitle, "menu.edit")
-        edit_menu.addActions([self.copy_action, self.copy_row_action, self.copy_row_header_action, self.find_action])
-        edit_menu.addSeparator()
-        edit_menu.addActions([self.filter_value_action, self.clear_filters_action])
-        edit_menu.addSeparator()
-        edit_menu.addActions([self.mark_action, self.unmark_all_action])
+        for item in (self.copy_action, self.copy_row_action, self.copy_row_header_action, self.copy_log_action, None,
+                     self.find_action, self.filter_value_action, self.clear_filters_action, None, self.mark_action,
+                     self.unmark_all_action):
+            self._add_item(edit_menu, item)
 
+        # Exibir > Linhas: as mesmas 100 / 500 / 1000 da aba Dados
+        self.rows_group = QActionGroup(self)
+        self.rows_actions: list[QAction] = []
+        for index, limit in enumerate(ROW_LIMITS):
+            action = QAction(str(limit), self, checkable=True)
+            action.triggered.connect(lambda _checked=False, i=index: self.limit_combo.setCurrentIndex(i))
+            self.rows_group.addAction(action)
+            self.rows_actions.append(action)
+        self.rows_actions[self.limit_combo.currentIndex()].setChecked(True)
+        self.limit_combo.currentIndexChanged.connect(lambda index: self.rows_actions[index].setChecked(True))
         view_menu = menu_bar.addMenu("")
         self._t(view_menu.setTitle, "menu.view")
-        toggle_tables = self.tables_dock.toggleViewAction()
-        self._t(toggle_tables.setText, "menu.tables_panel")
-        toggle_tables.setShortcut(QKeySequence("Ctrl+B"))
-        view_menu.addActions([toggle_tables, self.log_action, self.tables_action, self.only_marked_action])
-        view_menu.addSeparator()
-        view_menu.addActions([self.data_tab_action, self.schema_tab_action, self.sql_tab_action, self.terms_tab_action,
-                              self.run_sql_action, self.run_terms_action])
+        rows_menu, scope_menu = QMenu(self), QMenu(self)
+        self._t(rows_menu.setTitle, "rows.label")
+        rows_menu.addActions(self.rows_actions)
+        self._t(scope_menu.setTitle, "scope.name")
+        scope_menu.addActions(list(self.scope_actions.values()))
+        for item in (self.data_tab_action, self.schema_tab_action, self.sql_tab_action, self.terms_tab_action, None,
+                     rows_menu, self.columns_action, scope_menu, self.only_marked_action, self.tables_action, None,
+                     self.run_sql_action, self.run_terms_action, None, self.log_action):
+            self._add_item(view_menu, item)
 
         self.settings_menu = menu_bar.addMenu("")
         self._t(self.settings_menu.setTitle, "menu.settings")
@@ -1122,6 +1151,15 @@ class MainWindow(QMainWindow):
         help_menu = menu_bar.addMenu("")
         self._t(help_menu.setTitle, "menu.help")
         self._t(help_menu.addAction("", self.show_about).setText, "menu.about")
+
+    @staticmethod
+    def _add_item(menu: QMenu, item: QAction | QMenu | None) -> None:
+        if item is None:
+            menu.addSeparator()
+        elif isinstance(item, QMenu):
+            menu.addMenu(item)
+        else:
+            menu.addAction(item)
 
     def show_about(self) -> None:
         # !T: open() instead of exec(): no nested event loop, so tests and UI Automation do not block
@@ -1649,6 +1687,7 @@ class MainWindow(QMainWindow):
         self._found_summary = None
         everywhere =self.scope_actions["all"].isChecked() and bool(self.search_edit.text().split())
         self.data_stack.setCurrentWidget(self.found_list if everywhere else self.data_table)
+        self._update_export_actions()  # Exportar > Resultado da busca em todas as tabelas: so com a lista
         if everywhere:
             self._search_all_tables()
         else:
@@ -1677,6 +1716,7 @@ class MainWindow(QMainWindow):
         search = self.search_edit.text().strip()
         self._found_summary = (len(found), search)  # refeito no idioma novo se o idioma mudar
         self._set_message(self.info_label, counted("status.found", len(found), search=search), log=False)
+        self._update_export_actions()
 
     def _on_found_error(self, request_id: int, message: str) -> None:
         if request_id == self._found_request:
@@ -2234,12 +2274,18 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------------- export
 
     def _update_export_actions(self) -> None:
-        for action in (self.save_action, self.save_as_action):
-            action.setEnabled(self.manager is not None)
-        for action in self.export_table_actions:
-            action.setEnabled(self.manager is not None and self.loaded_table is not None)
+        opened = self.manager is not None
+        for action in (self.save_action, self.save_as_action, *self.export_db_schema_actions):
+            action.setEnabled(opened)
+        self.export_all_csv_action.setEnabled(opened and bool(self.table_list.topLevelItemCount()))
+        for action in (*self.export_table_actions, *self.export_table_schema_actions):
+            action.setEnabled(opened and self.loaded_table is not None)
         for action in self.export_sql_actions:
-            action.setEnabled(self.manager is not None and self.sql_query is not None)
+            action.setEnabled(opened and self.sql_query is not None)
+        # a lista da busca em todas as tabelas na tela, com alguma tabela
+        self.export_search_action.setEnabled(
+            opened and self.data_stack.currentWidget() is self.found_list and bool(self.found_list.count())
+        )
         marked = self.manager is not None and self.loaded_table is not None and bool(self.marks.get(self.loaded_table[0]))
         for action in (*self.export_marked_actions, self.unmark_all_action, self.only_marked_action):
             action.setEnabled(marked)
@@ -2248,7 +2294,8 @@ class MainWindow(QMainWindow):
         report = self.manager is not None and self.terms_result is not None
         for action in (*self.export_terms_actions, self.copy_hits_action):
             action.setEnabled(report)
-        self.terms_report_menu.setEnabled(report)
+        for submenu in self.export_submenus:  # submenu sem nenhum item valendo: desabilitado
+            submenu.setEnabled(any(action.isEnabled() for action in submenu.actions()))
         self._update_run_actions()
         self.export_button.setEnabled(self.manager is not None)
         self.close_db_action.setEnabled(self.manager is not None)
@@ -2302,10 +2349,6 @@ class MainWindow(QMainWindow):
         self.settings.setValue("save_dir", str(path.parent))
         return path
 
-    @staticmethod
-    def _dialog_title(action: QAction) -> str:
-        return action.text().replace("&", "").removesuffix("...")  # "Tabela atual para CSV"
-
     def save_database(self, save_as: bool = False, then: Callable[[], object] | None = None) -> bool:
         """Arquivo > Salvar / Salvar como...: o banco aberto inteiro em SQLite, DuckDB ou Excel (uma aba por tabela),
         ja marcado o tipo do aberto. Salvar comeca na pasta do arquivo original; Salvar como... na ultima pasta em que
@@ -2346,8 +2389,7 @@ class MainWindow(QMainWindow):
             return
         if not found:
             filters, search = [], ""
-        title = self._dialog_title(self.export_table_actions[(".csv", ".xlsx").index(suffix)])
-        out = self._ask_save_path(title, table, (suffix,))
+        out = self._ask_save_path(tr("export.table"), table, (suffix,))
         if out is not None:
             manager = self.manager
 
@@ -2362,13 +2404,51 @@ class MainWindow(QMainWindow):
         if self.manager is None or self.sql_query is None:
             return
         query = self.sql_query
-        title = self._dialog_title(self.export_sql_actions[(".csv", ".xlsx").index(suffix)])
-        out = self._ask_save_path(title, "query", (suffix,))
+        out = self._ask_save_path(tr("export.sql"), "query", (suffix,))
         if out is not None:
             manager = self.manager
             self._start_export(
                 out, lambda report, cancel: export_result(manager, query, "query", out, report, cancel), "rows"
             )
+
+    def export_table_schema_as(self, suffix: str) -> None:
+        # Coluna, Tipo, Aceita nulo (como a aba Esquema): <tabela>_schema
+        if self.manager is None or self.loaded_table is None:
+            return
+        table, manager = self.loaded_table[0], self.manager
+        query, params = table_schema_query(table)
+        out = self._ask_save_path(tr("export.table_schema"), f"{table}_schema", (suffix,))
+        if out is not None:
+            self._start_export(out, lambda report, cancel: export_result(
+                manager, query, f"{table}_schema", out, report, cancel, params), "rows")
+
+    def export_db_schema_as(self, suffix: str) -> None:
+        # Tabela, Coluna, Tipo, Aceita nulo de todas as tabelas: <banco>_schema
+        if self.manager is None or self.current_db_path is None:
+            return
+        manager, name = self.manager, f"{self.current_db_path.stem}_schema"
+        query, params = database_schema_query(self.table_names())
+        out = self._ask_save_path(tr("export.db_schema"), name, (suffix,))
+        if out is not None:
+            self._start_export(out, lambda report, cancel: export_result(
+                manager, query, name, out, report, cancel, params), "rows")
+
+    def export_all_csv(self) -> None:
+        # seletor de PASTA; <tabela>.csv de cada tabela inteira
+        sheets: list[Sheet] = [(table, f"SELECT * FROM {quote(table)}", ()) for table in self.table_names()]
+        self._export_csv_folder(self.export_all_csv_action.text().replace("&", "").removesuffix("..."), sheets)
+
+    def export_search_all(self) -> None:
+        # uma aba por tabela com acerto da busca em todas as tabelas, as linhas que a busca acha, todas as colunas
+        if self.manager is None or self.current_db_path is None or self._found_summary is None:
+            return
+        manager, search = self.manager, self._found_summary[1]
+        tables = [self.found_list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.found_list.count())]
+        sheets: list[Sheet] = [(table, *manager.select_table(table, (), search)) for table in tables]
+        out = self._ask_save_path(self.export_search_action.text().replace("&", "").removesuffix("..."),
+                                  f"{self.current_db_path.stem}_busca", (".xlsx",))
+        if out is not None:
+            self._start_export(out, lambda report, cancel: export_sheets(manager, sheets, out, report, cancel), "tables")
 
     def _start_export(self, out: Path, task: Callable, unit: str, done: Callable[[], object] | None = None) -> None:
         # task(report, cancel) grava em out (arquivo ou pasta) e devolve quantas tabelas ou linhas (unit); done()
