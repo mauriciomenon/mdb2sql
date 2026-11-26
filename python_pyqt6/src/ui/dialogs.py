@@ -24,8 +24,19 @@ from PyQt6.QtWidgets import (
 from shared.about import APP_NAME, LINKS, about_fields, app_version, link_html
 from shared.bundle import resource
 from shared.display import HELP, Notice
-from shared.i18n import tr
+from shared.i18n import every_language, tr
 
+
+def same_size(buttons: list, texts: list[str]) -> None:
+    """Os botoes de uma caixa com a mesma largura e altura: as do maior texto de `texts` (os 3 idiomas), entao a caixa
+    nao muda com o idioma nem com o texto de cada botao."""
+    probe = QPushButton()  # !T: same style and font as the dialog buttons (no style sheet on them)
+    size = QSize()
+    for text in texts:
+        probe.setText(text)
+        size = size.expandedTo(probe.sizeHint())
+    for button in buttons:
+        button.setFixedSize(size)
 
 
 class AboutDialog(QDialog):
@@ -92,10 +103,11 @@ class AboutDialog(QDialog):
 class ChoiceBox(QDialog):
     """Pergunta sem icone com botoes proprios (chave -> texto): os de `left` a esquerda e os de `right` a direita,
     lado a lado, como OK/Cancelar. Depois de exec(), `choice` e a chave do botao clicado; Esc e o X da caixa deixam
-    `escape`. Enter aciona `default`."""
+    `escape`. Enter aciona `default`. Todos os botoes com o tamanho do maior texto de `sizes` (os textos deles nos 3
+    idiomas; sem `sizes`, os textos de agora)."""
 
     def __init__(self, title: str, text: str, left: dict[str, str], right: dict[str, str], default: str, escape: str,
-                 parent: QWidget | None = None) -> None:
+                 parent: QWidget | None = None, sizes: list[str] | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
         self.choice = escape
@@ -110,6 +122,7 @@ class ChoiceBox(QDialog):
                 row.addWidget(button)
             if side is left:
                 row.addStretch(1)
+        same_size(list(self.buttons.values()), sizes or [*left.values(), *right.values()])
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 16)
         layout.setSpacing(18)
@@ -158,6 +171,8 @@ class DisplayWarning(QDialog):
         ok = QPushButton(tr("button.ok"))
         ok.setDefault(True)
         ok.clicked.connect(self.accept)
+        if notice.command:
+            same_size([copy, ok], every_language("display.copy") + every_language("button.ok"))
         bottom = QHBoxLayout()
         bottom.addWidget(self.help)
         bottom.addStretch(1)
@@ -221,6 +236,8 @@ class ColumnsDialog(QDialog):
         close = QPushButton(tr("button.close"))
         close.setDefault(True)
         close.clicked.connect(self.accept)
+        same_size([show_all, hide_all, close], [text for key in ("columns.show_all", "columns.hide_all", "button.close")
+                                                for text in every_language(key)])
         buttons = QHBoxLayout()
         buttons.addWidget(show_all)
         buttons.addWidget(hide_all)

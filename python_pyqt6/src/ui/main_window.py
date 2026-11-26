@@ -88,9 +88,9 @@ from backend.terms import not_found, parse_terms, report_sheets, search_terms, t
 from shared import i18n
 from shared.about import app_title
 from shared.bundle import resource
-from shared.i18n import num, tr
+from shared.i18n import every_language, num, tr
 from shared.tsv import rows_to_tsv
-from ui.dialogs import AboutDialog, ChoiceBox, ColumnsDialog
+from ui.dialogs import AboutDialog, ChoiceBox, ColumnsDialog, same_size
 from ui.table_model import COPY_ROLE, SORT_ROLE, TableModel, fold, search_words
 from ui.widgets import FlowLayout, PathEdit, SelectionTextDelegate, WrapLabel
 
@@ -1624,7 +1624,8 @@ class MainWindow(QMainWindow):
         """A pergunta ao sair com o SQLite convertido nao salvo (sem abrir): Salvar a esquerda; Voltar e Sair a
         direita. Esc e o X da caixa: Voltar."""
         return ChoiceBox(tr("converted.title"), tr("exit.text", name=source.name), {SAVE: tr("button.save")},
-                         {BACK: tr("button.back"), EXIT: tr("button.exit")}, SAVE, BACK, self)
+                         {BACK: tr("button.back"), EXIT: tr("button.exit")}, SAVE, BACK, self,
+                         every_language("button.save") + every_language("button.back") + every_language("button.exit"))
 
     def ask_exit(self, source: Path) -> str:
         box = self.exit_box(source)
@@ -1634,7 +1635,8 @@ class MainWindow(QMainWindow):
     def export_running_box(self, name: str) -> ChoiceBox:
         """A pergunta ao sair com uma exportacao em andamento (sem abrir): Voltar ou Sair (cancela a exportacao)."""
         return ChoiceBox(tr("export.run_title"), tr("export.run_text", name=name), {},
-                         {BACK: tr("button.back"), EXIT: tr("button.exit")}, BACK, BACK, self)
+                         {BACK: tr("button.back"), EXIT: tr("button.exit")}, BACK, BACK, self,
+                         every_language("button.back") + every_language("button.exit"))
 
     def ask_export_running(self, name: str) -> str:
         box = self.export_running_box(name)
@@ -2266,10 +2268,21 @@ class MainWindow(QMainWindow):
         if out is not None:
             self._start_export(out, lambda report, cancel: export_sheets(manager, sheets, out, report, cancel), "tables")
 
+    def overwrite_box(self, count: int) -> QMessageBox:
+        """A pergunta dos arquivos que ja existem na pasta (sem abrir): Sim / Nao do proprio Qt, do mesmo tamanho."""
+        box = QMessageBox(QMessageBox.Icon.Question, tr("export.title"), counted("export.overwrite_many", count),
+                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
+        buttons = box.buttons()
+        # shortcut: Qt translates Yes/No, so only the texts of the current language are measured; they are shorter
+        # than the minimum button width in the 3 languages (Sim/Nao, Yes/No, Si/No)
+        same_size(buttons, [button.text() for button in buttons])
+        return box
+
     def ask_overwrite_many(self, count: int) -> bool:
         """Uma pergunta so para os arquivos que ja existem na pasta escolhida: substituir (True) ou nao gravar nada."""
-        answer = QMessageBox.question(self, tr("export.title"), counted("export.overwrite_many", count))
-        return answer == QMessageBox.StandardButton.Yes
+        box = self.overwrite_box(count)
+        box.exec()
+        return box.clickedButton() is box.button(QMessageBox.StandardButton.Yes)
 
     def _export_csv_folder(self, title: str, sheets: list[Sheet]) -> None:
         # seletor de PASTA nativo; um <nome>.csv por item; os que ja existem: uma pergunta so
@@ -2327,6 +2340,8 @@ class MainWindow(QMainWindow):
         cancel = box.addButton(tr("button.cancel"), QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(whole)
         box.setEscapeButton(cancel)
+        same_size([whole, found, cancel], every_language("export.whole_table")
+                  + every_language(f"export.found_rows{one}", count=num(count)) + every_language("button.cancel"))
         return box, whole, found
 
     def ask_found_rows(self, count: int) -> bool | None:
