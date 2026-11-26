@@ -150,6 +150,11 @@ test('the converted database question is asked only on exit', () => {
   const same = appFunction('sameSize');
   assert.match(same, /for \(const \[code\] of LANGS\) \{\s*probe\.textContent = translator\(code\)\(\.\.\.labels\[i\]\);\s*width = Math\.max\(width, probe\.getBoundingClientRect\(\)\.width\);/);
   assert.match(same, /for \(const button of buttons\) button\.style\.width = `\$\{Math\.ceil\(width\)\}px`;/);
+  // captura nativa: 3 botoes de 206 px nao cabiam nos 460 px da caixa e dois encolhiam; os botoes nao encolhem e a caixa
+  // cresce ate a linha dos botoes
+  const css = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
+  assert.match(css, /\n {2}dialog \.actions button \{\s*flex-shrink: 0;/);
+  assert.match(css, /\n {2}dialog\.ask \{\s*position: relative;\s*width: min-content;[^\n]*\n\s*min-width: 460px;\s*\}/);
   assert.match(appFunction('openColumns'), /sameSize\(columnsDialog\.querySelector\('\.actions'\), \[\['columns\.showAll'\], \['columns\.hideAll'\], \['common\.close'\]\]\);/);
   assert.match(markup('./App.svelte'), /onclick=\{\(\) => reply\(button\.id\)\}>\{t\(button\.key, button\.values\)\}/);
   // Salvar vale mesmo com pesquisa ou consulta rodando (save ignora busy so quando vem daqui)
@@ -453,6 +458,8 @@ test('buttons in a tab row all have the same height', () => {
   for (const sel of ['.scope button', '.table-bar .columns-button']) {
     assert.match(css.match(new RegExp(`\\n {2}${sel.replace(/\./g, '\\.')} \\{[^}]*\\}`))[0], /padding: 3px 10px;/, sel);
   }
+  // captura nativa: botoes e campo com 24,8 px; o select do Chromium (ignora line-height) dava 26 com 3 px e 24,8 com 2,4
+  assert.match(css, /\n {2}\.limit select \{\s*padding: 2\.4px 6px;\s*\}/);
   // as linhas com botao: Dados (seletor, Colunas...), SQL (Executar), Pesquisa Avancada (seletores, Pesquisar termos)
   const ui = markup('./App.svelte');
   for (const bar of ['<div class="table-bar data-bar">', '<div class="table-bar">\n            <button type="button" title={t(\'sql.runTip\')} onclick={runSql}', '<div class="table-bar terms-bar">']) {

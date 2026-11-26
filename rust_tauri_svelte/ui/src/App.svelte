@@ -2164,7 +2164,9 @@
     color: var(--muted);
   }
 
+  /* os botoes nao encolhem: com a mesma largura (sameSize) a caixa cresce para caber, nunca aperta um deles */
   dialog .actions button {
+    flex-shrink: 0;
     margin: 0;
     padding: 4px 12px;
   }
@@ -2436,7 +2438,8 @@
      botoes numa linha, os da direita lado a lado */
   dialog.ask {
     position: relative;
-    width: 460px;
+    width: min-content; /* 460 px ou a linha dos botoes, se for maior (3 botoes de "So as N linhas encontradas") */
+    min-width: 460px;
   }
 
   dialog.ask .actions {
@@ -2520,8 +2523,10 @@
     gap: 6px;
   }
 
+  /* o select do Chromium ignora line-height (texto de 18 px contra 16,8 dos botoes): 2,4 px em cima e embaixo da a
+     altura dos botoes e campos da linha (24,8 px) */
   .limit select {
-    padding: 3px 6px;
+    padding: 2.4px 6px;
   }
 
   .sql .limit {
