@@ -1553,6 +1553,16 @@ describe('App IPC flow', () => {
     expect(rule('.terms-missing textarea')).not.toMatch(/monospace|Consolas/);
   });
 
+  // standard 18e (owner 26/11): one font, Segoe UI 14 px, in every tab, box, grid and label: the body sets it, every
+  // other rule inherits it (SQL box, Log, titles included); no monospace, no other size
+  it('uses one font, Segoe UI 14 px, everywhere', () => {
+    const css = readFileSync('src/App.css', 'utf8').replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+    const fonts = [...css.matchAll(/\bfont:\s*([^;]+);/g)].map((m) => m[1]);
+    expect(fonts.filter((f) => f !== 'inherit')).toEqual(["14px/1.4 'Segoe UI', system-ui, -apple-system, 'Roboto', sans-serif"]);
+    expect([...new Set([...css.matchAll(/\bfont-size:\s*([^;]+);/g)].map((m) => m[1]))].sort()).toEqual(['14px', 'inherit']);
+    expect(css).not.toMatch(/monospace|Consolas|font-family/);
+  });
+
   // coordinator 26/11: the title "Not found (n)" is not bold, as in the Python and Zig versions
   it('writes the not found title not bold', () => {
     const css = readFileSync('src/App.css', 'utf8').replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');

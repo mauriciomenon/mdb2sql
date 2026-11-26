@@ -237,7 +237,7 @@ body {
   flex: 1;
   min-height: 72px;
   resize: vertical;
-  font: 14px/1.4 Consolas, 'Cascadia Mono', monospace;
+  font: inherit; /* one font, Segoe UI 14 px, in every tab, box, grid and label (standard 18e) */
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -256,7 +256,7 @@ body {
 
 h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: inherit;
   font-weight: 600;
   overflow-wrap: anywhere;
 }
@@ -850,7 +850,7 @@ td[aria-selected='true'] {
 
 .display-cmd code {
   padding: 2px 6px;
-  font: 14px/1.4 Consolas, 'Cascadia Mono', monospace;
+  font: inherit;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -918,10 +918,10 @@ td[aria-selected='true'] {
   background: var(--row-hover);
 }
 
-/* monospace one step smaller than the 14 px base */
+/* the font of the app, as every box (standard 18e) */
 .log textarea {
   resize: none;
-  font: 13px/1.4 Consolas, 'Cascadia Mono', 'DejaVu Sans Mono', monospace;
+  font: inherit;
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--border);
