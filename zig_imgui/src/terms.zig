@@ -45,8 +45,9 @@ pub fn parse(a: Allocator, text: []const u8) Allocator.Error!List {
 pub const Pair = struct { term: usize, table: usize, rows: u64 };
 
 // Tabela com acerto: indice em db.table_names, linhas achadas (uma por termo x linha), identidade de linha usada e
-// as colunas (do arena do resultado)
-pub const Table = struct { table: usize, rows: u64, key: query.RowKey, columns: []const []const u8 };
+// as colunas (do arena do resultado). numeric: quais colunas sao numericas, quando os numeros casam pelo valor
+// (Valor inteiro com algum termo que e numero); null = so texto
+pub const Table = struct { table: usize, rows: u64, key: query.RowKey, columns: []const []const u8, numeric: ?[]const bool = null };
 
 pub const Result = struct {
     arena: std.heap.ArenaAllocator,
@@ -79,6 +80,7 @@ pub fn search(db: *Db, gpa: Allocator, text: []const u8, match: Match, only: ?us
     progress.begin(last - first);
 
     try storeTerms(db, gpa, res.terms);
+    const numbers = match == .whole and try hasNumbers(db);
     var cols = try db.runMax(columns_sql, &.{}, std.math.maxInt(usize));
     defer cols.deinit();
     var pairs: std.ArrayList(Pair) = .empty;
@@ -93,9 +95,9 @@ pub fn search(db: *Db, gpa: Allocator, text: []const u8, match: Match, only: ?us
         const end = @min(i + batch, last);
         parts.clearRetainingCapacity();
         for (i..end) |ti| {
-            const columns = try tableColumns(db, a, &cols, names[ti]);
-            if (columns.len == 0 or res.terms.len == 0) continue;
-            try parts.append(gpa, .{ .table = ti, .columns = columns, .key = if (query.hasRowidColumn(columns)) .hash else .rowid });
+            const tc = try tableColumns(db, a, &cols, names[ti]);
+            if (tc.names.len == 0 or res.terms.len == 0) continue;
+            try parts.append(gpa, .{ .table = ti, .columns = tc.names, .numeric = if (numbers) tc.numeric else null, .key = if (query.hasRowidColumn(tc.names)) .hash else .rowid });
         }
         if (parts.items.len > 0) {
             // as tabelas do lote numa consulta so; se ela falhar (view sem rowid), uma por uma
@@ -109,13 +111,13 @@ pub fn search(db: *Db, gpa: Allocator, text: []const u8, match: Match, only: ?us
             } else |e| {
                 if (e != error.DuckDb or progress.cancel.load(.monotonic)) return e;
                 for (parts.items) |*part| {
-                    var g = try tableCounts(db, gpa, names[part.table], part.columns, match, &part.key, progress);
+                    var g = try tableCounts(db, gpa, names[part.table], part.columns, part.numeric, match, &part.key, progress);
                     defer g.deinit();
                     for (g.rows) |r| try addCount(a, &pairs, found, part, r[0], r[1]);
                 }
             }
             for (parts.items) |part| if (part.rows > 0) {
-                try tables.append(a, .{ .table = part.table, .rows = part.rows, .key = part.key, .columns = part.columns });
+                try tables.append(a, .{ .table = part.table, .rows = part.rows, .key = part.key, .columns = part.columns, .numeric = part.numeric });
                 res.rows += part.rows;
             };
         }
@@ -139,27 +141,74 @@ pub fn search(db: *Db, gpa: Allocator, text: []const u8, match: Match, only: ?us
     return res;
 }
 
-const columns_sql = "SELECT table_name, column_name FROM duckdb_columns() WHERE database_name = current_database() " ++
+const columns_sql = "SELECT table_name, column_name, data_type FROM duckdb_columns() WHERE database_name = current_database() " ++
     "AND schema_name = current_schema() ORDER BY table_name, column_index";
+
+// Coluna numerica (inteiro, decimal, double): em Valor inteiro com numeros vale o valor dela
+fn isNumericType(ty: []const u8) bool {
+    if (std.mem.startsWith(u8, ty, "DECIMAL")) return true;
+    for ([_][]const u8{ "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT", "UHUGEINT", "FLOAT", "DOUBLE" }) |n|
+        if (std.mem.eql(u8, ty, n)) return true;
+    return false;
+}
+
+// !T: Whole value with numbers (item 13 a, the loose rule): a term and a cell that read as numbers match when some
+// reading of one equals some reading of the other. Readings of a number text (sign, digits, "." and "," between
+// digits): with both "." and ",", the last of the two is the decimal mark (1.234,5 and 1,234.5 = 1234.5); one kind
+// repeated is the thousands mark (1.234.567); a single mark gives both readings (1,234 = 1.234 or 1234; 216,0 = 216
+// or 2160); no mark, the number. A numeric cell (integer, decimal, double) reads as its value. Each reading is the
+// key chr(1) || the DOUBLE as text (chr(1) never equals a text key; + 0 turns -0 into 0). n1 = the first reading,
+// n2 = the thousands reading of a single mark. The first character filters out most text before the regex.
+const number_macros = [_][:0]const u8{
+    "CREATE OR REPLACE TEMP MACRO mdb2sql_n1(s) AS CASE WHEN left(s, 1) BETWEEN '+' AND '9' THEN " ++
+        "CASE WHEN regexp_full_match(s, '[+-]?[0-9]+([.,][0-9]+)*') THEN chr(1) || CAST(TRY_CAST(" ++
+        "CASE WHEN contains(s, '.') AND contains(s, ',') THEN CASE WHEN strpos(reverse(s), ',') < strpos(reverse(s), '.') " ++
+        "THEN replace(replace(s, '.', ''), ',', '.') ELSE replace(s, ',', '') END " ++
+        "WHEN length(s) - length(replace(replace(s, '.', ''), ',', '')) > 1 THEN replace(replace(s, '.', ''), ',', '') " ++
+        "ELSE replace(s, ',', '.') END AS DOUBLE) + 0 AS VARCHAR) END END",
+    "CREATE OR REPLACE TEMP MACRO mdb2sql_n2(s) AS CASE WHEN left(s, 1) BETWEEN '+' AND '9' THEN " ++
+        "CASE WHEN regexp_full_match(s, '[+-]?[0-9]+[.,][0-9]+') THEN chr(1) || " ++
+        "CAST(TRY_CAST(replace(replace(s, '.', ''), ',', '') AS DOUBLE) + 0 AS VARCHAR) END END",
+};
+
+// Chaves de Valor inteiro com numeros: o termo em minusculas e as leituras dele como numero
+const number_keys = "(SELECT ord, term, k FROM " ++ terms_table ++ " UNION ALL SELECT ord, term, n FROM (SELECT ord, term, " ++
+    "unnest([mdb2sql_n1(trim(term)), mdb2sql_n2(trim(term))]) AS n FROM " ++ terms_table ++ ") WHERE n IS NOT NULL)";
+
+// Algum termo se le como numero (so entao as celulas ganham as leituras: sem numero, a pesquisa e a de texto)
+fn hasNumbers(db: *Db) !bool {
+    var g = try db.runMax("SELECT 1 FROM " ++ terms_table ++ " WHERE mdb2sql_n1(trim(term)) IS NOT NULL LIMIT 1", &.{}, 1);
+    defer g.deinit();
+    return g.rows.len > 0;
+}
 
 // Tabelas por consulta (UNION ALL), como a busca em todas as tabelas: uma consulta por tabela custava mais que a
 // leitura dela (DB3 pelo leitor do SQLite: 287 consultas so de COUNT(*) levaram 8 s)
 const batch = 32;
 
 // Tabela de um lote: colunas (da arena do resultado), identidade de linha e as linhas achadas
-const Part = struct { table: usize, columns: []const []const u8, key: query.RowKey, rows: u64 = 0 };
+const Part = struct { table: usize, columns: []const []const u8, numeric: ?[]const bool, key: query.RowKey, rows: u64 = 0 };
 
-// Colunas da tabela, copiadas para `a`: as do catalogo; view: o catalogo so as tem depois de usada, o DESCRIBE da aba
-// Esquema sempre tem
-fn tableColumns(db: *Db, a: Allocator, cols: *const dbm.Grid, table: []const u8) ![]const []const u8 {
-    var list: std.ArrayList([]const u8) = .empty;
-    for (cols.rows) |r| if (std.mem.eql(u8, r[0] orelse "", table)) try list.append(a, try a.dupe(u8, r[1] orelse ""));
-    if (list.items.len == 0) {
+const TableColumns = struct { names: []const []const u8, numeric: []const bool };
+
+// Colunas da tabela e quais sao numericas, copiadas para `a`: as do catalogo; view: o catalogo so as tem depois de
+// usada, o DESCRIBE da aba Schema sempre tem
+fn tableColumns(db: *Db, a: Allocator, cols: *const dbm.Grid, table: []const u8) !TableColumns {
+    var names: std.ArrayList([]const u8) = .empty;
+    var numeric: std.ArrayList(bool) = .empty;
+    for (cols.rows) |r| if (std.mem.eql(u8, r[0] orelse "", table)) {
+        try names.append(a, try a.dupe(u8, r[1] orelse ""));
+        try numeric.append(a, isNumericType(r[2] orelse ""));
+    };
+    if (names.items.len == 0) {
         var g = try db.schema(table);
         defer g.deinit();
-        for (g.rows) |r| try list.append(a, try a.dupe(u8, r[0] orelse ""));
+        for (g.rows) |r| {
+            try names.append(a, try a.dupe(u8, r[0] orelse ""));
+            try numeric.append(a, isNumericType(r[1] orelse ""));
+        }
     }
-    return list.items;
+    return .{ .names = names.items, .numeric = numeric.items };
 }
 
 // Uma linha (termo, n) da contagem: o par entra no resultado e o termo conta como achado
@@ -179,7 +228,7 @@ fn batchCounts(db: *Db, gpa: Allocator, names: []const []const u8, parts: []cons
     for (parts, 0..) |part, p| {
         if (p > 0) try sql.appendSlice(gpa, " UNION ALL ");
         try sql.print(gpa, "SELECT {d} AS p, m.ord, COUNT(*) AS n FROM ", .{p});
-        try writeMatches(&sql, gpa, names[part.table], part.columns, match, query.keyExpr(part.key), false);
+        try writeMatches(&sql, gpa, names[part.table], part.columns, part.numeric, match, query.keyExpr(part.key), false);
         try sql.appendSlice(gpa, " m GROUP BY m.ord");
     }
     try sql.appendSlice(gpa, " ORDER BY 1, 2");
@@ -189,14 +238,14 @@ fn batchCounts(db: *Db, gpa: Allocator, names: []const []const u8, parts: []cons
 
 // Linhas por termo de uma tabela: (ord, n). A identidade de linha e o rowid do motor; a tabela sem rowid (view, ou
 // com uma coluna chamada rowid) usa o texto da linha inteira.
-fn tableCounts(db: *Db, gpa: Allocator, table: []const u8, columns: []const []const u8, match: Match, key: *query.RowKey, progress: *Progress) !dbm.Grid {
+fn tableCounts(db: *Db, gpa: Allocator, table: []const u8, columns: []const []const u8, numeric: ?[]const bool, match: Match, key: *query.RowKey, progress: *Progress) !dbm.Grid {
     key.* = if (query.hasRowidColumn(columns)) .hash else .rowid;
     while (true) {
         var sql: std.ArrayList(u8) = .empty;
         defer sql.deinit(gpa);
         // os pares (linha, termo) sem repetir ja contam: a tabela e lida uma vez
         try sql.appendSlice(gpa, "SELECT m.ord, COUNT(*) FROM ");
-        try writeMatches(&sql, gpa, table, columns, match, query.keyExpr(key.*), false);
+        try writeMatches(&sql, gpa, table, columns, numeric, match, query.keyExpr(key.*), false);
         try sql.appendSlice(gpa, " m GROUP BY m.ord ORDER BY m.ord");
         try sql.append(gpa, 0);
         return db.runMax(sql.items[0 .. sql.items.len - 1 :0], &.{}, std.math.maxInt(usize)) catch |e| {
@@ -211,19 +260,39 @@ fn tableCounts(db: *Db, gpa: Allocator, table: []const u8, columns: []const []co
 // terms table in a join; DISTINCT ON: a term in two columns of the same row counts once. With `whole_row` the row
 // itself goes along as the struct mdb2sql_r, so the grid, the copy and the report come from this one scan: joining
 // the table again by rowid gave no rows at random on SQLite files (DB3/DB5 through the sqlite extension).
-fn writeMatches(out: *std.ArrayList(u8), a: Allocator, table: []const u8, columns: []const []const u8, match: Match, key_sql: []const u8, whole_row: bool) Allocator.Error!void {
+// `numeric` (Valor inteiro com numeros): a coluna numerica entra pelo valor; a de texto, pelo texto e pelas leituras
+// dele como numero (number_macros).
+fn writeMatches(out: *std.ArrayList(u8), a: Allocator, table: []const u8, columns: []const []const u8, numeric: ?[]const bool, match: Match, key_sql: []const u8, whole_row: bool) Allocator.Error!void {
     try out.print(a, "(SELECT DISTINCT ON (c.k, t.ord) c.k, t.ord, t.term{s} FROM (SELECT {s} AS k, {s}unnest([", .{
         if (whole_row) ", c.mdb2sql_r" else "", key_sql, if (whole_row) row ++ " AS mdb2sql_r, " else "",
     });
     for (columns, 0..) |col, i| {
         if (i > 0) try out.appendSlice(a, ", ");
-        try out.appendSlice(a, if (match == .whole) "lower(trim(CAST(" ++ row ++ "." else "lower(CAST(" ++ row ++ ".");
-        try query.writeIdent(out, a, col);
-        try out.appendSlice(a, if (match == .whole) " AS VARCHAR)))" else " AS VARCHAR))");
+        const nums = numeric orelse {
+            try out.appendSlice(a, if (match == .whole) "lower(trim(CAST(" ++ row ++ "." else "lower(CAST(" ++ row ++ ".");
+            try query.writeIdent(out, a, col);
+            try out.appendSlice(a, if (match == .whole) " AS VARCHAR)))" else " AS VARCHAR))");
+            continue;
+        };
+        if (i < nums.len and nums[i]) {
+            try out.appendSlice(a, "chr(1) || CAST(TRY_CAST(" ++ row ++ ".");
+            try query.writeIdent(out, a, col);
+            try out.appendSlice(a, " AS DOUBLE) + 0 AS VARCHAR)");
+            continue;
+        }
+        for ([_][]const u8{ "lower(", "mdb2sql_n1(", "mdb2sql_n2(" }, 0..) |f, n| {
+            if (n > 0) try out.appendSlice(a, ", ");
+            try out.appendSlice(a, f);
+            try out.appendSlice(a, "trim(CAST(" ++ row ++ ".");
+            try query.writeIdent(out, a, col);
+            try out.appendSlice(a, " AS VARCHAR)))");
+        }
     }
     try out.appendSlice(a, "]) AS v FROM ");
     try query.writeIdent(out, a, table);
-    try out.print(a, " AS " ++ row ++ ") c JOIN " ++ terms_table ++ " t ON {s})", .{if (match == .whole) "c.v = t.k" else "contains(c.v, t.k)"});
+    try out.print(a, " AS " ++ row ++ ") c JOIN {s} t ON {s})", .{
+        if (numeric != null) number_keys else terms_table, if (match == .whole) "c.v = t.k" else "contains(c.v, t.k)",
+    });
 }
 
 // Nome de coluna do banco: sem diferenciar maiusculas, como o DuckDB compara
@@ -251,7 +320,7 @@ pub fn buildRows(a: Allocator, table: []const u8, hit: Table, match: Match, titl
     }
     // as colunas da tabela, na ordem dela (o struct da linha aberto)
     try out.appendSlice(a, "mdb2sql_r.* FROM ");
-    try writeMatches(&out, a, table, hit.columns, match, query.keyExpr(hit.key), true);
+    try writeMatches(&out, a, table, hit.columns, hit.numeric, match, query.keyExpr(hit.key), true);
     try out.appendSlice(a, if (hit.key == .rowid) " m ORDER BY m.ord, m.k" else " m ORDER BY m.ord");
     if (limit > 0) try out.print(a, " LIMIT {d}", .{limit});
     return out.toOwnedSliceSentinel(a, 0);
@@ -344,6 +413,7 @@ fn exec(db: *Db, gpa: Allocator, sql: *std.ArrayList(u8)) !void {
 // A lista de termos vira uma tabela temporaria do motor (em lotes: o SQL nao cresce sem limite)
 fn storeTerms(db: *Db, gpa: Allocator, terms: []const []const u8) !void {
     try db.exec("CREATE OR REPLACE TEMP TABLE mdb2sql_terms (ord INTEGER, term VARCHAR, k VARCHAR)");
+    for (number_macros) |m| try db.exec(m);
     var sql: std.ArrayList(u8) = .empty;
     defer sql.deinit(gpa);
     var first: usize = 0;
@@ -530,7 +600,7 @@ test "term search on a real database: every table's grid has the rows counted (o
                     try query.writeIdent(&sql, t.allocator, name);
                 } else {
                     try sql.appendSlice(t.allocator, "SELECT m.ord, COUNT(*) FROM ");
-                    try writeMatches(&sql, t.allocator, name, of.items, .whole, if (std.mem.eql(u8, variant, "rowid")) query.keyExpr(.rowid) else "row_number() OVER ()", false);
+                    try writeMatches(&sql, t.allocator, name, of.items, null, .whole, if (std.mem.eql(u8, variant, "rowid")) query.keyExpr(.rowid) else "row_number() OVER ()", false);
                     try sql.appendSlice(t.allocator, " m GROUP BY m.ord");
                 }
                 try sql.append(t.allocator, 0);
@@ -556,6 +626,53 @@ test "term search on a real database: every table's grid has the rows counted (o
             try t.expectEqual(@min(hit.rows, if (limit == 0) hit.rows else limit), g.rows.len);
         };
     };
+}
+
+// Valor inteiro com numeros (item 13 a): 216 acha 216.0 (DOUBLE), "216,0" (texto) e 216 (INTEGER), nao 2160 nem
+// 216.5; 0,1 acha 0.1 (DECIMAL); 1234.5 acha 1234.5 (DECIMAL) e "1.234,5"; 2160 acha tambem "216,0" (um separador so:
+// as duas leituras); texto segue como texto
+fn expectNumbers(db: *Db) !void {
+    var p: Progress = .{};
+    var res = try search(db, t.allocator, "216\n0,1\n1234.5\n216.5\n2160\nx", .whole, null, &p);
+    defer res.deinit();
+    try t.expectEqual(1, res.tables.len);
+    var per: [6]u64 = @splat(0);
+    for (res.pairs) |pair| per[pair.term] = pair.rows;
+    try t.expectEqualSlices(u64, &.{ 3, 1, 2, 0, 3, 1 }, &per);
+    try t.expectEqualStrings("216.5", res.not_found);
+    var g = try page(db, t.allocator, &res, res.tables[0], "Termo", 0);
+    defer g.deinit();
+    try t.expectEqual(3 + 1 + 2 + 3 + 1, g.rows.len);
+    // Contem nao muda: 216 esta no texto de 216.0, 216,0, 2160 e 2160.0
+    var c = try search(db, t.allocator, "0,1", .contains, null, &p);
+    defer c.deinit();
+    try t.expectEqual(0, c.found);
+}
+
+test "item 13 a: whole value with numbers, the loose rule: DOUBLE, DECIMAL, INTEGER and text, in DuckDB and SQLite" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var b1: [256]u8 = undefined;
+    var b2: [256]u8 = undefined;
+    const duck = dbm.tmpPath(&b1, &tmp, "num.duckdb");
+    const lite = dbm.tmpPath(&b2, &tmp, "num.sqlite");
+    const rows = " AS SELECT * FROM (VALUES (1, 216.0::DOUBLE, 0.1::DECIMAL(6,1), 'x'), (2, 5.5, 0.2, '216,0'), " ++
+        "(3, 7.0, 1234.5, 'abc'), (4, 8.0, 0.3, '1.234,5'), (216, 9.0, 0.4, '2160'), (6, 2160.0, 0.5, 'y')) v(id, d, m, s)";
+    var db = dbm.testDb();
+    defer db.close();
+    try db.open(duck, false);
+    try db.exec("CREATE TABLE nums" ++ rows);
+    try db.open(":memory:", false);
+    try db.loadSqlite();
+    var sb: [400]u8 = undefined;
+    try db.exec(try std.fmt.bufPrintSentinel(&sb, "ATTACH '{s}' AS w (TYPE sqlite)", .{lite}, 0));
+    try db.exec("CREATE TABLE w.nums" ++ rows);
+    try db.exec("DETACH w");
+    for ([_][:0]const u8{ duck, lite }) |path| {
+        try db.open(":memory:", false);
+        try db.openReadOnly(path);
+        try expectNumbers(&db);
+    }
 }
 
 test "a table column named like the term column (Termo) breaks neither the grid, the copy nor the report" {
