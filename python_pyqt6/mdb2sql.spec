@@ -9,12 +9,13 @@ from datetime import date
 from pathlib import Path
 
 root = Path(SPECPATH)
-# fonte unica da versao: pyproject.toml; o exe leva o numero (VERSION) e o build (BUILD: numero de commits e data)
+# fonte unica da versao: pyproject.toml; o exe leva o numero (VERSION) e o build (BUILD: commit completo e data),
+# mostrados no Sobre ("Versao 1.3.0 - commit <40 digitos> - <AAAA-MM-DD>")
 version = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
-commits = subprocess.run(["git", "rev-list", "--count", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
 (root / "build").mkdir(exist_ok=True)
 (root / "build" / "VERSION").write_text(version, encoding="utf-8")
-(root / "build" / "BUILD").write_text(f"{commits} {date.today().isoformat()}", encoding="utf-8")
+(root / "build" / "BUILD").write_text(f"{commit} {date.today().isoformat()}", encoding="utf-8")
 
 # extensao sqlite do DuckDB e mdbtools (programas, bibliotecas no Linux, licencas e versao) baixados com sha256
 # conferido: scripts/setup_tools.ps1 (Windows) ou scripts/setup_tools_linux.sh (Debian)

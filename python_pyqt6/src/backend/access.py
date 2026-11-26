@@ -28,6 +28,9 @@ NULL = "\x01NULL\x01"  # nao aparece em texto real: separa NULL da string vazia 
 TIMESTAMP = "%Y-%m-%d %H:%M:%S"
 INVALID_DATE = "1900-01-00"  # data que o mdbtools 1.0.1 do Linux nao converte (fora de ~1900-9999)
 CHUNK = 10_000
+# versao da conversao: vai junto do convertido lembrado entre execucoes; um salvo por versao antiga e convertido de
+# novo. 2: Numeric(p,0) como inteiro (BRIEF 19 a, b)
+CONVERTER_VERSION = 2
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # so existe no Windows: exe GUI sem janela de console
 
 Progress = Callable[[int, int, str], None]
@@ -50,8 +53,10 @@ def quote(name: str) -> str:
 
 
 def decimal_type(precision: int | None, scale: int | None) -> str:
-    # DuckDB (que le o SQLite) guarda ate 38 digitos
-    return f"DECIMAL({min(precision or 18, 38)},{min(scale or 0, 38)})"
+    # o tipo e da coluna (BRIEF 20): Numeric(p,0) do Access e INTEGER (RTUNO, PNTNO; ate 18 digitos cabem no inteiro
+    # de 64 bits do SQLite); com casas, DECIMAL(p,s). O DuckDB (que le o SQLite) guarda ate 38 digitos
+    precision, scale = min(precision or 18, 38), min(scale or 0, 38)
+    return "INTEGER" if scale == 0 and precision <= 18 else f"DECIMAL({precision},{scale})"
 
 
 def mdbtools_dir() -> Path | None:
@@ -116,7 +121,8 @@ def _create(lite: sqlite3.Connection, table: str, columns: list[tuple[str, str]]
 
 
 def _odbc_value(value: object) -> object:
-    # Decimal como texto (o SQLite guarda INTEGER ou REAL pela coluna DECIMAL); data no mesmo formato do mdbtools
+    # o valor como o Access o da; o tipo da coluna (o schema) decide como o SQLite guarda, sem CAST celula a celula
+    # (BRIEF 20). Decimal vai como o texto exato (o sqlite3 nao recebe Decimal); data no mesmo formato do mdbtools
     if isinstance(value, Decimal):
         return str(value)
     if isinstance(value, datetime):

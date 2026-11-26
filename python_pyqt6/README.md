@@ -74,7 +74,7 @@ Tabs:
 
 - **Data** (Ctrl+1): first rows of the selected table. Click a header to sort the loaded rows (numbers sort as
   numbers; third click returns to the original order). One line above the grid holds the search field (Ctrl+F),
-  "This table | All tables", "Rows" (rows loaded from the table and from the SQL result: 100 by default, 500,
+  "This table | All tables" (All tables by default), "Rows" (rows loaded from the table and from the SQL result: 100 by default, 500,
   1000) and Columns...; in a narrow window it wraps to a second line. The
   search runs 300 ms after the last key, or at once with Enter, over the **whole table in the database**, not only
   the loaded rows: a row stays when one of its cells has all the words typed, in any order, ignoring case and
@@ -118,17 +118,19 @@ Tabs:
   Contains" (default in Settings > Term matching) and "This table | All tables" (it always starts in All tables;
   with This table the summary ends with `(only in <table>)`), and Search terms (Ctrl+Enter in the tab). Every column of every table is compared as text: whole value = the cell without spaces at the ends is
   the term; contains = the cell contains it; case does not count. Empty lines are skipped and a repeated term is
-  searched once (`8 terms, 2 repeated`); a header pasted from Excel is a term like any other. The search runs in
+  searched once; a header pasted from Excel is a term like any other. The line of controls is Search terms, a box
+  with `N input lines` and the summary of the search, then, at the right, Whole value | Contains and This table |
+  All tables. The search runs in
   the database engine with progress and Cancel, then shows `X of Y terms found: N rows in M tables`, the tables with
-  hits as `table (n)` and the grid of the chosen one: a Term column plus every column of the table, in the order
-  of the pasted list and then of the table (a row found by two terms appears twice), limited by "Rows". The terms
-  not found are listed below, one per line, with Copy. Right-click on the grid: the three copy items (without the
-  Term column), Copy the rows found in this table (with header, TAB separated, pastes into Excel as exactly the
-  found rows) and the report (Excel, CSV folder, SQLite or DuckDB: one Filter Result sheet with every term, where
-  it was found and how many rows, the terms not found included, then one sheet/table per table with hits; name
-  `<database>_termos`). In Whole value, numbers match loosely: a term and a cell that read as numbers match when
-  a reading of one equals a reading of the other (216 finds 216.0, 216,0 and "216"; 1234.5 finds "1.234,5";
-  never 2160 or 216.5). DB3 (287 tables), a list of 9 terms, whole value, all tables: 6.8 s on the
+  hits as `table (n)` and the grid of the chosen one: the columns of the table (names, order and types as in the
+  table, nothing added), each row found once, in the order of the first term that found it and then of the
+  table, limited by "Rows". The terms not found are listed below, one per line, with Copy. Right-click on the
+  grid: the three copy items, Copy the rows found in this table (with header, TAB separated, pastes into Excel as
+  exactly the found rows) and the report (Excel, CSV folder, SQLite or DuckDB: one sheet/table/file per table
+  with hits, named after it, with the rows found; name `<database> - Advanced Search.xlsx`, in Portuguese
+  `<banco> - Pesquisa Avançada.xlsx`). In Whole value, a term that reads as a number (dot or comma decimal: 216, 216,0, 1.234,5,
+  1,234.5) matches the numeric columns of the table by value (216 finds 216 and 216.0, never 2160 or 216.5); text
+  columns are compared as text. DB3 (287 tables), a list of 9 terms, whole value, all tables: 6.8 s on the
   SQLite file, 3.6 s on the DuckDB file.
 
 Menus:
@@ -141,7 +143,8 @@ Menus:
   SQL result to CSV or Excel; All-tables search result (Excel: one sheet per table with hits, the rows the search
   finds; `<database>_busca`); Advanced Search report (see Advanced Search).
   - Excel: sheet name = table name, cleaned of `[]:*?/\` and cut to the 31-character Excel limit (repeated names
-    get `~2`, `~3`); header in row 1; a table with more than 1,048,575 rows continues in sheets `<name> (2)`, ...
+    get `~2`, `~3`); header in row 1; each column as wide as its longest text (at most 80 characters); numbers
+    and dates are number and date cells, NULL an empty cell; a table with more than 1,048,575 rows continues in sheets `<name> (2)`, ...
   - Current table: the whole current table (not only the loaded rows). When the grid shows part of the
     table (a search or a value filter) it asks first: "Whole table" or "Only the N rows found" (the rows the grid counts, value filters included).
   - SQL result: the whole result of the last query that ran; default name `query.csv` /
@@ -156,21 +159,20 @@ Menus:
   (This table / All tables), Only marked rows, Go to the table list (Ctrl+T), Run SQL (Ctrl+Enter), Search terms
   (Ctrl+Enter in the Advanced Search tab), Log (Ctrl+L). The tables panel cannot be closed.
   The **Log** panel, at the bottom (about 10% of the height, drag the edge to resize), lists the messages of the
-  session with the time in a smaller fixed font (selectable, Ctrl+C, "Copy all"). It starts collapsed and keeps
-  the last state; the arrow in its header and the arrow at the left of the status bar collapse and expand it. While
+  session with the time, in the app font like the rest of the window (selectable, Ctrl+C, "Copy all"). It always starts collapsed; the arrow in its header and the arrow at the left of the status bar collapse and expand it. While
   it is collapsed, the status bar shows the most important message (last error in red, then last warning, then
   the last action) and, at its right end, the number of errors and warnings not seen yet; a click on the message
   opens the log. Right-click on the status bar: Copy (the whole message) and Log. Numeric columns and their headers
   are right-aligned.
 - **Settings**: Theme (System, Light or Dark; switching changes the whole window), Language (English by default,
-  Português (Brasil), Español; applies at once), Default search scope (This table or All tables; the Data tab
-  only), Term matching (Whole value or Contains) and Show NULL
+  Português (Brasil), Español; applies at once), Default search scope (All tables by default, or This table;
+  the Data tab only), Term matching (Whole value or Contains) and Show NULL
   (off by default: a NULL cell is empty). All are saved (Windows registry `HKCU\Software\MDB2SQL`,
   Linux `~/.config/MDB2SQL/MDB2SQL.conf`; with the environment variable `MDB2SQL_SETTINGS=<file.ini>`, in that file).
-- **Help > About mdb2sql**: name, version, Build (number and date), Stack (Python and PyQt6 versions), Window (Qt
-  version), Databases (SQLite and DuckDB versions), Access reading ("Embedded mdbtools 1.0.1", or "Access ODBC
-  driver (installed); fallback: embedded mdbtools 1.0.1"), Writing (SQLite, DuckDB, Excel and CSV; `.mdb` and
-  `.accdb` cannot be written), Author, License, links.
+- **Help > About mdb2sql**: the same lines in the four versions: `MDB2SQL (Python)`, `Version 1.3.0 - commit
+  <full hash> - <build date>` (`dev` when run from the source), `Python x, PyQt6 x (Qt x)`, `Tools: SQLite x,
+  DuckDB x, mdbtools x`, `ODBC driver support, if installed.`, `Author: Mauricio Menon`, `License: GPLv2`, and
+  the GitHub / GitLab links.
 
 The window title is short, `mdb2sql 1.3.0 - Python` (with a file open, `<file> - mdb2sql 1.3.0 - Python`).
 Changes of each version: [CHANGELOG.md](CHANGELOG.md).

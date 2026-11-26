@@ -7,6 +7,7 @@ import csv
 import os
 import re
 import shutil
+import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
@@ -18,13 +19,14 @@ from typing import Any, Callable, Iterable, Iterator, Sequence
 import xlsxwriter
 
 from backend.access import quote
-from backend.db_manager import DBManager, load_sqlite_extension, sql_string
+from backend.db_manager import DBManager, sql_string
 from shared.i18n import num, tr
 
 Progress = Callable[[int, int, str], None]
 Sheet = tuple[str, str, Sequence[Any]]  # (nome da aba, da tabela ou do arquivo; consulta; parametros)
 MAX_SHEET_ROWS = 1_048_575  # linhas de dados por aba: 1.048.576 do Excel menos o cabecalho
 MAX_SHEET_NAME = 31
+MAX_COLUMN_WIDTH = 80  # caracteres: um Memo longo nao vira uma coluna da largura da tela inteira
 CHUNK = 5_000
 _BAD_SHEET_CHARS = re.compile(r"[\[\]:*?/\\]")
 _BAD_FILE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -163,30 +165,74 @@ def database_schema_query(tables: Sequence[str]) -> tuple[str, list[Any]]:
 def _sheets_to_db(
     manager: DBManager, sheets: Sequence[Sheet], out: Path, progress: Progress, cancel: threading.Event | None
 ) -> None:
-    sqlite = out.suffix.lower() == ".sqlite"
+    if out.suffix.lower() == ".sqlite":
+        _sheets_to_sqlite(manager, sheets, out, progress, cancel)
+        return
     with manager.cursor() as cursor:
-        if sqlite:
-            load_sqlite_extension(cursor)
-            cursor.execute(f"ATTACH {sql_string(str(out))} AS export_db (TYPE sqlite, READ_WRITE)")
-        else:
-            cursor.execute(f"ATTACH {sql_string(str(out))} AS export_db (READ_WRITE)")
+        cursor.execute(f"ATTACH {sql_string(str(out))} AS export_db (READ_WRITE)")
         try:
             for done, (name, query, params) in enumerate(sheets):
                 _check(cancel)
                 progress(done, len(sheets), name)
-                select = "*"
-                if sqlite:
-                    # o DuckDB grava DECIMAL no SQLite como VARCHAR (texto: > 20, ORDER BY e SUM comparariam texto);
-                    # DOUBLE vira REAL, com afinidade numerica
-                    columns = cursor.execute(f"SELECT * FROM ({query}) LIMIT 0", list(params)).description
-                    select = ", ".join(
-                        f"CAST({quote(c[0])} AS DOUBLE) AS {quote(c[0])}" if str(c[1]).startswith("DECIMAL")
-                        else quote(c[0]) for c in columns
-                    )
-                cursor.execute(f"CREATE TABLE export_db.{quote(name)} AS SELECT {select} FROM ({query})", list(params))
+                cursor.execute(f"CREATE TABLE export_db.{quote(name)} AS SELECT * FROM ({query})", list(params))
         finally:
             # o ATTACH vale para todos os cursores do banco: soltar o arquivo mesmo em erro/cancelamento
             cursor.execute("DETACH export_db")
+
+
+_SQLITE_KEPT = re.compile(r"(?:U?(?:TINY|SMALL|BIG|HUGE)?INT(?:EGER)?|DOUBLE|FLOAT|REAL|BOOLEAN|DATE|TIME|BLOB"
+                          r"|DECIMAL\(\d+,\d+\))")
+
+
+def _sqlite_type(kind: str) -> str:
+    """Tipo declarado no SQLite para um tipo do DuckDB, como o Access convertido (BRIEF 19 c): o leitor do app (e
+    outros programas) le de volta o mesmo tipo. O DuckDB gravaria DECIMAL e TIMESTAMP como texto e BOOLEAN como
+    BIGINT."""
+    kind = kind.upper()
+    if _SQLITE_KEPT.fullmatch(kind):
+        return kind
+    return "DATETIME" if kind.startswith("TIMESTAMP") else "TEXT"
+
+
+def _sqlite_value(value: object) -> object:
+    # como a conversao do Access: o tipo declarado da coluna decide como o SQLite guarda (BRIEF 20), Decimal vai como
+    # o texto exato; data e hora no formato do Access convertido; o que o SQLite nao guarda (lista, uuid...) como texto
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(value, (date, time)):
+        return value.isoformat()
+    if isinstance(value, int) and not -(2**63) <= value < 2**63:
+        return str(value)  # HUGEINT alem do inteiro do SQLite: texto exato
+    if value is None or isinstance(value, (str, int, float, bytes)):
+        return value
+    return str(value)
+
+
+def _sheets_to_sqlite(
+    manager: DBManager, sheets: Sequence[Sheet], out: Path, progress: Progress, cancel: threading.Event | None
+) -> None:
+    # cada tabela com os tipos declarados da origem e os valores nas classes do SQLite (sqlite3 do Python, como a
+    # conversao do Access)
+    lite = sqlite3.connect(out)
+    try:
+        lite.execute("PRAGMA journal_mode = OFF")
+        lite.execute("PRAGMA synchronous = OFF")
+        with manager.cursor() as cursor:
+            for done, (name, query, params) in enumerate(sheets):
+                _check(cancel)
+                progress(done, len(sheets), name)
+                cursor.execute(query, list(params))
+                columns = ", ".join(f"{quote(c[0])} {_sqlite_type(str(c[1]))}" for c in cursor.description)
+                lite.execute(f"CREATE TABLE {quote(name)} ({columns})")
+                insert = f"INSERT INTO {quote(name)} VALUES ({', '.join('?' * len(cursor.description))})"
+                for rows in _chunks(cursor):
+                    _check(cancel)
+                    lite.executemany(insert, [tuple(_sqlite_value(v) for v in row) for row in rows])
+        lite.commit()
+    finally:
+        lite.close()
 
 
 def _excel_value(value: object) -> object:
@@ -214,6 +260,19 @@ def _workbook(out: Path) -> xlsxwriter.Workbook:
     )
 
 
+def _cell_width(value: object) -> int:
+    """Largura do texto da celula em caracteres, como o Excel mostra (data e hora: 19; numero: os digitos)."""
+    if isinstance(value, str):
+        return len(value)
+    if isinstance(value, datetime):
+        return 19
+    if isinstance(value, date):
+        return 10
+    if isinstance(value, float):
+        return min(len(repr(value)), 12)  # o formato Geral mostra no maximo ~11 digitos
+    return 0 if value is None else len(str(value))
+
+
 def _write_sheets(
     book: xlsxwriter.Workbook,
     title: str,
@@ -225,17 +284,30 @@ def _write_sheets(
     # tabela maior que uma aba continua em '<nome> (2)', '<nome> (3)', ...
     part, row, written = 1, 0, 0
     sheet = book.add_worksheet(sheet_name(title, part, used))
+    sheets = [sheet]
     sheet.write_row(0, 0, header)
+    # largura de cada coluna pelo conteudo (best fit, BRIEF 19 g); o autofit do xlsxwriter nao funciona com
+    # constant_memory, entao a largura e medida enquanto as linhas passam
+    widths = [len(str(name)) for name in header]
     for chunk in chunks:
         _check(cancel)
         for values in chunk:
             if row == MAX_SHEET_ROWS:
                 part, row = part + 1, 0
                 sheet = book.add_worksheet(sheet_name(title, part, used))
+                sheets.append(sheet)
                 sheet.write_row(0, 0, header)
             row += 1
-            sheet.write_row(row, 0, [_excel_value(v) for v in values])
+            cells = [_excel_value(v) for v in values]
+            for index, value in enumerate(cells):
+                width = _cell_width(value)
+                if width > widths[index]:
+                    widths[index] = width
+            sheet.write_row(row, 0, cells)
         written += len(chunk)
+    for each in sheets:
+        for index, width in enumerate(widths):
+            each.set_column(index, index, min(width, MAX_COLUMN_WIDTH) + 2)  # + margem: o texto nunca encosta
     return written
 
 

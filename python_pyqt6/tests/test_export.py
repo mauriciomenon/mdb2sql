@@ -25,7 +25,8 @@ def test_export_to_sqlite_keeps_decimals_numeric(tmp_path: Path) -> None:
 
     lite = sqlite3.connect(out)
     expected = sorted(p for p in prices if p > 20)
-    assert lite.execute("SELECT DISTINCT typeof(UnitPrice) FROM Products").fetchall() == [("real",)]
+    # a coluna com o tipo da origem (o schema: BRIEF 20); as contas abaixo provam que ela tem numero
+    assert lite.execute("PRAGMA table_info(Products)").fetchone()[2] == "DECIMAL(19,4)"
     count, total = lite.execute("SELECT count(*), round(sum(UnitPrice), 2) FROM Products WHERE UnitPrice > 20").fetchone()
     assert (count, total) == (len(expected), round(sum(expected), 2))
     top = [r[0] for r in lite.execute("SELECT UnitPrice FROM Products ORDER BY UnitPrice DESC LIMIT 3")]
@@ -35,6 +36,44 @@ def test_export_to_sqlite_keeps_decimals_numeric(tmp_path: Path) -> None:
 
 def _noop(*_args) -> None:
     pass
+
+
+def test_every_output_keeps_the_columns_titles_and_types(tmp_path: Path) -> None:
+    # BRIEF 19 c: tabela atual, marcadas, resultado do SQL e Salvar como: as mesmas colunas, titulos, ordem e tipos
+    # da tabela; no Excel numero e celula numerica, data e data, NULL vazio; nenhuma coluna a mais
+    from backend.db_manager import MARK_KEY
+
+    db_file = tmp_path / "typed.duckdb"
+    with duckdb.connect(str(db_file)) as conn:
+        conn.execute("CREATE TABLE t (RTUNO BIGINT, PNTNO INTEGER, BIAS DOUBLE, PRECO DECIMAL(19,4), QUANDO TIMESTAMP,"
+                     " ATIVO BOOLEAN, NOME VARCHAR)")
+        conn.execute("INSERT INTO t VALUES (50, 238, 0.5, 12.3456, TIMESTAMP '2026-07-14 10:11:12', true, 'U9A'),"
+                     " (51, NULL, NULL, NULL, NULL, NULL, NULL)")
+    header = ("RTUNO", "PNTNO", "BIAS", "PRECO", "QUANDO", "ATIVO", "NOME")
+    with DBManager(str(db_file)) as manager:
+        keys = [row[MARK_KEY] for row in manager.fetch_rows(*manager.select_table("t", keyed=True))]
+        outputs = {"table": manager.select_table("t"), "marked": manager.marked_query("t", keys),
+                   "sql": ("SELECT * FROM t", [])}
+        for name, (query, params) in outputs.items():
+            export_result(manager, query, "t", tmp_path / f"{name}.xlsx", _noop, params=params)
+        for suffix in (".xlsx", ".duckdb", ".sqlite"):
+            export_database(manager, tmp_path / f"saved{suffix}", _noop)
+        source_types = manager.column_types()["t"]
+    for name in (*outputs, "saved"):
+        sheet = openpyxl.load_workbook(tmp_path / f"{name}.xlsx")["t"]
+        assert tuple(c.value for c in sheet[1]) == header, name
+        assert [c.data_type for c in sheet[2]] == ["n", "n", "n", "n", "d", "b", "s"], name
+        assert sheet["A2"].value == 50 and sheet["B2"].value == 238 and sheet["D2"].value == 12.3456, name
+        assert [c.value for c in sheet[3]] == [51, None, None, None, None, None, None], name
+    with DBManager(str(tmp_path / "saved.duckdb")) as saved:
+        assert saved.column_types()["t"] == source_types
+    with DBManager(str(tmp_path / "saved.sqlite")) as saved:
+        types = saved.column_types()["t"]
+        assert list(types) == list(header) and types["NOME"] == "VARCHAR"
+        assert all(kind != "VARCHAR" for column, kind in types.items() if column != "NOME"), types
+        assert types["PRECO"] == "DECIMAL(19,4)" and types["ATIVO"] == "BOOLEAN" and types["QUANDO"] == "TIMESTAMP"
+        row = saved.query_table("t")[0]
+        assert (row["RTUNO"], row["PNTNO"], row["ATIVO"], str(row["QUANDO"])) == (50, 238, True, "2026-07-14 10:11:12")
 
 
 def test_sheet_name_rules() -> None:
@@ -132,6 +171,19 @@ def test_export_result_xlsx_keeps_text_that_looks_like_formula(tmp_path: Path) -
     # binario em hex e data que o Excel nao representa como texto, em vez de erro ou numero negativo
     assert [c.value for c in sheet[2]][3:] == ["0001", "1800-01-02 03:04:05", 1.5]
     assert (tmp_path / "t.csv").read_text(encoding="utf-8-sig").splitlines() == ["bin", "0001"]
+    # BRIEF 19 c: o numero e celula numerica, a data e data (nada vira texto)
+    assert sheet["F2"].data_type == "n" and sheet["C2"].is_date
+
+
+def test_excel_columns_fit_their_content(manager: DBManager, tmp_path: Path) -> None:
+    # BRIEF 19 g: cada coluna com a largura do maior texto (cabecalho ou celula) + margem, sem arrastar no Excel
+    out = tmp_path / "people.xlsx"
+    export_result(manager, "SELECT id, name || ' da Silva Sauro' AS name, score FROM people", "people", out, _noop)
+    sheet = openpyxl.load_workbook(out)["people"]
+    widths = {column: sheet.column_dimensions[column].width for column in "ABC"}
+    assert widths["A"] == pytest.approx(len("10") + 2, abs=1)  # "id" e 10: dois caracteres
+    assert widths["B"] == pytest.approx(len("Bruno da Silva Sauro") + 2, abs=1)
+    assert widths["C"] == pytest.approx(len("score") + 2, abs=1)
 
 
 def test_cancel_removes_partial_file(manager: DBManager, tmp_path: Path) -> None:

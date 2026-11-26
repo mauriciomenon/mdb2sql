@@ -26,7 +26,7 @@ from PyQt6.QtCore import (
     QTranslator,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QActionGroup, QFontDatabase, QGuiApplication, QIcon, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QGuiApplication, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDockWidget,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -68,7 +69,7 @@ from backend.database_tasks import (
     load_table_payload,
     open_database,
 )
-from backend.db_manager import ACCESS_EXT, DBManager, sql_string, unique_names
+from backend.db_manager import ACCESS_EXT, DBManager, sql_string
 from backend.export import (
     Cancelled,
     Sheet,
@@ -81,7 +82,7 @@ from backend.export import (
     export_sheets,
     table_schema_query,
 )
-from backend.access import quote
+from backend.access import CONVERTER_VERSION, quote
 from backend import temp_store
 from backend.terms import not_found, parse_terms, report_sheets, search_terms, table_hits
 from shared import i18n
@@ -502,10 +503,7 @@ class MainWindow(QMainWindow):
 
         self.sql_edit = QPlainTextEdit()
         self.sql_edit.setAccessibleName("SQL")
-        self.sql_edit.setPlaceholderText("SELECT * FROM ...")
-        sql_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        sql_font.setPointSizeF(self.font().pointSizeF())  # monoespacada no tamanho da base (14 px), nao nos 9 pt
-        self.sql_edit.setFont(sql_font)
+        self.sql_edit.setPlaceholderText("SELECT * FROM ...")  # a fonte do app, como todo o resto (BRIEF 18 e)
         self.sql_edit.addAction(self.run_sql_action)
         # botao do mesmo tipo dos outros das abas (QToolButton): mesma altura e preenchimento numa linha (13 f)
         run_button = QToolButton()
@@ -722,16 +720,32 @@ class MainWindow(QMainWindow):
         self.terms_run_button = QToolButton()  # como as alternancias da mesma linha: mesma altura (13 f)
         self._t(self.terms_run_button.setText, "terms.run")
         self.terms_run_button.clicked.connect(self.run_terms)
+        height = self.terms_run_button.sizeHint().height()
+        # linha dos controles (BRIEF 18 c): Pesquisar termos | caixa fixa com margem ("N linhas de entrada" e o resumo
+        # da pesquisa; estica, nunca menor que o texto: nada cortado) | encostados a direita: Valor inteiro | Contem,
+        # linha fina, Esta tabela | Todas as tabelas. Janela estreita: o que nao cabe vai para a linha de baixo
         self.terms_count = QLabel()
-        bar = FlowLayout()
-        bar.addWidget(self._toggle_pair(self.match_actions, "menu.terms_match"))
-        bar.addWidget(self._toggle_pair(self.terms_scope_actions, "scope.name"))
-        bar.addWidget(self.terms_run_button)
-        bar.addWidget(self.terms_count)
-
         self.terms_summary = QLabel()
-        self.terms_summary.setWordWrap(True)
         self._copy_menu_on(self.terms_summary)
+        summary_box = QFrame()
+        summary_box.setFrameShape(QFrame.Shape.StyledPanel)
+        summary_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        summary_box.setFixedHeight(height)
+        box_row = QHBoxLayout(summary_box)
+        box_row.setContentsMargins(8, 0, 8, 0)
+        box_row.setSpacing(12)
+        box_row.addWidget(self.terms_count)
+        box_row.addWidget(self.terms_summary, 1)
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.VLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setFixedHeight(height)
+        bar = FlowLayout()
+        bar.addWidget(self.terms_run_button)
+        bar.addWidget(summary_box)
+        bar.addWidget(self._toggle_pair(self.match_actions, "menu.terms_match"))
+        bar.addWidget(separator)
+        bar.addWidget(self._toggle_pair(self.terms_scope_actions, "scope.name"))
         # tabelas com acerto "tabela (n)" (como a busca em todas as tabelas) e a grade da escolhida
         self.terms_found = QListWidget()
         self._t(self.terms_found.setAccessibleName, "search.found_name")
@@ -774,7 +788,6 @@ class MainWindow(QMainWindow):
         layout.setSpacing(6)
         layout.addWidget(self.terms_edit)
         layout.addLayout(bar)
-        layout.addWidget(self.terms_summary)
         layout.addWidget(results, 1)
         layout.addLayout(title_row)
         layout.addWidget(self.not_found_edit)
@@ -873,15 +886,12 @@ class MainWindow(QMainWindow):
 
     def _create_log(self) -> None:
         # Painel Log embaixo: mensagens da sessao (hora + texto), selecionaveis, Ctrl+C e "Copiar tudo";
-        # recolhido por padrao (estado lembrado); recolhido, a barra de status mostra erro > aviso > ultima acao
+        # recolhido ao abrir; recolhido, a barra de status mostra erro > aviso > ultima acao; a fonte do app (BRIEF 18 e)
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self._t(self.log_view.setAccessibleName, "log.title")
         self.log_view.setMaximumBlockCount(LOG_LINES)
         self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        font.setPointSizeF(max(8.0, self.font().pointSizeF() - 1))  # um passo menor que a base, legivel
-        self.log_view.setFont(font)
         self.log_view.setMinimumHeight(3 * self.log_view.fontMetrics().lineSpacing() + 10)  # minimo: 3 linhas
         panel = QWidget()
         layout = QVBoxLayout(panel)
@@ -936,7 +946,6 @@ class MainWindow(QMainWindow):
         self._refresh_log_status()
 
     def set_log_visible(self, visible: bool) -> None:
-        self.settings.setValue("log_visible", bool(visible))
         self.log_action.setChecked(bool(visible))
         self.log_dock.setVisible(bool(visible))
         if visible:
@@ -1198,8 +1207,9 @@ class MainWindow(QMainWindow):
         apply_theme(name)
 
     def default_scope(self) -> str:
-        scope = str(self.settings.value("search_scope", "table"))
-        return scope if scope in SCOPES else "table"
+        # padrao Todas as tabelas (BRIEF 18 a): com Esta tabela, a busca com a 1a tabela aberta nao achava nada
+        scope = str(self.settings.value("search_scope", "all"))
+        return scope if scope in SCOPES else "all"
 
     def set_default_scope(self, name: str) -> None:
         # grava o padrao e ja vale na aba Dados (a Pesquisa Avancada nao segue: BRIEF 17)
@@ -1298,7 +1308,7 @@ class MainWindow(QMainWindow):
         status_bar.addPermanentWidget(self.log_unread)
         status_bar.addPermanentWidget(self.hidden_label)
         status_bar.addPermanentWidget(self.reader_label)
-        self.set_log_visible(self.settings.value("log_visible", False, type=bool))  # padrao: recolhido
+        self.set_log_visible(False)  # sempre recolhido ao abrir, nas 4 versoes (BRIEF 18 d)
 
     def status_menu(self, label: QLabel) -> QMenu:
         menu = QMenu(self)
@@ -1473,8 +1483,7 @@ class MainWindow(QMainWindow):
         if view is None:
             return
         model = view.model()
-        # sem a caixa de marcar; na grade de Termos, sem a coluna Termo
-        columns = range(1 if view is self.terms_table else 0, len(model.sourceModel().columns))
+        columns = range(len(model.sourceModel().columns))  # sem a caixa de marcar (fora de columns)
         rows = sorted({index.row() for index in view.selectedIndexes()})
         if not rows:
             return
@@ -1550,11 +1559,13 @@ class MainWindow(QMainWindow):
 
     def saved_conversion(self, source: Path) -> Path | None:
         """Arquivo salvo (SQLite ou DuckDB) deste Access, se nenhum dos dois mudou desde entao (caminho + tamanho +
-        data)."""
+        data) e se foi feito pela conversao de agora (um de versao antiga tem os tipos errados: converte de novo)."""
         if source.suffix.lower() not in (".accdb", ".mdb"):
             return None
         entry = self._saved_conversions().get(path_key(source))
         if not isinstance(entry, dict) or not file_key(source) or entry.get("source") != file_key(source):
+            return None
+        if entry.get("converter") != CONVERTER_VERSION:
             return None
         dest = Path(str(entry.get("dest", "")))
         return dest if entry.get("dest_key") and file_key(dest) == entry.get("dest_key") else None
@@ -1562,7 +1573,8 @@ class MainWindow(QMainWindow):
     def _remember_conversion(self, source: Path, source_key: str, dest: Path) -> None:
         saved = {k: v for k, v in self._saved_conversions().items()
                  if isinstance(v, dict) and Path(str(v.get("dest", ""))).is_file()}  # sem os apagados
-        saved[path_key(source)] = {"source": source_key, "dest": str(dest), "dest_key": file_key(dest)}
+        saved[path_key(source)] = {"source": source_key, "dest": str(dest), "dest_key": file_key(dest),
+                                   "converter": CONVERTER_VERSION}
         self.settings.setValue("converted_files", json.dumps(saved))
 
     def _on_database_loaded(self, request_id: int, result: object) -> None:
@@ -2232,12 +2244,10 @@ class MainWindow(QMainWindow):
         self.terms_edit.setFocus()
 
     def _count_terms(self) -> None:
-        # "8 termos, 2 repetidos" enquanto o texto muda
+        # "10 linhas de entrada" (linhas nao vazias, repetidas incluidas) enquanto o texto muda (BRIEF 18 c)
         terms, repeated = parse_terms(self.terms_edit.toPlainText())
-        text = counted("terms.count", len(terms)) if terms else ""
-        if repeated:
-            text += counted("terms.repeated", repeated)
-        self.terms_count.setText(text)
+        lines = len(terms) + repeated
+        self.terms_count.setText(counted("terms.lines", lines) if lines else "")
         self._update_run_actions()
 
     def _update_run_actions(self) -> None:
@@ -2276,8 +2286,9 @@ class MainWindow(QMainWindow):
 
     def _on_terms_done(self, result: object) -> None:
         self.terms_result = result  # type: ignore[assignment]
-        for table, counts in self.terms_result["hits"]:  # type: ignore[index]
-            item = QListWidgetItem(tr("search.found_item", table=table, count=num(sum(counts.values()))))
+        for table, _counts in self.terms_result["hits"]:  # type: ignore[index]
+            # linhas achadas, cada uma uma vez: as que a grade, a copia e o relatorio trazem
+            item = QListWidgetItem(tr("search.found_item", table=table, count=num(self.terms_result["rows"][table])))
             item.setData(Qt.ItemDataRole.UserRole, table)
             self.terms_found.addItem(item)
         self._show_terms_summary()
@@ -2292,7 +2303,7 @@ class MainWindow(QMainWindow):
             self.not_found_title.setText(tr("terms.not_found", count=num(0)))
             return
         missing = not_found(result)
-        rows = sum(sum(counts.values()) for _table, counts in result["hits"])
+        rows = sum(result["rows"].values())
         found = counted("terms.found", len(result["terms"]), found=num(len(result["terms"]) - len(missing)))
         summary = tr("terms.summary", found=found, rows=counted("terms.rows", rows),
                      tables=counted("terms.tables", len(result["hits"])))
@@ -2338,13 +2349,11 @@ class MainWindow(QMainWindow):
         if request_id != self._terms_request or self.terms_result is None:
             return
         table, rows = result  # type: ignore[misc]
-        # os nomes que a consulta devolve: uma coluna da tabela com o nome da coluna Termo vem como Termo_2
-        columns = list(rows[0]) if rows else unique_names([tr("terms.column"), *self.terms_result["columns"][table]])
-        self.terms_model.set_rows(rows, columns)
+        # so as colunas da tabela, com os nomes dela (sem coluna Termo: BRIEF 19 d)
+        self.terms_model.set_rows(rows, self.terms_result["columns"][table])
         self.terms_table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
         self._fit_columns(self.terms_table)
-        total = dict(self.terms_result["hits"])[table]
-        self._set_message(self.terms_info, counted("status.showing", sum(total.values()), table=table,
+        self._set_message(self.terms_info, counted("status.showing", self.terms_result["rows"][table], table=table,
                                                    loaded=num(len(rows))), log=False)
 
     def _on_term_rows_error(self, request_id: int, message: str) -> None:
@@ -2352,8 +2361,8 @@ class MainWindow(QMainWindow):
             self._set_message(self.status_label, tr("status.error", message=message), error=True)
 
     def copy_term_hits(self) -> None:
-        """Todas as linhas achadas da tabela escolhida, com cabecalho, separadas por TAB, sem a coluna Termo: colar no
-        Excel da exatamente as linhas achadas."""
+        """Todas as linhas achadas da tabela escolhida, com cabecalho, separadas por TAB: colar no Excel da exatamente
+        as linhas achadas, com as colunas da tabela."""
         table = self._term_table()
         if self.manager is None or self.terms_result is None or not table:
             return
@@ -2361,17 +2370,18 @@ class MainWindow(QMainWindow):
         # if a table with hundreds of thousands of hits shows up
         rows = self.manager.fetch_rows(*table_hits(self.terms_result, table))
         columns = self.terms_result["columns"][table]
-        QGuiApplication.clipboard().setText(rows_to_tsv([list(row.values())[1:] for row in rows], columns))
+        QGuiApplication.clipboard().setText(rows_to_tsv([list(row.values()) for row in rows], columns))
 
     def export_terms_as(self, suffix: str) -> None:
-        # o relatorio: Resumo, uma aba por tabela com acerto e Nao encontrados; CSV = uma pasta, um arquivo por aba
+        # o relatorio: uma aba por tabela com acerto; CSV = uma pasta, um arquivo por tabela. Nome sugerido
+        # "<banco> - Pesquisa Avancada" (BRIEF 19 e)
         if self.manager is None or self.terms_result is None or self.current_db_path is None:
             return
         manager, sheets = self.manager, report_sheets(self.terms_result)
         if suffix == ".csv":
             self._export_csv_folder(tr("export.terms"), sheets)
             return
-        out = self._ask_save_path(tr("export.terms"), f"{self.current_db_path.stem}_termos", (suffix,))
+        out = self._ask_save_path(tr("export.terms"), f"{self.current_db_path.stem} - {tr('tab.terms')}", (suffix,))
         if out is not None:
             self._start_export(out, lambda report, cancel: export_sheets(manager, sheets, out, report, cancel), "tables")
 

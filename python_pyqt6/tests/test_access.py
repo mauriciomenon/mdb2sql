@@ -56,7 +56,7 @@ def test_mdb_schema_tables_maps_access_types() -> None:
 
     assert list(tables) == ["RANGER_SOSTAT", "OTHER"]
     assert tables["RANGER_SOSTAT"] == [
-        ("RTUNO", "DECIMAL(10,0)"),
+        ("RTUNO", "INTEGER"),  # Numeric(p,0) e inteiro (BRIEF 19 a e 20: o tipo e da coluna)
         ("SUBNAM", "TEXT"),
         ("VALUE", "DOUBLE"),
         ("WHEN", "DATETIME"),
@@ -70,10 +70,15 @@ def test_mdb_schema_tables_maps_access_types() -> None:
 
 
 def test_odbc_types() -> None:
-    assert access._odbc_type("DECIMAL", 10, 0) == "DECIMAL(10,0)"
+    # Numeric(p,0) e INTEGER (ate 18 digitos), acima DECIMAL(p,0); com casas, DECIMAL(p,s): o tipo e da coluna
+    assert access._odbc_type("DECIMAL", 10, 0) == access._odbc_type("NUMERIC", 5, 0) == "INTEGER"
+    assert access._odbc_type("NUMERIC", 30, 0) == "DECIMAL(30,0)"
     assert access._odbc_type("COUNTER", 10, 0) == "INTEGER"
     assert access._odbc_type("LONGCHAR", 1073741823, None) == "TEXT"
     assert access._odbc_type("NUMERIC", 60, 2) == "DECIMAL(38,2)"
+    assert access._odbc_type("REAL", 24, None) == "REAL" and access._odbc_type("DOUBLE", 53, None) == "DOUBLE"
+    # o valor como o Access o da, sem CAST celula a celula (BRIEF 20): o schema decide como o SQLite guarda
+    assert access._odbc_value(Decimal("12.50")) == "12.50"
 
 
 @pytest.mark.parametrize(
@@ -207,6 +212,58 @@ def test_sample_mdb_converts_once_to_a_typed_sqlite_file(monkeypatch, tmp_path: 
     folder = manager.converted.parent
     manager.release()  # Apagar: a pasta do SQLite convertido some
     assert not folder.exists() and copy.exists()
+
+
+@pytest.mark.skipif(os.name != "nt" or not access.odbc_available(), reason="cria o .mdb pelo driver ODBC do Access")
+@pytest.mark.parametrize("reader", READERS)
+def test_numbers_with_decimals_are_numbers_everywhere(monkeypatch, tmp_path: Path, reader: str) -> None:
+    # BRIEF 19 h e 20: Currency, Decimal(10,2), Single e Double saem numero: o SQLite convertido tem o tipo do Access
+    # em cada coluna (o schema), a coluna numerica tem numero, o DuckDB salvo mantem DECIMAL e o Excel tem celula
+    # numerica
+    import ctypes
+
+    import openpyxl
+    import pyodbc
+
+    from backend.export import export_database
+
+    mdb = tmp_path / "nums.mdb"
+    created = ctypes.windll.ODBCCP32.SQLConfigDataSourceW(
+        None, 1, access.ODBC_DRIVER, ctypes.create_unicode_buffer(f'CREATE_DB="{mdb}" General\0\0'))
+    assert created
+    # ExtendedAnsiSQL=1: o DDL ANSI-92 do driver, o unico com DECIMAL(p,s)
+    conn = pyodbc.connect(f"Driver={{{access.ODBC_DRIVER}}};DBQ={mdb};ExtendedAnsiSQL=1;", autocommit=True)
+    try:
+        conn.execute("CREATE TABLE nums (id INTEGER, dinheiro CURRENCY, decimal2 DECIMAL(10,2), simples REAL,"
+                     " duplo FLOAT)")
+        conn.execute("INSERT INTO nums VALUES (1, 18.5, 12.34, 1.5, 2316.25)")
+        conn.execute("INSERT INTO nums VALUES (2, 7, -3, -0.25, 0.001)")
+    finally:
+        conn.close()
+    monkeypatch.setenv("MDB2SQL_ACCESS_READER", reader)
+    manager = DBManager()
+    manager.connect(str(mdb), work_dir=tmp_path)
+    try:
+        lite = sqlite3.connect(manager.converted)
+        declared = {row[1]: row[2] for row in lite.execute("PRAGMA table_info(nums)")}
+        lite.close()
+        assert declared == {"id": "INTEGER", "dinheiro": "DECIMAL(19,4)", "decimal2": "DECIMAL(10,2)",
+                            "simples": "REAL", "duplo": "DOUBLE"}
+        assert manager.column_types()["nums"] == {"id": "BIGINT", "dinheiro": "DECIMAL(19,4)",
+                                                  "decimal2": "DECIMAL(10,2)", "simples": "DOUBLE", "duplo": "DOUBLE"}
+        assert manager.query_table("nums")[0] == {"id": 1, "dinheiro": Decimal("18.5"), "decimal2": Decimal("12.34"),
+                                                  "simples": 1.5, "duplo": 2316.25}
+        for suffix in (".duckdb", ".xlsx"):
+            export_database(manager, tmp_path / f"saved{suffix}", lambda *_a: None)
+    finally:
+        manager.release()
+    with DBManager(str(tmp_path / "saved.duckdb")) as saved:
+        types = saved.column_types()["nums"]
+        assert types["dinheiro"] == "DECIMAL(19,4)" and types["decimal2"] == "DECIMAL(10,2)"
+        assert saved.query_table("nums")[0]["decimal2"] == Decimal("12.34")
+    sheet = openpyxl.load_workbook(tmp_path / "saved.xlsx")["nums"]
+    assert [[c.data_type for c in row] for row in sheet.iter_rows(min_row=2)] == [["n"] * 5, ["n"] * 5]
+    assert [c.value for c in sheet[2]] == [1, 18.5, 12.34, 1.5, 2316.25]
 
 
 def test_saving_an_access_file_as_sqlite_copies_the_converted_file(monkeypatch, tmp_path: Path) -> None:

@@ -1,7 +1,7 @@
-# Dados do dialogo Sobre (as linhas do Rust): nome, versao (fonte unica: pyproject.toml), build, stack, janela,
-# bancos, leitura do Access, autor, licenca e links do codigo
-# !T: The version comes from pyproject.toml; the frozen exe carries it in VERSION and the build number/date in
-# !T: BUILD (both written by mdb2sql.spec); outside the exe the build is "dev"
+# Dados do dialogo Sobre, iguais nas 4 versoes (BRIEF 18 b): nome, versao com o commit, runtime, ferramentas, ODBC,
+# autor, licenca e os links do codigo
+# !T: The version comes from pyproject.toml; the frozen exe carries it in VERSION and the full commit hash and the
+# !T: build date in BUILD (both written by mdb2sql.spec); outside the exe the version line ends in "dev"
 
 import platform
 import re
@@ -13,7 +13,6 @@ from pathlib import Path
 import duckdb
 from PyQt6.QtCore import PYQT_VERSION_STR, qVersion
 
-from backend.access import odbc_available
 from shared.bundle import bundled
 from shared.i18n import tr
 
@@ -43,13 +42,14 @@ def app_title() -> str:
     return f"{APP_NAME} {app_version()} - {STACK}"
 
 
-def build_info() -> str:
-    """'build <N> (<AAAA-MM-DD>)' no exe (N = git rev-list --count HEAD); 'build dev' fora dele."""
+def build_stamp() -> tuple[str, str] | None:
+    """(commit de 40 digitos, AAAA-MM-DD do build) no exe; None fora dele (ou com um BUILD de outro formato)."""
     bundle = _bundle()
     if bundle and (bundle / "BUILD").is_file():
-        number, day = (bundle / "BUILD").read_text(encoding="utf-8").split()
-        return f"build {number} ({day})"
-    return "build dev"
+        parts = (bundle / "BUILD").read_text(encoding="utf-8").split()
+        if len(parts) == 2 and re.fullmatch(r"[0-9a-f]{40}", parts[0]):
+            return parts[0], parts[1]
+    return None
 
 
 def mdbtools_version() -> str:
@@ -61,26 +61,22 @@ def mdbtools_version() -> str:
     return found[1] if found else "?"
 
 
-def access_engine() -> str:
-    # como o Access e lido (textos do Rust): o driver ODBC e opcional (so aparece quando existe); o mdbtools vai
-    # dentro do pacote
-    mdbtools = mdbtools_version()
-    if odbc_available():
-        return tr("about.access_odbc", version=mdbtools) if mdbtools else tr("about.access_odbc_only")
-    return tr("about.access_mdbtools", version=mdbtools) if mdbtools else tr("about.mdbtools_missing")
-
-
-def about_fields() -> list[tuple[str, str]]:
-    """Linhas (rotulo, valor) do Sobre, na ordem em que aparecem (igual nas 4 versoes: as do Rust)."""
+def about_lines() -> list[str]:
+    """As linhas do Sobre, nesta ordem, so texto tecnico (os links vem depois, numa linha propria)."""
+    stamp = build_stamp()
+    version = (tr("about.version", version=app_version(), commit=stamp[0], date=stamp[1]) if stamp
+               else tr("about.version_dev", version=app_version()))
+    tools = [f"SQLite {sqlite3.sqlite_version}", f"DuckDB {duckdb.__version__}"]
+    if mdbtools_version():  # o mdbtools vai no pacote; rodando do codigo sem .tools nao ha versao a mostrar
+        tools.append(f"mdbtools {mdbtools_version()}")
     return [
-        (tr("about.build"), build_info().removeprefix("build ")),
-        (tr("about.stack"), f"Python {platform.python_version()} + PyQt6 {PYQT_VERSION_STR}"),
-        (tr("about.window"), f"Qt {qVersion()}"),
-        (tr("about.databases"), f"SQLite {sqlite3.sqlite_version}, DuckDB {duckdb.__version__}"),
-        (tr("about.access"), access_engine()),
-        (tr("about.write"), tr("about.write_text")),
-        (tr("about.author"), "Mauricio Menon"),
-        (tr("about.license"), tr("about.license_text")),
+        f"MDB2SQL ({STACK})",
+        version,
+        f"Python {platform.python_version()}, PyQt6 {PYQT_VERSION_STR} (Qt {qVersion()})",
+        tr("about.tools", tools=", ".join(tools)),
+        tr("about.odbc"),
+        tr("about.author", name="Mauricio Menon"),
+        tr("about.license", license="GPLv2"),
     ]
 
 

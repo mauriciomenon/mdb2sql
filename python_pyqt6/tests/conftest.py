@@ -17,6 +17,8 @@ def isolated_settings(tmp_path_factory, monkeypatch):
     # QSettings em arquivo .ini temporario: os testes nao tocam no registro do usuario
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path_factory.mktemp("settings")))
+    # os testes da aba Dados partem de Esta tabela; o padrao de fabrica (Todas as tabelas) tem teste proprio
+    QSettings().setValue("search_scope", "table")
     monkeypatch.delenv("MDB2SQL_ACCESS_READER", raising=False)
     # pastas temporarias das sessoes (SQLite convertidos) dentro do tmp do teste; textos em ingles (padrao)
     sessions = tmp_path_factory.mktemp("sessions")

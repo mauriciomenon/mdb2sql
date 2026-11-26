@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import QSettings, QSize, Qt
+from PyQt6.QtCore import QPoint, QSettings, QSize, Qt
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QFileDialog, QLabel, QProgressDialog, QWidget
 
@@ -456,6 +456,32 @@ def test_terms_box_background_text_has_the_example_in_separate_lines(window: Mai
     assert window.terms_edit.height() >= 5 * window.terms_edit.fontMetrics().lineSpacing()
 
 
+def test_advanced_search_controls_line(qtbot, window: MainWindow) -> None:
+    # BRIEF 18 c: Pesquisar termos | caixa ("N linhas de entrada" + resumo, nada cortado) | encostados a direita:
+    # Valor inteiro | Contem, linha fina, Esta tabela | Todas as tabelas; o resumo nao tem mais linha propria
+    from PyQt6.QtWidgets import QFrame, QToolButton
+
+    window.resize(1280, 800)
+    window.tabs.setCurrentWidget(window.terms_page)
+    window.terms_edit.setPlainText("a\nb\nA\n")
+    QApplication.processEvents()
+    assert window.terms_count.text() == "3 input lines"
+    box = window.terms_summary.parentWidget()
+    assert box is window.terms_count.parentWidget() and isinstance(box, QFrame)
+    assert box.width() >= box.minimumSizeHint().width()  # o texto inteiro cabe
+    buttons = {a: next(b for b in window.terms_page.findChildren(QToolButton) if b.defaultAction() is a)
+               for a in (*window.match_actions.values(), *window.terms_scope_actions.values())}
+    line = [window.terms_run_button, box, *buttons.values()]
+    page = window.terms_page
+    xs = [w.mapTo(page, w.rect().topLeft()).x() for w in line]
+    assert xs == sorted(xs) and len({w.mapTo(page, w.rect().center()).y() // 8 for w in line}) == 1
+    last = buttons[window.terms_scope_actions["all"]]
+    assert last.mapTo(page, last.rect().topRight()).x() >= page.width() - 12  # encostado a direita
+    lines = [f for f in page.findChildren(QFrame) if f.frameShape() == QFrame.Shape.VLine and f.isVisible()]
+    match_right = buttons[window.match_actions["contains"]].mapTo(page, QPoint(0, 0)).x()
+    assert len(lines) == 1 and lines[0].mapTo(page, QPoint(0, 0)).x() > match_right
+
+
 def test_buttons_of_a_row_have_one_height_and_do_not_touch_the_boxes(qtbot, window: MainWindow) -> None:
     # 13 f): numa linha, todos os botoes da mesma altura (o Pesquisar termos e o Executar eram maiores); nenhum encosta
     # na caixa de cima ou de baixo
@@ -617,6 +643,30 @@ def test_search_all_tables_and_open_one(qtbot, window: MainWindow) -> None:
     again = MainWindow()
     qtbot.addWidget(again)
     assert again.scope_actions["all"].isChecked() and again.default_scope_actions["all"].isChecked()
+
+
+def test_data_search_starts_in_all_tables(qtbot, tmp_path: Path) -> None:
+    # BRIEF 18 a: sem nada gravado, a busca da aba Dados comeca em Todas as tabelas: o texto que so existe em outras
+    # tabelas aparece com a 1a tabela aberta, sem mexer em nada (com Esta tabela o dono nao achava nada)
+    import duckdb
+
+    QSettings().remove("search_scope")  # o padrao de fabrica
+    db_file = tmp_path / "plant.duckdb"
+    with duckdb.connect(str(db_file)) as conn:
+        conn.execute("CREATE TABLE accu AS SELECT 'MEDICION ENERGIA' AS pntnam")
+        conn.execute("CREATE TABLE soeqid AS SELECT * FROM (VALUES ('GENERADOR CGS 1'), ('GENERADOR CGS 1 B'))"
+                     " t(pntnam)")
+        conn.execute("CREATE TABLE sostat AS SELECT * FROM (VALUES (50, 'GENERADOR CGS 1'), (50, 'GENERADOR CGS 1'),"
+                     " (50, 'OTRO')) t(rtuno, pntnam)")
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.open_database(db_file)
+    qtbot.waitUntil(lambda: win.loaded_table is not None and win._busy == 0, timeout=30000)
+    assert win.loaded_table[0] == "accu" and win.scope_actions["all"].isChecked()
+    assert win.default_scope_actions["all"].isChecked()
+    win.search_edit.setText("GENERADOR CGS 1")
+    qtbot.waitUntil(lambda: win.found_list.count() == 2 and win._busy == 0, timeout=30000)
+    assert [win.found_list.item(row).text() for row in range(2)] == ["soeqid (2)", "sostat (2)"]
 
 
 def test_search_all_tables_never_shows_an_old_result_and_reports_failure(qtbot, window: MainWindow, tmp_path: Path):
@@ -1114,48 +1164,51 @@ def test_terms_tab_lists_hits_in_list_order_copies_and_reports(qtbot, tmp_path: 
         assert [k.toString() for k in action.shortcuts()] == ["Ctrl+Enter", "Ctrl+Return"]
     assert not win.run_sql_action.isEnabled() and not win.run_terms_action.isEnabled()  # caixa vazia
     win.terms_edit.setPlainText("PNTNAM\nu9a\n\n turbina cgi \nU9A\n")
-    assert win.terms_count.text() == "3 terms, 1 repeated"
+    assert win.terms_count.text() == "4 input lines"  # linhas nao vazias, a repetida incluida (BRIEF 18 c)
     assert win.run_terms_action.isEnabled() and win.terms_run_button.isEnabled()
     assert win.match_actions["whole"].isChecked() and win.match_actions["whole"].toolTip().startswith("Whole value:")
     win.terms_scope_actions["all"].trigger()
     win.run_terms_action.trigger()
     qtbot.waitUntil(lambda: win._job is None and win._busy == 0 and win.terms_model.rowCount() > 0, timeout=30000)
 
-    assert [win.terms_found.item(i).text() for i in range(win.terms_found.count())] == ["other (1)", "pts (4)"]
-    assert win.terms_summary.text() == "2 of 3 terms found: 5 rows in 2 tables"
+    # cada linha achada conta uma vez (a 242 achada por u9a e por turbina cgi: uma linha so)
+    assert [win.terms_found.item(i).text() for i in range(win.terms_found.count())] == ["other (1)", "pts (3)"]
+    assert win.terms_summary.text() == "2 of 3 terms found: 4 rows in 2 tables"
     assert win.not_found_title.text() == "Not found (1)" and win.not_found_edit.toPlainText() == "PNTNAM"
-    assert win.terms_found.currentRow() == 0 and win.terms_model.columns == ["Term", "txt"]  # a primeira escolhida
+    assert win.terms_found.currentRow() == 0 and win.terms_model.columns == ["txt"]  # a primeira escolhida
     # UI Automation seleciona o item sem torna-lo o atual: a grade segue a selecao
     from PyQt6.QtCore import QItemSelectionModel
 
     win.terms_found.selectionModel().select(win.terms_found.model().index(1, 0),
                                             QItemSelectionModel.SelectionFlag.ClearAndSelect)
-    qtbot.waitUntil(lambda: win._busy == 0 and win.terms_model.columns[1:2] == ["RTUNO"], timeout=30000)
+    qtbot.waitUntil(lambda: win._busy == 0 and win.terms_model.columns[:1] == ["RTUNO"], timeout=30000)
     proxy = win.terms_proxy
-    assert [(proxy.index(r, 0).data(), proxy.index(r, 2).data()) for r in range(proxy.rowCount())] == [
-        ("u9a", "238"), ("u9a", "242"), ("u9a", "8"), ("turbina cgi", "242")]  # ordem da lista, depois da tabela
-    assert win.terms_info.text() == "pts: showing 4 of 4 rows"
+    # so as colunas da tabela (sem Termo: BRIEF 19 d), cada linha uma vez, na ordem do 1o termo que a achou
+    assert win.terms_model.columns == ["RTUNO", "PNTNO", "SUBNAM", "PNTNAM"]
+    assert [proxy.index(r, 1).data() for r in range(proxy.rowCount())] == ["238", "242", "8"]
+    assert win.terms_info.text() == "pts: showing 3 of 3 rows"
 
-    # copiar: as linhas achadas com cabecalho, sem a coluna Termo; copiar linha tambem sem ela
+    # copiar: as linhas achadas com cabecalho, as colunas da tabela
     clipboard = QApplication.clipboard()
     win.copy_hits_action.trigger()
     assert clipboard.text() == ("RTUNO\tPNTNO\tSUBNAM\tPNTNAM\n50\t238\tU9A\t GENERADOR CGS \n50\t242\tU9A\tturbina cgi\n"
-                                "52\t8\tu9a\t\n50\t242\tU9A\tturbina cgi")
-    win.terms_table.selectRow(3)
+                                "52\t8\tu9a\t")
+    win.terms_table.selectRow(1)
     win.copy_row_action.trigger()
     assert clipboard.text() == "50\t242\tU9A\tturbina cgi"
     assert win.copy_hits_action in win.terms_table.actions()
     assert win.terms_table.actions()[-1].menu() is win.terms_report_menu
 
-    # relatorio: Excel (<banco>_termos) e CSV (pasta; os que ja existem: uma pergunta so)
+    # relatorio: Excel ("<banco> - Advanced Search", BRIEF 19 e) e CSV (pasta; os que ja existem: uma pergunta so)
     asked = []
     monkeypatch.setattr(QFileDialog, "getSaveFileName",
                         lambda *a: asked.append(Path(a[2]).name) or (str(tmp_path / "rep.xlsx"), ""))
     win.export_terms_actions[0].trigger()
     qtbot.waitUntil(lambda: win._job is None and (tmp_path / "rep.xlsx").exists(), timeout=30000)
-    assert asked == ["pts_termos.xlsx"]
+    assert asked == ["pts - Advanced Search.xlsx"]
     book = openpyxl.load_workbook(tmp_path / "rep.xlsx", read_only=True)
-    assert book.sheetnames == ["Filter Result", "other", "pts"]  # 13 i
+    assert book.sheetnames == ["other", "pts"]  # uma aba por tabela, sem "Resultado Filtro" (BRIEF 19 d)
+    assert next(book["pts"].values) == ("RTUNO", "PNTNO", "SUBNAM", "PNTNAM")
     book.close()
     folder = tmp_path / "csv"
     folder.mkdir()
@@ -1166,8 +1219,8 @@ def test_terms_tab_lists_hits_in_list_order_copies_and_reports(qtbot, tmp_path: 
     win.export_terms_actions[1].trigger()
     assert sorted(p.name for p in folder.iterdir()) == ["pts.csv"]  # nao: nada gravado
     win.export_terms_actions[1].trigger()
-    qtbot.waitUntil(lambda: win._job is None and len(list(folder.iterdir())) == 3, timeout=30000)
-    assert (folder / "pts.csv").read_text(encoding="utf-8-sig").startswith("Term,RTUNO")
+    qtbot.waitUntil(lambda: win._job is None and len(list(folder.iterdir())) == 2, timeout=30000)
+    assert (folder / "pts.csv").read_text(encoding="utf-8-sig").startswith("RTUNO,PNTNO")
 
     # Configuracoes > Comparacao dos termos: Contem (gravado, ja vale na aba); "cgs" acha 2 linhas em pts
     win.default_match_actions["contains"].trigger()
@@ -1185,7 +1238,7 @@ def test_terms_tab_lists_hits_in_list_order_copies_and_reports(qtbot, tmp_path: 
 
 
 def test_terms_grid_and_copy_with_a_table_column_named_like_the_term_column(qtbot, tmp_path: Path) -> None:
-    # revisao B2: a coluna "Term" da tabela nao some nem troca o termo na grade e no copiar
+    # revisao B2: a coluna "Term" da tabela e uma coluna como as outras (a grade nao tem coluna Termo: BRIEF 19 d)
     import duckdb
 
     db_file = tmp_path / "g.duckdb"
@@ -1201,10 +1254,9 @@ def test_terms_grid_and_copy_with_a_table_column_named_like_the_term_column(qtbo
     win.terms_edit.setPlainText("alpha")
     win.run_terms_action.trigger()
     qtbot.waitUntil(lambda: win._job is None and win._busy == 0 and win.terms_model.rowCount() == 2, timeout=30000)
-    assert win.terms_model.columns == ["Term", "Term_2", "other"]
+    assert win.terms_model.columns == ["Term", "other"]
     proxy = win.terms_proxy
-    assert [[proxy.index(r, c).data() for c in range(3)] for r in range(2)] == [["alpha", "alpha", "x"],
-                                                                                ["alpha", "beta", "alpha"]]
+    assert [[proxy.index(r, c).data() for c in range(2)] for r in range(2)] == [["alpha", "x"], ["beta", "alpha"]]
     win.copy_hits_action.trigger()
     assert QApplication.clipboard().text() == "Term\tother\nalpha\tx\nbeta\talpha"
 

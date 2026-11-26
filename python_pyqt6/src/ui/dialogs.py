@@ -8,8 +8,6 @@ from PyQt6.QtGui import QGuiApplication, QPixmap
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -21,7 +19,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from shared.about import APP_NAME, LINKS, about_fields, app_version, link_html
+from shared.about import LINKS, about_lines, link_html
 from shared.bundle import resource
 from shared.display import HELP, Notice
 from shared.i18n import every_language, tr
@@ -50,41 +48,27 @@ class AboutDialog(QDialog):
                 72, 72, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
             )
         )
-        self.title = QLabel(f"{APP_NAME} {app_version()}")
-        font = self.title.font()
-        font.setPointSizeF(font.pointSizeF() * 1.4)  # destaque discreto, mesma familia do app
-        font.setBold(True)
-        self.title.setFont(font)
-        summary = QLabel(tr("about.summary"))
-        summary.setWordWrap(True)
-        heading = QVBoxLayout()
-        heading.addWidget(self.title)
-        heading.addWidget(summary)
+        # so as linhas tecnicas, iguais nas 4 versoes (BRIEF 18 b), na fonte do app (uma fonte so: 18 e);
+        # selecionaveis para copiar o commit
+        self.lines: list[QLabel] = []
+        text = QVBoxLayout()
+        text.setSpacing(6)
+        for line in about_lines():
+            label = QLabel(line)
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            self.lines.append(label)
+            text.addWidget(label)
+        self.title = self.lines[0]
+        # GitHub / GitLab: os dois links numa linha, abrem no navegador padrao, tambem por Tab + Enter
+        self.links = [QLabel(" / ".join(link_html(url, label) for label, url in LINKS))]
+        self.links[0].setOpenExternalLinks(True)
+        self.links[0].setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        self.links[0].setAccessibleName(" / ".join(f"{label} {url}" for label, url in LINKS))
+        text.addWidget(self.links[0])
         top = QHBoxLayout()
         top.setSpacing(16)
         top.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
-        top.addLayout(heading, 1)
-
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setFrameShadow(QFrame.Shadow.Sunken)
-
-        self.form = QFormLayout()
-        self.form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        self.form.setHorizontalSpacing(16)
-        self.form.setVerticalSpacing(6)
-        for label, value in about_fields():
-            text = QLabel(value)
-            text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            self.form.addRow(tr("about.label", label=label), text)
-        self.links: list[QLabel] = []
-        for label, url in LINKS:
-            link = QLabel(link_html(url))
-            link.setOpenExternalLinks(True)  # abre no navegador padrao
-            link.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)  # tambem por Tab + Enter
-            link.setAccessibleName(f"{label} {url}")
-            self.links.append(link)
-            self.form.addRow(tr("about.label", label=label), link)
+        top.addLayout(text, 1)
 
         buttons = QDialogButtonBox()
         buttons.addButton(tr("button.ok"), QDialogButtonBox.ButtonRole.AcceptRole).setDefault(True)  # Enter
@@ -94,10 +78,7 @@ class AboutDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 16)
         layout.setSpacing(14)
         layout.addLayout(top)
-        layout.addWidget(line)
-        layout.addLayout(self.form)
         layout.addWidget(buttons)
-        self.setMinimumWidth(560)
 
 
 class ChoiceBox(QDialog):

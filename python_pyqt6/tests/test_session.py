@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from PyQt6.QtCore import QSettings, Qt, QTimer
 from PyQt6.QtTest import QTest
-from PyQt6.QtGui import QAction, QFontDatabase
+from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QDockWidget, QLabel, QLineEdit, QMenu, QTabWidget
 
 from backend import access
@@ -163,7 +163,7 @@ def test_settings_file_from_the_environment_replaces_the_registry(qtbot, tmp_pat
     win.set_default_scope("all")
     win.settings.sync()
     assert "search_scope=all" in ini.read_text(encoding="utf-8")
-    assert QSettings().value("search_scope") is None and mw.app_settings().value("search_scope") == "all"
+    assert QSettings().value("search_scope") != "all" and mw.app_settings().value("search_scope") == "all"
 
 
 def _reopen(qtbot, win: MainWindow, source: Path) -> None:
@@ -284,6 +284,12 @@ def test_save_offers_sqlite_duckdb_and_excel_and_remembers_the_access_conversion
     again = MainWindow()  # proxima execucao: lembrado nas configuracoes
     qtbot.addWidget(again)
     assert again.saved_conversion(source) == lite
+    # BRIEF 19 b: o salvo por uma conversao de versao antiga (tipos errados) nao vale: converte de novo
+    entries = json.loads(again.settings.value("converted_files"))
+    old = {key: {k: v for k, v in entry.items() if k != "converter"} for key, entry in entries.items()}
+    again.settings.setValue("converted_files", json.dumps(old))
+    assert again.saved_conversion(source) is None
+    again.settings.setValue("converted_files", json.dumps(entries))
     win.close()
     assert not win.isVisible()  # nada a salvar: nao pergunta
 
@@ -352,9 +358,9 @@ def test_log_panel_collapsed_shows_the_most_important_line(qtbot) -> None:
     assert win.log_dock.isHidden() and win.log_action.shortcut().toString() == "Ctrl+L"
     assert win.tables_action.shortcut().toString() == "Ctrl+T"
     assert win.log_toggle.arrowType() == Qt.ArrowType.UpArrow and win.log_unread.isHidden()
-    # fonte monoespacada um passo menor que a base; minimo de 3 linhas
-    assert win.log_view.font().family() == QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()
-    assert win.log_view.font().pointSizeF() == max(8.0, win.font().pointSizeF() - 1)
+    # uma fonte so (BRIEF 18 e): o Log e a caixa do SQL na fonte do app (Segoe UI 14 px); minimo de 3 linhas
+    for box in (win.log_view, win.sql_edit, win.terms_edit, win.data_table, win.terms_table):
+        assert box.font() == QApplication.font(), box.accessibleName()
     assert win.log_view.minimumHeight() >= 3 * win.log_view.fontMetrics().lineSpacing()
 
     # erro > aviso > ultima acao: com o painel recolhido, o erro fica na barra (destacado) mesmo depois de outra acao
@@ -368,21 +374,22 @@ def test_log_panel_collapsed_shows_the_most_important_line(qtbot) -> None:
     # o contador fica a direita, a mensagem a esquerda (barra de baixo igual ao Go)
     assert win.log_unread.x() > win.status_label.x()
 
-    # clique na mensagem reexibe o log e zera os nao lidos; a seta do cabecalho recolhe; estado lembrado
+    # clique na mensagem reexibe o log e zera os nao lidos; a seta do cabecalho recolhe
     qtbot.mouseClick(win.status_label, Qt.MouseButton.LeftButton)
-    assert not win.log_dock.isHidden() and win.log_unread.isHidden() and QSettings().value("log_visible") in (True, "true")
+    assert not win.log_dock.isHidden() and win.log_unread.isHidden()
     assert win.log_toggle.arrowType() == Qt.ArrowType.DownArrow
     assert "SQL error: boom" in win.log_view.toPlainText()
     bar = win.log_view.verticalScrollBar()
     qtbot.waitUntil(lambda: bar.maximum() > 0 and bar.value() == bar.maximum(), timeout=5000)
     assert win.log_dock.maximumHeight() <= max(round(win.height() * 0.25), win.log_view.minimumHeight() + 32)
     win.log_collapse.click()
-    assert win.log_dock.isHidden() and QSettings().value("log_visible") in (False, "false")
+    assert win.log_dock.isHidden()
     win.log_toggle.click()
     assert not win.log_dock.isHidden()
-    again = MainWindow()  # proxima abertura: como ficou
+    again = MainWindow()  # proxima abertura: recolhido, mesmo tendo ficado aberto (BRIEF 18 d, igual nas 4)
     qtbot.addWidget(again)
-    assert not again.log_dock.isHidden()
+    again.show()
+    assert again.log_dock.isHidden() and not again.log_action.isChecked()
 
 
 def test_language_applies_at_once_and_is_saved(qtbot, people_db: Path) -> None:
@@ -439,9 +446,7 @@ PROPER = {"SQLite", "DuckDB", "Excel", "CSV", "UTF-8", "Access", "ODBC", "SQL", 
           "WAYLAND_DISPLAY", "GPL", "Ctrl+O", "Ctrl+F", "Ctrl+L", "Ctrl+Enter", "Enter", "F5", "Windows", "Brasil",
           "MDB2SQL_ACCESS_READER", "Log", "X", "Microsoft",
           # nome da aba Pesquisa Avancada (13 d), como o dono escreveu
-          "Search", "Pesquisa", "Avançada", "Búsqueda", "Avanzada",
-          # nome da aba do relatorio (13 i), como o dono escreveu
-          "Result", "Filtro"}
+          "Search", "Pesquisa", "Avançada", "Búsqueda", "Avanzada"}
 
 
 def test_texts_have_no_title_case() -> None:
@@ -488,7 +493,8 @@ def test_catalogs_have_the_same_keys_and_placeholders() -> None:
 # textos que nao sao traduzidos: nomes de produto, codigo SQL e numeros
 # (Sobre: versoes, autor, links; botoes internos do Qt, traduzidos pelo qtbase_<idioma>.qm)
 NOT_TEXT = re.compile(r"(SQL|SELECT \* FROM \.\.\.|[\d,.]+|mdb2sql [\d.]+( - Python)?|GitHub|GitLab|"
-                      r"Python .*|Qt [\d.]+|SQLite [\d.]+, DuckDB .*|dev|Mauricio Menon|(GitHub |GitLab )?https://\S+|"
+                      r"MDB2SQL \(Python\)|Python .*|Qt [\d.]+|SQLite [\d.]+, DuckDB .*|dev|Mauricio Menon|(GitHub |GitLab )?https://\S+|"
+                      r"GitHub https://\S+ / GitLab https://\S+|"
                       r"<a href=.*|Scroll Left|Scroll Right|Float|Close|◀|▶)")  # setas das paginas (13 h): sinais, nao texto
 
 
