@@ -874,6 +874,11 @@ mod tests {
         let (sql, params) = search_condition(&[col("n", "INTEGER"), col("s", "VARCHAR")], "campo 7").unwrap();
         assert!(!sql.contains("\"n\"") && sql.contains("\"s\"") && params.len() == 2, "{sql}");
         assert_eq!(search_condition(&[col("n", "DATE")], "campo").unwrap().0, "FALSE");
+        // cada tipo com os seus caracteres: "U9A" nao cabe em numero, data, hora nem booleano; "238" so nao cabe em booleano
+        let kinds = ["INTEGER", "DECIMAL(10,0)", "DOUBLE", "DATE", "TIME", "TIMESTAMP", "BOOLEAN"].map(|kind| col(kind, kind));
+        assert_eq!(search_condition(&kinds, "U9A").unwrap().0, "FALSE");
+        let (sql, _) = search_condition(&kinds, "238").unwrap();
+        assert!(!sql.contains("\"BOOLEAN\"") && sql.matches("CAST(").count() == 6, "{sql}");
         for (kind, word) in [("DOUBLE", "1E+20"), ("DOUBLE", "-inf"), ("BOOLEAN", "False"), ("TIMESTAMP", "10:00:00+00"), ("BOOLEAN", "fálse")] {
             assert!(search_condition(&[col("n", kind)], word).unwrap().0.contains("\"n\""), "{kind} {word}");
         }

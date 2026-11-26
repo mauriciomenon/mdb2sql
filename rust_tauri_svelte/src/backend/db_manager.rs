@@ -123,17 +123,17 @@ pub(crate) fn search_condition(columns: &[(String, String)], search: &str) -> Op
     if words.is_empty() || columns.is_empty() {
         return None;
     }
-    // o texto desses tipos so tem estes caracteres (1e+20, -inf, nan, true, false, 10:00:00+00, 0001-01-01 (BC));
-    // letra fora daqui, nunca. Fora do ASCII a palavra ainda passa pelo dobramento: a coluna fica
-    let fits = |word: &&str| word.chars().all(|c| !c.is_ascii() || "0123456789-+.: ()abcefilnrstuy".contains(c.to_ascii_lowercase()));
+    // palavra com caractere ASCII que o texto do tipo nunca tem nao esta na celula; fora do ASCII a palavra ainda passa
+    // pelo dobramento (fálse vira false): a coluna fica
+    let fits = |chars: &str| words.iter().all(|w| w.chars().all(|c| !c.is_ascii() || chars.contains(c.to_ascii_lowercase())));
     let fold = |sql: &str| format!("lower(strip_accents({sql}))");
     let mut params = Vec::new();
     let cells: Vec<String> = columns
         .iter()
-        .filter(|(_, kind)| !prints_folded(kind) || words.iter().all(fits))
+        .filter(|(_, kind)| printed_chars(kind).is_none_or(fits))
         .map(|(col, kind)| {
             let text = format!("CAST({} AS VARCHAR)", ident(col));
-            let cell = if prints_folded(kind) { text } else { fold(&text) };
+            let cell = if printed_chars(kind).is_some() { text } else { fold(&text) };
             let all: Vec<String> = words
                 .iter()
                 .map(|w| {
@@ -150,15 +150,22 @@ pub(crate) fn search_condition(columns: &[(String, String)], search: &str) -> Op
     Some((format!("({})", cells.join(" OR ")), params))
 }
 
-// tipo do DuckDB cujo texto (CAST AS VARCHAR) so tem digitos, pontuacao e minusculas sem acento (1e+20, inf, true,
-// 2024-01-02 10:00:00): lower(strip_accents()) nao muda nada nele
-fn prints_folded(kind: &str) -> bool {
-    const PLAIN: [&str; 15] = [
-        "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT", "UHUGEINT",
-        "FLOAT", "DOUBLE", "DATE", "TIME", "BOOLEAN",
-    ];
+// NIVEL BASICO: Os caracteres que o texto (CAST AS VARCHAR) de um tipo do DuckDB pode ter: numeros, datas, horas e
+// booleanos so escrevem digitos, pontuacao e minusculas sem acento (-12, 1e+20, -inf, nan, 2024-01-02, 0001-01-01 (BC),
+// infinity, 23:59:58.5, 10:00:00+00, true, false), entao lower(strip_accents()) nao muda nada neles. None: texto livre
+fn printed_chars(kind: &str) -> Option<&'static str> {
     let kind = kind.to_ascii_uppercase();
-    kind.starts_with("DECIMAL(") || kind.starts_with("TIMESTAMP") || PLAIN.contains(&kind.as_str())
+    Some(match kind.as_str() {
+        "TINYINT" | "SMALLINT" | "INTEGER" | "BIGINT" | "HUGEINT" | "UTINYINT" | "USMALLINT" | "UINTEGER" | "UBIGINT"
+        | "UHUGEINT" => "0123456789-",
+        "FLOAT" | "DOUBLE" => "0123456789-+.einfa",
+        "DATE" => "0123456789- ()bcinfty",
+        "TIME" => "0123456789:.",
+        "BOOLEAN" => "truefals",
+        decimal if decimal.starts_with("DECIMAL(") => "0123456789-.",
+        timestamp if timestamp.starts_with("TIMESTAMP") => "0123456789-:. +()bcinfty",
+        _ => return None,
+    })
 }
 
 // filtros (AND) e pesquisa juntos num WHERE so
