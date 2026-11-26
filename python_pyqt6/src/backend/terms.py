@@ -18,19 +18,20 @@ Progress = Callable[[int, int, str], None]
 # !T: such as IDX or TERM is never ambiguous
 _IDX, _TERM, _ROW = "mdb2sql_idx", "mdb2sql_term", "mdb2sql_row"  # _ROW: posicao da linha na tabela
 
-# Valor inteiro com numeros, regra frouxa (ha dados em formato EUA e BR/Europa): termo e celula que se leem como numero
-# casam quando alguma leitura de um e igual a alguma do outro. Um texto numerico tem ate duas leituras: ponto decimal
-# com virgula de milhar e virgula decimal com ponto de milhar (milhar = grupos de 3 digitos). Com os dois separadores,
-# so a leitura em que o ultimo e o decimal vale (1.234,5 e 1,234.5 = 1234.5); um separador repetido e de milhar
-# (1.234.567); um separador so: as duas, quando cabem (1,234 = 1.234 ou 1234; 216,0 = 216, nunca 2160)
+# Valor inteiro com numeros, regra frouxa (ha dados em formato EUA e BR/Europa) SO para o TERMO: um termo que se le
+# como numero casa com as colunas NUMERICAS do schema pelo valor; coluna de texto compara como texto (o tipo e da
+# coluna, nunca da celula: BRIEF 20). Um termo numerico tem ate duas leituras: ponto decimal com virgula de milhar e
+# virgula decimal com ponto de milhar (milhar = grupos de 3 digitos). Com os dois separadores, so a leitura em que o
+# ultimo e o decimal vale (1.234,5 e 1,234.5 = 1234.5); um separador repetido e de milhar (1.234.567); um separador
+# so: as duas, quando cabem (1,234 = 1.234 ou 1234; 216,0 = 216, nunca 2160)
 _DOT = r"[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?"
 _COMMA = r"[+-]?(?:\d+|\d{1,3}(?:\.\d{3})+)(?:,\d+)?"
-# celula de coluna numerica: o valor dela (uma leitura so)
+# coluna numerica pelo tipo do schema: comparada pelo valor
 _NUMERIC = re.compile(r"U?(?:TINY|SMALL|BIG|HUGE)?INT(?:EGER)?|FLOAT|DOUBLE|REAL|DECIMAL\(.*\)|NUMERIC.*", re.I)
 
 
 def number_readings(text: str) -> set[float]:
-    """As leituras numericas de um texto (vazio: nao e numero); as mesmas que _sql_readings faz no motor."""
+    """As leituras numericas de um termo (vazio: nao e numero); as mesmas que _sql_readings faz no motor."""
     text, found = text.strip(), set()
     if re.fullmatch(_DOT, text):
         found.add(float(text.replace(",", "")))
@@ -83,11 +84,10 @@ def _hits_cte(table: str, columns: Sequence[str], contains: bool, numeric: Seque
     keys = ", ".join(f"lower(trim({cell}))" for cell in cells)
     hit = (f"SELECT terms.{_IDX}, cells.{_ROW} FROM (SELECT src.{_ROW}, unnest([{keys}]) AS"
            f" mdb2sql_cell FROM src) cells JOIN terms ON cells.mdb2sql_cell = lower(terms.{_TERM})")
-    if numeric is not None:
-        # celula numerica: o valor dela; celula de texto: as leituras do texto; casa com qualquer leitura do termo
-        readings = [f"[CAST(src.{quote(column)} AS DOUBLE)]" if column in numeric else _sql_readings(f"trim({cell})")
-                    for column, cell in zip(columns, cells)]
-        hit += (f" UNION SELECT terms.{_IDX}, nums.{_ROW} FROM (SELECT src.{_ROW}, unnest(flatten([{', '.join(readings)}]))"
+    values = [f"CAST(src.{quote(column)} AS DOUBLE)" for column in columns if column in (numeric or ())]
+    if values:
+        # so as colunas numericas do schema, pelo valor, contra as leituras do termo (texto continua texto)
+        hit += (f" UNION SELECT terms.{_IDX}, nums.{_ROW} FROM (SELECT src.{_ROW}, unnest([{', '.join(values)}])"
                 f" AS mdb2sql_num FROM src) nums JOIN (SELECT {_IDX}, unnest(mdb2sql_nums) AS mdb2sql_num FROM terms)"
                 f" terms ON nums.mdb2sql_num = terms.mdb2sql_num")
     return f"WITH {_TERMS}, {source}, hit AS (SELECT DISTINCT * FROM ({hit}))"

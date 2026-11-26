@@ -128,9 +128,9 @@ Tabs:
   grid: the three copy items, Copy the rows found in this table (with header, TAB separated, pastes into Excel as
   exactly the found rows) and the report (Excel, CSV folder, SQLite or DuckDB: one sheet/table/file per table
   with hits, named after it, with the rows found; name `<database> - Advanced Search.xlsx`, in Portuguese
-  `<banco> - Pesquisa Avançada.xlsx`). In Whole value, numbers match loosely: a term and a cell that read as numbers match when
-  a reading of one equals a reading of the other (216 finds 216.0, 216,0 and "216"; 1234.5 finds "1.234,5";
-  never 2160 or 216.5). DB3 (287 tables), a list of 9 terms, whole value, all tables: 6.8 s on the
+  `<banco> - Pesquisa Avançada.xlsx`). In Whole value, a term that reads as a number (dot or comma decimal: 216, 216,0, 1.234,5,
+  1,234.5) matches the numeric columns of the table by value (216 finds 216 and 216.0, never 2160 or 216.5); text
+  columns are compared as text. DB3 (287 tables), a list of 9 terms, whole value, all tables: 6.8 s on the
   SQLite file, 3.6 s on the DuckDB file.
 
 Menus:

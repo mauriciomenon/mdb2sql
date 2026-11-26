@@ -98,8 +98,9 @@ def test_number_readings_follow_the_loose_rule() -> None:
 
 @pytest.mark.parametrize("kind", [".duckdb", ".sqlite"])
 def test_whole_value_numbers_match_with_the_loose_rule(tmp_path: Path, kind: str) -> None:
-    # 13 a): 216 acha 216.0 (DOUBLE), 216 (INTEGER) e "216,0" (texto), nao 2160 nem 216.5; 0,1 acha 0.10 (DECIMAL);
-    # 1234.5 acha "1.234,5"; o DOUBLE 1.234 tem uma leitura so (nao casa com 1234); texto segue como texto
+    # 13 a) corrigido pelo BRIEF 20: a leitura frouxa vale so para o TERMO contra as colunas NUMERICAS do schema:
+    # 216 acha 216.0 (DOUBLE) e 216 (INTEGER); 0,1 acha 0.10 (DECIMAL); o DOUBLE 1.234 nao casa com 1234. Coluna de
+    # texto compara como texto: "216,0", "1.234,5" e "1,234" nao sao lidos como numero
     rows = [(1, 216.0, None, None, None), (2, None, "0.10", None, None), (3, None, None, 216, None),
             (4, None, None, None, "216,0"), (5, None, None, None, "1.234,5"), (6, None, None, None, "2160"),
             (7, None, None, None, "216.5"), (8, 1.234, None, None, None), (9, None, None, None, "1,234"),
@@ -118,8 +119,8 @@ def test_whole_value_numbers_match_with_the_loose_rule(tmp_path: Path, kind: str
         terms = ["216", "0,1", "1234.5", "1234", "abc", "nothing"]
         result = search_terms(manager, terms, False, ["n"], _noop)
         hits = [r["id"] for r in manager.fetch_rows(*table_hits(result, "n"))]
-        assert hits == [1, 3, 4, 2, 5, 9, 10]  # 216: 1, 3, 4; 0,1: 2; 1234.5: 5; 1234: 9; abc: 10
-        assert not_found(result) == ["nothing"]
+        assert hits == [1, 3, 2, 10]  # 216: 1, 3; 0,1: 2; abc: 10 (texto igual)
+        assert not_found(result) == ["1234.5", "1234", "nothing"]
 
 
 def test_report_in_every_format(points: DBManager, tmp_path: Path) -> None:
