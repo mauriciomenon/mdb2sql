@@ -198,6 +198,11 @@ test('new texts of Save, exit, marked rows and Terms are the agreed ones', () =>
     ['terms.found', {}, 'Encontrado', 'Found', 'Encontrado'],
     ['terms.missing', {}, 'Não encontrado', 'Not found', 'No encontrado'],
     // item 34 (BRIEF secao 11)
+    // BRIEF secao 13 c: a aba e tudo que dizia esquema na tela viram "Schema"
+    ['tabs.schema', {}, 'Schema', 'Schema', 'Schema'],
+    ['export.tableSchema', {}, 'Schema da tabela atual', 'Current table schema', 'Schema de la tabla actual'],
+    ['export.dbSchema', {}, 'Schema do banco', 'Database schema', 'Schema de la base de datos'],
+    ['schema.label', { table: 'T' }, 'Schema de T', 'Schema of T', 'Schema de T'],
     ['fav.add', {}, 'Favoritar', 'Add to favorites', 'Añadir a favoritas'],
     ['fav.remove', {}, 'Desfavoritar', 'Remove from favorites', 'Quitar de favoritas'],
     ['view.favorite', {}, 'Favoritar ou desfavoritar tabela', 'Favorite or unfavorite table', 'Marcar o desmarcar tabla favorita'],
@@ -207,6 +212,10 @@ test('new texts of Save, exit, marked rows and Terms are the agreed ones', () =>
     assert.deepEqual([pt(key, values), en(key, values), es(key, values)], [inPt, inEn, inEs], key);
   }
   // "Lembrar nesta sessao" saiu da tela, do codigo e do catalogo; os 3 "Banco para ..." sairam de Exportar
+  // secao 13 c: nenhum texto da tela diz "esquema"
+  for (const [code, catalog] of Object.entries(CATALOGS)) {
+    assert.deepEqual(Object.entries(catalog).filter(([, text]) => /esquema/i.test(text)), [], code);
+  }
   for (const gone of ['convert.remember', 'convert.text', 'convert.delete', 'export.dbSqlite', 'export.dbDuckdb', 'export.dbXlsx']) {
     assert.ok(!(gone in CATALOGS.en), gone);
   }
