@@ -226,6 +226,12 @@ fn writeMatches(out: *std.ArrayList(u8), a: Allocator, table: []const u8, column
     try out.print(a, " AS " ++ row ++ ") c JOIN " ++ terms_table ++ " t ON {s})", .{if (match == .whole) "c.v = t.k" else "contains(c.v, t.k)"});
 }
 
+// Nome de coluna do banco: sem diferenciar maiusculas, como o DuckDB compara
+fn hasColumn(columns: []const []const u8, name: []const u8) bool {
+    for (columns) |c| if (std.ascii.eqlIgnoreCase(c, name)) return true;
+    return false;
+}
+
 // As linhas achadas de uma tabela, na ordem dos termos e depois na da tabela. `title`: titulo da 1a coluna (o termo
 // que achou a linha); null = so as colunas da tabela. limit 0 = todas.
 pub fn buildRows(a: Allocator, table: []const u8, hit: Table, match: Match, title: ?[]const u8, limit: u32) Allocator.Error![:0]u8 {
@@ -233,8 +239,14 @@ pub fn buildRows(a: Allocator, table: []const u8, hit: Table, match: Match, titl
     errdefer out.deinit(a);
     try out.appendSlice(a, "SELECT ");
     if (title) |name| {
+        // tabela com uma coluna de mesmo nome (Termo, Term, Termino): a do termo vira "Termo (2)"; duas colunas com
+        // o mesmo nome quebravam o relatorio em SQLite e DuckDB (CREATE TABLE ... AS)
+        var free = name;
+        var n: usize = 2;
+        var nb: [600]u8 = undefined;
+        while (hasColumn(hit.columns, free)) : (n += 1) free = std.fmt.bufPrint(&nb, "{s} ({d})", .{ name, n }) catch break;
         try out.appendSlice(a, "m.term AS ");
-        try query.writeIdent(&out, a, name);
+        try query.writeIdent(&out, a, free);
         try out.appendSlice(a, ", ");
     }
     // as colunas da tabela, na ordem dela (o struct da linha aberto)
@@ -560,6 +572,38 @@ test "term search on a real database: every table's grid has the rows counted (o
             try t.expectEqual(@min(hit.rows, if (limit == 0) hit.rows else limit), g.rows.len);
         };
     };
+}
+
+test "a table column named like the term column (Termo) breaks neither the grid, the copy nor the report" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var b1: [256]u8 = undefined;
+    var b2: [256]u8 = undefined;
+    const duck = dbm.tmpPath(&b1, &tmp, "tc.duckdb");
+    const out = dbm.tmpPath(&b2, &tmp, "tc_termos.duckdb");
+    var db = dbm.testDb();
+    defer db.close();
+    try db.open(duck, false);
+    try db.exec("CREATE TABLE tt AS SELECT * FROM (VALUES ('bomba 1', 'a'), ('x', 'bomba 1')) v(\"TERMO\", \"Termo (2)\")");
+    try db.open(":memory:", false);
+    try db.openReadOnly(duck);
+    var p: Progress = .{};
+    var res = try search(&db, t.allocator, "bomba 1", .whole, null, &p);
+    defer res.deinit();
+    try t.expectEqual(1, res.tables.len);
+    // a coluna do termo ganha um nome livre; as da tabela ficam como sao
+    var g = try page(&db, t.allocator, &res, res.tables[0], "Termo", 100);
+    defer g.deinit();
+    try t.expectEqualStrings("Termo (3)", g.columns[0]);
+    try t.expectEqualStrings("TERMO", g.columns[1]);
+    try t.expectEqual(2, g.rows.len);
+    const copied = try copyText(&db, t.allocator, &res, res.tables[0], &p);
+    defer t.allocator.free(copied);
+    try t.expectEqualStrings("TERMO\tTermo (2)\r\nbomba 1\ta\r\nx\tbomba 1", copied);
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const items = try reportItems(arena.allocator(), db.table_names, &res, .{ .term = "Termo", .status = "Situação", .table = "Tabela", .rows = "Linhas", .found = "Encontrado", .not_found = "Não encontrado", .sheet_summary = "Resumo", .sheet_not_found = "Não encontrados" });
+    try t.expectEqual(3, try exporter.bundle(&db, t.io, .duckdb, items, out, &p, 0));
 }
 
 test "term search report: summary, one table per table with rows, not found; into a new DuckDB file" {
