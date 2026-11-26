@@ -68,7 +68,7 @@ from backend.database_tasks import (
     load_table_payload,
     open_database,
 )
-from backend.db_manager import ACCESS_EXT, DBManager, sql_string, unique_names
+from backend.db_manager import ACCESS_EXT, DBManager, sql_string
 from backend.export import (
     Cancelled,
     Sheet,
@@ -1467,8 +1467,7 @@ class MainWindow(QMainWindow):
         if view is None:
             return
         model = view.model()
-        # sem a caixa de marcar; na grade de Termos, sem a coluna Termo
-        columns = range(1 if view is self.terms_table else 0, len(model.sourceModel().columns))
+        columns = range(len(model.sourceModel().columns))  # sem a caixa de marcar (fora de columns)
         rows = sorted({index.row() for index in view.selectedIndexes()})
         if not rows:
             return
@@ -2273,8 +2272,9 @@ class MainWindow(QMainWindow):
 
     def _on_terms_done(self, result: object) -> None:
         self.terms_result = result  # type: ignore[assignment]
-        for table, counts in self.terms_result["hits"]:  # type: ignore[index]
-            item = QListWidgetItem(tr("search.found_item", table=table, count=num(sum(counts.values()))))
+        for table, _counts in self.terms_result["hits"]:  # type: ignore[index]
+            # linhas achadas, cada uma uma vez: as que a grade, a copia e o relatorio trazem
+            item = QListWidgetItem(tr("search.found_item", table=table, count=num(self.terms_result["rows"][table])))
             item.setData(Qt.ItemDataRole.UserRole, table)
             self.terms_found.addItem(item)
         self._show_terms_summary()
@@ -2289,7 +2289,7 @@ class MainWindow(QMainWindow):
             self.not_found_title.setText(tr("terms.not_found", count=num(0)))
             return
         missing = not_found(result)
-        rows = sum(sum(counts.values()) for _table, counts in result["hits"])
+        rows = sum(result["rows"].values())
         found = counted("terms.found", len(result["terms"]), found=num(len(result["terms"]) - len(missing)))
         summary = tr("terms.summary", found=found, rows=counted("terms.rows", rows),
                      tables=counted("terms.tables", len(result["hits"])))
@@ -2335,13 +2335,11 @@ class MainWindow(QMainWindow):
         if request_id != self._terms_request or self.terms_result is None:
             return
         table, rows = result  # type: ignore[misc]
-        # os nomes que a consulta devolve: uma coluna da tabela com o nome da coluna Termo vem como Termo_2
-        columns = list(rows[0]) if rows else unique_names([tr("terms.column"), *self.terms_result["columns"][table]])
-        self.terms_model.set_rows(rows, columns)
+        # so as colunas da tabela, com os nomes dela (sem coluna Termo: BRIEF 19 d)
+        self.terms_model.set_rows(rows, self.terms_result["columns"][table])
         self.terms_table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
         self._fit_columns(self.terms_table)
-        total = dict(self.terms_result["hits"])[table]
-        self._set_message(self.terms_info, counted("status.showing", sum(total.values()), table=table,
+        self._set_message(self.terms_info, counted("status.showing", self.terms_result["rows"][table], table=table,
                                                    loaded=num(len(rows))), log=False)
 
     def _on_term_rows_error(self, request_id: int, message: str) -> None:
@@ -2349,8 +2347,8 @@ class MainWindow(QMainWindow):
             self._set_message(self.status_label, tr("status.error", message=message), error=True)
 
     def copy_term_hits(self) -> None:
-        """Todas as linhas achadas da tabela escolhida, com cabecalho, separadas por TAB, sem a coluna Termo: colar no
-        Excel da exatamente as linhas achadas."""
+        """Todas as linhas achadas da tabela escolhida, com cabecalho, separadas por TAB: colar no Excel da exatamente
+        as linhas achadas, com as colunas da tabela."""
         table = self._term_table()
         if self.manager is None or self.terms_result is None or not table:
             return
@@ -2358,7 +2356,7 @@ class MainWindow(QMainWindow):
         # if a table with hundreds of thousands of hits shows up
         rows = self.manager.fetch_rows(*table_hits(self.terms_result, table))
         columns = self.terms_result["columns"][table]
-        QGuiApplication.clipboard().setText(rows_to_tsv([list(row.values())[1:] for row in rows], columns))
+        QGuiApplication.clipboard().setText(rows_to_tsv([list(row.values()) for row in rows], columns))
 
     def export_terms_as(self, suffix: str) -> None:
         # o relatorio: Resumo, uma aba por tabela com acerto e Nao encontrados; CSV = uma pasta, um arquivo por aba

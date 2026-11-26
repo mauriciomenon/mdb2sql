@@ -11,7 +11,6 @@ from typing import Any, Callable, Sequence
 from backend.access import quote
 from backend.db_manager import DBManager
 from backend.export import Cancelled, Sheet
-from shared.i18n import tr
 
 Progress = Callable[[int, int, str], None]
 # termos na ordem colada: posicao 1, 2, ... (generate_subscripts e unnest da mesma lista andam juntos)
@@ -96,11 +95,11 @@ def _hits_cte(table: str, columns: Sequence[str], contains: bool, numeric: Seque
 
 def hits_query(table: str, columns: Sequence[str], terms: Sequence[str], contains: bool,
                numeric: Sequence[str] | None = None) -> tuple[str, list[Any]]:
-    """As linhas achadas: coluna Termo (o termo que achou) + todas as colunas da tabela; ordem dos termos, depois a da
-    tabela. Uma linha achada por 2 termos vem 2 vezes."""
-    sql = (f"{_hits_cte(table, columns, contains, numeric)} SELECT terms.{_TERM} AS {quote(tr('terms.column'))},"
-           f" src.* EXCLUDE ({_ROW}) FROM hit JOIN terms ON terms.{_IDX} = hit.{_IDX}"
-           f" JOIN src ON src.{_ROW} = hit.{_ROW} ORDER BY hit.{_IDX}, hit.{_ROW}")
+    """As linhas achadas, cada uma uma vez, so com as colunas da tabela (nomes, ordem e tipos originais, nenhuma a
+    mais: BRIEF 19 d); na ordem do primeiro termo que achou a linha, depois na da tabela."""
+    sql = (f"{_hits_cte(table, columns, contains, numeric)} SELECT src.* EXCLUDE ({_ROW}) FROM"
+           f" (SELECT {_ROW}, min({_IDX}) AS mdb2sql_first FROM hit GROUP BY {_ROW}) h"
+           f" JOIN src ON src.{_ROW} = h.{_ROW} ORDER BY h.mdb2sql_first, h.{_ROW}")
     return sql, [list(terms), list(terms)]
 
 
@@ -108,13 +107,14 @@ def search_terms(manager: DBManager, terms: Sequence[str], contains: bool, table
                  cancel: threading.Event | None = None) -> dict[str, Any]:
     """Conta os acertos de cada termo em cada tabela. Devolve {"terms", "contains", "columns": {tabela: colunas},
     "numeric": {tabela: colunas numericas} ou None (nenhum termo e numero, ou Contem), "hits": [(tabela, {posicao do
-    termo: linhas})] so das tabelas com acerto, na ordem de `tables`}."""
+    termo: linhas})] so das tabelas com acerto, na ordem de `tables`, "rows": {tabela: linhas achadas, cada uma uma
+    vez}}."""
     columns = manager.table_columns()
     numeric = None
     if not contains and any(number_readings(term) for term in terms):  # so entao a regra dos numeros entra
         numeric = {table: [name for name, kind in types.items() if _NUMERIC.fullmatch(kind)]
                    for table, types in manager.column_types().items()}
-    hits = []
+    hits, rows = [], {}
     for done, table in enumerate(tables):
         if cancel is not None and cancel.is_set():
             raise Cancelled()
@@ -122,15 +122,18 @@ def search_terms(manager: DBManager, terms: Sequence[str], contains: bool, table
         if not columns.get(table):
             continue
         cte = _hits_cte(table, columns[table], contains, None if numeric is None else numeric.get(table, []))
-        sql = f"{cte} SELECT {_IDX}, count(*) FROM hit GROUP BY {_IDX}"
+        # por termo e, na mesma consulta, as linhas distintas (uma linha achada por 2 termos sai uma vez so)
+        sql = f"{cte} SELECT {_IDX}, count(*), (SELECT count(DISTINCT {_ROW}) FROM hit) FROM hit GROUP BY {_IDX}"
         with manager.cursor() as cursor:
-            counts = dict(cursor.execute(sql, [list(terms), list(terms)]).fetchall())
-        if counts:
-            hits.append((table, {idx - 1: count for idx, count in counts.items()}))
+            found = cursor.execute(sql, [list(terms), list(terms)]).fetchall()
+        if found:
+            hits.append((table, {idx - 1: count for idx, count, _rows in found}))
+            rows[table] = found[0][2]
     if cancel is not None and cancel.is_set():  # Cancelar durante a ultima tabela tambem e cancelar
         raise Cancelled()
     progress(len(tables), len(tables), "")
-    return {"terms": list(terms), "contains": contains, "columns": columns, "numeric": numeric, "hits": hits}
+    return {"terms": list(terms), "contains": contains, "columns": columns, "numeric": numeric, "hits": hits,
+            "rows": rows}
 
 
 def not_found(result: dict[str, Any]) -> list[str]:
@@ -146,21 +149,6 @@ def table_hits(result: dict[str, Any], table: str) -> tuple[str, list[Any]]:
 
 
 def report_sheets(result: dict[str, Any]) -> list[Sheet]:
-    """O relatorio: uma aba "Resultado Filtro" com tudo (Termo, Situacao, Tabela, Linhas: uma linha por termo x tabela;
-    o nao encontrado com Tabela vazia e 0) e uma aba por tabela com acerto (Termo + colunas), com o nome da tabela."""
-    summary: list[list[Any]] = [[], [], [], []]
-    for position, term in enumerate(result["terms"]):
-        rows = [(table, counts[position]) for table, counts in result["hits"] if position in counts]
-        for table, count in rows or [(None, 0)]:
-            for values, value in zip(summary, (term, tr("terms.status_found" if rows else "terms.status_not_found"),
-                                               table, count)):
-                values.append(value)
-    names = [quote(tr(key)) for key in ("terms.column", "terms.col_status", "terms.col_table", "terms.col_rows")]
-    sheets: list[Sheet] = [(
-        tr("terms.sheet_summary"),
-        f"SELECT unnest(?::VARCHAR[]) AS {names[0]}, unnest(?::VARCHAR[]) AS {names[1]},"
-        f" unnest(?::VARCHAR[]) AS {names[2]}, unnest(?::BIGINT[]) AS {names[3]}",
-        summary,
-    )]
-    sheets += [(table, *table_hits(result, table)) for table, _counts in result["hits"]]
-    return sheets
+    """O relatorio: so uma aba (tabela, arquivo CSV) por tabela com acerto, com o nome dela: as linhas achadas com as
+    colunas originais (sem coluna Termo nem aba de resumo: BRIEF 19 d)."""
+    return [(table, *table_hits(result, table)) for table, _counts in result["hits"]]

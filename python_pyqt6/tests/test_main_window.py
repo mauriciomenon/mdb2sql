@@ -1145,27 +1145,29 @@ def test_terms_tab_lists_hits_in_list_order_copies_and_reports(qtbot, tmp_path: 
     win.run_terms_action.trigger()
     qtbot.waitUntil(lambda: win._job is None and win._busy == 0 and win.terms_model.rowCount() > 0, timeout=30000)
 
-    assert [win.terms_found.item(i).text() for i in range(win.terms_found.count())] == ["other (1)", "pts (4)"]
-    assert win.terms_summary.text() == "2 of 3 terms found: 5 rows in 2 tables"
+    # cada linha achada conta uma vez (a 242 achada por u9a e por turbina cgi: uma linha so)
+    assert [win.terms_found.item(i).text() for i in range(win.terms_found.count())] == ["other (1)", "pts (3)"]
+    assert win.terms_summary.text() == "2 of 3 terms found: 4 rows in 2 tables"
     assert win.not_found_title.text() == "Not found (1)" and win.not_found_edit.toPlainText() == "PNTNAM"
-    assert win.terms_found.currentRow() == 0 and win.terms_model.columns == ["Term", "txt"]  # a primeira escolhida
+    assert win.terms_found.currentRow() == 0 and win.terms_model.columns == ["txt"]  # a primeira escolhida
     # UI Automation seleciona o item sem torna-lo o atual: a grade segue a selecao
     from PyQt6.QtCore import QItemSelectionModel
 
     win.terms_found.selectionModel().select(win.terms_found.model().index(1, 0),
                                             QItemSelectionModel.SelectionFlag.ClearAndSelect)
-    qtbot.waitUntil(lambda: win._busy == 0 and win.terms_model.columns[1:2] == ["RTUNO"], timeout=30000)
+    qtbot.waitUntil(lambda: win._busy == 0 and win.terms_model.columns[:1] == ["RTUNO"], timeout=30000)
     proxy = win.terms_proxy
-    assert [(proxy.index(r, 0).data(), proxy.index(r, 2).data()) for r in range(proxy.rowCount())] == [
-        ("u9a", "238"), ("u9a", "242"), ("u9a", "8"), ("turbina cgi", "242")]  # ordem da lista, depois da tabela
-    assert win.terms_info.text() == "pts: showing 4 of 4 rows"
+    # so as colunas da tabela (sem Termo: BRIEF 19 d), cada linha uma vez, na ordem do 1o termo que a achou
+    assert win.terms_model.columns == ["RTUNO", "PNTNO", "SUBNAM", "PNTNAM"]
+    assert [proxy.index(r, 1).data() for r in range(proxy.rowCount())] == ["238", "242", "8"]
+    assert win.terms_info.text() == "pts: showing 3 of 3 rows"
 
-    # copiar: as linhas achadas com cabecalho, sem a coluna Termo; copiar linha tambem sem ela
+    # copiar: as linhas achadas com cabecalho, as colunas da tabela
     clipboard = QApplication.clipboard()
     win.copy_hits_action.trigger()
     assert clipboard.text() == ("RTUNO\tPNTNO\tSUBNAM\tPNTNAM\n50\t238\tU9A\t GENERADOR CGS \n50\t242\tU9A\tturbina cgi\n"
-                                "52\t8\tu9a\t\n50\t242\tU9A\tturbina cgi")
-    win.terms_table.selectRow(3)
+                                "52\t8\tu9a\t")
+    win.terms_table.selectRow(1)
     win.copy_row_action.trigger()
     assert clipboard.text() == "50\t242\tU9A\tturbina cgi"
     assert win.copy_hits_action in win.terms_table.actions()
@@ -1179,7 +1181,8 @@ def test_terms_tab_lists_hits_in_list_order_copies_and_reports(qtbot, tmp_path: 
     qtbot.waitUntil(lambda: win._job is None and (tmp_path / "rep.xlsx").exists(), timeout=30000)
     assert asked == ["pts_termos.xlsx"]
     book = openpyxl.load_workbook(tmp_path / "rep.xlsx", read_only=True)
-    assert book.sheetnames == ["Filter Result", "other", "pts"]  # 13 i
+    assert book.sheetnames == ["other", "pts"]  # uma aba por tabela, sem "Resultado Filtro" (BRIEF 19 d)
+    assert next(book["pts"].values) == ("RTUNO", "PNTNO", "SUBNAM", "PNTNAM")
     book.close()
     folder = tmp_path / "csv"
     folder.mkdir()
@@ -1190,8 +1193,8 @@ def test_terms_tab_lists_hits_in_list_order_copies_and_reports(qtbot, tmp_path: 
     win.export_terms_actions[1].trigger()
     assert sorted(p.name for p in folder.iterdir()) == ["pts.csv"]  # nao: nada gravado
     win.export_terms_actions[1].trigger()
-    qtbot.waitUntil(lambda: win._job is None and len(list(folder.iterdir())) == 3, timeout=30000)
-    assert (folder / "pts.csv").read_text(encoding="utf-8-sig").startswith("Term,RTUNO")
+    qtbot.waitUntil(lambda: win._job is None and len(list(folder.iterdir())) == 2, timeout=30000)
+    assert (folder / "pts.csv").read_text(encoding="utf-8-sig").startswith("RTUNO,PNTNO")
 
     # Configuracoes > Comparacao dos termos: Contem (gravado, ja vale na aba); "cgs" acha 2 linhas em pts
     win.default_match_actions["contains"].trigger()
@@ -1209,7 +1212,7 @@ def test_terms_tab_lists_hits_in_list_order_copies_and_reports(qtbot, tmp_path: 
 
 
 def test_terms_grid_and_copy_with_a_table_column_named_like_the_term_column(qtbot, tmp_path: Path) -> None:
-    # revisao B2: a coluna "Term" da tabela nao some nem troca o termo na grade e no copiar
+    # revisao B2: a coluna "Term" da tabela e uma coluna como as outras (a grade nao tem coluna Termo: BRIEF 19 d)
     import duckdb
 
     db_file = tmp_path / "g.duckdb"
@@ -1225,10 +1228,9 @@ def test_terms_grid_and_copy_with_a_table_column_named_like_the_term_column(qtbo
     win.terms_edit.setPlainText("alpha")
     win.run_terms_action.trigger()
     qtbot.waitUntil(lambda: win._job is None and win._busy == 0 and win.terms_model.rowCount() == 2, timeout=30000)
-    assert win.terms_model.columns == ["Term", "Term_2", "other"]
+    assert win.terms_model.columns == ["Term", "other"]
     proxy = win.terms_proxy
-    assert [[proxy.index(r, c).data() for c in range(3)] for r in range(2)] == [["alpha", "alpha", "x"],
-                                                                                ["alpha", "beta", "alpha"]]
+    assert [[proxy.index(r, c).data() for c in range(2)] for r in range(2)] == [["alpha", "x"], ["beta", "alpha"]]
     win.copy_hits_action.trigger()
     assert QApplication.clipboard().text() == "Term\tother\nalpha\tx\nbeta\talpha"
 

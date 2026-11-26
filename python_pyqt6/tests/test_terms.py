@@ -48,11 +48,11 @@ def test_whole_value_ignores_case_and_spaces_and_keeps_the_list_order(points: DB
     terms = ["u9a", "nothing", "generador cgs", "238"]
     result = search_terms(points, terms, False, points.list_tables(), _noop)
     # numeros como texto; espacos nas pontas da celula e maiusculas nao contam
-    assert result["hits"] == [("pts", {0: 3, 2: 1, 3: 1})]
+    assert result["hits"] == [("pts", {0: 3, 2: 1, 3: 1})] and result["rows"] == {"pts": 3}
     rows = points.fetch_rows(*table_hits(result, "pts"))
-    assert [(r["Term"], r["PNTNO"]) for r in rows] == [("u9a", 238), ("u9a", 242), ("u9a", 8),
-                                                        ("generador cgs", 238), ("238", 238)]
-    assert list(rows[0]) == ["Term", "RTUNO", "PNTNO", "SUBNAM", "PNTNAM"]
+    # cada linha uma vez, na ordem do primeiro termo que a achou; so as colunas da tabela (BRIEF 19 d)
+    assert [r["PNTNO"] for r in rows] == [238, 242, 8]
+    assert list(rows[0]) == ["RTUNO", "PNTNO", "SUBNAM", "PNTNAM"]
     assert not_found(result) == ["nothing"]
 
 
@@ -117,36 +117,36 @@ def test_whole_value_numbers_match_with_the_loose_rule(tmp_path: Path, kind: str
     with DBManager(str(path)) as manager:
         terms = ["216", "0,1", "1234.5", "1234", "abc", "nothing"]
         result = search_terms(manager, terms, False, ["n"], _noop)
-        hits = [(r["Term"], r["id"]) for r in manager.fetch_rows(*table_hits(result, "n"))]
-        assert hits == [("216", 1), ("216", 3), ("216", 4), ("0,1", 2), ("1234.5", 5), ("1234", 9), ("abc", 10)]
+        hits = [r["id"] for r in manager.fetch_rows(*table_hits(result, "n"))]
+        assert hits == [1, 3, 4, 2, 5, 9, 10]  # 216: 1, 3, 4; 0,1: 2; 1234.5: 5; 1234: 9; abc: 10
         assert not_found(result) == ["nothing"]
 
 
 def test_report_in_every_format(points: DBManager, tmp_path: Path) -> None:
     result = search_terms(points, ["U9A", "zzz", "turbina cgi"], False, points.list_tables(), _noop)
     sheets = report_sheets(result)
-    # 13 i): UMA aba inicial "Resultado Filtro" com tudo (os nao encontrados nela), depois uma aba por tabela
-    assert [name for name, _query, _params in sheets] == ["Filter Result", "other", "pts"]
-    summary = points.fetch_rows(sheets[0][1], sheets[0][2])
-    assert [tuple(r.values()) for r in summary] == [
-        ("U9A", "Found", "pts", 3), ("zzz", "Not found", None, 0),
-        ("turbina cgi", "Found", "other", 1), ("turbina cgi", "Found", "pts", 1)]
-    assert list(summary[0]) == ["Term", "Status", "Table", "Rows"]
+    # BRIEF 19 d: so uma aba por tabela com acerto (sem "Resultado Filtro"), as linhas achadas uma vez cada, com as
+    # colunas, titulos e tipos da tabela (sem coluna Termo)
+    assert [name for name, _query, _params in sheets] == ["other", "pts"]
 
-    assert export_sheets(points, sheets, tmp_path / "r.xlsx", _noop) == 3
+    assert export_sheets(points, sheets, tmp_path / "r.xlsx", _noop) == 2
     book = openpyxl.load_workbook(tmp_path / "r.xlsx", read_only=True)
-    assert book.sheetnames == ["Filter Result", "other", "pts"]
+    assert book.sheetnames == ["other", "pts"]
+    assert list(book["pts"].values) == [("RTUNO", "PNTNO", "SUBNAM", "PNTNAM"), (50, 238, "U9A", " GENERADOR CGS "),
+                                        (50, 242, "U9A", "turbina cgi"), (52, 8, "u9a", None)]  # numeros como numero
     book.close()
     for suffix in (".sqlite", ".duckdb"):
         export_sheets(points, sheets, tmp_path / f"r{suffix}", _noop)
         with DBManager(str(tmp_path / f"r{suffix}")) as saved:
-            assert saved.list_tables() == ["Filter Result", "other", "pts"]
-            assert saved.get_row_count("pts") == 4
+            assert saved.list_tables() == ["other", "pts"]
+            assert saved.get_row_count("pts") == 3
+            assert saved.column_types()["pts"]["PNTNO"] in ("INTEGER", "BIGINT")
     folder = tmp_path / "csv"
     folder.mkdir()
-    assert export_csv_folder(points, sheets, folder, _noop) == 3
-    assert sorted(p.name for p in folder.iterdir()) == ["Filter Result.csv", "other.csv", "pts.csv"]
-    assert (folder / "pts.csv").read_text(encoding="utf-8-sig").splitlines()[1] == "U9A,50,238,U9A, GENERADOR CGS "
+    assert export_csv_folder(points, sheets, folder, _noop) == 2
+    assert sorted(p.name for p in folder.iterdir()) == ["other.csv", "pts.csv"]
+    assert (folder / "pts.csv").read_text(encoding="utf-8-sig").splitlines()[:2] == [
+        "RTUNO,PNTNO,SUBNAM,PNTNAM", "50,238,U9A, GENERADOR CGS "]
 
 
 def test_csv_name_replaces_what_windows_refuses() -> None:

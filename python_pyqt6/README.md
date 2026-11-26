@@ -120,13 +120,12 @@ Tabs:
   the term; contains = the cell contains it; case does not count. Empty lines are skipped and a repeated term is
   searched once (`8 terms, 2 repeated`); a header pasted from Excel is a term like any other. The search runs in
   the database engine with progress and Cancel, then shows `X of Y terms found: N rows in M tables`, the tables with
-  hits as `table (n)` and the grid of the chosen one: a Term column plus every column of the table, in the order
-  of the pasted list and then of the table (a row found by two terms appears twice), limited by "Rows". The terms
-  not found are listed below, one per line, with Copy. Right-click on the grid: the three copy items (without the
-  Term column), Copy the rows found in this table (with header, TAB separated, pastes into Excel as exactly the
-  found rows) and the report (Excel, CSV folder, SQLite or DuckDB: one Filter Result sheet with every term, where
-  it was found and how many rows, the terms not found included, then one sheet/table per table with hits; name
-  `<database>_termos`). In Whole value, numbers match loosely: a term and a cell that read as numbers match when
+  hits as `table (n)` and the grid of the chosen one: the columns of the table (names, order and types as in the
+  table, nothing added), each row found once, in the order of the first term that found it and then of the
+  table, limited by "Rows". The terms not found are listed below, one per line, with Copy. Right-click on the
+  grid: the three copy items, Copy the rows found in this table (with header, TAB separated, pastes into Excel as
+  exactly the found rows) and the report (Excel, CSV folder, SQLite or DuckDB: one sheet/table/file per table
+  with hits, named after it, with the rows found; name `<database>_termos`). In Whole value, numbers match loosely: a term and a cell that read as numbers match when
   a reading of one equals a reading of the other (216 finds 216.0, 216,0 and "216"; 1234.5 finds "1.234,5";
   never 2160 or 216.5). DB3 (287 tables), a list of 9 terms, whole value, all tables: 6.8 s on the
   SQLite file, 3.6 s on the DuckDB file.
