@@ -1500,7 +1500,7 @@
              tabelas com acerto e a grade da escolhida; (e) os termos nao encontrados, copiaveis -->
         <div class="terms">
           <textarea bind:value={termsText} rows="8" aria-label={t('tabs.terms')} placeholder={t('terms.hint')} spellcheck="false"></textarea>
-          <div class="table-bar data-bar">
+          <div class="table-bar terms-bar">
             {@render choice(MATCHES, match, (id) => (match = id), t('settings.match'), t('match.help'))}
             {@render choice(SCOPES, termsScope, (id) => (termsScope = id), t('scope.label'))}
             {#if termsWork}
@@ -1832,7 +1832,8 @@
     font: inherit;
   }
 
-  /* Arquivo > Exportar: o submenu abre ao lado do item */
+  /* submenu (Arquivo > Exportar, os formatos de cada exportacao, Tema, Idioma...): abre ao lado do item, do tamanho
+     dos textos; sem lugar a direita, abre para a esquerda */
   .submenu-root {
     position: relative;
     display: flex;
@@ -1842,6 +1843,12 @@
   .dropdown.sub {
     top: -5px;
     left: 100%;
+    min-width: 120px;
+  }
+
+  .dropdown.sub:global(.left) {
+    right: 100%;
+    left: auto;
   }
 
   .dropdown button:hover:not(:disabled),
@@ -1852,13 +1859,6 @@
   .dropdown .separator {
     margin: 4px 0;
     border-top: 1px solid var(--border);
-  }
-
-  .dropdown .group {
-    padding: 4px 10px 2px;
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 600;
   }
 
   .check {
@@ -2334,8 +2334,10 @@
     color: var(--accent);
   }
 
-  /* exportar a tabela inteira ou so as linhas encontradas: o nome da exportacao e as escolhas numa linha */
+  /* pergunta com botoes (sair, exportacao em andamento, tabela inteira ou linhas encontradas): titulo, frase e os
+     botoes numa linha, os da direita lado a lado */
   dialog.ask {
+    position: relative;
     width: 460px;
   }
 
@@ -2343,34 +2345,8 @@
     margin-top: 16px;
   }
 
-  /* pergunta do SQLite convertido: titulo, nome do arquivo, lembrar, botoes alinhados */
-  dialog.convert {
-    width: 420px;
-  }
-
-  dialog.convert .file {
-    margin: 6px 0 12px;
-  }
-
-  dialog.convert .remember {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--text);
-    font-size: inherit;
-    font-weight: 400;
-  }
-
-  dialog.convert .actions {
-    margin-top: 16px;
-  }
-
-  dialog.convert {
-    position: relative;
-  }
-
-  /* X do dialogo: fecha e cancela, como o Esc */
-  dialog.convert .dialog-x {
+  /* X do dialogo: fecha sem escolher, como o Esc */
+  dialog.ask .dialog-x {
     position: absolute;
     top: 8px;
     right: 10px;
@@ -2384,16 +2360,15 @@
     line-height: 1.4;
   }
 
-  dialog.convert .dialog-x:hover {
+  dialog.ask .dialog-x:hover {
     color: var(--text);
   }
 
   /* foco inicial sempre visivel no botao padrao (o showModal veio de clique, nao de teclado) */
-  dialog.convert button.save:focus {
+  dialog.ask button.default:focus {
     outline: 2px solid var(--text);
     outline-offset: 2px;
   }
-
 
   main {
     display: flex;
@@ -2454,11 +2429,63 @@
     margin-left: auto;
   }
 
-  /* contagem embaixo da grade: uma linha, no texto apagado das outras contagens */
+  /* contagem embaixo da grade: uma linha, no texto apagado das outras contagens; a direita, "So as marcadas" */
   .table-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
     margin: 0;
     color: var(--muted);
     font-size: 12px;
+  }
+
+  /* caixa discreta: no tamanho e na cor da contagem */
+  .only-marked {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 6px;
+    color: inherit;
+    font-size: inherit;
+    font-weight: 400;
+  }
+
+  .only-marked input {
+    margin: 0;
+  }
+
+  /* aba Termos: a caixa dos termos, a linha dos seletores e o resumo */
+  .terms {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .terms textarea,
+  .not-found textarea {
+    resize: vertical;
+    font-family: Consolas, 'Cascadia Mono', monospace;
+    font-size: 12px;
+  }
+
+  /* tabelas com acerto ao lado da grade da tabela escolhida */
+  .terms-found {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    gap: 8px;
+  }
+
+  .terms-found .found {
+    flex: 0 0 220px;
+  }
+
+  /* termos nao encontrados: titulo com o botao Copiar e a caixa so de leitura */
+  .not-found {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
 
   h2 {
@@ -2528,6 +2555,12 @@
 
   .found button:hover {
     background: var(--row-hover);
+  }
+
+  /* aba Termos: a tabela escolhida, como a tabela escolhida na lista de tabelas */
+  .found button.selected {
+    background: var(--accent);
+    color: var(--accent-text);
   }
 
   .found p {
