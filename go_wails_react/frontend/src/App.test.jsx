@@ -2,7 +2,7 @@ import React from 'react';
 import { readFileSync } from 'node:fs';
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { vi, beforeEach } from 'vitest';
-import App, { aboutRows, clampLogHeight, columnCellWidth, filterLabel, gridText, LOG_MIN, logLine, nullableText, parseTerms, progressText, ROWID, rowKey, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
+import App, { aboutRows, clampLogHeight, columnCellWidth, favoritesFirst, filterLabel, gridText, LOG_MIN, logLine, nullableText, parseTerms, progressText, ROWID, rowKey, rowToTsv, searchRows, statusLine, tsvField, withFilter } from './App.tsx';
 import { CATALOGS, LANGS, translate, translateN } from './i18n';
 
 const tables = ['RANGER_SOACCU', 'RANGER_SOGEN'];
@@ -1066,7 +1066,7 @@ describe('App IPC flow', () => {
     ]);
     expect(tree('View')).toEqual([
       '✓Data Ctrl+1', 'Schema Ctrl+2', 'SQL Ctrl+3', 'Terms Ctrl+4', '--', 'Rows ▸', 'Columns...', 'Search in ▸', 'Only marked rows',
-      'Go to the table list Ctrl+T', '--', 'Run SQL Ctrl+Enter', 'Search terms Ctrl+Enter', '--', 'Log Ctrl+L',
+      'Go to the table list Ctrl+T', 'Favorite or unfavorite table Ctrl+D', '--', 'Run SQL Ctrl+Enter', 'Search terms Ctrl+Enter', '--', 'Log Ctrl+L',
     ]);
     expect(tree('Settings')).toEqual(['Theme ▸', 'Language ▸', 'Default search scope ▸', 'Term matching ▸', 'Show NULL']);
     expect(tree('Help')).toEqual(['About mdb2sql']);
@@ -1105,7 +1105,7 @@ describe('App IPC flow', () => {
     ]);
     expect(tree('Exibir')).toEqual([
       'Dados Ctrl+1', 'Esquema Ctrl+2', 'SQL Ctrl+3', '✓Termos Ctrl+4', '--', 'Linhas ▸', 'Colunas...', 'Pesquisar em ▸', 'Só as linhas marcadas',
-      'Ir para a lista de tabelas Ctrl+T', '--', 'Executar SQL Ctrl+Enter', 'Pesquisar termos Ctrl+Enter', '--', 'Log Ctrl+L',
+      'Ir para a lista de tabelas Ctrl+T', 'Favoritar ou desfavoritar tabela Ctrl+D', '--', 'Executar SQL Ctrl+Enter', 'Pesquisar termos Ctrl+Enter', '--', 'Log Ctrl+L',
     ]);
     expect(tree('Configurações')).toEqual(['Tema ▸', 'Idioma ▸', 'Escopo padrão da busca ▸', 'Comparação dos termos ▸', 'Exibir NULL']);
     expect(tree('Ajuda')).toEqual(['Sobre o mdb2sql']);
@@ -1113,6 +1113,38 @@ describe('App IPC flow', () => {
       'Tabela atual ▸', 'Linhas marcadas ▸', 'Esquema da tabela atual ▸', 'Esquema do banco ▸', 'Todas as tabelas em CSV (um arquivo por tabela)...',
       'Resultado do SQL ▸', 'Resultado da busca em todas as tabelas (Excel)...', 'Relatório da pesquisa de termos ▸',
     ]);
+  });
+
+  // standard item 34: favorite tables first in the table list, in alphabetical order, with a star; right-click a table
+  // or View > Favorite or unfavorite table (Ctrl+D, the open table); kept by name while the program is open
+  it('puts the favorite tables first in the table list, from its right-click menu and Ctrl+D', async () => {
+    const LoadDatabase = vi.fn(async () => ['RANGER_SOACCU', 'RANGER_SOGEN', 'RANGER_SOSTAT']);
+    global.window = Object.assign(window, { go: { main: { App: { ...bridge, LoadDatabase } } } });
+    render(<App />);
+    openDefault();
+    await screen.findByText('Alpha');
+    const list = screen.getByRole('navigation', { name: 'Tables' });
+    const names = () => [...list.querySelectorAll('.table-item .name')].map((el) => el.textContent);
+    expect(names()).toEqual(['RANGER_SOACCU', 'RANGER_SOGEN', 'RANGER_SOSTAT']);
+
+    fireEvent.contextMenu(within(list).getByRole('button', { name: 'RANGER_SOSTAT' }));
+    fireEvent.click(item('Add to favorites'));
+    expect(names()).toEqual(['★ RANGER_SOSTAT', 'RANGER_SOACCU', 'RANGER_SOGEN']);
+    fireEvent.keyDown(window, { key: 'd', ctrlKey: true }); // the open table, RANGER_SOACCU
+    expect(names()).toEqual(['★ RANGER_SOACCU', '★ RANGER_SOSTAT', 'RANGER_SOGEN']);
+    fireEvent.change(screen.getByLabelText('Filter 3 tables'), { target: { value: 'stat' } });
+    await waitFor(() => expect(names()).toEqual(['★ RANGER_SOSTAT'])); // the filter applies to the favorites too
+
+    // another file keeps them by name; a name the file does not have is not shown
+    LoadDatabase.mockImplementation(async () => ['RANGER_SOGEN', 'RANGER_SOSTAT']);
+    openDefault();
+    await waitFor(() => expect(names()).toEqual(['★ RANGER_SOSTAT', 'RANGER_SOGEN']));
+    fireEvent.contextMenu(within(list).getByRole('button', { name: 'RANGER_SOSTAT' }));
+    fireEvent.click(item('Remove from favorites'));
+    pick('View', 'Favorite or unfavorite table'); // the open table, RANGER_SOGEN
+    expect(names()).toEqual(['★ RANGER_SOGEN', 'RANGER_SOSTAT']);
+    expect(favoritesFirst(['B', 'A', 'C', 'D'], new Set(['D', 'B', 'X']))).toEqual(['B', 'D', 'A', 'C']);
+    expect(translate('pt-BR', 'fav.add')).toBe('Favoritar');
   });
 
   // standard item 28: File > Save and Save as... (Go asks for the file: SQLite, DuckDB or Excel), disabled with nothing

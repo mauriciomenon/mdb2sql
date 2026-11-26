@@ -145,8 +145,12 @@ Menus (every button has a menu item):
 - Edit: Copy value Ctrl+C, Copy row Ctrl+Shift+C, Copy row with header, Copy the whole log, Search Ctrl+F, Filter
   by this value, Clear filters, Mark or unmark row (Space), Unmark all rows.
 - View: Data Ctrl+1, Schema Ctrl+2, SQL Ctrl+3, Terms Ctrl+4, Rows (100/500/1000), Columns..., Search in (This
-  table, All tables), Only marked rows, Go to the table list Ctrl+T, Run SQL Ctrl+Enter, Search terms Ctrl+Enter,
-  Log Ctrl+L.
+  table, All tables), Only marked rows, Go to the table list Ctrl+T, Favorite or unfavorite table Ctrl+D, Run SQL
+  Ctrl+Enter, Search terms Ctrl+Enter, Log Ctrl+L.
+
+Favorite tables: right-click a table of the list (Add to favorites / Remove from favorites) or Ctrl+D on the open
+table. Favorites come first in the list, in alphabetical order, with "★ " before the name; they are kept by name while
+the program is open (also for another file), never saved.
 - Settings: Theme, Language, Default search scope, Term matching (Whole value, Contains), Show NULL.
 - Help: About mdb2sql.
 

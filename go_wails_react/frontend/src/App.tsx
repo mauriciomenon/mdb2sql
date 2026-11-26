@@ -133,6 +133,13 @@ export const ROWID = '\u0000rowid';
 const NO_ROWS: Row[] = []; // one empty list, so the grid memos keep it between renders
 export const sumRows = (hits: TableHits[]) => hits.reduce((n, h) => n + h.rows, 0);
 
+// Table list with favorites (standard item 34): the favorite tables of the list first, in alphabetical order, then the
+// others as they were; a favorite name the open file does not have is simply not in the list
+export const favoritesFirst = (tables: string[], favorites: Set<string>) => [
+  ...tables.filter((tb) => favorites.has(tb)).sort(),
+  ...tables.filter((tb) => !favorites.has(tb)),
+];
+
 // What tells a row apart from the others of its table: the engine's rowid when Go sent one, else all its values (rows
 // equal in every value are then marked together)
 export const rowKey = (row: Row, columns: string[]) => (ROWID in row ? `#${row[ROWID]}` : JSON.stringify(columns.map((c) => row[c] ?? null)));
@@ -381,8 +388,17 @@ function App() {
   const [searching, setSearching] = useState(false);
   const [sel, setSel] = useState<{ row: Row; col: string } | null>(null); // selected cell
   useEffect(() => setSel(null), [view]); // Edit > Copy... never copies a cell of another tab
-  // open context menu: of the selected cell, of a column header (header = column name) or of the status bar
-  const [menu, setMenu] = useState<{ x: number; y: number; header?: string; status?: boolean } | null>(null);
+  // open context menu: of the selected cell, of a column header (header = column name), of the status bar or of a table
+  // of the table list (table = its name)
+  const [menu, setMenu] = useState<{ x: number; y: number; header?: string; status?: boolean; table?: string } | null>(null);
+  // favorite tables, by name, while the program is open (not saved; another file or F5 keeps them)
+  const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  const toggleFavorite = (table: string) =>
+    setFavorites((old) => {
+      const next = new Set(old);
+      if (!next.delete(table)) next.add(table);
+      return next;
+    });
   const [filters, setFilters] = useState<Filter[]>([]); // of the current table, applied by Go in the query
   const [hidden, setHidden] = useState<Set<string>>(new Set()); // hidden columns of the current table
   const [widths, setWidths] = useState<Record<string, number>>({}); // Data columns resized by hand (current table)
@@ -479,8 +495,8 @@ function App() {
   useEffect(() => window.runtime?.EventsOn?.('progress', setProgress), []);
   useEffect(() => window.runtime?.EventsOn?.('log', (text: string) => addLog(text)), []);
 
-  // shortcuts of the menus (standard items 20 and 28): Ctrl+O, Ctrl+S, Ctrl+Shift+S, Ctrl+W, Ctrl+Q, F5, Ctrl+F, Ctrl+T,
-  // Ctrl+1/2/3/4, Ctrl+L here; Ctrl+Enter in the SQL and Terms fields, Ctrl+C, Ctrl+Shift+C and Space in the grid. The
+  // shortcuts of the menus (standard items 20, 28 and 34): Ctrl+O, Ctrl+S, Ctrl+Shift+S, Ctrl+W, Ctrl+Q, F5, Ctrl+F,
+  // Ctrl+T, Ctrl+D, Ctrl+1/2/3/4, Ctrl+L here; Ctrl+Enter in the SQL and Terms fields, Ctrl+C, Ctrl+Shift+C and Space in the grid. The
   // keys are always taken from the webview (F5 would reload the page); with a dialog open they do nothing, and while a
   // job runs only Ctrl+Q works (it asks before leaving)
   useEffect(() => {
@@ -497,6 +513,7 @@ function App() {
         : k === 'w' ? () => L.closeDatabase()
         : k === 'f' ? () => L.focusSearch()
         : k === 't' ? () => L.focusTables()
+        : k === 'd' ? () => L.toggleFavorite()
         : k === 'q' ? () => L.quit()
         : k === 'l' ? () => toggleLog()
         : ['1', '2', '3', '4'].includes(e.key) ? () => L.showView(VIEWS[Number(e.key) - 1])
@@ -1094,8 +1111,8 @@ function App() {
 
   const visibleTables = useMemo(() => {
     const words = searchWords(tableFilter);
-    return words.length ? tables.filter((tb) => hasAllWords(normalizeText(tb), words)) : tables;
-  }, [tables, tableFilter]);
+    return favoritesFirst(words.length ? tables.filter((tb) => hasAllWords(normalizeText(tb), words)) : tables, favorites);
+  }, [tables, tableFilter, favorites]);
 
   // schema order = database column order (Go maps reach JS sorted by key); also gives empty tables a header
   // memoized so the search index below is built once per load, not on every keystroke
@@ -1168,6 +1185,7 @@ function App() {
     save: (saveAs: boolean) => dbName && save(saveAs),
     closeDatabase: () => dbName && closeDatabase(),
     focusTables: goTables,
+    toggleFavorite: () => selectedTable && toggleFavorite(selectedTable),
     modal: () => !!(about || colsOpen || question || exportAsk || displayWarn),
     busy: () => busy,
   };
@@ -1210,6 +1228,7 @@ function App() {
     { label: t('scope.label'), on: view === 'data' && tables.length > 0, items: radios(SCOPES, scope, (s) => t(`scope.${s}`), setScope) },
     { label: t('menu.onlyMarked'), on: markCount > 0, checked: onlyShown, run: () => setOnlyMarked(!onlyShown) },
     { label: t('menu.goTables'), kbd: 'Ctrl+T', on: tables.length > 0, run: goTables },
+    { label: t('fav.toggle'), kbd: 'Ctrl+D', on: !!selectedTable, run: () => toggleFavorite(selectedTable) },
     { sep: true },
     { label: t('menu.runSql'), kbd: 'Ctrl+Enter', on: view === 'sql' && !!sql.trim() && !querying, run: () => runSql() },
     { label: t('terms.run'), kbd: 'Ctrl+Enter', on: view === 'terms' && termsInfo.terms.length > 0, run: runTerms },
@@ -1415,8 +1434,16 @@ function App() {
                 aria-label={table}
                 aria-current={table === selectedTable ? 'true' : undefined}
                 onClick={() => loadTable(table, limit)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setOpenMenu(null);
+                  // the menu key may report no position: open the menu under the table
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setMenu(e.clientX || e.clientY ? { x: e.clientX, y: e.clientY, table } : { x: r.left + 8, y: r.bottom, table });
+                }}
               >
-                <span className="name">{table}</span>
+                {/* a favorite: a discreet star before the name, in the text color */}
+                <span className="name">{favorites.has(table) ? `★ ${table}` : table}</span>
                 {table in counts && <span className="count">{counts[table]}</span>}
               </button>
             </li>
@@ -1792,7 +1819,19 @@ function App() {
         </div>
       )}
 
-      {menu && menu.header === undefined && !menu.status && (
+      {/* table list: add to or remove from the favorites */}
+      {menu?.table !== undefined && (
+        <MenuList
+          key={`${menu.x},${menu.y}`}
+          place={keepInWindow}
+          items={[{ label: favorites.has(menu.table) ? t('fav.remove') : t('fav.add'), focus: true, run: () => toggleFavorite(menu.table!) }]}
+          label={t('sidebar.label')}
+          className="menu"
+          style={{ left: menu.x, top: menu.y }}
+        />
+      )}
+
+      {menu && menu.header === undefined && !menu.status && menu.table === undefined && (
         <MenuList
           key={`${menu.x},${menu.y}`}
           place={keepInWindow}
