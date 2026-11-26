@@ -604,6 +604,7 @@ td.mark input {
   grid-column: 1 / -1;
   margin: 0;
   font-size: inherit;
+  font-weight: normal; /* as in the Python and Zig versions */
 }
 
 /* numbers to the right, the header of a numeric column too */

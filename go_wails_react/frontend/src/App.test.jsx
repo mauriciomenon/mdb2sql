@@ -1503,6 +1503,13 @@ describe('App IPC flow', () => {
     expect(rule('.terms-missing textarea')).not.toMatch(/monospace|Consolas/);
   });
 
+  // coordinator 26/11: the title "Not found (n)" is not bold, as in the Python and Zig versions
+  it('writes the not found title not bold', () => {
+    const css = readFileSync('src/App.css', 'utf8').replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = (sel) => css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*]/g, '\\$&')} \\{([^}]*)\\}`))?.[1] ?? '';
+    expect(rule('.terms-missing h3')).toMatch(/font-weight: normal;/);
+  });
+
   // owner 26/11 (13f): no button larger than the others to show rank: the Run button of the SQL tab keeps its height
   // (not stretched to the SQL field), the default button is not bold, Run and Search terms look as the rest
   it('makes no button larger than the others', async () => {
