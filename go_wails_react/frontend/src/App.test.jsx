@@ -1317,7 +1317,12 @@ describe('App IPC flow', () => {
     await screen.findByText('Alpha');
     fireEvent.click(screen.getByRole('tab', { name: 'Advanced Search' }));
     const box = screen.getByLabelText('Advanced Search');
-    expect(box).toHaveAttribute('placeholder', 'Paste the terms, one per line (for example, an Excel column)');
+    // owner 26/11 (13e): the hint shows an example, one term per line
+    expect(box.getAttribute('placeholder').split('\n')).toEqual([
+      'Paste the terms, one per line (for example, an Excel column). Example:', 'text1', 'text2', 'text3',
+      'searches the 3 terms in all tables or only in the selected table.',
+    ]);
+    expect(translate('pt-BR', 'terms.hint').split('\n')[4]).toBe('pesquisa os 3 termos em todas as tabelas ou só na tabela selecionada.');
     expect(screen.getByRole('radio', { name: 'Contains' })).toHaveAttribute('aria-checked', 'true'); // Settings > Term matching
     expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true'); // Default search scope
     expect(screen.getByRole('radiogroup', { name: 'Term matching' }).title).toMatch(/^Whole value: the whole cell equals the term/);

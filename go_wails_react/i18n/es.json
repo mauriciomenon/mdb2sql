@@ -241,7 +241,7 @@
   "terms.count.one": "1 término",
   "terms.found": "{0} de {1} términos encontrados",
   "terms.found.one": "{0} de 1 término encontrado",
-  "terms.hint": "Pegue los términos, uno por línea (por ejemplo, una columna de Excel)",
+  "terms.hint": "Pegue los términos, uno por línea (por ejemplo, una columna de Excel). Ejemplo:\ntexto1\ntexto2\ntexto3\nbusca los 3 términos en todas las tablas o solo en la tabla seleccionada.",
   "terms.matchTip": "Valor completo: la celda entera es igual al término. Contiene: la celda contiene el término. Mayúsculas y espacios en los extremos no cuentan.",
   "terms.notFound": "No encontrados ({0})",
   "terms.progress": "Buscando términos: tabla {0} de {1} ({2})",

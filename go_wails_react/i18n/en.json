@@ -241,7 +241,7 @@
   "terms.count.one": "1 term",
   "terms.found": "{0} of {1} terms found",
   "terms.found.one": "{0} of 1 term found",
-  "terms.hint": "Paste the terms, one per line (for example, an Excel column)",
+  "terms.hint": "Paste the terms, one per line (for example, an Excel column). Example:\ntext1\ntext2\ntext3\nsearches the 3 terms in all tables or only in the selected table.",
   "terms.matchTip": "Whole value: the whole cell equals the term. Contains: the cell contains the term. Case and spaces at the ends do not count.",
   "terms.notFound": "Not found ({0})",
   "terms.progress": "Searching terms: table {0} of {1} ({2})",

@@ -241,7 +241,7 @@
   "terms.count.one": "1 termo",
   "terms.found": "{0} de {1} termos encontrados",
   "terms.found.one": "{0} de 1 termo encontrado",
-  "terms.hint": "Cole os termos, um por linha (por exemplo, uma coluna do Excel)",
+  "terms.hint": "Cole os termos, um por linha (por exemplo, uma coluna do Excel). Exemplo:\ntexto1\ntexto2\ntexto3\npesquisa os 3 termos em todas as tabelas ou só na tabela selecionada.",
   "terms.matchTip": "Valor inteiro: a célula inteira é igual ao termo. Contém: a célula contém o termo. Maiúsculas e espaços nas pontas não contam.",
   "terms.notFound": "Não encontrados ({0})",
   "terms.progress": "Pesquisando termos: tabela {0} de {1} ({2})",
