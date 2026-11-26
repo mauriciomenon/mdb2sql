@@ -8,18 +8,54 @@
 // The grid, the copy and the report read those tables, so nothing is searched twice. Temporary tables belong to
 // the connection: the open file and the session copy never change.
 
-use super::db_manager::{ColumnSchema, SqlResult, all_columns, has_rowid, ident, literal, rows_to_json, table_info};
+use super::db_manager::{ColumnSchema, SqlResult, all_columns, has_rowid, ident, is_number, literal, rows_to_json, table_info};
 use duckdb::Connection;
 use serde::Serialize;
 
 const TERMS: &str = "\"mdb2sql terms\""; // (ord INTEGER, term VARCHAR): os termos na ordem colada
 const COUNTS: &str = "\"mdb2sql counts\""; // (ord INTEGER, tbl VARCHAR, n BIGINT): linhas de cada termo em cada tabela
+const KEYS: &str = "\"mdb2sql keys\""; // (ord INTEGER, key VARCHAR): chaves do valor inteiro de cada termo (texto e numero)
 const ORD: &str = "\"mdb2sql ord\"";
 const TERM: &str = "\"mdb2sql term\"";
 const RID: &str = "\"mdb2sql rid\"";
 
 fn hit_name(table: &str) -> String {
     format!("mdb2sql hit {table}")
+}
+
+// NIVEL BASICO: Leituras de numero de um texto (BRIEF secao 13 a, regra frouxa: ha dados em formato EUA e BR/Europa).
+// Com ponto e virgula, o ultimo dos dois e o decimal (1.234,5 e 1,234.5 = 1234.5); um so tipo de separador repetido e de
+// milhar (1.234.567); um separador so vale como decimal e, se vierem 3 digitos depois dele, tambem como milhar (1,234 =
+// 1.234 ou 1234; 216,0 = 216). mdb2sql_n1 = a leitura decimal (ou a unica), mdb2sql_n2 = a de milhar; mdb2sql_key = a
+// chave 'n:' do valor (o numero escrito pelo DuckDB a partir do DOUBLE: 216, 216.0 e 216,0 dao "216.0")
+const NUMBER_READINGS: &str = "CREATE OR REPLACE TEMP MACRO mdb2sql_n1(s) AS CASE \
+     WHEN NOT regexp_full_match(s, '[+-]?[0-9][0-9.,]*') THEN NULL \
+     WHEN contains(s, '.') AND contains(s, ',') THEN CASE WHEN strpos(reverse(s), '.') < strpos(reverse(s), ',') \
+       THEN replace(s, ',', '') ELSE replace(replace(s, '.', ''), ',', '.') END \
+     WHEN length(s) - length(replace(replace(s, '.', ''), ',', '')) > 1 THEN replace(replace(s, '.', ''), ',', '') \
+     ELSE replace(s, ',', '.') END; \
+   CREATE OR REPLACE TEMP MACRO mdb2sql_n2(s) AS CASE \
+     WHEN regexp_full_match(s, '[+-]?[0-9]+[.,][0-9]{3}') THEN replace(replace(s, '.', ''), ',', '') END; \
+   CREATE OR REPLACE TEMP MACRO mdb2sql_key(x) AS 'n:' || CAST(TRY_CAST(x AS DOUBLE) AS VARCHAR);";
+
+// chaves dos termos: o texto e as leituras de numero (NULL, de termo que nao e numero, fica de fora)
+fn term_keys() -> String {
+    let reading = |n: &str| format!("SELECT ord, mdb2sql_key({n}(trim(term))) AS key FROM {TERMS} WHERE key IS NOT NULL");
+    format!("SELECT ord, 't:' || lower(trim(term)) AS key FROM {TERMS} UNION ALL {} UNION ALL {}", reading("mdb2sql_n1"), reading("mdb2sql_n2"))
+}
+
+// NIVEL BASICO: Chaves de uma celula no valor inteiro: 't:' + o texto; com termo numerico, a coluna numerica tambem pelo
+// valor e a de texto tambem pelas leituras de numero dela ("216,0", "1.234,5")
+// shortcut: the value goes through DOUBLE, so integers above 2^53 that differ only past that precision match the same
+// term; compare them as text if such ids ever need it
+fn cell_keys(column: &str, kind: &str, numbers: bool) -> String {
+    let text = format!("CAST({column} AS VARCHAR)");
+    let key = format!("'t:' || lower(trim({text}))");
+    match (numbers, is_number(kind), kind.eq_ignore_ascii_case("VARCHAR")) {
+        (true, true, _) => format!("[{key}, 'n:' || CAST(CAST({column} AS DOUBLE) AS VARCHAR)]"),
+        (true, _, true) => format!("[{key}, mdb2sql_key(mdb2sql_n1(trim({text}))), mdb2sql_key(mdb2sql_n2(trim({text})))]"),
+        _ => format!("[{key}]"),
+    }
 }
 
 // NIVEL BASICO: Um termo achado numa tabela: posicao do termo na lista, tabela e quantas linhas
@@ -55,6 +91,12 @@ pub fn search(
         }
     }
     run("COMMIT")?;
+    // valor inteiro: chaves 't:' + o texto e, de termo ou celula que se le como numero, 'n:' + cada leitura dele
+    run(&format!("{NUMBER_READINGS} CREATE TEMP TABLE {KEYS} AS {}", term_keys()))?;
+    let numbers = whole
+        && conn
+            .query_row(&format!("SELECT count(*) > 0 FROM {KEYS} WHERE starts_with(key, 'n:')"), [], |row| row.get::<_, bool>(0))
+            .map_err(|e| e.to_string())?;
     let (catalog, schema): (String, String) = conn
         .query_row("SELECT current_database(), current_schema()", [], |row| Ok((row.get(0)?, row.get(1)?)))
         .map_err(|e| e.to_string())?;
@@ -65,17 +107,18 @@ pub fn search(
         let Some(cols) = columns.get(table).filter(|cols| !cols.is_empty()) else {
             continue;
         };
-        let cols: Vec<String> = cols.iter().map(|(name, _)| name.clone()).collect();
-        let cols = &cols;
+        let names: Vec<String> = cols.iter().map(|(name, _)| name.clone()).collect();
         let text = |column: &String| format!("CAST({} AS VARCHAR)", ident(column));
         // identidade da linha so dentro deste comando: o rowid; sem ele (view), a ordem de leitura, guardada
         // (MATERIALIZED) para as duas leituras verem a mesma
-        let (rid, kept) = if has_rowid(conn, table, cols) { ("rowid", "") } else { ("row_number() OVER ()", "MATERIALIZED ") };
+        let (rid, kept) = if has_rowid(conn, table, &names) { ("rowid", "") } else { ("row_number() OVER ()", "MATERIALIZED ") };
         let (cell, hit) = if whole {
-            let cells: Vec<String> = cols.iter().map(|c| format!("lower(trim({}))", text(c))).collect();
-            (format!("unnest([{}])", cells.join(", ")), format!("SELECT DISTINCT k.ord, c.rid FROM cell c JOIN {TERMS} k ON c.cell = lower(trim(k.term))"))
+            // sem termo numerico, so o texto (o custo de antes); com ele, as celulas numericas pelo valor e as de texto
+            // tambem pelas leituras de numero delas
+            let cells: Vec<String> = cols.iter().map(|(c, kind)| cell_keys(&ident(c), kind, numbers)).collect();
+            (format!("unnest(flatten([{}]))", cells.join(", ")), format!("SELECT DISTINCT k.ord, c.rid FROM cell c JOIN {KEYS} k ON c.cell = k.key"))
         } else {
-            let cells: Vec<String> = cols.iter().map(text).collect();
+            let cells: Vec<String> = names.iter().map(text).collect();
             (
                 format!("lower(concat_ws(chr(10), {}))", cells.join(", ")),
                 format!("SELECT k.ord, c.rid FROM cell c JOIN {TERMS} k ON contains(c.cell, lower(trim(k.term)))"),

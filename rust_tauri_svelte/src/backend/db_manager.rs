@@ -150,6 +150,13 @@ pub(crate) fn search_condition(columns: &[(String, String)], search: &str) -> Op
     Some((format!("({})", cells.join(" OR ")), params))
 }
 
+// NIVEL BASICO: Tipo numerico (inteiro, decimal, double): a pesquisa de termos por valor inteiro compara o valor
+pub(crate) fn is_number(kind: &str) -> bool {
+    let kind = kind.to_ascii_uppercase();
+    let numbers = ["TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT", "UHUGEINT"];
+    kind.starts_with("DECIMAL(") || ["FLOAT", "DOUBLE"].contains(&kind.as_str()) || numbers.contains(&kind.as_str())
+}
+
 // NIVEL BASICO: Os caracteres que o texto (CAST AS VARCHAR) de um tipo do DuckDB pode ter: numeros, datas, horas e
 // booleanos so escrevem digitos, pontuacao e minusculas sem acento (-12, 1e+20, -inf, nan, 2024-01-02, 0001-01-01 (BC),
 // infinity, 23:59:58.5, 10:00:00+00, true, false), entao lower(strip_accents()) nao muda nada neles. None: texto livre

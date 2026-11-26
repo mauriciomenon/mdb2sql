@@ -1362,6 +1362,38 @@ mod tests {
         assert_eq!(manager.get_table_schema("a_pts").unwrap().len(), 3);
     }
 
+    // BRIEF secao 13 a: Valor inteiro com numeros, regra frouxa (dados em formato EUA e BR/Europa): termo e celula casam
+    // quando alguma leitura de um e igual a alguma do outro. Casam: 216 com 216.0, "216,0" e "216"; 0,1 com 0.1; 1234.5
+    // com "1.234,5"; 1,234 com 1234 e com 1.234. Nao casam: 216 com 2160 nem com 216.5. Texto que nao e numero: como antes
+    #[test]
+    fn term_whole_value_reads_numbers_loosely() {
+        use crate::backend::terms::{self, TermHit};
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("numbers.duckdb");
+        duckdb::Connection::open(&path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE n (i INTEGER, d DOUBLE, m DECIMAL(10,2), s VARCHAR);
+                 INSERT INTO n VALUES (216, 0.1, 1234.50, '216,0'), (2160, 216.5, 7.00, '1.234,5'), (NULL, NULL, 1.23, 'abc'),
+                   (1234, NULL, NULL, '1,234.567'), (NULL, NULL, NULL, '216');",
+            )
+            .unwrap();
+        let manager = DBManager::new();
+        manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+        let hit = |ord: usize, count: i64| TermHit { ord, table: "n".to_string(), count };
+        let search = |terms: &[&str]| {
+            let terms: Vec<String> = terms.iter().map(|t| t.to_string()).collect();
+            terms::search(&manager.export_connection().unwrap(), &terms, true, &["n".to_string()], &mut ok_progress()).unwrap()
+        };
+        // "216": linha 1 (i 216 e o texto "216,0") e linha 5 ("216"); nunca 2160 nem 216.5 (linha 2)
+        // "0,1": d 0.1; "1234.5": m 1234.50 e o texto "1.234,5"; "1,234": i 1234 (linha 4) e m 1.23 nao; "1234567": "1,234.567"
+        // nao: e 1234.567; "abc": texto; "216.50": d 216.5
+        let hits = search(&["216", "0,1", "1234.5", "1,234", "1234567", "abc", "216.50", "2.160"]);
+        assert_eq!(hits, [hit(0, 2), hit(1, 1), hit(2, 2), hit(3, 1), hit(5, 1), hit(6, 1), hit(7, 1)]);
+        // sem termo numerico, so o texto (o caminho de antes)
+        assert_eq!(search(&["ABC", "zzz"]), [hit(0, 1)]);
+    }
+
     // revisao do Python (B1): funcao de tabela que anexa ou grava nao passa pela aba SQL so leitura. Aqui as extensoes
     // nao carregam sozinhas (sqlite_attach nem existe) e o resto roda numa transacao so de leitura: nada e criado
     #[test]
@@ -1578,6 +1610,12 @@ mod tests {
                     assert!(missing.is_empty() && with_hits.contains(&"RANGER_SOTEXT".to_string()), "{missing:?}");
                 }
             }
+            // secao 13 a: com termos numericos o valor inteiro le tambem os numeros das celulas de texto (o custo novo)
+            let numbers: Vec<String> = ["238", "2190", "50", "0,1", "216,0", "U9A"].map(String::from).to_vec();
+            let conn = manager.export_connection().unwrap();
+            let t = std::time::Instant::now();
+            let hits = terms::search(&conn, &numbers, true, &tables, &mut ok_progress()).unwrap();
+            eprintln!("DB3 numeric terms whole=true: {} terms, all tables in {:?}; {} term x table hits", numbers.len(), t.elapsed(), hits.len());
         }
     }
 }
