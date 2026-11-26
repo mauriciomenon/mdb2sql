@@ -35,6 +35,8 @@ def sql_string(text: str) -> str:
 # tipos de comando do DuckDB que so leem: SELECT (tambem WITH, VALUES, FROM, TABLE, SHOW, DESCRIBE, SUMMARIZE),
 # EXPLAIN, PRAGMA e MULTI (o PIVOT sem lista de valores)
 READ_STATEMENTS = {"SELECT", "EXPLAIN", "PRAGMA", "MULTI"}
+# coluna com a identidade da linha (linhas marcadas da aba Dados); vem nas linhas da grade, nunca na tela
+MARK_KEY = "mdb2sql_mark"
 
 
 def reads_only(query: str) -> bool:
@@ -108,21 +110,21 @@ def column_expr(name: str, declared: str) -> str:
     return f"CAST({quote(name)} AS {kind}) AS {quote(name)}"
 
 
-def sqlite_views(path: str) -> list[tuple[str, str]]:
-    """(nome, SELECT ...) de cada tabela e view do SQLite, lidas por source_db, com os tipos declarados."""
+def sqlite_views(path: str) -> list[tuple[str, str, str | None]]:
+    """(nome, SELECT ..., SELECT com o rowid na coluna MARK_KEY ou None) de cada tabela e view do SQLite, lidas por
+    source_db, com os tipos declarados. Sem rowid: view e tabela WITHOUT ROWID."""
     lite = sqlite3.connect(Path(path).as_uri() + "?mode=ro", uri=True)
     try:
-        names = [
-            row[0]
-            for row in lite.execute(
-                "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite~_%' ESCAPE '~'"
-            )
-        ]
+        found = lite.execute(
+            "SELECT name, type = 'table' AND upper(sql) NOT LIKE '%WITHOUT ROWID%' FROM sqlite_master"
+            " WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite~_%' ESCAPE '~'"
+        ).fetchall()
         views = []
-        for name in names:
+        for name, rowid in found:
             columns = lite.execute(f"PRAGMA table_info({quote(name)})").fetchall()
             select = ", ".join(column_expr(column[1], column[2]) for column in columns) or "*"
-            views.append((name, f"SELECT {select} FROM source_db.{quote(name)}"))
+            keyed = f"SELECT rowid AS {MARK_KEY}, {select} FROM source_db.{quote(name)}" if rowid else None
+            views.append((name, f"SELECT {select} FROM source_db.{quote(name)}", keyed))
         return views
     finally:
         lite.close()
@@ -147,6 +149,7 @@ class DBManager:
         self.converted: Optional[Path] = None  # SQLite convertido do Access (pasta propria, apagada em release())
         self.sqlite_file: Optional[str] = None  # o arquivo SQLite lido (o proprio .sqlite ou o convertido do Access)
         self._tables: Optional[List[str]] = None
+        self._keyed: Dict[str, str] = {}  # tabela com rowid -> SELECT com ele na coluna MARK_KEY
         self._cursors: set[duckdb.DuckDBPyConnection] = set()  # em uso (outras threads); close() interrompe e espera
         self._idle = threading.Condition()
 
@@ -178,6 +181,11 @@ class DBManager:
         if suffix in DUCKDB_EXT:
             self.conn = duckdb.connect(validated_path, read_only=True)
             self.reader = "DuckDB"
+            tables = self.conn.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_type = 'BASE TABLE'"
+                " AND table_catalog = current_database() AND table_schema = current_schema()"
+            ).fetchall()
+            self._keyed = {name: f"SELECT rowid AS {MARK_KEY}, * FROM {quote(name)}" for (name,) in tables}
         else:
             sqlite_path = validated_path
             if suffix in ACCESS_EXT:
@@ -200,14 +208,15 @@ class DBManager:
             self.sqlite_file = sqlite_path
         self.current_db = validated_path
 
-    @staticmethod
-    def _open_sqlite(path: str) -> duckdb.DuckDBPyConnection:
+    def _open_sqlite(self, path: str) -> duckdb.DuckDBPyConnection:
         conn = duckdb.connect(":memory:")
         try:
             load_sqlite_extension(conn)
             conn.execute(f"ATTACH {sql_string(path)} AS source_db (TYPE sqlite, READ_ONLY)")
-            for name, select in sqlite_views(path):
+            for name, select, keyed in sqlite_views(path):
                 conn.execute(f"CREATE VIEW {quote(name)} AS {select}")
+                if keyed:
+                    self._keyed[name] = keyed
         except BaseException:
             conn.close()
             raise
@@ -302,14 +311,39 @@ class DBManager:
         columns = [column["column_name"] for column in self.get_table_schema(table_name)] if search.split() else []
         return where_clause(filters, columns, search)
 
-    def select_table(self, table_name: str, filters: Filters = (), search: str = "") -> tuple[str, list[Any]]:
-        """SELECT da tabela inteira com os filtros e a pesquisa (o que a grade mostra) e os parametros."""
+    def keyed_table(self, table_name: str) -> str:
+        """SELECT da tabela com a identidade de cada linha na coluna MARK_KEY (linhas marcadas): o rowid do motor
+        quando a tabela tem um (tabela DuckDB; tabela SQLite, tambem a do Access convertido); numa view ou tabela
+        SQLite WITHOUT ROWID, o texto da linha inteira (linhas iguais tem a mesma identidade e marcam juntas)."""
+        self._validate_table_name(table_name)
+        return self._keyed.get(table_name) or f"SELECT CAST(q AS VARCHAR) AS {MARK_KEY}, q.* FROM {quote(table_name)} q"
+
+    def select_table(
+        self, table_name: str, filters: Filters = (), search: str = "", keyed: bool = False
+    ) -> tuple[str, list[Any]]:
+        """SELECT da tabela inteira com os filtros e a pesquisa (o que a grade mostra) e os parametros; keyed: com a
+        identidade da linha na coluna MARK_KEY."""
         self._validate_table_name(table_name)
         where, params = self._where(table_name, filters, search)
-        return f"SELECT * FROM {quote(table_name)}{where}", params
+        source = f"({self.keyed_table(table_name)}) t" if keyed else quote(table_name)
+        return f"SELECT * FROM {source}{where}", params
+
+    def marked_query(self, table_name: str, keys: Sequence[Any], keyed: bool = False) -> tuple[str, list[Any]]:
+        """SELECT das linhas marcadas (identidades `keys`), na ordem da tabela; sem keyed, so as colunas da tabela."""
+        columns = "*" if keyed else f"* EXCLUDE ({MARK_KEY})"
+        return (f"SELECT {columns} FROM ({self.keyed_table(table_name)}) t WHERE {MARK_KEY} IN (SELECT unnest(?))",
+                [list(keys)])
+
+    def fetch_rows(self, query: str, params: Sequence[Any] = (), limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Linhas (dicts por coluna) de uma consulta do proprio app, ate limit."""
+        # !T: Plain Python values, not pandas: DECIMAL(10,0) stays 1 (pandas would show 1.0) and NULL stays None
+        with self.cursor() as cursor:
+            cursor.execute(query if limit is None else f"{query} LIMIT {int(limit)}", list(params))
+            columns = [column[0] for column in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     def query_table(
-        self, table_name: str, limit: int = 100, filters: Filters = (), search: str = ""
+        self, table_name: str, limit: int = 100, filters: Filters = (), search: str = "", keyed: bool = False
     ) -> List[Dict[str, Any]]:
         """
         Executa SELECT na tabela e retorna ate limit linhas (so as que passam nos filtros e na pesquisa).
@@ -318,12 +352,20 @@ class DBManager:
             return []
 
         # SELECT com LIMIT para nao carregar tabela inteira
-        # !T: Plain Python values, not pandas: DECIMAL(10,0) stays 1 (pandas would show 1.0) and NULL stays None
-        select, params = self.select_table(table_name, filters, search)
+        select, params = self.select_table(table_name, filters, search, keyed)
+        return self.fetch_rows(select, params, limit)
+
+    def table_columns(self) -> Dict[str, List[str]]:
+        """Colunas de cada tabela, na ordem, numa consulta so (PRAGMA por tabela: ~2.5 s nas 287 do DB4)."""
         with self.cursor() as cursor:
-            cursor.execute(f"{select} LIMIT {int(limit)}", params)
-            columns = [column[0] for column in cursor.description]
-            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+            columns = cursor.execute(
+                "SELECT table_name, column_name FROM information_schema.columns WHERE table_catalog = current_database()"
+                " AND table_schema = current_schema() ORDER BY ordinal_position"
+            ).fetchall()
+        by_table: Dict[str, List[str]] = {}
+        for table, column in columns:
+            by_table.setdefault(table, []).append(column)
+        return by_table
 
     def execute_query(self, query: str, limit: int = 1000) -> tuple[List[str], List[Dict[str, Any]], bool]:
         """
@@ -363,15 +405,7 @@ class DBManager:
         !T: accents), so the count listed is the count the opened table shows. `stop` is checked between tables so
         !T: a newer search ends this one
         """
-        # colunas de todas as tabelas numa consulta so (PRAGMA por tabela: ~2.5 s nas 287 do DB4)
-        with self.cursor() as cursor:
-            columns = cursor.execute(
-                "SELECT table_name, column_name FROM information_schema.columns WHERE table_catalog = current_database()"
-                " AND table_schema = current_schema() ORDER BY ordinal_position"
-            ).fetchall()
-        by_table: dict[str, list[str]] = {}
-        for table, column in columns:
-            by_table.setdefault(table, []).append(column)
+        by_table = self.table_columns()
         found = []
         for table in self.list_tables():
             if stop():
@@ -450,6 +484,7 @@ class DBManager:
         self.reader = ""
         self.sqlite_file = None
         self._tables = None
+        self._keyed = {}
 
     def release(self) -> None:
         """Fecha; o SQLite convertido do Access e apagado (com a pasta dele)."""

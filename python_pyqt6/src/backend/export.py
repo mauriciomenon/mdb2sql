@@ -1,4 +1,5 @@
-# Exportacao: banco inteiro para .duckdb, .sqlite ou .xlsx (uma aba por tabela) e tabela/consulta para .csv ou .xlsx
+# Exportacao: banco inteiro ou uma lista de consultas para .duckdb, .sqlite ou .xlsx (uma tabela/aba por item) ou
+# para uma pasta de .csv; tabela/consulta para .csv ou .xlsx
 # !T: Runs in a worker thread; progress(done, total, text) reports, cancel (threading.Event) stops between chunks
 # !T: and only the temporary file is deleted; the target is replaced only when the export finished
 
@@ -21,10 +22,12 @@ from backend.db_manager import DBManager, load_sqlite_extension, sql_string
 from shared.i18n import num, tr
 
 Progress = Callable[[int, int, str], None]
+Sheet = tuple[str, str, Sequence[Any]]  # (nome da aba, da tabela ou do arquivo; consulta; parametros)
 MAX_SHEET_ROWS = 1_048_575  # linhas de dados por aba: 1.048.576 do Excel menos o cabecalho
 MAX_SHEET_NAME = 31
 CHUNK = 5_000
 _BAD_SHEET_CHARS = re.compile(r"[\[\]:*?/\\]")
+_BAD_FILE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _EXCEL_TYPES = (str, int, float, Decimal, bool, datetime, date, time, timedelta)
 DATABASE_FORMATS = (".duckdb", ".sqlite", ".xlsx")
 RESULT_FORMATS = (".csv", ".xlsx")
@@ -95,24 +98,70 @@ def export_database(
     manager: DBManager, out: Path, progress: Progress, cancel: threading.Event | None = None
 ) -> int:
     """Grava todas as tabelas em out (.duckdb, .sqlite ou .xlsx); devolve o numero de tabelas."""
-    suffix = out.suffix.lower()
-    if suffix not in DATABASE_FORMATS:
-        raise ValueError(tr("error.export_format", suffix=suffix))
-    _refuse_open(manager, out)
     tables = manager.list_tables()
+    if out.suffix.lower() != ".sqlite" or manager.converted is None:
+        return export_sheets(manager, [(t, f"SELECT * FROM {quote(t)}", ()) for t in tables], out, progress, cancel)
+    _refuse_open(manager, out)
     with _staged(out, cancel) as temp:
-        if suffix == ".xlsx":
-            _database_to_xlsx(manager, tables, temp, progress, cancel)
-        elif suffix == ".sqlite" and manager.converted is not None:
-            shutil.copyfile(manager.converted, temp)  # Access: o SQLite ja convertido, com os tipos declarados
-        else:
-            _database_to_db(manager, tables, temp, progress, cancel)
+        shutil.copyfile(manager.converted, temp)  # Access: o SQLite ja convertido, com os tipos declarados
     progress(len(tables), len(tables), "")
     return len(tables)
 
 
-def _database_to_db(
-    manager: DBManager, tables: list[str], out: Path, progress: Progress, cancel: threading.Event | None
+def export_sheets(
+    manager: DBManager, sheets: Sequence[Sheet], out: Path, progress: Progress, cancel: threading.Event | None = None
+) -> int:
+    """Grava o resultado de cada (nome, consulta, parametros) em out: .xlsx (uma aba por item), .sqlite ou .duckdb
+    (uma tabela por item); devolve o numero de itens."""
+    suffix = out.suffix.lower()
+    if suffix not in DATABASE_FORMATS:
+        raise ValueError(tr("error.export_format", suffix=suffix))
+    _refuse_open(manager, out)
+    with _staged(out, cancel) as temp:
+        if suffix == ".xlsx":
+            _sheets_to_xlsx(manager, sheets, temp, progress, cancel)
+        else:
+            _sheets_to_db(manager, sheets, temp, progress, cancel)
+    progress(len(sheets), len(sheets), "")
+    return len(sheets)
+
+
+def csv_name(name: str) -> str:
+    """Nome do arquivo .csv de uma tabela ou aba (caracteres que o Windows nao aceita viram _)."""
+    return _BAD_FILE_CHARS.sub("_", name).rstrip(". ") + ".csv"
+
+
+def export_csv_folder(
+    manager: DBManager, sheets: Sequence[Sheet], folder: Path, progress: Progress,
+    cancel: threading.Event | None = None,
+) -> int:
+    """Um <nome>.csv por item em folder (cada um so troca o existente quando termina); devolve o numero de itens."""
+    for done, (name, query, params) in enumerate(sheets):
+        _check(cancel)
+        progress(done, len(sheets), name)
+        export_result(manager, query, name, folder / csv_name(name), lambda *_args: None, cancel, params)
+    progress(len(sheets), len(sheets), "")
+    return len(sheets)
+
+
+def table_schema_query(table: str) -> tuple[str, list[Any]]:
+    """Esquema da tabela como na aba Esquema: Coluna, Tipo, Aceita nulo (Sim/Nao no idioma da tela)."""
+    names = [quote(tr(key)) for key in ("schema.column", "schema.type", "schema.nullable")]
+    return (f'SELECT name AS {names[0]}, type AS {names[1]}, CASE WHEN "notnull" THEN ? ELSE ? END AS {names[2]}'
+            " FROM pragma_table_info(?)", [tr("schema.no"), tr("schema.yes"), table])
+
+
+def database_schema_query(tables: Sequence[str]) -> tuple[str, list[Any]]:
+    """Esquema do banco: Tabela, Coluna, Tipo, Aceita nulo, na ordem da lista de tabelas e das colunas."""
+    names = [quote(tr(key)) for key in ("tables.column_table", "schema.column", "schema.type", "schema.nullable")]
+    return (f"SELECT table_name AS {names[0]}, column_name AS {names[1]}, data_type AS {names[2]},"
+            f" CASE WHEN is_nullable = 'YES' THEN ? ELSE ? END AS {names[3]} FROM information_schema.columns"
+            " WHERE table_catalog = current_database() AND table_schema = current_schema()"
+            " ORDER BY list_position(?, table_name), ordinal_position", [tr("schema.yes"), tr("schema.no"), list(tables)])
+
+
+def _sheets_to_db(
+    manager: DBManager, sheets: Sequence[Sheet], out: Path, progress: Progress, cancel: threading.Event | None
 ) -> None:
     sqlite = out.suffix.lower() == ".sqlite"
     with manager.cursor() as cursor:
@@ -122,19 +171,19 @@ def _database_to_db(
         else:
             cursor.execute(f"ATTACH {sql_string(str(out))} AS export_db (READ_WRITE)")
         try:
-            for done, table in enumerate(tables):
+            for done, (name, query, params) in enumerate(sheets):
                 _check(cancel)
-                progress(done, len(tables), table)
+                progress(done, len(sheets), name)
                 select = "*"
                 if sqlite:
                     # o DuckDB grava DECIMAL no SQLite como VARCHAR (texto: > 20, ORDER BY e SUM comparariam texto);
                     # DOUBLE vira REAL, com afinidade numerica
-                    columns = cursor.execute(f"DESCRIBE {quote(table)}").fetchall()
+                    columns = cursor.execute(f"SELECT * FROM ({query}) LIMIT 0", list(params)).description
                     select = ", ".join(
-                        f"CAST({quote(name)} AS DOUBLE) AS {quote(name)}" if kind.startswith("DECIMAL") else quote(name)
-                        for name, kind, *_ in columns
+                        f"CAST({quote(c[0])} AS DOUBLE) AS {quote(c[0])}" if str(c[1]).startswith("DECIMAL")
+                        else quote(c[0]) for c in columns
                     )
-                cursor.execute(f"CREATE TABLE export_db.{quote(table)} AS SELECT {select} FROM {quote(table)}")
+                cursor.execute(f"CREATE TABLE export_db.{quote(name)} AS SELECT {select} FROM ({query})", list(params))
         finally:
             # o ATTACH vale para todos os cursores do banco: soltar o arquivo mesmo em erro/cancelamento
             cursor.execute("DETACH export_db")
@@ -195,18 +244,18 @@ def _chunks(cursor) -> Iterable[list[tuple]]:
         yield rows
 
 
-def _database_to_xlsx(
-    manager: DBManager, tables: list[str], out: Path, progress: Progress, cancel: threading.Event | None
+def _sheets_to_xlsx(
+    manager: DBManager, sheets: Sequence[Sheet], out: Path, progress: Progress, cancel: threading.Event | None
 ) -> None:
     book = _workbook(out)
     used: set[str] = {"history"}  # nome reservado pelo Excel
     try:
         with manager.cursor() as cursor:
-            for done, table in enumerate(tables):
+            for done, (name, query, params) in enumerate(sheets):
                 _check(cancel)
-                progress(done, len(tables), table)
-                cursor.execute(f"SELECT * FROM {quote(table)}")
-                _write_sheets(book, table, [c[0] for c in cursor.description], _chunks(cursor), used, cancel)
+                progress(done, len(sheets), name)
+                cursor.execute(query, list(params))
+                _write_sheets(book, name, [c[0] for c in cursor.description], _chunks(cursor), used, cancel)
     finally:
         book.close()
 

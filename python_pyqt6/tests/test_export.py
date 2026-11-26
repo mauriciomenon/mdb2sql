@@ -198,6 +198,20 @@ def test_cancel_during_last_table_or_chunk_is_a_cancel(manager: DBManager, tmp_p
         assert out.read_bytes() == OLD
 
 
+def test_schema_exports_use_the_screen_titles(manager: DBManager, tmp_path: Path) -> None:
+    # esquema da tabela (como a aba Esquema) e do banco inteiro, na ordem da lista de tabelas e das colunas
+    out = tmp_path / "people_schema.csv"
+    query, params = export.table_schema_query("people")
+    export_result(manager, query, "people_schema", out, _noop, params=params)
+    assert out.read_text(encoding="utf-8-sig").splitlines() == [
+        "Column,Type,Nullable", "id,INTEGER,No", "name,VARCHAR,Yes", "score,DOUBLE,Yes"]
+    query, params = export.database_schema_query(manager.list_tables())
+    assert [tuple(r.values()) for r in manager.fetch_rows(query, params)] == [
+        ("empty_table", "code", "INTEGER", "Yes"), ("empty_table", "label", "VARCHAR", "Yes"),
+        ("people", "id", "INTEGER", "No"), ("people", "name", "VARCHAR", "Yes"), ("people", "score", "DOUBLE", "Yes")]
+    assert list(manager.fetch_rows(query, params)[0]) == ["Table", "Column", "Type", "Nullable"]
+
+
 def test_export_refuses_to_overwrite_open_database(manager: DBManager) -> None:
     with pytest.raises(ValueError, match="is the open database"):
         export_database(manager, Path(manager.current_db), _noop)
