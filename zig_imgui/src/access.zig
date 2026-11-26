@@ -940,7 +940,7 @@ test "versioned .mdb through mdbtools becomes a SQLite file with types and NULLs
     for (sch.rows, want_types) |row, ty| try t.expectEqualStrings(ty, row[1].?);
     // item 20: o schema do SQLite convertido tem o tipo do Access de cada coluna (Numeric(10,2) e Currency DECIMAL,
     // Double DOUBLE, DateTime TIMESTAMP, Boolean BOOLEAN, Long/Byte/Integer INTEGER, Text/Memo TEXT, OLE BLOB)
-    try expectCell(&db, "INTEGER|TEXT|DECIMAL(10,2)|DECIMAL(19,4)|DOUBLE|TIMESTAMP|BOOLEAN|INTEGER|INTEGER|TEXT|BLOB", "SELECT string_agg(type, '|' ORDER BY cid) FROM sqlite_query('src', 'SELECT cid, type FROM pragma_table_info(''Tipos'')')");
+    try expectCell(&db, "INTEGER|TEXT|DECIMAL(10,2)|DECIMAL(19,4)|DOUBLE|TIMESTAMP|BOOLEAN|INTEGER|INTEGER|TEXT|BLOB", "SELECT string_agg(type, '|' ORDER BY cid::INTEGER) FROM sqlite_query('src', 'SELECT cid, type FROM pragma_table_info(''Tipos'')')");
     // no proprio SQLite todo numero tem afinidade numerica (filtro, ORDER BY e SUM comparam numeros)
     try expectCell(&db, "integer|real|real|real|text|integer|integer", "SELECT concat_ws('|', a, b, c, d, e, f, g) FROM sqlite_query('src', 'SELECT typeof(id) a, typeof(valor) b, typeof(preco) c, typeof(razao) d, typeof(quando) e, typeof(ativo) f, typeof(curto) g FROM Tipos WHERE id = 1')");
     try expectCell(&db, "2|19.99|1", "SELECT concat_ws('|', n, s, m) FROM sqlite_query('src', 'SELECT count(*) n, sum(preco) s, min(id) m FROM Tipos WHERE preco >= 0')");
@@ -1020,8 +1020,9 @@ fn checkTypes(db: *Db, path: []const u8, reader: []const u8) !void {
     defer decl.deinit();
     std.debug.print("{s}: declared types {s}\n", .{ reader, decl.rows[0][0] orelse "" });
     if (std.mem.indexOf(u8, path, "DB3") == null) return;
-    try t.expectEqualStrings("float 5816; int 1681; text 2867; ", line.items);
-    try t.expectEqualStrings("DOUBLE 5816; INTEGER 1681; TEXT 2867", decl.rows[0][0].?);
+    // as 2.867 colunas de texto do mdb-schema incluem 6 DateTime: agora TIMESTAMP no schema (item 20)
+    try t.expectEqualStrings("TIMESTAMP 6; float 5816; int 1681; text 2861; ", line.items);
+    try t.expectEqualStrings("DOUBLE 5816; INTEGER 1681; TEXT 2861; TIMESTAMP 6", decl.rows[0][0].?);
     try t.expectEqual(2, key.rows.len);
     try reportOfOwnerTerms(db);
 }
