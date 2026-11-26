@@ -164,8 +164,8 @@ func tableItems(tables []string) []exportItem {
 
 // ExportDatabase writes every table to out; format is "duckdb", "sqlite" or "xlsx"
 // savedSelect is the SELECT of a whole table for Save as: from a SQLite file (also a converted Access) a column
-// declared DECIMAL(p,s) or BOOLEAN comes back as that type (DuckDB reads them as DOUBLE and BIGINT), so a DuckDB file
-// saved keeps DECIMAL and a SQLite one keeps the declared type (standard 19h)
+// declared DECIMAL(p,s), BOOLEAN or REAL comes back as that type (DuckDB reads them as DOUBLE, BIGINT and DOUBLE), so a
+// DuckDB file saved keeps DECIMAL and a SQLite one keeps the declared type: the schema, standard 19h and 20
 func (m *DBManager) savedSelect(table string) string {
 	all := "SELECT * FROM " + quoteIdent(table)
 	if m.source == SourceDuckDB {
@@ -188,8 +188,8 @@ func (m *DBManager) savedSelect(table string) string {
 		var p, s int
 		if _, err := fmt.Sscanf(t, "DECIMAL(%d,%d)", &p, &s); err == nil && decimalType(p, s) != "DOUBLE" {
 			col, cast = "CAST("+col+" AS "+decimalType(p, s)+") AS "+col, true
-		} else if t == "BOOLEAN" {
-			col, cast = "CAST("+col+" AS BOOLEAN) AS "+col, true
+		} else if t == "BOOLEAN" || t == "REAL" {
+			col, cast = "CAST("+col+" AS "+t+") AS "+col, true
 		}
 		cols = append(cols, col)
 	}
