@@ -189,7 +189,13 @@ func (a *App) log(key string, args ...any) {
 	a.logText(i18n.T(key, args...))
 }
 
+// logHook gets every Log line too (tests read them; the Wails runtime only works inside the app)
+var logHook func(text string)
+
 func (a *App) logText(text string) {
+	if logHook != nil {
+		logHook(text)
+	}
 	if a.ctx != nil { // nil in tests: the Wails runtime only works inside the app
 		runtime.EventsEmit(a.ctx, "log", text)
 	}
@@ -489,15 +495,18 @@ func (a *App) LoadDatabase(dbPath string) ([]string, error) {
 	// the same Access file (path, size, date) saved as SQLite, in this run or an earlier one: open that file, no new
 	// conversion
 	openPath := validatedPath
-	if saved := a.savedConversion(validatedPath); saved != "" {
+	saved := a.savedConversion(validatedPath)
+	if saved != "" {
 		openPath = saved
-		a.log("log.reused", filepath.Base(validatedPath), saved)
 	}
 	if err := a.dbManager.Open(ctx, openPath, a.progress); err != nil {
 		if ctx.Err() != nil {
 			return nil, errors.New(i18n.T("err.loadCancelled"))
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("err.openFailed"), err)
+	}
+	if saved != "" { // the format the saved file was read as: SQLite or DuckDB (standard 13)
+		a.log("log.reused", filepath.Base(validatedPath), a.dbManager.Source(), saved)
 	}
 	a.dbName = filepath.Base(validatedPath)
 	a.dbPath = validatedPath

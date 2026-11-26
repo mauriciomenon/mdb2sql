@@ -149,7 +149,7 @@
   "log.discarded": "SQLite convertido de {0} descartado",
   "log.expand": "Mostrar o log",
   "log.resize": "Arraste para redimensionar o log",
-  "log.reused": "{0}: aberto o SQLite salvo dele ({1})",
+  "log.reused": "{0}: aberto o {1} salvo dele ({2})",
   "log.staleRemoved": "{0} arquivos convertidos de uma sessão anterior removidos",
   "log.staleRemoved.one": "1 arquivo convertido de uma sessão anterior removido",
   "log.title": "Log",

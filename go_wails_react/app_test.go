@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	goruntime "runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -292,6 +293,9 @@ func TestConvertedSQLiteLifecycle(t *testing.T) {
 		return p
 	}
 
+	var logged []string
+	logHook = func(text string) { logged = append(logged, text) }
+	t.Cleanup(func() { logHook = nil })
 	app := NewApp()
 	t.Cleanup(func() { app.shutdown(context.Background()) })
 	if _, err := app.LoadDatabase(mdb); err != nil {
@@ -361,6 +365,12 @@ func TestConvertedSQLiteLifecycle(t *testing.T) {
 	}
 	if _, err := app.LoadDatabase(second2); err != nil || app.converted != "" || app.dbManager.Source() != backend.SourceDuckDB || app.dbManager.Path() != duck {
 		t.Fatalf("reopen after DuckDB: %v, converted %q, source %q", err, app.converted, app.dbManager.Source())
+	}
+	// the Log says the format of the saved file (standard 13), SQLite or DuckDB, never "SQLite" for a .duckdb
+	for _, want := range []string{"types.mdb: opened the SQLite saved from it (" + saved + ")", "duck.mdb: opened the DuckDB saved from it (" + duck + ")"} {
+		if !slices.Contains(logged, want) {
+			t.Errorf("Log without %q: %q", want, logged)
+		}
 	}
 	// Save as Excel: nothing more to ask, but the Access file is converted again next time
 	third2 := copyMDB("sheet.mdb")
