@@ -424,13 +424,13 @@ func (a *App) progress(done, total int, label string) {
 	}
 }
 
-// progressDue: at most one progress event per 100 ms, always the first and the last; each event goes through the
-// window's thread, and with that thread busy (an accessibility client) one event per table made the 287-table term
-// search of DB3 take 472 s instead of 22 s
+// progressDue: at most one progress event per 200 ms (5 a second, owner 26/11), always the first and the last; each
+// event goes through the window's thread, and with that thread busy (an accessibility client) one event per table made
+// the 287-table term search of DB3 take 472 s instead of 22 s
 func (a *App) progressDue(done, total int, now time.Time) bool {
 	a.progressMu.Lock()
 	defer a.progressMu.Unlock()
-	if done > 1 && (total == 0 || done < total) && now.Sub(a.lastProgress) < 100*time.Millisecond {
+	if done > 1 && (total == 0 || done < total) && now.Sub(a.lastProgress) < 200*time.Millisecond {
 		return false
 	}
 	a.lastProgress = now
