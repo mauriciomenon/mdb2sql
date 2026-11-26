@@ -8,7 +8,8 @@ const exporter = @import("exporter.zig");
 const access = @import("access.zig");
 const Allocator = std.mem.Allocator;
 
-pub const Kind = enum { open, select, reload, sql, export_, search_all };
+pub const Kind = enum { open, select, reload, sql, export_, search_all, terms, terms_page, terms_copy };
+const terms = dbm.terms;
 
 // Busca em todas as tabelas: tabela (indice em db.table_names) e linhas encontradas
 pub const Hit = struct { table: usize, rows: u64 };
@@ -23,19 +24,28 @@ pub const ExportKind = enum {
     result_xlsx,
     marked_csv, // linhas marcadas da tabela atual (item 31)
     marked_xlsx,
+    terms_xlsx, // relatorio da pesquisa de termos (item 32); CSV: uma pasta, um arquivo por aba
+    terms_csv,
+    terms_sqlite,
+    terms_duckdb,
 
     pub fn ext(k: ExportKind) []const u8 {
         return switch (k) {
-            .db_duckdb => ".duckdb",
-            .db_sqlite => ".sqlite",
-            .db_xlsx, .table_xlsx, .result_xlsx, .marked_xlsx => ".xlsx",
-            .table_csv, .result_csv, .marked_csv => ".csv",
+            .db_duckdb, .terms_duckdb => ".duckdb",
+            .db_sqlite, .terms_sqlite => ".sqlite",
+            .db_xlsx, .table_xlsx, .result_xlsx, .marked_xlsx, .terms_xlsx => ".xlsx",
+            .table_csv, .result_csv, .marked_csv, .terms_csv => ".csv",
         };
     }
 
     // O trabalho conta tabelas (banco para banco) ou linhas (o resto)
     pub fn countsTables(k: ExportKind) bool {
-        return k == .db_duckdb or k == .db_sqlite;
+        return k == .db_duckdb or k == .db_sqlite or k == .terms_sqlite or k == .terms_duckdb;
+    }
+
+    // Destino e uma pasta (um CSV por tabela ou por aba)
+    pub fn toFolder(k: ExportKind) bool {
+        return k == .terms_csv;
     }
 };
 
@@ -74,6 +84,13 @@ pub const Req = struct {
     dest: [4096]u8 = undefined, // export: arquivo de destino (UTF-8)
     dest_len: usize = 0,
     total_hint: u64 = 0, // export de tabela/resultado: linhas esperadas (progresso)
+    // Pesquisa de termos (item 32)
+    terms_text: []const u8 = "", // terms: a caixa (copia do gpa feita pela UI, solta por ela depois)
+    term_match: terms.Match = .whole,
+    terms_only: ?usize = null, // terms: so esta tabela (Esta tabela); null = todas
+    terms_res: ?*const terms.Result = null, // terms_page, terms_copy, relatorio: o resultado mostrado (da UI)
+    terms_hit: usize = 0, // terms_page, terms_copy: indice em terms_res.tables
+    terms_titles: terms.Titles = undefined, // titulos da coluna do termo e do relatorio, no idioma da tela
 
     pub fn destPath(r: *const Req) []const u8 {
         return r.dest[0..r.dest_len];
@@ -102,6 +119,8 @@ pub const Out = struct {
     exported: u64 = 0, // export: tabelas ou linhas gravadas
     converted: access.TempPath = .{}, // open de Access: o SQLite temporario (len 0 = nenhum)
     hits: []Hit = &.{}, // search_all: tabelas com linhas encontradas
+    terms: ?terms.Result = null, // terms: o resultado (a grade da 1a tabela vem em `data`)
+    copied: ?[]u8 = null, // terms_copy: o texto para a area de transferencia (gpa)
 
     pub fn deinit(out: *Out, gpa: Allocator) void {
         gpa.free(out.counts);
@@ -109,6 +128,8 @@ pub const Out = struct {
         if (out.schema) |*g| g.deinit();
         if (out.data) |*g| g.deinit();
         if (out.result) |*g| g.deinit();
+        if (out.terms) |*r| r.deinit();
+        if (out.copied) |c| gpa.free(c);
         out.* = .{ .kind = out.kind, .converted = out.converted };
     }
 };
@@ -167,6 +188,23 @@ fn exec(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *expor
         .sql => out.result = try db.runReadOnly(std.mem.sliceTo(&req.sql, 0)), // a aba SQL so le
         .export_ => out.exported = try exportJob(db, gpa, env, req, progress),
         .search_all => out.hits = try searchAll(db, gpa, std.mem.sliceTo(&req.search, 0), progress),
+        .terms => {
+            var res = try terms.search(db, gpa, req.terms_text, req.term_match, req.terms_only, progress);
+            errdefer res.deinit();
+            // a grade da primeira tabela com acerto ja vem junto
+            if (res.tables.len > 0) out.data = try terms.page(db, gpa, &res, res.tables[0], req.terms_titles.term, req.limit);
+            out.terms = res;
+        },
+        .terms_page => {
+            const res = req.terms_res orelse return error.TableNotFound;
+            if (req.terms_hit >= res.tables.len) return error.TableNotFound;
+            out.data = try terms.page(db, gpa, res, res.tables[req.terms_hit], req.terms_titles.term, req.limit);
+        },
+        .terms_copy => {
+            const res = req.terms_res orelse return error.TableNotFound;
+            if (req.terms_hit >= res.tables.len) return error.TableNotFound;
+            out.copied = try terms.copyText(db, gpa, res, res.tables[req.terms_hit], progress);
+        },
     }
 }
 
@@ -268,6 +306,20 @@ fn exportJob(db: *dbm.Db, gpa: Allocator, env: Env, req: *const Req, progress: *
         .result_csv, .result_xlsx => {
             const format: exporter.FileFormat = if (req.export_kind == .result_csv) .csv else .xlsx;
             return exporter.selection(db, env.io, format, .{ .sql = std.mem.sliceTo(&req.sql, 0), .sheet = "Query" }, dest, progress, req.total_hint);
+        },
+        .terms_xlsx, .terms_csv, .terms_sqlite, .terms_duckdb => {
+            // resumo, uma aba por tabela com acerto e os nao encontrados (a mesma lista nos 4 formatos)
+            const res = req.terms_res orelse return error.TableNotFound;
+            var arena: std.heap.ArenaAllocator = .init(gpa);
+            defer arena.deinit();
+            const items = try terms.reportItems(arena.allocator(), db.table_names, res, req.terms_titles);
+            const format: exporter.BundleFormat = switch (req.export_kind) {
+                .terms_xlsx => .xlsx,
+                .terms_csv => .csv_dir,
+                .terms_sqlite => .sqlite,
+                else => .duckdb,
+            };
+            return exporter.bundle(db, env.io, format, items, dest, progress, req.total_hint);
         },
     }
 }
@@ -785,6 +837,57 @@ test "marked rows (item 31): always on top in table order during other searches,
     try db.openReadOnly(lite);
     try expectMarks(&db, "people");
     try t.expectEqual(query.RowKey.rowid, try db.rowKey("people", &.{ "id", "name", "score" }));
+}
+
+test "term search jobs (item 32): result with the first table's grid, another table's page, copy and report" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var b1: [256]u8 = undefined;
+    const path = dbm.tmpPath(&b1, &tmp, "tj.duckdb");
+    try dbm.makeSample(path);
+    var db = dbm.testDb();
+    defer db.close();
+    try db.openReadOnly(path);
+    var slot: Slot = .{ .db = &db, .gpa = t.allocator, .env = .{ .io = t.io } };
+    const titles: terms.Titles = .{ .term = "Termo", .status = "Situação", .table = "Tabela", .rows = "Linhas", .found = "Encontrado", .not_found = "Não encontrado", .sheet_summary = "Resumo", .sheet_not_found = "Não encontrados" };
+    slot.req = .{ .kind = .terms, .terms_text = "nada\n149\nZé\nacao", .terms_titles = titles, .limit = 100 };
+    try slot.start();
+    var out = slot.wait().?;
+    try t.expect(out.err == null);
+    var res = out.terms.?; // a UI fica com o resultado
+    out.terms = null;
+    defer res.deinit();
+    // 149 em big.n; Zé e acao em people (valor inteiro, sem diferenciar maiusculas; acento conta)
+    try t.expectEqual(2, res.tables.len);
+    try t.expectEqualStrings("nada", res.not_found);
+    try t.expectEqualStrings("Termo", out.data.?.columns[0]);
+    try t.expectEqualStrings("149", out.data.?.rows[0][0].?);
+    out.deinit(t.allocator);
+
+    slot.req = .{ .kind = .terms_page, .terms_res = &res, .terms_hit = 1, .terms_titles = titles, .limit = 1 };
+    try slot.start();
+    out = slot.wait().?;
+    try t.expect(out.err == null and out.data.?.rows.len == 1);
+    try t.expectEqualStrings("Zé", out.data.?.rows[0][0].?); // ordem dos termos colados
+    out.deinit(t.allocator);
+
+    slot.req.kind = .terms_copy;
+    try slot.start();
+    out = slot.wait().?;
+    try t.expectEqualStrings("id\tname\tscore\r\n4\tZé\t20.0\r\n3\tacao\t3.0", out.copied.?);
+    out.deinit(t.allocator);
+
+    // relatorio em CSV: uma pasta, um arquivo por aba
+    var b2: [256]u8 = undefined;
+    slot.req = .{ .kind = .export_, .export_kind = .terms_csv, .terms_res = &res, .terms_titles = titles };
+    slot.req.setDest(dbm.tmpPath(&b2, &tmp, ""));
+    try slot.start();
+    out = slot.wait().?;
+    try t.expect(out.err == null);
+    out.deinit(t.allocator);
+    var b3: [300]u8 = undefined;
+    var cbuf: [256]u8 = undefined;
+    try t.expectEqualStrings("\xEF\xBB\xBFTermo\r\nnada\r\n", try std.Io.Dir.cwd().readFile(t.io, try exporter.csvPath(&b3, dbm.tmpPath(&b2, &tmp, ""), "Não encontrados"), &cbuf));
 }
 
 test "identical rows of a table without rowid are one row for the marks" {

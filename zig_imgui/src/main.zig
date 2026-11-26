@@ -837,7 +837,11 @@ fn setClipboard(s: []const u8) void {
 
 // ------------------------------------------------------------------- app
 
-const Tab = enum { data, schema, sql };
+const Tab = enum { data, schema, sql, terms };
+
+// Caixa da aba Termos: 1 MiB (uma coluna do Excel com dezenas de milhares de termos)
+// shortcut: a fixed box, text beyond 1 MiB is not accepted; grow it with ImGuiInputTextFlags_CallbackResize if needed
+const terms_box_size = 1 << 20;
 
 // Busca em todas as tabelas: o termo buscado e as tabelas com linhas (hits do gpa)
 const Global = struct { term: [256:0]u8, hits: []worker.Hit };
@@ -923,6 +927,20 @@ const App = struct {
     want_mark: ?usize = null, // marcar ou desmarcar esta linha da grade de Dados
     want_unmark_all: bool = false,
 
+    // Aba Termos (item 32)
+    terms_text: []u8 = &.{}, // a caixa (terms_box_size + 1 bytes do gpa, terminada em 0)
+    terms_counted: [2]usize = .{ 0, 0 }, // termos sem os repetidos e os repetidos da caixa (refeito ao editar)
+    terms_match: settings.TermMatch = .whole, // Valor inteiro | Contem (padrao em Configuracoes)
+    terms_scope: settings.SearchScope = .table, // Esta tabela | Todas as tabelas (padrao: Escopo padrao da busca)
+    terms_res: ?dbm.terms.Result = null, // resultado mostrado
+    terms_hit: usize = 0, // tabela escolhida na lista (indice em terms_res.tables)
+    terms_grid: ?dbm.Grid = null, // as linhas achadas da tabela escolhida (coluna Termo + as da tabela)
+    terms_sel: GridSel = .{},
+    terms_seconds: f64 = 0, // tempo da ultima pesquisa
+    want_terms: bool = false, // Pesquisar termos (botao, Ctrl+Enter)
+    want_terms_page: ?usize = null, // outra tabela escolhida na lista
+    want_terms_copy: bool = false, // Copiar as linhas encontradas desta tabela
+
     sql: [8192:0]u8 = @splat(0),
     result: ?dbm.Grid = null,
     result_sql: [8192:0]u8 = @splat(0), // SQL que gerou `result` (a exportacao roda de novo, sem limite)
@@ -975,6 +993,9 @@ const App = struct {
         app.clearTable();
         app.clearResult();
         app.clearGlobal();
+        app.clearTerms();
+        app.gpa.free(app.terms_text);
+        app.gpa.free(app.slot.req.terms_text); // pesquisa cortada pela saida
         app.gpa.free(app.counts);
         app.freeMarks();
         app.filter_scratch.deinit(app.gpa);
@@ -1052,6 +1073,23 @@ const App = struct {
             } else |_| {}
         };
         if (list.items.len == 0) app.only_marked = false;
+    }
+
+    // Sem resultado de termos (pesquisa nova, outro arquivo): o velho nunca aparece
+    fn clearTerms(app: *App) void {
+        if (app.terms_res) |*r| r.deinit();
+        if (app.terms_grid) |*g| g.deinit();
+        app.terms_res = null;
+        app.terms_grid = null;
+        app.terms_hit = 0;
+        app.terms_sel = .{};
+    }
+
+    // Contagem da caixa de termos ("8 termos, 1 repetido"): refeita quando o texto muda
+    fn countTerms(app: *App) void {
+        const list = dbm.terms.parse(app.gpa, std.mem.sliceTo(app.terms_text, 0)) catch return;
+        defer app.gpa.free(list.terms);
+        app.terms_counted = .{ list.terms.len, list.repeated };
     }
 
     fn clearTable(app: *App) void {
@@ -1199,6 +1237,19 @@ const App = struct {
             },
             .sql => r.sql = app.sql,
             .export_ => {}, // preenchido em startExport
+            .terms => {
+                app.clearTerms();
+                // copia: a caixa continua editavel durante a pesquisa (solta em apply)
+                r.terms_text = app.gpa.dupe(u8, std.mem.sliceTo(app.terms_text, 0)) catch return app.status.set(true, "err_generic", .{error.OutOfMemory});
+                r.term_match = app.terms_match;
+                r.terms_only = if (app.terms_scope == .table) app.selected else null;
+                r.terms_titles = termsTitles();
+            },
+            .terms_page, .terms_copy => {
+                r.terms_res = if (app.terms_res) |*res| res else return;
+                r.terms_hit = if (kind == .terms_page) (app.want_terms_page orelse return) else app.terms_hit;
+                r.terms_titles = termsTitles();
+            },
         }
         app.busy_since = ig.igGetTime();
         app.slot.start() catch |e| app.status.set(true, "err_worker", .{e});
@@ -1213,6 +1264,7 @@ const App = struct {
                 app.clearTable();
                 app.clearResult();
                 app.clearGlobal();
+                app.clearTerms();
                 // arquivo novo comeca sem o filtro da lista de tabelas e sem a busca da aba Data, no escopo de Settings
                 app.table_filter = @splat(0);
                 app.table_filter_applied = @splat(0);
@@ -1285,6 +1337,25 @@ const App = struct {
                         app.sql_msg.setText(false, sqlRowsCols(&app.sql_msg.buf, g.rows.len, g.columns.len));
                 }
             },
+            .terms => {
+                app.gpa.free(app.slot.req.terms_text);
+                app.slot.req.terms_text = "";
+                app.terms_seconds = ig.igGetTime() - app.busy_since;
+                if (out.err == null) {
+                    app.terms_res = out.terms;
+                    app.terms_grid = out.data;
+                    out.terms = null;
+                    out.data = null;
+                }
+            },
+            .terms_page => if (out.err == null) {
+                if (app.terms_grid) |*g| g.deinit();
+                app.terms_grid = out.data;
+                out.data = null;
+                app.terms_hit = app.slot.req.terms_hit;
+                app.terms_sel = .{};
+            },
+            .terms_copy => if (out.copied) |text| setClipboard(text),
             .export_ => if (out.err == null) {
                 const r = &app.slot.req;
                 // Salvar em DuckDB, Excel (ou SQLite de um banco que nao e Access): o arquivo aberto conta como salvo
@@ -1361,6 +1432,7 @@ const App = struct {
         return switch (app.tab) {
             .data => hiddenText(buf, &app.data_sel, if (app.data) |g| g.columns.len else 0),
             .sql => hiddenText(buf, &app.result_sel, if (app.result) |g| g.columns.len else 0),
+            .terms => hiddenText(buf, &app.terms_sel, if (app.terms_grid) |g| g.columns.len else 0),
             .schema => "",
         };
     }
@@ -1514,6 +1586,7 @@ const App = struct {
         app.clearTable();
         app.clearResult();
         app.clearGlobal();
+        app.clearTerms();
         app.sql_msg.len = 0;
         app.db.closeSource();
         app.gpa.free(app.counts);
@@ -1624,6 +1697,15 @@ const App = struct {
         } else if (app.want_global) {
             app.want_global = false;
             app.start(.search_all);
+        } else if (app.want_terms) {
+            app.want_terms = false;
+            if (app.terms_counted[0] > 0) app.start(.terms);
+        } else if (app.want_terms_page != null) {
+            app.start(.terms_page);
+            app.want_terms_page = null;
+        } else if (app.want_terms_copy) {
+            app.want_terms_copy = false;
+            app.start(.terms_copy);
         }
     }
 
@@ -1633,6 +1715,7 @@ const App = struct {
         return switch (app.tab) {
             .data, .schema => app.selected != null,
             .sql => app.result != null,
+            .terms => false, // o relatorio tem o seu item
         };
     }
 
@@ -1662,6 +1745,7 @@ const App = struct {
             },
             .result_csv, .result_xlsx => "query",
             .marked_csv, .marked_xlsx => std.fmt.bufPrint(&name_buf, "{s}_marcadas", .{app.db.table_names[app.selected orelse return]}) catch "marcadas",
+            .terms_xlsx, .terms_csv, .terms_sqlite, .terms_duckdb => std.fmt.bufPrint(&name_buf, "{s}_termos", .{std.fs.path.stem(loaded)}) catch "termos",
         };
         var file_buf: [600]u8 = undefined;
         var file = settings.fileName(&file_buf, base, kind.ext());
@@ -1678,21 +1762,23 @@ const App = struct {
         };
         const initial = settings.suggest(&sugg_buf, dir, file);
         const dkind: dialog.Kind = switch (kind) {
-            .db_duckdb => .save_duckdb,
-            .db_sqlite => .save_sqlite,
-            .db_xlsx, .table_xlsx, .result_xlsx, .marked_xlsx => .save_xlsx,
-            .table_csv, .result_csv, .marked_csv => .save_csv,
+            .db_duckdb, .terms_duckdb => .save_duckdb,
+            .db_sqlite, .terms_sqlite => .save_sqlite,
+            .db_xlsx, .table_xlsx, .result_xlsx, .marked_xlsx, .terms_xlsx => .save_xlsx,
+            .table_csv, .result_csv, .marked_csv, .terms_csv => .save_csv,
         };
         var path_buf: dialog.PathBuf = undefined;
-        const dest = dialog.pick(app.io, dkind, app.hwnd, initial, &path_buf) orelse {
-            if (dialog.unavailable) app.status.set(true, "err_no_dialog", .{});
+        // um CSV por tabela ou por aba: o seletor de pasta nativo
+        const picked = if (kind.toFolder()) app.pickExportFolder(kind, dir, &path_buf) else dialog.pick(app.io, dkind, app.hwnd, initial, &path_buf);
+        const dest = picked orelse {
+            if (!kind.toFolder() and dialog.unavailable) app.status.set(true, "err_no_dialog", .{});
             return;
         };
         // nem o arquivo aberto nem o SQLite salvo que o substitui (Access reaproveitado)
         if (std.ascii.eqlIgnoreCase(dest, loaded) or std.ascii.eqlIgnoreCase(dest, zstr(&app.opened_file))) return app.status.set(true, "err_choose_other", .{});
         if (app.converted) |cv| if (std.ascii.eqlIgnoreCase(dest, cv.tmp.slice())) return app.status.set(true, "err_choose_other", .{});
-        app.rememberDir(dest);
-        copyZ(&app.save_dir, std.fs.path.dirname(dest) orelse ""); // onde "Salvar como..." comeca
+        if (!kind.toFolder()) app.rememberDir(dest);
+        copyZ(&app.save_dir, if (kind.toFolder()) dest else std.fs.path.dirname(dest) orelse ""); // onde "Salvar como..." comeca
 
         r.setDest(dest);
         r.total_hint = 0;
@@ -1732,9 +1818,48 @@ const App = struct {
             };
         } else if (kind == .db_xlsx) {
             for (app.counts) |n| r.total_hint += n;
+        } else if (kind == .terms_xlsx or kind == .terms_csv or kind == .terms_sqlite or kind == .terms_duckdb) {
+            // relatorio da pesquisa mostrada: resumo, uma aba por tabela com acerto, nao encontrados
+            const res = if (app.terms_res) |*x| x else return;
+            r.terms_res = res;
+            r.terms_titles = termsTitles();
+            r.total_hint = res.rows + res.pairs.len + res.terms.len;
         }
         r.export_kind = kind;
         app.start(.export_);
+    }
+
+    // Exportacao para uma pasta (um CSV por tabela ou por aba): o seletor de pasta nativo; se algum dos arquivos ja
+    // existe nela, uma pergunta so (T.overwriteMany, Sim/Nao nativo)
+    fn pickExportFolder(app: *App, kind: ExportKind, initial: []const u8, buf: *dialog.PathBuf) ?[]const u8 {
+        const dir = dialog.pickFolder(app.io, app.hwnd, initial, buf) orelse {
+            if (dialog.unavailable) app.status.set(true, "err_no_dialog", .{});
+            return null;
+        };
+        var arena: std.heap.ArenaAllocator = .init(app.gpa);
+        defer arena.deinit();
+        const names = app.folderFiles(arena.allocator(), kind) catch return null;
+        var existing: usize = 0;
+        for (names) |n| {
+            var pb: [4096]u8 = undefined;
+            const p = dbm.exporter.csvPath(&pb, dir, n) catch continue;
+            if (std.Io.Dir.cwd().access(app.io, p, .{})) |_| existing += 1 else |_| {}
+        }
+        if (existing > 0) {
+            var qb: [200]u8 = undefined;
+            if (!platform.confirm(app.io, app.hwnd, app_title, i18n.fmtCount(&qb, "overwrite_many", existing, .{existing}))) return null;
+        }
+        return dir;
+    }
+
+    // Nomes (sem o .csv) dos arquivos de uma exportacao para pasta
+    fn folderFiles(app: *App, a: std.mem.Allocator, kind: ExportKind) ![]const []const u8 {
+        if (kind != .terms_csv) return &.{};
+        const res = if (app.terms_res) |*x| x else return &.{};
+        const items = try dbm.terms.reportItems(a, app.db.table_names, res, termsTitles());
+        const names = try a.alloc([]const u8, items.len);
+        for (names, items) |*n, item| n.* = item.sheet;
+        return names;
     }
 
     fn draw(app: *App) void {
@@ -1840,12 +1965,13 @@ const App = struct {
         // o banco inteiro para SQLite, DuckDB ou Excel e Arquivo > Salvar e Salvar como...
         const cur = app.canExportCurrent();
         const csv_key, const xlsx_key = switch (app.tab) {
-            .data => .{ tr("export_table_csv"), tr("export_table_xlsx") },
+            .data, .terms => .{ tr("export_table_csv"), tr("export_table_xlsx") },
             .schema => .{ tr("export_schema_csv"), tr("export_schema_xlsx") },
             .sql => .{ tr("export_result_csv"), tr("export_result_xlsx") },
         };
         if (ig.igMenuItem_Bool(csv_key, null, false, cur)) app.want_export = if (app.tab == .sql) .result_csv else .table_csv;
         if (ig.igMenuItem_Bool(xlsx_key, null, false, cur)) app.want_export = if (app.tab == .sql) .result_xlsx else .table_xlsx;
+        if (termsReportMenu(app.terms_res != null)) |k| app.want_export = k;
     }
 
     fn drawMenu(app: *App) void {
@@ -1920,6 +2046,21 @@ const App = struct {
                     app.prefs.search_scope = s;
                     app.savePrefs();
                     app.setScope(s);
+                    app.terms_scope = s;
+                }
+            }
+            // padrao da aba Termos: Valor inteiro ou Contem
+            var mb: [96]u8 = undefined;
+            if (ig.igBeginMenu(idLabel(&mb, "menu_term_match", "term_match"), true)) {
+                defer ig.igEndMenu();
+                const cur = app.prefs.term_match;
+                const pick: ?settings.TermMatch = if (ig.igMenuItem_Bool(tr("match_whole"), null, cur == .whole, true))
+                    .whole
+                else if (ig.igMenuItem_Bool(tr("match_contains"), null, cur == .contains, true)) .contains else null;
+                if (pick) |m| {
+                    app.prefs.term_match = m;
+                    app.savePrefs();
+                    app.terms_match = m;
                 }
             }
             if (ig.igMenuItem_Bool(tr("menu_show_null"), null, app.prefs.show_null, true)) {
@@ -1954,9 +2095,15 @@ const App = struct {
             if (chord(ctrl | ig.ImGuiKey_1)) app.want_tab = .data;
             if (chord(ctrl | ig.ImGuiKey_2)) app.want_tab = .schema;
             if (chord(ctrl | ig.ImGuiKey_3)) app.want_tab = .sql;
-            if ((chord(ctrl | ig.ImGuiKey_Enter) or chord(ctrl | ig.ImGuiKey_KeypadEnter)) and zstr(&app.sql).len > 0) {
-                app.want_tab = .sql;
-                app.want_run = true;
+            if (chord(ctrl | ig.ImGuiKey_4)) app.want_tab = .terms;
+            // Ctrl+Enter: na aba Termos pesquisa os termos; nas outras roda o SQL
+            if (chord(ctrl | ig.ImGuiKey_Enter) or chord(ctrl | ig.ImGuiKey_KeypadEnter)) {
+                if (app.tab == .terms) {
+                    app.want_terms = true;
+                } else if (zstr(&app.sql).len > 0) {
+                    app.want_tab = .sql;
+                    app.want_run = true;
+                }
             }
         }
     }
@@ -2275,15 +2422,22 @@ const App = struct {
             const done = app.slot.progress.done.load(.monotonic);
             const total = app.slot.progress.total.load(.monotonic);
             ig.igAlignTextToFramePadding();
+            var wb: [600]u8 = undefined;
             const what = switch (r.kind) {
                 .open => if (query.sourceKind(zstr(&r.path)) catch .duckdb == .access) tr("busy_converting") else tr("busy_opening"),
-                .select, .reload => tr("busy_loading"),
-                .sql => tr("busy_running"),
+                .select, .reload, .terms_page => tr("busy_loading"),
+                .sql, .terms_copy => tr("busy_running"),
                 .export_ => tr("busy_exporting"),
                 .search_all => tr("busy_searching"),
+                // "Pesquisando termos: tabela 3 de 287 (RANGER_SOSTAT)"
+                .terms => blk: {
+                    const names = app.db.table_names;
+                    const at = if (r.terms_only) |o| o else @min(done, names.len -| 1);
+                    break :blk i18n.fmt(&wb, "terms_progress", .{ @min(done + 1, @max(total, 1)), @max(total, 1), if (at < names.len) names[at] else "" });
+                },
             };
             textT("busy_elapsed", .{ what, elapsed });
-            if (total > 0 and (r.kind == .open or r.kind == .export_ or r.kind == .search_all)) {
+            if (total > 0 and (r.kind == .open or r.kind == .export_ or r.kind == .search_all or r.kind == .terms)) {
                 ig.igSameLine(0, -1);
                 var buf: [64]u8 = undefined;
                 const unit = if (r.kind != .export_ or r.export_kind.countsTables()) i18n.trCount("unit_tables", total) else i18n.trCount("unit_rows", total);
@@ -2400,8 +2554,8 @@ const App = struct {
     fn drawContent(app: *App) void {
         if (!ig.igBeginTabBar("##tabs", 0)) return;
         defer ig.igEndTabBar();
-        var lb: [3][64]u8 = undefined;
-        // aba pedida por atalho (Ctrl+1/2/3, Ctrl+F, Ctrl+Enter) ou pelo --sql
+        var lb: [4][64]u8 = undefined;
+        // aba pedida por atalho (Ctrl+1/2/3/4, Ctrl+F, Ctrl+Enter) ou pelo --sql
         const pick = app.want_tab;
         app.want_tab = null;
         const sel = ig.ImGuiTabItemFlags_SetSelected;
@@ -2431,6 +2585,103 @@ const App = struct {
             app.tab = .sql;
             app.drawSql();
         }
+        if (ig.igBeginTabItem(idLabel(&lb[3], "tab_terms", "terms"), null, if (pick == .terms) sel else 0)) {
+            defer ig.igEndTabItem();
+            app.tab = .terms;
+            app.drawTerms();
+        }
+    }
+
+    // Aba Termos (item 32), de cima para baixo: a caixa dos termos; Valor inteiro | Contem, Esta tabela | Todas as
+    // tabelas, Pesquisar termos e a contagem; o resumo; as tabelas com acerto e a grade da escolhida; os nao
+    // encontrados numa caixa copiavel
+    fn drawTerms(app: *App) void {
+        const st = ig.igGetStyle();
+        const box_h = ig.igGetTextLineHeight() * 8 + 2 * st.*.FramePadding.y;
+        // Ctrl+Enter na caixa pesquisa (Enter quebra a linha)
+        if (ig.igInputTextEx("##terms", tr("terms_hint"), app.terms_text.ptr, @intCast(app.terms_text.len), .{ .x = -1, .y = box_h }, ig.ImGuiInputTextFlags_Multiline | ig.ImGuiInputTextFlags_EnterReturnsTrue, null, null)) app.want_terms = true;
+        if (ig.igIsItemEdited()) app.countTerms();
+        const match_l = [_][:0]const u8{ tr("match_whole"), tr("match_contains") };
+        var match_hover = false;
+        if (segmented(1, &match_l, @intFromBool(app.terms_match == .contains), &match_hover)) |i| app.terms_match = if (i == 0) .whole else .contains;
+        if (match_hover) tooltip(tr("match_tip"));
+        const scope_l = [_][:0]const u8{ tr("scope_table"), tr("scope_all") };
+        sameLineIfFits(segmentedWidth(&scope_l), -1);
+        if (segmented(2, &scope_l, @intFromBool(app.terms_scope == .all), null)) |i| app.terms_scope = if (i == 0) .table else .all;
+        const run_l = tr("terms_run");
+        sameLineIfFits(buttonWidth(run_l), -1);
+        ig.igBeginDisabled(app.slot.busyWith(.terms) or app.terms_counted[0] == 0);
+        if (button(run_l)) app.want_terms = true;
+        ig.igEndDisabled();
+        // "8 termos, 1 repetido"
+        var cb: [64]u8 = undefined;
+        var rb: [64]u8 = undefined;
+        var lb: [140]u8 = undefined;
+        const n, const rep = app.terms_counted;
+        const count_s = std.fmt.bufPrint(&lb, "{s}{s}", .{ i18n.fmtCount(&cb, "terms_count", n, .{n}), if (rep > 0) i18n.fmtCount(&rb, "terms_repeated", rep, .{rep}) else "" }) catch "";
+        sameLineIfFits(rawWidth(count_s), -1);
+        ig.igAlignTextToFramePadding();
+        textSlice(count_s);
+
+        const res = if (app.terms_res) |*x| x else return;
+        // "6 de 9 termos encontrados: 14 linhas em 3 tabelas"
+        var sb: [3][96]u8 = undefined;
+        var summary: [400]u8 = undefined;
+        const n_terms = res.terms.len;
+        textSlice(i18n.fmt(&summary, "terms_summary", .{
+            i18n.fmtCount(&sb[0], "terms_found", n_terms, .{ res.found, n_terms }),
+            i18n.fmtCount(&sb[1], "terms_rows", res.rows, .{res.rows}),
+            i18n.fmtCount(&sb[2], "terms_tables", res.tables.len, .{res.tables.len}),
+        }));
+        // embaixo: o titulo dos nao encontrados com Copiar e a caixa deles (4 linhas)
+        const nf_box_h = ig.igGetTextLineHeight() * 4 + 2 * st.*.FramePadding.y;
+        const nf_h = ig.igGetFrameHeightWithSpacing() + nf_box_h + st.*.ItemSpacing.y;
+        const mid_h = @max(ig.igGetFrameHeight() * 3, ig.igGetContentRegionAvail().y - nf_h);
+        if (res.tables.len > 0) {
+            // lista "tabela (n)", na largura do nome mais longo (ate 35% da aba)
+            var longest: f32 = 0;
+            var nb: [600]u8 = undefined;
+            for (res.tables) |hit| longest = @max(longest, rawWidth(std.fmt.bufPrint(&nb, "{s} ({d})", .{ app.db.table_names[hit.table], hit.rows }) catch ""));
+            const list_w = std.math.clamp(longest + 2 * st.*.WindowPadding.x + st.*.ScrollbarSize, 160, @max(160, ig.igGetContentRegionAvail().x * 0.35));
+            if (ig.igBeginChild_Str("##terms_tables", .{ .x = list_w, .y = mid_h }, ig.ImGuiChildFlags_Borders, 0)) {
+                for (res.tables, 0..) |hit, i| {
+                    ig.igPushID_Int(@intCast(i));
+                    if (ig.igSelectable_Bool("##h", app.terms_hit == i, 0, .{ .x = 0, .y = 0 }) and i != app.terms_hit) app.want_terms_page = i;
+                    ig.igPopID();
+                    ig.igSameLine(0, 0);
+                    textSlice(std.fmt.bufPrint(&nb, "{s} ({d})", .{ app.db.table_names[hit.table], hit.rows }) catch app.db.table_names[hit.table]);
+                }
+            }
+            ig.igEndChild();
+            ig.igSameLine(0, -1);
+            if (ig.igBeginChild_Str("##terms_grid", .{ .x = 0, .y = mid_h }, 0, 0)) if (app.terms_hit < res.tables.len) {
+                const hit = res.tables[app.terms_hit];
+                const name = app.db.table_names[hit.table];
+                const count_h = ig.igGetFrameHeight() + st.*.ItemSpacing.y;
+                if (app.terms_grid) |*g| _ = drawGrid("##termsgrid", g, null, &app.terms_sel, null, .terms, &app.prefs, name, count_h, null);
+                // "<tabela>: mostrando X de Y linhas" (as linhas achadas; copiar e exportar usam todas)
+                const shown: u64 = if (app.terms_grid) |g| g.rows.len else 0;
+                var rlb: [700]u8 = undefined;
+                var fb: [760]u8 = undefined;
+                const line = i18n.fmtCount(&rlb, "rows_showing", hit.rows, .{ name, shown, hit.rows });
+                ig.igAlignTextToFramePadding();
+                const fitted = fitLine(&fb, line, ig.igGetContentRegionAvail().x);
+                textSlice(fitted);
+                if (fitted.len != line.len and ig.igIsItemHovered(0)) tooltip(line);
+            };
+            ig.igEndChild();
+            // pedidos do menu da grade
+            if (app.terms_sel.want_copy_hits) app.want_terms_copy = true;
+            if (app.terms_sel.want_export) |k| app.want_export = k;
+            app.terms_sel.want_copy_hits = false;
+            app.terms_sel.want_export = null;
+        } else ig.igDummy(.{ .x = 1, .y = mid_h });
+        // "Nao encontrados (2)" + Copiar; um termo por linha, na ordem colada
+        ig.igAlignTextToFramePadding();
+        textT("not_found_title", .{n_terms - res.found});
+        ig.igSameLine(0, -1);
+        if (button(tr("copy"))) setClipboard(res.not_found);
+        _ = ig.igInputTextMultiline("##notfound", @constCast(res.not_found.ptr), res.not_found.len + 1, .{ .x = -1, .y = nf_box_h }, ig.ImGuiInputTextFlags_ReadOnly, null, null);
     }
 
     fn drawData(app: *App) void {
@@ -2597,23 +2848,8 @@ const App = struct {
     // Escopo da busca ao lado da caixa: "Esta tabela" | "Todas as tabelas", dois segmentos colados; o escolhido com
     // a cor de botao do tema, o outro com a cor das caixas de texto
     fn scopeSelector(app: *App) void {
-        const st = ig.igGetStyle();
-        const dl = ig.igGetWindowDrawList();
         const labels = [_][:0]const u8{ tr("scope_table"), tr("scope_all") };
-        for (labels, 0..) |label, i| {
-            const s: settings.SearchScope = if (i == 0) .table else .all;
-            if (i > 0) ig.igSameLine(0, 0);
-            ig.igPushID_Int(@intCast(i));
-            if (ig.igInvisibleButton("##scope", .{ .x = textWidth(label) + 2 * st.*.FramePadding.x, .y = ig.igGetFrameHeight() }, 0)) app.setScope(s);
-            ig.igPopID();
-            const col: c_int = if (app.scope == s) ig.ImGuiCol_Button else if (ig.igIsItemHovered(0)) ig.ImGuiCol_FrameBgHovered else ig.ImGuiCol_FrameBg;
-            const corners: c_int = if (i == 0) ig.ImDrawFlags_RoundLeft else ig.ImDrawFlags_RoundRight;
-            const min = ig.igGetItemRectMin();
-            const max = ig.igGetItemRectMax();
-            ig.ImDrawList_AddRectFilled(dl, min, max, ig.igGetColorU32_Col(col, 1), st.*.FrameRounding, corners);
-            ig.ImDrawList_AddRect(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_Border, 1), st.*.FrameRounding, st.*.FrameBorderSize, corners);
-            ig.ImDrawList_AddText_Vec2(dl, .{ .x = min.x + st.*.FramePadding.x, .y = min.y + st.*.FramePadding.y }, ig.igGetColorU32_Col(ig.ImGuiCol_Text, 1), label.ptr, label.ptr + label.len);
-        }
+        if (segmented(0, &labels, @intFromBool(app.scope == .all), null)) |i| app.setScope(if (i == 0) .table else .all);
     }
 
     // Busca em todas as tabelas: "<n> tabelas com linhas que contem ..." e a lista "tabela (linhas)" (Python e Rust);
@@ -2638,6 +2874,65 @@ const App = struct {
         }
     }
 };
+
+// Segmentos colados ("Esta tabela | Todas as tabelas", "Valor inteiro | Contem"): o escolhido com a cor de botao do
+// tema, os outros com a cor das caixas de texto. Devolve o segmento clicado; `hovered`: o mouse esta sobre ele.
+fn segmented(id: c_int, labels: []const [:0]const u8, current: usize, hovered: ?*bool) ?usize {
+    const st = ig.igGetStyle();
+    const dl = ig.igGetWindowDrawList();
+    var clicked: ?usize = null;
+    ig.igPushID_Int(id);
+    defer ig.igPopID();
+    for (labels, 0..) |label, i| {
+        if (i > 0) ig.igSameLine(0, 0);
+        ig.igPushID_Int(@intCast(i));
+        if (ig.igInvisibleButton("##seg", .{ .x = textWidth(label) + 2 * st.*.FramePadding.x, .y = ig.igGetFrameHeight() }, 0)) clicked = i;
+        ig.igPopID();
+        const over = ig.igIsItemHovered(0);
+        if (hovered) |h| h.* = h.* or over;
+        const col: c_int = if (current == i) ig.ImGuiCol_Button else if (over) ig.ImGuiCol_FrameBgHovered else ig.ImGuiCol_FrameBg;
+        const corners: c_int = if (i == 0) ig.ImDrawFlags_RoundLeft else if (i + 1 == labels.len) ig.ImDrawFlags_RoundRight else ig.ImDrawFlags_RoundNone;
+        const min = ig.igGetItemRectMin();
+        const max = ig.igGetItemRectMax();
+        ig.ImDrawList_AddRectFilled(dl, min, max, ig.igGetColorU32_Col(col, 1), st.*.FrameRounding, corners);
+        ig.ImDrawList_AddRect(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_Border, 1), st.*.FrameRounding, st.*.FrameBorderSize, corners);
+        ig.ImDrawList_AddText_Vec2(dl, .{ .x = min.x + st.*.FramePadding.x, .y = min.y + st.*.FramePadding.y }, ig.igGetColorU32_Col(ig.ImGuiCol_Text, 1), label.ptr, label.ptr + label.len);
+    }
+    return clicked;
+}
+
+fn segmentedWidth(labels: []const [:0]const u8) f32 {
+    var w: f32 = 0;
+    for (labels) |l| w += buttonWidth(l);
+    return w;
+}
+
+// Relatorio da pesquisa de termos > Excel / CSV / SQLite / DuckDB (menu Exportar e menu da grade de Termos)
+fn termsReportMenu(enabled: bool) ?ExportKind {
+    var pick: ?ExportKind = null;
+    if (ig.igBeginMenu(tr("export_terms"), enabled)) {
+        defer ig.igEndMenu();
+        if (ig.igMenuItem_Bool(tr("fmt_xlsx"), null, false, true)) pick = .terms_xlsx;
+        if (ig.igMenuItem_Bool(tr("fmt_csv"), null, false, true)) pick = .terms_csv;
+        if (ig.igMenuItem_Bool(tr("fmt_sqlite"), null, false, true)) pick = .terms_sqlite;
+        if (ig.igMenuItem_Bool(tr("fmt_duckdb"), null, false, true)) pick = .terms_duckdb;
+    }
+    return pick;
+}
+
+// Titulos da coluna do termo e do relatorio, no idioma da tela (textos estaticos do catalogo)
+fn termsTitles() dbm.terms.Titles {
+    return .{
+        .term = tr("col_term"),
+        .status = tr("col_status"),
+        .table = tr("col_table"),
+        .rows = tr("col_rows"),
+        .found = tr("term_found"),
+        .not_found = tr("term_not_found"),
+        .sheet_summary = tr("sheet_summary"),
+        .sheet_not_found = tr("sheet_not_found"),
+    };
+}
 
 // Botao "Colunas..." da barra da grade: o dialogo e desenhado por drawGrid
 fn columnsButton(sel: *GridSel) void {
@@ -2687,7 +2982,8 @@ const GridSel = struct {
     want_clear: bool = false, // menu da celula: limpar filtros
     want_mark: ?usize = null, // caixa da linha ou menu da celula: marcar ou desmarcar a linha
     want_unmark_all: bool = false, // menu da celula: desmarcar todas
-    want_export: ?ExportKind = null, // menu da celula: exportar as linhas marcadas
+    want_export: ?ExportKind = null, // menu da celula: exportar as linhas marcadas (Dados) ou o relatorio (Termos)
+    want_copy_hits: bool = false, // menu da grade de Termos: copiar as linhas achadas da tabela
 
     // Clique (esquerdo ou direito) na celula: so a selecao muda (refazer o GridSel inteiro mostrava as ocultas de novo)
     fn pick(sel: *GridSel, row: usize, col: usize) void {
@@ -2705,21 +3001,22 @@ const GridSel = struct {
 // shortcut: ImGui tables hold at most 512 columns, wider results are cut at 512
 const max_grid_cols = 512;
 
-// plain: so copia; hide: tambem ocultar colunas; filter: tambem "Filtrar por este valor" (aba Dados)
-const GridMode = enum { plain, hide, filter };
+// plain: so copia; hide: tambem ocultar colunas; filter: tambem "Filtrar por este valor" (aba Dados); terms: grade da
+// aba Termos (copiar linha sem a coluna Termo, copiar as linhas achadas, relatorio)
+const GridMode = enum { plain, hide, filter, terms };
 
 // Coluna das caixas de marcar da aba Dados: as `top` primeiras linhas sao as marcadas; `count` marcadas na tabela
 const Marking = struct { top: usize, count: usize };
 
 // Poe na area de transferencia o valor da celula selecionada ou a linha dela separada por TAB (NULL = vazio);
-// `header`: a linha de nomes das colunas vem antes
-fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool, header: bool) void {
+// `header`: a linha de nomes das colunas vem antes; `skip`: colunas do comeco que a linha nao leva (Termo)
+fn copySelection(g: *const dbm.Grid, sel: *const GridSel, whole_row: bool, header: bool, skip: usize) void {
     const r = sel.row orelse return;
-    if (r >= g.rows.len or sel.col >= g.columns.len) return;
+    if (r >= g.rows.len or sel.col >= g.columns.len or skip >= g.columns.len) return;
     var out: std.Io.Writer.Allocating = .init(std.heap.page_allocator);
     defer out.deinit();
     const w = &out.writer;
-    (if (whole_row) dbm.gridtools.writeRow(w, g.columns, g.rows[r], header) else w.writeAll(g.rows[r][sel.col] orelse "")) catch return;
+    (if (whole_row) dbm.gridtools.writeRow(w, g.columns[skip..], g.rows[r][skip..], header) else w.writeAll(g.rows[r][sel.col] orelse "")) catch return;
     w.writeByte(0) catch return;
     ig.igSetClipboardText(out.written().ptr);
 }
@@ -2851,7 +3148,9 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
         }
     }
 
-    if (ig.igIsWindowFocused(0) and ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_C)) copySelection(g, sel, false, false);
+    // aba Termos: copiar linha e linha com cabecalho sem a coluna Termo
+    const skip: usize = @intFromBool(mode == .terms);
+    if (ig.igIsWindowFocused(0) and ig.igIsKeyChordPressed_Nil(ig.ImGuiMod_Ctrl | ig.ImGuiKey_C)) copySelection(g, sel, false, false, 0);
     if (open_menu) _ = ig.igOpenPopup_Str("##copy", 0);
     // menu da celula do Go: filtros por valor (aba Dados), depois copiar valor, linha e linha com o cabecalho
     if (ig.igBeginPopup("##copy", 0)) {
@@ -2861,9 +3160,15 @@ fn drawGrid(id: [*:0]const u8, g: *const dbm.Grid, sort: ?Sort, sel: *GridSel, r
             if (ig.igMenuItem_Bool(tr("clear_filters"), null, false, sel.has_filters)) sel.want_clear = true;
             ig.igSeparator();
         }
-        if (ig.igMenuItem_Bool(tr("copy_value"), "Ctrl+C", false, true)) copySelection(g, sel, false, false);
-        if (ig.igMenuItem_Bool(tr("copy_row"), null, false, true)) copySelection(g, sel, true, false);
-        if (ig.igMenuItem_Bool(tr("copy_row_header"), null, false, true)) copySelection(g, sel, true, true);
+        if (ig.igMenuItem_Bool(tr("copy_value"), "Ctrl+C", false, true)) copySelection(g, sel, false, false, 0);
+        if (ig.igMenuItem_Bool(tr("copy_row"), null, false, true)) copySelection(g, sel, true, false, skip);
+        if (ig.igMenuItem_Bool(tr("copy_row_header"), null, false, true)) copySelection(g, sel, true, true, skip);
+        // aba Termos: todas as linhas achadas da tabela (sem a coluna Termo) e o relatorio
+        if (mode == .terms) {
+            ig.igSeparator();
+            if (ig.igMenuItem_Bool(tr("copy_hits"), null, false, true)) sel.want_copy_hits = true;
+            if (termsReportMenu(true)) |k| sel.want_export = k;
+        }
         // aba Dados: marcar a linha, exportar as marcadas, desmarcar todas (item 31)
         if (mark) |m| {
             ig.igSeparator();
@@ -3114,6 +3419,11 @@ fn run(init: std.process.Init) !void {
     };
     i18n.lang = app.prefs.lang;
     app.scope = app.prefs.search_scope;
+    // aba Termos: comparacao e escopo padrao das configuracoes; a caixa vazia
+    app.terms_match = app.prefs.term_match;
+    app.terms_scope = app.prefs.search_scope;
+    app.terms_text = try init.gpa.alloc(u8, terms_box_size + 1);
+    @memset(app.terms_text, 0);
     var theme = app.prefs.theme;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {

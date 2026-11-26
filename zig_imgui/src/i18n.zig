@@ -148,6 +148,14 @@ test "texts as in the Go catalog (the reference wording), in the three languages
         .{ "about_write", "Writing", "Gravação", "Escritura" },
         .{ "menu_open_typed", "Open the typed path", "Abrir o caminho digitado", "Abrir la ruta escrita" },
         .{ "menu_save_as", "Save as...", "Salvar como...", "Guardar como..." },
+        // itens 31 e 32
+        .{ "only_marked", "Only marked", "Só as marcadas", "Solo las marcadas" },
+        .{ "tab_terms", "Terms", "Termos", "Términos" },
+        .{ "terms_hint", "Paste the terms, one per line (for example, an Excel column)", "Cole os termos, um por linha (por exemplo, uma coluna do Excel)", "Pegue los términos, uno por línea (por ejemplo, una columna de Excel)" },
+        .{ "match_whole", "Whole value", "Valor inteiro", "Valor completo" },
+        .{ "terms_progress", "Searching terms: table {d} of {d} ({s})", "Pesquisando termos: tabela {d} de {d} ({s})", "Buscando términos: tabla {d} de {d} ({s})" },
+        .{ "copy_hits", "Copy the rows found in this table", "Copiar as linhas encontradas desta tabela", "Copiar las filas encontradas en esta tabla" },
+        .{ "overwrite_many_one", "{d} file already exists in this folder. Replace it?", "{d} arquivo já existe nesta pasta. Substituir?", "{d} archivo ya existe en esta carpeta. ¿Reemplazarlo?" },
     };
     inline for (want) |w| {
         inline for (0..3) |l| try t.expectEqualStrings(w[l + 1], @field(catalogs[l], w[0]));
@@ -278,6 +286,22 @@ test "Data tab count line under the grid: shown of all rows, or of the rows foun
     lang = .pt_br;
     try t.expectEqualStrings("1 tabela com linhas que contêm \"campo\"", fmtCount(&b, "global_found", 1, .{ 1, "campo" }));
     try t.expectEqualStrings("3 tabelas com linhas que contêm \"ELSUL\"", fmtCount(&b, "global_found", 3, .{ 3, "ELSUL" }));
+}
+
+test "Terms tab counts and summary with the right plural (item 32)" {
+    defer lang = .en;
+    var b: [4][96]u8 = undefined;
+    lang = .pt_br;
+    try t.expectEqualStrings("8 termos", fmtCount(&b[0], "terms_count", 8, .{8}));
+    try t.expectEqualStrings(", 1 repetido", fmtCount(&b[0], "terms_repeated", 1, .{1}));
+    try t.expectEqualStrings("1 de 1 termo encontrado: 1 linha em 1 tabela", fmt(&b[3], "terms_summary", .{
+        fmtCount(&b[0], "terms_found", 1, .{ 1, 1 }), fmtCount(&b[1], "terms_rows", 1, .{1}), fmtCount(&b[2], "terms_tables", 1, .{1}),
+    }));
+    lang = .es;
+    try t.expectEqualStrings("7 de 9 términos encontrados: 12 filas en 3 tablas", fmt(&b[3], "terms_summary", .{
+        fmtCount(&b[0], "terms_found", 9, .{ 7, 9 }), fmtCount(&b[1], "terms_rows", 12, .{12}), fmtCount(&b[2], "terms_tables", 3, .{3}),
+    }));
+    try t.expectEqualStrings(", 1 marcada", fmtCount(&b[0], "marked_count", 1, .{1}));
 }
 
 test "tr and fmt follow the current language" {

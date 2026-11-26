@@ -150,6 +150,13 @@ test "About as in Rust (Build, Stack, Window, Databases, Access reading, Author,
     try std.testing.expectEqualStrings("Gravação", pt.about_write);
 }
 
+test "Terms tab (item 32), top to bottom: box, matching, scope, button and count, summary, tables and grid, not found" {
+    try expectOrder("fn drawTerms(", &.{ "\"##terms\"", "tr(\"terms_hint\")", "tr(\"match_whole\")", "tr(\"match_contains\")", "tr(\"match_tip\")", "tr(\"scope_table\")", "tr(\"scope_all\")", "tr(\"terms_run\")", "\"terms_count\"", "\"terms_summary\"", "\"##terms_tables\"", "drawGrid(\"##termsgrid\"", "\"rows_showing\"", "\"not_found_title\"", "tr(\"copy\")", "\"##notfound\"" });
+    // a aba nova vem depois da SQL; Ctrl+4 a abre
+    try expectOrder("fn drawContent(", &.{ "\"tab_data\"", "\"tab_schema\"", "\"tab_sql\"", "\"tab_terms\"" });
+    try expectOrder("const chord = ig.igIsKeyChordPressed_Nil;", &.{ "ImGuiKey_3)", "ImGuiKey_4)" });
+}
+
 test "export menu: CSV and Excel of the table, schema or result" {
     try expectOrder("fn exportItems(", &.{ "tr(\"export_table_csv\")", "tr(\"export_table_xlsx\")" });
 }
