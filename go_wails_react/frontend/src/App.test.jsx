@@ -1385,7 +1385,7 @@ describe('App IPC flow', () => {
       { ID: 2, NAME: 'b' },
     ];
     const TermRows = vi.fn(async (table) => ({ columns: ['ID', 'NAME'], rows: table === 'RANGER_SOGEN' ? [{ ID: 7, NAME: 'g' }] : stat, more: false }));
-    const ExportTerms = vi.fn(async () => 'C:\\out\\sample_termos.xlsx');
+    const ExportTerms = vi.fn(async () => 'C:\\out\\sample - Advanced Search.xlsx');
     const SetTermMatch = vi.fn(async () => {});
     const ClipboardSetText = vi.fn(async () => true);
     let goProgress;

@@ -258,6 +258,18 @@ func TestDefaultSaveDir(t *testing.T) {
 	}
 }
 
+// standard 19e (owner 26/11): the Advanced Search report is proposed as "<database> - Pesquisa Avançada", in the
+// language of the screen, never "_termos"
+func TestTermsReportName(t *testing.T) {
+	defer i18n.SetLang("en")
+	for lang, want := range map[string]string{"pt-BR": "DB3 - Pesquisa Avançada", "en": "DB3 - Advanced Search", "es": "DB3 - Búsqueda Avanzada"} {
+		i18n.SetLang(lang)
+		if got := termsReportName("DB3"); got != want {
+			t.Errorf("%s: %q, want %q", lang, got, want)
+		}
+	}
+}
+
 // owner 26/11: the progress of a search goes to the UI at most 5 times a second, the first and the last always
 func TestProgressAtMostFiveASecond(t *testing.T) {
 	a := &App{}

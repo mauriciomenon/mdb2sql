@@ -769,6 +769,10 @@ func (a *App) dbStem() string {
 	return strings.TrimSuffix(a.dbName, filepath.Ext(a.dbName))
 }
 
+// termsReportName: the name proposed for the Advanced Search report, "DB3 - Pesquisa Avançada" (the save dialog adds
+// .xlsx, .sqlite or .duckdb; standard 19e)
+func termsReportName(stem string) string { return stem + " - " + i18n.T("tab.terms") }
+
 // types of File > Save, in the order of the dialog: catalog key of the name and the pattern
 var saveFormats = []string{"sqlite", "duckdb", "xlsx"}
 
@@ -941,15 +945,15 @@ func (a *App) TermRows(table string, terms []string, contains bool, limit int) (
 	return a.dbManager.TermRows(context.Background(), table, terms, contains, limit)
 }
 
-// ExportTerms exporta o relatorio da pesquisa de termos: xlsx, sqlite ou duckdb num arquivo <banco>_termos; csv numa
-// pasta, um arquivo por aba
+// ExportTerms exporta o relatorio da Pesquisa Avancada: xlsx, sqlite ou duckdb num arquivo "<banco> - Pesquisa
+// Avançada" (nome da aba no idioma da tela, padrao 19e); csv numa pasta, um arquivo por tabela
 func (a *App) ExportTerms(res backend.TermsResult, contains bool, format string) (string, error) {
 	if format == "csv" {
 		return a.runFolderExport(backend.TermsSheets(res), func(ctx context.Context, dir string) error {
 			return a.dbManager.ExportTerms(ctx, res, contains, format, dir, a.progress)
 		})
 	}
-	return a.runExport(a.dbStem()+"_termos", format, func(ctx context.Context, out string) error {
+	return a.runExport(termsReportName(a.dbStem()), format, func(ctx context.Context, out string) error {
 		return a.dbManager.ExportTerms(ctx, res, contains, format, out, a.progress)
 	})
 }
