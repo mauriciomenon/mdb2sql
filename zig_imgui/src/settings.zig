@@ -66,6 +66,10 @@ pub const Saved = struct {
 };
 pub const max_saved = 8; // os mais recentes
 
+// Versao do conversor do Access (item 19 b): entra na chave do convertido lembrado. Um convertido salvo por outra
+// versao (linha sem ela ou com outro numero) e ignorado e o Access e convertido de novo, com os tipos de hoje.
+pub const converter_version = 2;
+
 pub const Settings = struct {
     theme: Theme = .system,
     lang: Lang = .en,
@@ -138,7 +142,8 @@ pub const Settings = struct {
             if (std.mem.eql(u8, key, "search_scope")) s.search_scope = std.meta.stringToEnum(SearchScope, value) orelse .all;
             if (std.mem.eql(u8, key, "term_match")) s.term_match = std.meta.stringToEnum(TermMatch, value) orelse .whole;
             if (std.mem.eql(u8, key, "show_null")) s.show_null = std.mem.eql(u8, value, "1");
-            // saved=<tamanho>|<data>|<tamanho do sqlite>|<data do sqlite>|<access>TAB<sqlite> (na ordem: mais recente primeiro)
+            // saved=<conversor>|<tamanho>|<data>|<tamanho do sqlite>|<data do sqlite>|<access>TAB<sqlite> (na ordem: mais
+            // recente primeiro)
             if (std.mem.eql(u8, key, "saved") and s.saved_len < max_saved) if (parseSaved(value)) |e| {
                 s.saved[s.saved_len] = e;
                 s.saved_len += 1;
@@ -149,6 +154,8 @@ pub const Settings = struct {
 
     fn parseSaved(value: []const u8) ?Saved {
         var it = std.mem.splitScalar(u8, value, '|');
+        // convertido por outra versao do conversor: esquecido (o Access e convertido de novo)
+        if ((std.fmt.parseInt(u32, it.next() orelse return null, 10) catch return null) != converter_version) return null;
         var nums: [4]i128 = undefined;
         for (&nums) |*n| n.* = std.fmt.parseInt(i128, it.next() orelse return null, 10) catch return null;
         const paths = it.rest();
@@ -163,7 +170,7 @@ pub const Settings = struct {
             s.search_scope, s.term_match, @intFromBool(s.show_null), s.lastDir(),
         });
         for (s.saved[0..s.saved_len]) |*e|
-            try w.print("saved={d}|{d}|{d}|{d}|{s}\t{s}\r\n", .{ e.src_key.size, e.src_key.mtime, e.dest_key.size, e.dest_key.mtime, e.src(), e.dest() });
+            try w.print("saved={d}|{d}|{d}|{d}|{d}|{s}\t{s}\r\n", .{ converter_version, e.src_key.size, e.src_key.mtime, e.dest_key.size, e.dest_key.mtime, e.src(), e.dest() });
     }
 
     pub fn load(io: Io, path: []const u8) Settings {
@@ -274,7 +281,13 @@ test "Access converted and saved: reused while neither file changes, kept betwee
     }
     try t.expectEqual(max_saved, many.saved_len);
     try t.expectEqualStrings("C:\\a9.accdb", many.saved[0].src());
-    try t.expectEqual(0, Settings.parse("saved=1|2|x|4|a\tb\r\nsaved=1|2|3|4|sem tab\r\n").saved_len);
+    try t.expectEqual(0, Settings.parse("saved=2|1|2|x|4|a\tb\r\nsaved=2|1|2|3|4|sem tab\r\n").saved_len);
+    // item 19 b: convertido lembrado por um conversor antigo (linha sem a versao ou com outra): converte de novo
+    var lb: [600]u8 = undefined;
+    const line = try std.fmt.bufPrint(&lb, "saved={d}|1|2|3|4|C:\\a.accdb\tC:\\a.sqlite\r\n", .{converter_version});
+    try t.expectEqual(1, Settings.parse(line).saved_len);
+    try t.expectEqual(0, Settings.parse("saved=1|2|3|4|C:\\a.accdb\tC:\\a.sqlite\r\n").saved_len);
+    try t.expectEqual(0, Settings.parse("saved=1|1|2|3|4|C:\\a.accdb\tC:\\a.sqlite\r\n").saved_len);
     try t.expect(Saved.make("a\tb", .{ .size = 1, .mtime = 1 }, "c", .{ .size = 1, .mtime = 1 }) == null);
 }
 
