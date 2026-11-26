@@ -515,7 +515,8 @@ fn row_id(conn: &Connection, table: &str, columns: &[String]) -> String {
     }
 }
 
-// condicao (sem WHERE) das linhas com estas identidades; cada uma vai como parametro
+// " WHERE ..." das linhas com estas identidades (cada uma vai como parametro), na ordem da tabela: ORDER BY rowid, que
+// uma tabela grande lida em paralelo nao garante sem ele; sem rowid (view), a ordem de leitura
 fn marked_condition(id: &str, marked: &[serde_json::Value]) -> (String, Vec<duckdb::types::Value>) {
     let params = marked
         .iter()
@@ -524,7 +525,8 @@ fn marked_condition(id: &str, marked: &[serde_json::Value]) -> (String, Vec<duck
             None => duckdb::types::Value::Text(json_text(value)),
         })
         .collect();
-    (format!("{id} IN ({})", vec!["?"; marked.len()].join(", ")), params)
+    let order = if id == "rowid" { " ORDER BY rowid" } else { "" };
+    (format!(" WHERE {id} IN ({}){order}", vec!["?"; marked.len()].join(", ")), params)
 }
 
 // NIVEL BASICO: Colunas (nome, tipo) de cada tabela do banco corrente, na ordem da tabela (uma consulta so, sem PRAGMA
@@ -760,7 +762,7 @@ impl DBManager {
                 (Vec::new(), Vec::new())
             } else {
                 let (cond, params) = marked_condition(&id, marked);
-                read(format!("{select} WHERE {cond}"), params)?
+                read(format!("{select}{cond}"), params)?
             };
             Ok(TablePage { rows, ids, marked, marked_ids })
         })
@@ -852,8 +854,7 @@ impl DBManager {
             return Err("No marked rows".to_string());
         }
         self.with_conn(|conn| {
-            let (cond, params) = marked_condition(&row_id(conn, table_name, &names), marked);
-            Ok((format!(" WHERE {cond}"), params))
+            Ok(marked_condition(&row_id(conn, table_name, &names), marked))
         })
     }
 

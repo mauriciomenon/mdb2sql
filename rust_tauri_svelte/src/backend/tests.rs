@@ -1362,6 +1362,23 @@ mod tests {
         assert_eq!(manager.get_table_schema("a_pts").unwrap().len(), 3);
     }
 
+
+    // revisao do Python (P1): as marcadas voltam na ordem da tabela (ORDER BY rowid) tambem numa tabela grande, lida em
+    // paralelo
+    #[test]
+    fn marked_rows_of_a_big_table_come_in_table_order() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("big.duckdb");
+        duckdb::Connection::open(&path).unwrap().execute_batch("CREATE TABLE b AS SELECT range AS id FROM range(1000000)").unwrap();
+        let manager = DBManager::new();
+        manager.connect(path.to_str().unwrap(), &mut no_progress()).unwrap();
+        let marked = [json!(999_000), json!(5), json!(500_000), json!(130_000)];
+        let page = manager.table_page("b", 1, &[], "", &marked).unwrap();
+        assert_eq!(page.marked_ids, [json!(5), json!(130_000), json!(500_000), json!(999_000)]);
+        let (filter, _) = manager.marked_where("b", &marked).unwrap();
+        assert!(filter.ends_with(" ORDER BY rowid"), "{filter}");
+    }
+
     // Exportar > Esquema da tabela atual / do banco: Coluna, Tipo, Aceita nulo traduzidos (e Tabela na frente no do banco);
     // Todas as tabelas em CSV: um arquivo por tabela na pasta
     #[test]
