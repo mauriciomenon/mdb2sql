@@ -141,7 +141,8 @@ Menus:
   SQL result to CSV or Excel; All-tables search result (Excel: one sheet per table with hits, the rows the search
   finds; `<database>_busca`); Advanced Search report (see Advanced Search).
   - Excel: sheet name = table name, cleaned of `[]:*?/\` and cut to the 31-character Excel limit (repeated names
-    get `~2`, `~3`); header in row 1; a table with more than 1,048,575 rows continues in sheets `<name> (2)`, ...
+    get `~2`, `~3`); header in row 1; each column as wide as its longest text (at most 80 characters); numbers
+    and dates are number and date cells, NULL an empty cell; a table with more than 1,048,575 rows continues in sheets `<name> (2)`, ...
   - Current table: the whole current table (not only the loaded rows). When the grid shows part of the
     table (a search or a value filter) it asks first: "Whole table" or "Only the N rows found" (the rows the grid counts, value filters included).
   - SQL result: the whole result of the last query that ran; default name `query.csv` /

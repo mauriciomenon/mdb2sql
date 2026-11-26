@@ -132,6 +132,19 @@ def test_export_result_xlsx_keeps_text_that_looks_like_formula(tmp_path: Path) -
     # binario em hex e data que o Excel nao representa como texto, em vez de erro ou numero negativo
     assert [c.value for c in sheet[2]][3:] == ["0001", "1800-01-02 03:04:05", 1.5]
     assert (tmp_path / "t.csv").read_text(encoding="utf-8-sig").splitlines() == ["bin", "0001"]
+    # BRIEF 19 c: o numero e celula numerica, a data e data (nada vira texto)
+    assert sheet["F2"].data_type == "n" and sheet["C2"].is_date
+
+
+def test_excel_columns_fit_their_content(manager: DBManager, tmp_path: Path) -> None:
+    # BRIEF 19 g: cada coluna com a largura do maior texto (cabecalho ou celula) + margem, sem arrastar no Excel
+    out = tmp_path / "people.xlsx"
+    export_result(manager, "SELECT id, name || ' da Silva Sauro' AS name, score FROM people", "people", out, _noop)
+    sheet = openpyxl.load_workbook(out)["people"]
+    widths = {column: sheet.column_dimensions[column].width for column in "ABC"}
+    assert widths["A"] == pytest.approx(len("10") + 2, abs=1)  # "id" e 10: dois caracteres
+    assert widths["B"] == pytest.approx(len("Bruno da Silva Sauro") + 2, abs=1)
+    assert widths["C"] == pytest.approx(len("score") + 2, abs=1)
 
 
 def test_cancel_removes_partial_file(manager: DBManager, tmp_path: Path) -> None:

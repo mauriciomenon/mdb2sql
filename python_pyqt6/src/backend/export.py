@@ -25,6 +25,7 @@ Progress = Callable[[int, int, str], None]
 Sheet = tuple[str, str, Sequence[Any]]  # (nome da aba, da tabela ou do arquivo; consulta; parametros)
 MAX_SHEET_ROWS = 1_048_575  # linhas de dados por aba: 1.048.576 do Excel menos o cabecalho
 MAX_SHEET_NAME = 31
+MAX_COLUMN_WIDTH = 80  # caracteres: um Memo longo nao vira uma coluna da largura da tela inteira
 CHUNK = 5_000
 _BAD_SHEET_CHARS = re.compile(r"[\[\]:*?/\\]")
 _BAD_FILE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -214,6 +215,19 @@ def _workbook(out: Path) -> xlsxwriter.Workbook:
     )
 
 
+def _cell_width(value: object) -> int:
+    """Largura do texto da celula em caracteres, como o Excel mostra (data e hora: 19; numero: os digitos)."""
+    if isinstance(value, str):
+        return len(value)
+    if isinstance(value, datetime):
+        return 19
+    if isinstance(value, date):
+        return 10
+    if isinstance(value, float):
+        return min(len(repr(value)), 12)  # o formato Geral mostra no maximo ~11 digitos
+    return 0 if value is None else len(str(value))
+
+
 def _write_sheets(
     book: xlsxwriter.Workbook,
     title: str,
@@ -225,17 +239,30 @@ def _write_sheets(
     # tabela maior que uma aba continua em '<nome> (2)', '<nome> (3)', ...
     part, row, written = 1, 0, 0
     sheet = book.add_worksheet(sheet_name(title, part, used))
+    sheets = [sheet]
     sheet.write_row(0, 0, header)
+    # largura de cada coluna pelo conteudo (best fit, BRIEF 19 g); o autofit do xlsxwriter nao funciona com
+    # constant_memory, entao a largura e medida enquanto as linhas passam
+    widths = [len(str(name)) for name in header]
     for chunk in chunks:
         _check(cancel)
         for values in chunk:
             if row == MAX_SHEET_ROWS:
                 part, row = part + 1, 0
                 sheet = book.add_worksheet(sheet_name(title, part, used))
+                sheets.append(sheet)
                 sheet.write_row(0, 0, header)
             row += 1
-            sheet.write_row(row, 0, [_excel_value(v) for v in values])
+            cells = [_excel_value(v) for v in values]
+            for index, value in enumerate(cells):
+                width = _cell_width(value)
+                if width > widths[index]:
+                    widths[index] = width
+            sheet.write_row(row, 0, cells)
         written += len(chunk)
+    for each in sheets:
+        for index, width in enumerate(widths):
+            each.set_column(index, index, min(width, MAX_COLUMN_WIDTH) + 2)  # + margem: o texto nunca encosta
     return written
 
 
