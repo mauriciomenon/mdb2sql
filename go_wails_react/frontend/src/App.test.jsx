@@ -190,8 +190,8 @@ describe('App IPC flow', () => {
     key({ key: '3', ctrlKey: true });
     await waitFor(() => expect(screen.getByLabelText('SQL')).toHaveFocus());
     key({ key: '4', ctrlKey: true });
-    expect(screen.getByRole('tab', { name: 'Terms' })).toHaveAttribute('aria-selected', 'true');
-    await waitFor(() => expect(screen.getByLabelText('Terms')).toHaveFocus());
+    expect(screen.getByRole('tab', { name: 'Advanced Search' })).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => expect(screen.getByLabelText('Advanced Search')).toHaveFocus());
     key({ key: 'f', ctrlKey: true }); // the Terms tab has no search field: back to Data, on its search
     await waitFor(() => expect(screen.getByLabelText('Search the table')).toHaveFocus());
     key({ key: '1', ctrlKey: true });
@@ -1066,14 +1066,14 @@ describe('App IPC flow', () => {
       'Search Ctrl+F', 'Filter by this value', 'Clear filters', '--', 'Mark or unmark row Space', 'Unmark all rows',
     ]);
     expect(tree('View')).toEqual([
-      '✓Data Ctrl+1', 'Schema Ctrl+2', 'SQL Ctrl+3', 'Terms Ctrl+4', '--', 'Rows ▸', 'Columns...', 'Search in ▸', 'Only marked rows',
+      '✓Data Ctrl+1', 'Schema Ctrl+2', 'SQL Ctrl+3', 'Advanced Search Ctrl+4', '--', 'Rows ▸', 'Columns...', 'Search in ▸', 'Only marked rows',
       'Go to the table list Ctrl+T', 'Favorite or unfavorite table Ctrl+D', '--', 'Run SQL Ctrl+Enter', 'Search terms Ctrl+Enter', '--', 'Log Ctrl+L',
     ]);
     expect(tree('Settings')).toEqual(['Theme ▸', 'Language ▸', 'Default search scope ▸', 'Term matching ▸', 'Show NULL']);
     expect(tree('Help')).toEqual(['About mdb2sql']);
     const exportList = [
       'Current table ▸', 'Marked rows ▸', 'Current table schema ▸', 'Database schema ▸', 'All tables to CSV (one file per table)...',
-      'SQL result ▸', 'All-tables search result (Excel)...', 'Term search report ▸',
+      'SQL result ▸', 'All-tables search result (Excel)...', 'Advanced Search report ▸',
     ];
     expect(tree('Export...', 'Export')).toEqual(exportList);
     fireEvent.click(screen.getByRole('button', { name: 'File' }));
@@ -1091,7 +1091,7 @@ describe('App IPC flow', () => {
     expect(menuTree(screen.getByRole('menu', { name: 'Term matching' }))).toEqual(['✓Whole value', 'Contains']);
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     // labels and data only: no how-to sentences, no copyright line
-    fireEvent.click(screen.getByRole('tab', { name: 'Terms' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Advanced Search' }));
     const shown = document.body.textContent + [...document.querySelectorAll('[title], [placeholder]')].map((e) => e.title || e.placeholder).join(' ');
     expect(shown).not.toMatch(/copyright|press |write a|verifi|lembre|open a database|export writes/i);
 
@@ -1105,14 +1105,14 @@ describe('App IPC flow', () => {
       'Pesquisar Ctrl+F', 'Filtrar por este valor', 'Limpar filtros', '--', 'Marcar ou desmarcar linha Espaço', 'Desmarcar todas as linhas',
     ]);
     expect(tree('Exibir')).toEqual([
-      'Dados Ctrl+1', 'Schema Ctrl+2', 'SQL Ctrl+3', '✓Termos Ctrl+4', '--', 'Linhas ▸', 'Colunas...', 'Pesquisar em ▸', 'Só as linhas marcadas',
+      'Dados Ctrl+1', 'Schema Ctrl+2', 'SQL Ctrl+3', '✓Pesquisa Avançada Ctrl+4', '--', 'Linhas ▸', 'Colunas...', 'Pesquisar em ▸', 'Só as linhas marcadas',
       'Ir para a lista de tabelas Ctrl+T', 'Favoritar ou desfavoritar tabela Ctrl+D', '--', 'Executar SQL Ctrl+Enter', 'Pesquisar termos Ctrl+Enter', '--', 'Log Ctrl+L',
     ]);
     expect(tree('Configurações')).toEqual(['Tema ▸', 'Idioma ▸', 'Escopo padrão da busca ▸', 'Comparação dos termos ▸', 'Exibir NULL']);
     expect(tree('Ajuda')).toEqual(['Sobre o mdb2sql']);
     expect(tree('Exportar...', 'Exportar')).toEqual([
       'Tabela atual ▸', 'Linhas marcadas ▸', 'Schema da tabela atual ▸', 'Schema do banco ▸', 'Todas as tabelas em CSV (um arquivo por tabela)...',
-      'Resultado do SQL ▸', 'Resultado da busca em todas as tabelas (Excel)...', 'Relatório da pesquisa de termos ▸',
+      'Resultado do SQL ▸', 'Resultado da busca em todas as tabelas (Excel)...', 'Relatório da Pesquisa Avançada ▸',
     ]);
   });
 
@@ -1315,8 +1315,8 @@ describe('App IPC flow', () => {
     render(<App />);
     openDefault();
     await screen.findByText('Alpha');
-    fireEvent.click(screen.getByRole('tab', { name: 'Terms' }));
-    const box = screen.getByLabelText('Terms');
+    fireEvent.click(screen.getByRole('tab', { name: 'Advanced Search' }));
+    const box = screen.getByLabelText('Advanced Search');
     expect(box).toHaveAttribute('placeholder', 'Paste the terms, one per line (for example, an Excel column)');
     expect(screen.getByRole('radio', { name: 'Contains' })).toHaveAttribute('aria-checked', 'true'); // Settings > Term matching
     expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true'); // Default search scope
@@ -1348,7 +1348,7 @@ describe('App IPC flow', () => {
     // the copies leave the Term column out; "Copy the rows found" copies every row found, with the header
     fireEvent.contextMenu(screen.getByText('a'));
     expect(menuTree(screen.getByRole('menu', { name: 'Cell' }))).toEqual([
-      'Copy value Ctrl+C', 'Copy row Ctrl+Shift+C', 'Copy row with header', '--', 'Copy the rows found in this table', 'Term search report ▸',
+      'Copy value Ctrl+C', 'Copy row Ctrl+Shift+C', 'Copy row with header', '--', 'Copy the rows found in this table', 'Advanced Search report ▸',
     ]);
     fireEvent.click(item('Copy row with header'));
     await waitFor(() => expect(ClipboardSetText).toHaveBeenLastCalledWith('ID\tNAME\r\n1\ta'));
@@ -1360,12 +1360,12 @@ describe('App IPC flow', () => {
 
     // the report: cell menu and Export
     fireEvent.contextMenu(screen.getByText('a'));
-    fireEvent.mouseEnter(item('Term search report'));
-    expect(menuTree(screen.getByRole('menu', { name: 'Term search report' }))).toEqual(['Excel (.xlsx)...', 'CSV...', 'SQLite (.sqlite)...', 'DuckDB (.duckdb)...']);
+    fireEvent.mouseEnter(item('Advanced Search report'));
+    expect(menuTree(screen.getByRole('menu', { name: 'Advanced Search report' }))).toEqual(['Excel (.xlsx)...', 'CSV...', 'SQLite (.sqlite)...', 'DuckDB (.duckdb)...']);
     fireEvent.click(item('Excel (.xlsx)...'));
     await waitFor(() => expect(ExportTerms).toHaveBeenCalledWith(res, true, 'xlsx'));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    pick('Export...', 'Term search report', 'DuckDB (.duckdb)...');
+    pick('Export...', 'Advanced Search report', 'DuckDB (.duckdb)...');
     await waitFor(() => expect(ExportTerms).toHaveBeenLastCalledWith(res, true, 'duckdb'));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
@@ -1380,6 +1380,9 @@ describe('App IPC flow', () => {
 
     // terms: one per line, trimmed, empty lines dropped, a repeat (ignoring case) searched once; the right plural
     expect(parseTerms(' a \nA\n\nb\r\nB ')).toEqual({ terms: ['a', 'b'], repeated: 2 });
+    // owner 26/11 (13d): the tab is the Advanced Search in the 3 languages, and so is its report
+    expect(LANGS.map((l) => translate(l, 'tab.terms'))).toEqual(['Advanced Search', 'Pesquisa Avançada', 'Búsqueda Avanzada']);
+    expect(translate('es', 'export.terms')).toBe('Informe de la Búsqueda Avanzada');
     const pt = (key, n, ...args) => translateN('pt-BR', key, n, ...args);
     expect(pt('terms.count', 1, 1) + pt('terms.repeated', 1, 1)).toBe('1 termo, 1 repetido');
     expect(translate('pt-BR', 'terms.summary', pt('terms.found', 1, 1, 1), pt('terms.rows', 1, 1), pt('terms.tables', 1, 1))).toBe('1 de 1 termo encontrado: 1 linha em 1 tabela');

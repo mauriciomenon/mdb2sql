@@ -140,11 +140,11 @@ Menus (every button has a menu item):
   .mdb and .accdb files cannot be written.
 - Export > (the same list under the Export... button; what does not apply now is disabled): Current table, Marked
   rows, Current table schema, Database schema (each CSV or Excel), All tables to CSV (one file per table, in a
-  folder), SQL result (CSV or Excel, `query.csv`), All-tables search result (Excel), Term search report (Excel,
+  folder), SQL result (CSV or Excel, `query.csv`), All-tables search result (Excel), Advanced Search report (Excel,
   CSV, SQLite or DuckDB). All with progress and Cancel; a failed export leaves no half file.
 - Edit: Copy value Ctrl+C, Copy row Ctrl+Shift+C, Copy row with header, Copy the whole log, Search Ctrl+F, Filter
   by this value, Clear filters, Mark or unmark row (Space), Unmark all rows.
-- View: Data Ctrl+1, Schema Ctrl+2, SQL Ctrl+3, Terms Ctrl+4, Rows (100/500/1000), Columns..., Search in (This
+- View: Data Ctrl+1, Schema Ctrl+2, SQL Ctrl+3, Advanced Search Ctrl+4, Rows (100/500/1000), Columns..., Search in (This
   table, All tables), Only marked rows, Go to the table list Ctrl+T, Favorite or unfavorite table Ctrl+D, Run SQL
   Ctrl+Enter, Search terms Ctrl+Enter, Log Ctrl+L.
 
@@ -164,7 +164,7 @@ on top of the grid, in table order, whatever the search or filter; "Only marked"
 A row is told apart by the engine's rowid (DuckDB and SQLite tables, Access converted to SQLite); a view has
 none: there all the values of the row count, so equal rows are marked together.
 
-Terms tab: paste a list (one term per line, for example an Excel column); each term is searched in every column
+Advanced Search tab: paste a list (one term per line, for example an Excel column); each term is searched in every column
 of this table or of all tables, the whole cell (Whole value) or inside it (Contains), ignoring case and the spaces
 at the ends. The tables found, their rows with the term first, and the terms not found (copiable).
 
