@@ -2,20 +2,46 @@
 // !T: Single-screen viewer talking to Go through the Wails IPC bridge (window.go.main.App). Every visible text comes
 // from the catalogs in ../../i18n (see i18n.ts)
 
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, version as reactVersion } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, version as reactVersion } from 'react';
 import './App.css';
 import { LANGS, translate, translateN, type Lang, type T, type TN } from './i18n';
 
 type Row = Record<string, unknown>;
 type Column = { name: string; type: string; null: string };
 export type Theme = 'system' | 'light' | 'dark';
-type View = 'data' | 'schema' | 'sql';
-type Scope = 'table' | 'all'; // Data tab search: the open table or all tables
+type View = 'data' | 'schema' | 'sql' | 'terms';
+type Scope = 'table' | 'all'; // Data tab search and Terms tab: the open table or all tables
+type Match = 'whole' | 'contains'; // Terms tab: the whole cell equals the term, or the cell contains it
 type TableHits = { table: string; rows: number };
-type MenuName = 'file' | 'exportBar' | 'view' | 'settings' | 'help';
+type MenuName = 'file' | 'edit' | 'exportBar' | 'view' | 'settings' | 'help';
 type QueryResult = { columns: string[]; rows: Row[]; more: boolean };
 type Progress = { done: number; total: number; label: string };
-type Conversion = { done: boolean; saved: string };
+// answer of a term search (Go: backend.TermsResult): the terms searched, in pasted order, and where each one is
+export type TermsResult = {
+  terms: string[];
+  repeated: number;
+  hits: { term: string; table: string; rows: number }[];
+  tables: TableHits[];
+  notFound: string[];
+};
+// the running job: a file being opened, an export or save (what = its name; leaving the app asks first) or a term search
+type Job = { kind: 'load' | 'export' | 'terms'; text: string; what?: string };
+// a question with its buttons in screen order (the first one has the focus: Enter); cls "end" starts the right group
+type Question = { title: string; text: string; buttons: { label: string; value: string; cls?: string }[] };
+// One line of a menu: a separator, a command (run), a submenu (items) or a check/radio item (checked)
+export type MenuItem =
+  | { sep: true }
+  | {
+      label: string;
+      kbd?: string;
+      on?: boolean; // false = disabled
+      run?: () => void;
+      items?: MenuItem[];
+      checked?: boolean;
+      radio?: boolean;
+      lang?: string;
+      focus?: boolean; // gets the focus when the menu opens
+    };
 // Linux without X11 (display.go): three short lines, the install command and the README help link
 type DisplayWarning = { text: string; missing: string; distro: string; command: string; help: string };
 export type AppInfo = {
@@ -48,9 +74,17 @@ declare global {
           StartupPath?: () => Promise<string>;
           GetAppInfo?: () => Promise<AppInfo>;
           RunQuery?: (query: string, limit: number) => Promise<QueryResult>;
-          ExportDatabase?: (format: string) => Promise<string>;
+          SaveDatabase?: (saveAs: boolean) => Promise<string>;
           ExportTable?: (table: string, format: string, filters: Filter[], search: string) => Promise<string>;
           ExportQuery?: (query: string, format: string) => Promise<string>;
+          MarkedRows?: (table: string, marks: Row[]) => Promise<Row[]>;
+          ExportMarked?: (table: string, format: string, marks: Row[]) => Promise<string>;
+          ExportSchema?: (table: string, format: string) => Promise<string>;
+          ExportAllCSV?: () => Promise<string>;
+          ExportSearch?: (search: string, tables: string[]) => Promise<string>;
+          SearchTerms?: (lines: string[], contains: boolean, table: string) => Promise<TermsResult>;
+          TermRows?: (table: string, terms: string[], contains: boolean, limit: number) => Promise<QueryResult>;
+          ExportTerms?: (res: TermsResult, contains: boolean, format: string) => Promise<string>;
           CancelJob?: () => Promise<void>;
           GetTheme?: () => Promise<Theme>;
           GetLogOpen?: () => Promise<boolean>;
@@ -62,12 +96,14 @@ declare global {
           SetShowNull?: (show: boolean) => Promise<void>;
           GetSearchScope?: () => Promise<Scope>;
           SetSearchScope?: (scope: Scope) => Promise<void>;
+          GetTermMatch?: () => Promise<Match>;
+          SetTermMatch?: (match: Match) => Promise<void>;
           SearchAllTables?: (search: string) => Promise<TableHits[]>;
           TableCounts?: () => Promise<number[]>;
           PendingConversion?: () => Promise<string>;
-          RememberedChoice?: () => Promise<string>;
-          ResolveConversion?: (choice: string, remember: boolean) => Promise<Conversion>;
           CloseDatabase?: () => Promise<void>;
+          Exit?: () => Promise<void>;
+          StartupLog?: () => Promise<string[] | null>;
           DisplayWarning?: () => Promise<DisplayWarning | null>;
         };
       };
@@ -87,7 +123,36 @@ const ROW_LIMITS = [100, 500, 1000]; // more would render too many cells (130-co
 const TYPING_PAUSE = 300; // ms without typing before the table list filter and the Data search apply (Enter: at once)
 const THEMES: Theme[] = ['system', 'light', 'dark'];
 const SCOPES: Scope[] = ['table', 'all'];
-const VIEWS: View[] = ['data', 'schema', 'sql']; // tab order: Ctrl+1, Ctrl+2, Ctrl+3
+const MATCHES: Match[] = ['whole', 'contains'];
+const VIEWS: View[] = ['data', 'schema', 'sql', 'terms']; // tab order: Ctrl+1, Ctrl+2, Ctrl+3, Ctrl+4
+const TABLE_FORMATS = ['csv', 'xlsx']; // Export > ... > CSV... / Excel (.xlsx)...
+const REPORT_FORMATS = ['xlsx', 'csv', 'sqlite', 'duckdb']; // Export > Term search report
+// key Go puts in each Data row with the engine's rowid of that row (never a column name): marked rows are told apart by it
+export const ROWID = '\u0000rowid';
+const NO_ROWS: Row[] = []; // one empty list, so the grid memos keep it between renders
+export const sumRows = (hits: TableHits[]) => hits.reduce((n, h) => n + h.rows, 0);
+
+// What tells a row apart from the others of its table: the engine's rowid when Go sent one, else all its values (rows
+// equal in every value are then marked together)
+export const rowKey = (row: Row, columns: string[]) => (ROWID in row ? `#${row[ROWID]}` : JSON.stringify(columns.map((c) => row[c] ?? null)));
+
+// Terms of the text pasted in the Terms tab: one per line, without the spaces at the ends, empty lines dropped; a term
+// already in the list (ignoring case, as the search does) counts as repeated and is searched once (Go: CleanTerms)
+export function parseTerms(text: string) {
+  const seen = new Set<string>();
+  const terms: string[] = [];
+  let repeated = 0;
+  for (const line of text.split(/\r?\n/)) {
+    const term = line.trim();
+    if (!term) continue;
+    if (seen.has(term.toLowerCase())) repeated++;
+    else {
+      seen.add(term.toLowerCase());
+      terms.push(term);
+    }
+  }
+  return { terms, repeated };
+}
 
 // How an Access file is read now: the ODBC driver (embedded mdbtools as fallback), mdbtools only, or nothing
 function accessReading(info: AppInfo, t: T): string {
@@ -97,9 +162,9 @@ function accessReading(info: AppInfo, t: T): string {
   return t('about.reader.none');
 }
 
-// Linhas (rotulo, valor) do dialogo Sobre, as do Rust (Build, Stack, Janela, Bancos, Leitura do Access, Autor,
-// Licenca, links); versao de wails.json, numero/data do build gravados pelo build, runtimes lidos em execucao. Valor
-// que comeca com https:// vira link aberto no navegador padrao.
+// Linhas (rotulo, valor) do dialogo Sobre, as do Rust (Build, Stack, Janela, Bancos, Leitura do Access, Gravacao,
+// Autor, Licenca, links); versao de wails.json, numero/data do build gravados pelo build, runtimes lidos em execucao.
+// Valor que comeca com https:// vira link aberto no navegador padrao.
 export function aboutRows(info: AppInfo, t: T): [string, string][] {
   const v = (s: string) => s.replace(/^v/, '');
   return [
@@ -108,6 +173,7 @@ export function aboutRows(info: AppInfo, t: T): [string, string][] {
     [t('about.window'), info.webview ?? ''],
     [t('about.engines'), `DuckDB ${v(info.duckdb)}`], // SQLite files are read by DuckDB (its sqlite extension)
     [t('about.access'), accessReading(info, t)],
+    [t('about.write'), t('about.writeValue')], // .mdb and .accdb cannot be written (standard item 28)
     [t('about.author'), 'Mauricio Menon'],
     [t('about.license'), t('about.licenseText')],
     ['GitHub', 'https://github.com/mauriciomenon/mdb2sql'],
@@ -200,6 +266,61 @@ function keepInWindow(el: HTMLElement | null) {
   if (el) el.style.top = `${Math.max(4, Math.min(el.getBoundingClientRect().top, window.innerHeight - el.offsetHeight - 4))}px`;
 }
 
+// a menu drawn from data: commands, check/radio items, separators and submenus (opened by hover or click)
+type MenuListProps = { items: MenuItem[]; label: string; className: string; style?: React.CSSProperties; place?: (el: HTMLElement | null) => void };
+function MenuList({ items, label, className, style, place }: MenuListProps) {
+  const [sub, setSub] = useState(-1);
+  // as a native menu: with any check or radio item, every item keeps the column of the check mark
+  const checks = items.some((it) => !('sep' in it) && it.checked !== undefined);
+  return (
+    <div ref={place} className={className} style={style} role="menu" aria-label={label}>
+      {items.map((it, i) =>
+        'sep' in it ? (
+          <hr key={i} />
+        ) : it.items ? (
+          <div className="menu-root" key={i}>
+            <button
+              role="menuitem"
+              aria-haspopup="menu"
+              aria-expanded={sub === i}
+              disabled={it.on === false}
+              onMouseEnter={() => setSub(i)}
+              onClick={(e) => {
+                e.stopPropagation(); // the window click handler would close the menu
+                setSub(i); // as a native submenu: the click after the hover keeps it open
+              }}
+            >
+              {checks && <span className="check" />}
+              {it.label} <span className="sub-arrow">▸</span>
+            </button>
+            {sub === i && <MenuList items={it.items} label={it.label} className="dropdown sub" />}
+          </div>
+        ) : (
+          <button
+            key={i}
+            role={it.checked === undefined ? 'menuitem' : it.radio ? 'menuitemradio' : 'menuitemcheckbox'}
+            aria-checked={it.checked}
+            disabled={it.on === false}
+            lang={it.lang}
+            autoFocus={it.focus}
+            onMouseEnter={() => setSub(-1)}
+            onClick={it.run}
+          >
+            {checks && <span className="check">{it.checked ? '✓' : ''}</span>}
+            {it.label}
+            {it.kbd && (
+              <>
+                {' '}
+                <kbd>{it.kbd}</kbd>
+              </>
+            )}
+          </button>
+        ),
+      )}
+    </div>
+  );
+}
+
 function getWailsBridge() {
   const bridge = window.go?.main?.App;
   if (!bridge) {
@@ -226,6 +347,7 @@ function App() {
   const [openedPath, setOpenedPath] = useState(''); // the open file, which F5 opens again
   const searchRef = useRef<HTMLInputElement>(null); // Ctrl+F
   const sqlRef = useRef<HTMLTextAreaElement>(null); // Ctrl+3
+  const termsRef = useRef<HTMLTextAreaElement>(null); // Ctrl+4
   const [source, setSource] = useState('');
   const [converted, setConverted] = useState(false);
   const [filter, setFilter] = useState('');
@@ -238,13 +360,11 @@ function App() {
   const [limit, setLimit] = useState(ROW_LIMITS[0]);
   const [status, setStatusText] = useState(() => translate('en', 'status.none'));
   const [error, setErrorText] = useState('');
-  const [job, setJob] = useState(''); // verb of the running load/export ("" = none)
+  const [job, setJob] = useState<Job | null>(null); // the running load, export or term search
   const [progress, setProgress] = useState<Progress | null>(null);
   const [theme, setThemeState] = useState<Theme>('system');
   const [showNull, setShowNull] = useState(false); // Settings > Show NULL (off: a NULL cell is empty)
   const [openMenu, setOpenMenu] = useState<MenuName | null>(null);
-  const [subOpen, setSubOpen] = useState(false); // File > Export submenu
-  useEffect(() => setSubOpen(false), [openMenu]);
   const [about, setAbout] = useState<AppInfo | null>(null);
   const [search, setSearch] = useState('');
   const [tableSearch, setTableSearch] = useState(''); // search applied in the database (Data tab), after a pause
@@ -255,6 +375,7 @@ function App() {
   const [hits, setHits] = useState<{ search: string; tables: TableHits[] } | null>(null);
   const [searching, setSearching] = useState(false);
   const [sel, setSel] = useState<{ row: Row; col: string } | null>(null); // selected cell
+  useEffect(() => setSel(null), [view]); // Edit > Copy... never copies a cell of another tab
   // open context menu: of the selected cell, of a column header (header = column name) or of the status bar
   const [menu, setMenu] = useState<{ x: number; y: number; header?: string; status?: boolean } | null>(null);
   const [filters, setFilters] = useState<Filter[]>([]); // of the current table, applied by Go in the query
@@ -269,8 +390,25 @@ function App() {
   const [readMark, setReadMark] = useState(0); // log lines before this one were seen
   const [logHeight, setLogHeight] = useState(() => clampLogHeight(Math.round(window.innerHeight * 0.1), window.innerHeight));
   const [displayWarn, setDisplayWarn] = useState<DisplayWarning | null>(null); // Linux: X11 missing, on Wayland
-  // "save or delete the converted SQLite" question; resolve gets the answer (null = cancel)
-  const [ask, setAsk] = useState<{ name: string; resolve: (a: { choice: string; remember: boolean } | null) => void } | null>(null);
+  // question asked on exit (export running, converted SQLite not saved); resolve gets the value of the button (null = Esc, x)
+  const [question, setQuestion] = useState<(Question & { resolve: (answer: string | null) => void }) | null>(null);
+  const quitting = useRef(false); // the exit questions are open: another X or Ctrl+Q asks nothing more
+  // marked rows of the Data tab: per table, the key of each marked row (rowKey) and the row as Go sent it
+  const [marks, setMarks] = useState<Record<string, Map<string, Row>>>({});
+  const [markedRows, setMarkedRows] = useState<{ table: string; rows: Row[] }>({ table: '', rows: [] }); // in table order
+  const [onlyMarked, setOnlyMarked] = useState(false); // View > Only marked rows
+  const markReq = useRef(0);
+  // Terms tab: the pasted text, Whole value | Contains (default in Settings), This table | All tables, the answer and
+  // the rows of the table chosen in its list
+  const [termsText, setTermsText] = useState('');
+  const [match, setMatch] = useState<Match>('whole');
+  const [defaultMatch, setDefaultMatch] = useState<Match>('whole');
+  const [termsScope, setTermsScope] = useState<Scope>('table');
+  const [termsRes, setTermsRes] = useState<{ res: TermsResult; contains: boolean } | null>(null);
+  const [termsTable, setTermsTable] = useState('');
+  const [termGrid, setTermGrid] = useState<QueryResult | null>(null);
+  const termsReq = useRef(0);
+  const termGridReq = useRef(0);
   // "whole table or only the n rows found?" before a table export with the search active; resolve(true) = rows found
   const [exportAsk, setExportAsk] = useState<{ table: string; found: number; resolve: (found: boolean | null) => void } | null>(null);
   const started = useRef(false);
@@ -336,25 +474,31 @@ function App() {
   useEffect(() => window.runtime?.EventsOn?.('progress', setProgress), []);
   useEffect(() => window.runtime?.EventsOn?.('log', (text: string) => addLog(text)), []);
 
-  // shortcuts of the Python version (standard item 20): Ctrl+O, Ctrl+F, F5, Ctrl+Q, Ctrl+1/2/3, Ctrl+L here; Ctrl+Enter
-  // in the SQL field and Ctrl+C in the grid. The keys are always taken from the webview (F5 would reload the page);
-  // with a dialog open they do nothing
+  // shortcuts of the menus (standard items 20 and 28): Ctrl+O, Ctrl+S, Ctrl+Shift+S, Ctrl+W, Ctrl+Q, F5, Ctrl+F, Ctrl+T,
+  // Ctrl+1/2/3/4, Ctrl+L here; Ctrl+Enter in the SQL and Terms fields, Ctrl+C, Ctrl+Shift+C and Space in the grid. The
+  // keys are always taken from the webview (F5 would reload the page); with a dialog open they do nothing, and while a
+  // job runs only Ctrl+Q works (it asks before leaving)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const ctrl = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
+      const ctrl = (e.ctrlKey || e.metaKey) && !e.altKey;
       const k = e.key.toLowerCase();
+      const L = latest.current;
       const action =
-        e.key === 'F5' && !e.ctrlKey && !e.altKey && !e.shiftKey ? () => latest.current.reload()
+        e.key === 'F5' && !e.ctrlKey && !e.altKey && !e.shiftKey ? () => L.reload()
         : !ctrl ? null
-        : k === 'o' ? () => latest.current.loadDatabase()
-        : k === 'f' ? () => latest.current.focusSearch()
-        : k === 'q' ? () => latest.current.quit()
+        : e.shiftKey ? (k === 's' ? () => L.save(true) : null)
+        : k === 'o' ? () => L.loadDatabase()
+        : k === 's' ? () => L.save(false)
+        : k === 'w' ? () => L.closeDatabase()
+        : k === 'f' ? () => L.focusSearch()
+        : k === 't' ? () => L.focusTables()
+        : k === 'q' ? () => L.quit()
         : k === 'l' ? () => toggleLog()
-        : e.key === '1' || e.key === '2' || e.key === '3' ? () => latest.current.showView(VIEWS[Number(e.key) - 1])
+        : ['1', '2', '3', '4'].includes(e.key) ? () => L.showView(VIEWS[Number(e.key) - 1])
         : null;
       if (!action) return;
       e.preventDefault();
-      if (!latest.current.modal()) action();
+      if (!L.modal() && (k === 'q' || !L.busy())) action();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -423,8 +567,21 @@ function App() {
           defaultScopeRef.current = s;
           setDefaultScope(s);
           setScope(s);
+          setTermsScope(s);
         }
       })
+      .catch(() => {});
+    bridge?.GetTermMatch?.()
+      .then((m) => {
+        if (MATCHES.includes(m)) {
+          setDefaultMatch(m);
+          setMatch(m);
+        }
+      })
+      .catch(() => {});
+    // what Go did before the UI listened (converted files of a crash removed)
+    bridge?.StartupLog?.()
+      .then((lines) => lines?.forEach((line) => addLog(line)))
       .catch(() => {});
     const langLoaded = Promise.resolve(bridge?.GetLanguage?.())
       .then((l) => {
@@ -451,7 +608,8 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!about && !colsOpen && !displayWarn && !job) return;
+    // a question (on exit) takes Esc itself: it must not also cancel the export running under it
+    if ((!about && !colsOpen && !displayWarn && !job) || question) return;
     // Esc closes every dialog (the progress window: Cancel); each one also has its own OK/Close/Cancel button
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
@@ -462,7 +620,7 @@ function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [about, colsOpen, displayWarn, job]);
+  }, [about, colsOpen, displayWarn, job, question]);
 
   // the Data tab searches the whole table in the database: wait for a pause in typing, then query
   useEffect(() => {
@@ -528,7 +686,15 @@ function App() {
     defaultScopeRef.current = s;
     setDefaultScope(s);
     setScope(s);
+    setTermsScope(s);
     window.go?.main?.App?.SetSearchScope?.(s)?.catch(fail);
+  }
+
+  // Settings > Term matching: also applies now; the selector of the Terms tab changes only the current session
+  function chooseDefaultMatch(m: Match) {
+    setDefaultMatch(m);
+    setMatch(m);
+    window.go?.main?.App?.SetTermMatch?.(m)?.catch(fail);
   }
 
   // a table of the "All tables" list opens in the Data tab with the same search
@@ -572,56 +738,69 @@ function App() {
     setOpenedPath('');
     setSource('');
     setConverted(false);
+    // the marks and the term search belong to the file (Close, another file and Reopen clear them)
+    setMarks({});
+    setOnlyMarked(false);
+    termsReq.current++;
+    setTermsRes(null);
+    setTermsTable('');
   }
 
-  // Before closing the file, opening another or quitting: the SQLite converted from an Access file is saved or
-  // deleted (asked once; "remember" keeps the answer for the session). false = cancelled, keep everything open.
-  async function settleConversion(): Promise<boolean> {
-    const bridge = window.go?.main?.App;
-    const name = (await bridge?.PendingConversion?.()) ?? '';
-    if (!name || !bridge?.ResolveConversion) return true;
-    const remembered = (await bridge.RememberedChoice?.()) ?? '';
-    // Esc, the dialog's x and Cancel give null: nothing happens (the app does not quit). A Save whose file
-    // dialog was cancelled asks again, with Esc still working.
-    for (;;) {
-      const answer: { choice: string; remember: boolean } | null = remembered
-        ? { choice: remembered, remember: false }
-        : await new Promise((resolve) => setAsk({ name, resolve }));
-      setAsk(null);
-      if (!answer) return false;
-      try {
-        const res = await bridge.ResolveConversion(answer.choice, answer.remember);
-        if (res.done) {
-          clearDatabase();
-          return true;
-        }
-        if (remembered) return false;
-      } catch (err) {
-        clearDatabase(); // Go closed the database before the error (a failed move or delete)
-        fail(err);
-        return true;
+  const ask = (q: Question) =>
+    new Promise<string | null>((resolve) =>
+      setQuestion({
+        ...q,
+        resolve: (answer) => {
+          setQuestion(null);
+          resolve(answer);
+        },
+      }),
+    );
+
+  // window close button and Alt+F4: Go keeps the window open and asks the UI (export running or converted SQLite not saved)
+  useEffect(() => window.runtime?.EventsOn?.('exit-asked', () => latest.current.quit()), []);
+
+  // File > Exit, Ctrl+Q and the window close button (standard item 27). An export running asks first: Back or Exit
+  // (Exit cancels it, no half-written file); a term or table search just stops. Then, with the SQLite converted from an
+  // Access file not saved: Save | Back, Exit; Save opens the save dialog, and cancelled there the question comes back.
+  async function quit() {
+    setOpenMenu(null);
+    if (quitting.current) return;
+    quitting.current = true;
+    try {
+      const b = window.go?.main?.App;
+      if (job?.kind === 'export') {
+        const back = { label: t('btn.back'), value: 'back', cls: 'end' };
+        if ((await ask({ title: t('exportRun.title'), text: t('exportRun.text', job.what), buttons: [back, { label: t('menu.exit'), value: 'exit' }] })) !== 'exit') return;
       }
+      if (job) await b?.CancelJob?.();
+      for (;;) {
+        const name = (await b?.PendingConversion?.()) ?? '';
+        if (!name) break;
+        const answer = await ask({
+          title: t('exit.title'),
+          text: t('exit.text', name),
+          buttons: [
+            { label: t('menu.save'), value: 'save', cls: 'primary' },
+            { label: t('btn.back'), value: 'back', cls: 'end' },
+            { label: t('menu.exit'), value: 'exit' },
+          ],
+        });
+        if (answer === 'exit') break;
+        if (answer !== 'save') return; // Back, Esc or the x of the question
+        await save(false);
+      }
+      if (b?.Exit) await b.Exit(); // Go closes the window; leaving deletes the converted SQLite
+      else window.runtime?.Quit?.();
+    } finally {
+      quitting.current = false;
     }
   }
 
-  // window close button: Go stops the close and asks the UI; then quit for real
-  useEffect(
-    () =>
-      window.runtime?.EventsOn?.('conversion-pending', async () => {
-        if (await settleConversion()) window.runtime?.Quit?.();
-      }),
-    [],
-  );
-
-  async function quit() {
-    setOpenMenu(null);
-    if (await settleConversion()) window.runtime?.Quit?.();
-  }
-
+  // File > Close: nothing is asked; an unsaved converted SQLite is deleted and the Log says so (Go)
   async function closeDatabase() {
     setOpenMenu(null);
     const name = dbName;
-    if (!(await settleConversion())) return;
     try {
       clearDatabase(); // first: Go stops the running search or query, and their "cancelled" answers must be dropped
       await window.go?.main?.App?.CloseDatabase?.();
@@ -648,11 +827,11 @@ function App() {
   // the path of the top bar field: an empty field opens the default database (MDB2SQL_DB_PATH or the sample)
   const openTyped = () => openPath(pathText.trim());
 
+  // another file (or the same one again, F5): the open one is left without a question (Go deletes its unsaved SQLite)
   async function openPath(path: string) {
     setError('');
-    if (!(await settleConversion())) return;
     if (path) setPathText(path);
-    setJob(t('job.loading'));
+    setJob({ kind: 'load', text: t('job.loading') });
     setProgress(null);
     setStatusText(t('status.loading'));
     try {
@@ -679,6 +858,7 @@ function App() {
       setSearch('');
       setTableSearch('');
       setScope(defaultScopeRef.current);
+      setTermsScope(defaultScopeRef.current);
       setStatus(tn('status.loaded', tableList.length, name, tableList.length));
       if (tableList.length > 0) await loadTable(tableList[0], limit, undefined, '');
     } catch (err) {
@@ -686,7 +866,7 @@ function App() {
       setSource('');
       fail(err, t('status.loadError'));
     } finally {
-      setJob('');
+      setJob(null);
     }
   }
 
@@ -769,19 +949,22 @@ function App() {
     }
   }
 
-  // every export asks for the file in Go (native dialog) and runs there, with progress events and Cancel
+  // every export and File > Save ask for the file in Go (native dialog) and run there, with progress events and
+  // Cancel; what = the name the status bar and the exit question give it. Returns the file written ("" = none).
   async function runExport(what: string, call: () => Promise<string> | undefined) {
     setOpenMenu(null);
     setError('');
-    setJob(t('job.exporting'));
+    setJob({ kind: 'export', text: t('job.exporting'), what });
     setProgress(null);
     try {
-      const saved = await call();
+      const saved = (await call()) ?? '';
       if (saved) setStatus(t('status.exported', what, saved));
+      return saved;
     } catch (err) {
       fail(err);
+      return '';
     } finally {
-      setJob('');
+      setJob(null);
     }
   }
 
@@ -803,29 +986,102 @@ function App() {
 
   const bridge = window.go?.main?.App;
   const sqlResultName = t('sql.result');
-  const exportItems = [
-    { group: 'db', label: t('export.dbSqlite'), on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('sqlite')) },
-    { group: 'db', label: t('export.dbDuckdb'), on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('duckdb')) },
-    { group: 'db', label: t('export.dbXlsx'), on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportDatabase?.('xlsx')) },
-    { group: 'table', label: t('export.tableCsv'), on: !!selectedTable, run: () => exportTable('csv') },
-    { group: 'table', label: t('export.tableXlsx'), on: !!selectedTable, run: () => exportTable('xlsx') },
-    { group: 'sql', label: t('export.sqlCsv'), on: !!resultSql, run: () => runExport(sqlResultName, () => bridge?.ExportQuery?.(resultSql, 'csv')) },
-    { group: 'sql', label: t('export.sqlXlsx'), on: !!resultSql, run: () => runExport(sqlResultName, () => bridge?.ExportQuery?.(resultSql, 'xlsx')) },
-  ];
 
-  // the export list: the Export... button of the top bar and File > Export open the same items
-  const exportMenu = (className: string) => (
-    <div className={className} role="menu" aria-label={t('menu.export')}>
-      {exportItems.map((it, i) => (
-        <Fragment key={it.label}>
-          {i > 0 && exportItems[i - 1].group !== it.group && <hr />}
-          <button role="menuitem" disabled={!it.on || busy} onClick={it.run}>
-            {it.label}
-          </button>
-        </Fragment>
-      ))}
-    </div>
-  );
+  // File > Save and Save as... (standard item 28): Go asks for the file (SQLite, DuckDB or Excel) and writes it
+  const save = (saveAs: boolean) => runExport(dbName, () => bridge?.SaveDatabase?.(saveAs));
+
+  // marked rows (standard item 31): the marks of the table on screen; Go returns those rows in table order
+  const tableMarks = marks[shownTable];
+  const markList = useMemo(() => [...(tableMarks?.values() ?? [])], [tableMarks]);
+  useEffect(() => {
+    const req = ++markReq.current;
+    const table = shownTable;
+    if (markList.length === 0) {
+      setMarkedRows({ table, rows: [] });
+      return;
+    }
+    Promise.resolve(window.go?.main?.App?.MarkedRows?.(table, markList))
+      .then((found) => req === markReq.current && setMarkedRows({ table, rows: found ?? [] }))
+      .catch((err) => req === markReq.current && fail(err));
+  }, [markList, shownTable]);
+  const shownMarked = markedRows.table === shownTable ? markedRows.rows : NO_ROWS;
+  const markCount = shownMarked.length;
+  const onlyShown = onlyMarked && markCount > 0; // with no mark left the box goes away and every row shows
+  const isMarked = (row: Row) => !!tableMarks?.has(rowKey(row, tableColumns));
+  const toggleMark = (row: Row) =>
+    setMarks((old) => {
+      const next = new Map(old[shownTable]);
+      const key = rowKey(row, tableColumns);
+      if (!next.delete(key)) next.set(key, row);
+      return { ...old, [shownTable]: next };
+    });
+  const unmarkAll = () => setMarks((old) => ({ ...old, [shownTable]: new Map() }));
+  const exportMarked = (format: string) => runExport(shownTable, () => bridge?.ExportMarked?.(shownTable, format, markList));
+
+  // Terms tab (standard item 32): Go searches every column of the tables in the engine, as a job with progress and
+  // Cancel; the answer of an older search never shows
+  const termsInfo = useMemo(() => parseTerms(termsText), [termsText]);
+  async function runTerms() {
+    const b = window.go?.main?.App;
+    if (!b?.SearchTerms || termsInfo.terms.length === 0 || tables.length === 0 || busy) return;
+    const contains = match === 'contains';
+    const req = ++termsReq.current;
+    setTermsRes(null);
+    setError('');
+    setJob({ kind: 'terms', text: t('job.searching') });
+    setProgress(null);
+    try {
+      const res = await b.SearchTerms(termsText.split(/\r?\n/), contains, termsScope === 'table' ? selectedTable : '');
+      if (req !== termsReq.current) return;
+      setTermsRes({ res, contains });
+      setTermsTable(res.tables?.[0]?.table ?? '');
+    } catch (err) {
+      if (req === termsReq.current) fail(err);
+    } finally {
+      setJob(null);
+    }
+  }
+
+  // the rows of the table chosen in the Terms list, limited as in the Data tab (Rows)
+  useEffect(() => {
+    const req = ++termGridReq.current;
+    setTermGrid(null);
+    if (!termsRes || !termsTable) return;
+    Promise.resolve(window.go?.main?.App?.TermRows?.(termsTable, termsRes.res.terms, termsRes.contains, limit))
+      .then((r) => req === termGridReq.current && r && setTermGrid({ columns: r.columns ?? [], rows: r.rows ?? [], more: r.more }))
+      .catch((err) => req === termGridReq.current && fail(err));
+  }, [termsRes, termsTable, limit]);
+  const termsHits = termsRes?.res.tables?.find((h) => h.table === termsTable)?.rows ?? 0;
+
+  // "Copy the rows found in this table": every row found, not only the ones on screen, with the header and without the
+  // Term column, so a paste in Excel gives exactly those rows
+  async function copyHits() {
+    try {
+      const found = termsRes && (await window.go?.main?.App?.TermRows?.(termsTable, termsRes.res.terms, termsRes.contains, 0));
+      if (!found) return;
+      const cols = (found.columns ?? []).slice(1);
+      const list = found.rows ?? [];
+      await copyText([cols.map(tsvField).join('\t'), ...list.map((r) => rowToTsv(cols, r, false))].join('\r\n'), tn('copied.hits', list.length, list.length));
+    } catch (err) {
+      fail(err);
+    }
+  }
+  const exportTerms = (format: string) => termsRes && runExport(dbName, () => bridge?.ExportTerms?.(termsRes.res, termsRes.contains, format));
+
+  // the formats of one export: CSV... / Excel (.xlsx)... (and SQLite, DuckDB for the term search report)
+  const formats = (list: string[], run: (format: string) => unknown): MenuItem[] => list.map((f) => ({ label: t(`export.${f}`), run: () => run(f) }));
+  // the export list (standard item 28), the same under File > Export and the Export... button: a fixed list, what
+  // does not apply now is disabled
+  const exportItems: MenuItem[] = [
+    { label: t('export.table'), on: !!selectedTable, items: formats(TABLE_FORMATS, exportTable) },
+    { label: t('export.marked'), on: markList.length > 0, items: formats(TABLE_FORMATS, exportMarked) },
+    { label: t('export.tableSchema'), on: !!selectedTable, items: formats(TABLE_FORMATS, (f) => runExport(selectedTable, () => bridge?.ExportSchema?.(selectedTable, f))) },
+    { label: t('export.dbSchema'), on: tables.length > 0, items: formats(TABLE_FORMATS, (f) => runExport(dbName, () => bridge?.ExportSchema?.('', f))) },
+    { label: t('export.allCsv'), on: tables.length > 0, run: () => runExport(dbName, () => bridge?.ExportAllCSV?.()) },
+    { label: t('export.sql'), on: !!resultSql, items: formats(TABLE_FORMATS, (f) => runExport(sqlResultName, () => bridge?.ExportQuery?.(resultSql, f))) },
+    { label: t('export.searchAll'), on: !!shownHits?.length, run: () => runExport(dbName, () => bridge?.ExportSearch?.(tableSearch, (shownHits ?? []).map((h) => h.table))) },
+    { label: t('export.terms'), on: !!termsRes, items: formats(REPORT_FORMATS, exportTerms) },
+  ];
 
   const visibleTables = useMemo(() => {
     const words = searchWords(tableFilter);
@@ -835,8 +1091,19 @@ function App() {
   // schema order = database column order (Go maps reach JS sorted by key); also gives empty tables a header
   // memoized so the search index below is built once per load, not on every keystroke
   const tableColumns = useMemo(() => (schema.length > 0 ? schema.map((c) => c.name) : Object.keys(rows[0] ?? {})), [schema, rows]);
-  const gridColumns = useMemo(() => (view === 'sql' ? (result?.columns ?? []) : tableColumns), [view, result, tableColumns]);
-  const gridRows = useMemo(() => (view === 'sql' ? (result?.rows ?? []) : rows), [view, result, rows]);
+  // Data grid: the marked rows always on top, in table order, then the rows of the search that are not marked (only
+  // the marked ones with View > Only marked rows)
+  const dataRows = useMemo(() => {
+    if (onlyShown) return shownMarked;
+    if (shownMarked.length === 0) return rows;
+    const keys = new Set(shownMarked.map((r) => rowKey(r, tableColumns)));
+    return [...shownMarked, ...rows.filter((r) => !keys.has(rowKey(r, tableColumns)))];
+  }, [onlyShown, shownMarked, rows, tableColumns]);
+  const gridColumns = useMemo(
+    () => (view === 'sql' ? (result?.columns ?? []) : view === 'terms' ? (termGrid?.columns ?? []) : tableColumns),
+    [view, result, termGrid, tableColumns],
+  );
+  const gridRows = useMemo(() => (view === 'sql' ? (result?.rows ?? []) : view === 'terms' ? (termGrid?.rows ?? []) : dataRows), [view, result, termGrid, dataRows]);
   // SQL tab: the search filters the loaded result here; Data tab: Go already returned only the matching rows
   const sqlSearching = view === 'sql' && search.trim() !== '';
   const searchIndex = useMemo(() => (sqlSearching ? rowSearchText(gridRows, gridColumns) : undefined), [sqlSearching, gridRows, gridColumns]);
@@ -857,28 +1124,125 @@ function App() {
   // the search of the rows on screen, not of the one being typed: the counts below belong to those rows
   const narrowed = filters.length > 0 || shownFind !== '';
   const copyCell = () => sel && copyText(cellText(sel.row[sel.col]), t('copied.value'));
+  const copyColumns = view === 'terms' ? gridColumns.slice(1) : gridColumns; // Terms: without the Term column
   const copyRow = (withHeader: boolean) =>
-    sel && copyText(rowToTsv(gridColumns, sel.row, withHeader), t(withHeader ? 'copied.rowHeader' : 'copied.row'));
-  const busy = job !== '';
+    sel && copyText(rowToTsv(copyColumns, sel.row, withHeader), t(withHeader ? 'copied.rowHeader' : 'copied.row'));
+  const copyLog = () => copyText(logLines.map((e) => e.line).join('\r\n'), t('copied.log'));
+  const filterBySel = () => sel && applyFilters(withFilter(filters, { column: sel.col, value: sel.row[sel.col] ?? null }));
+  const busy = job !== null;
   const nullText = showNull ? t('cell.null') : '';
   // log collapsed: the most important unread line (error, then warning) takes the status bar
   const shownStatus = logOpen ? { text: error || status, level: error ? 'error' : 'info', unread: 0 } : statusLine(logLines, readMark, status, error);
   const viewName = (v: View) => t(`tab.${v}`); // "Esquema" without the column count (standard item 15)
 
-  latest.current = {
-    ...{ openPath, loadDatabase, quit },
-    reload: () => openPath(openedPath), // nothing open: the default database, as the Python version
-    focusSearch: () => {
+  const reload = () => openPath(openedPath); // nothing open: the default database, as the Python version
+  const focusSearch = () => {
+    const focus = () => {
       searchRef.current?.focus();
       searchRef.current?.select();
-    },
-    showView: (v: View) => {
-      if (tables.length === 0) return;
-      setView(v);
-      if (v === 'sql') setTimeout(() => sqlRef.current?.focus()); // the field exists after this render
-    },
-    modal: () => !!(about || colsOpen || ask || exportAsk || displayWarn || busy),
+    };
+    if (view !== 'terms') return focus();
+    setView('data'); // the Terms tab has no search field: the Data search
+    setTimeout(focus); // the field exists after this render
   };
+  const showView = (v: View) => {
+    if (tables.length === 0) return;
+    setView(v);
+    if (v === 'sql') setTimeout(() => sqlRef.current?.focus()); // the field exists after this render
+    if (v === 'terms') setTimeout(() => termsRef.current?.focus());
+  };
+  // View > Go to the table list (Ctrl+T): the focus on the open table of the list, or on its first table
+  const goTables = () => ((document.querySelector('.sidebar [aria-current]') ?? document.querySelector('.sidebar .table-item')) as HTMLElement | null)?.focus();
+
+  latest.current = {
+    ...{ openPath, loadDatabase, quit, reload, focusSearch, showView },
+    save: (saveAs: boolean) => dbName && save(saveAs),
+    closeDatabase: () => dbName && closeDatabase(),
+    focusTables: goTables,
+    modal: () => !!(about || colsOpen || question || exportAsk || displayWarn),
+    busy: () => busy,
+  };
+
+  // menus drawn from data (standard item 28: every button has a menu item, the same tree in the 4 apps); items are
+  // disabled as their button
+  const radios = <V,>(values: V[], current: V, label: (v: V) => string, choose: (v: V) => void): MenuItem[] =>
+    values.map((v) => ({ label: label(v), checked: v === current, radio: true, run: () => choose(v) }));
+  const fileItems: MenuItem[] = [
+    { label: t('menu.open'), kbd: 'Ctrl+O', run: () => loadDatabase() },
+    { label: t('menu.openTyped'), run: openTyped },
+    { label: t('menu.reopen'), kbd: 'F5', run: reload },
+    { sep: true },
+    { label: t('menu.save'), kbd: 'Ctrl+S', on: !!dbName, run: () => save(false) },
+    { label: t('menu.saveAs'), kbd: 'Ctrl+Shift+S', on: !!dbName, run: () => save(true) },
+    { label: t('menu.export'), on: tables.length > 0, items: exportItems },
+    { sep: true },
+    { label: t('menu.close'), kbd: 'Ctrl+W', on: !!dbName, run: () => closeDatabase() },
+    { sep: true },
+    { label: t('menu.exit'), kbd: 'Ctrl+Q', run: () => quit() },
+  ];
+  const editItems: MenuItem[] = [
+    { label: t('cellmenu.copy'), kbd: 'Ctrl+C', on: !!sel, run: copyCell },
+    { label: t('cellmenu.copyRow'), kbd: 'Ctrl+Shift+C', on: !!sel, run: () => copyRow(false) },
+    { label: t('cellmenu.copyRowHeader'), on: !!sel, run: () => copyRow(true) },
+    { label: t('menu.copyLog'), on: logLines.length > 0, run: copyLog },
+    { sep: true },
+    { label: t('menu.search'), kbd: 'Ctrl+F', on: tables.length > 0, run: focusSearch },
+    { label: t('cellmenu.filter'), on: view === 'data' && !!sel, run: filterBySel },
+    { label: t('cellmenu.clear'), on: view === 'data' && filters.length > 0, run: () => applyFilters([]) },
+    { sep: true },
+    { label: t('menu.mark'), kbd: t('kbd.space'), on: view === 'data' && !!sel, run: () => sel && toggleMark(sel.row) },
+    { label: t('menu.unmarkAll'), on: markList.length > 0, run: unmarkAll },
+  ];
+  const viewItems: MenuItem[] = [
+    ...VIEWS.map((v, i): MenuItem => ({ label: viewName(v), kbd: `Ctrl+${i + 1}`, on: tables.length > 0, checked: view === v, radio: true, run: () => showView(v) })),
+    { sep: true },
+    { label: t('rows.label'), items: radios(ROW_LIMITS, limit, String, changeLimit) },
+    { label: t('cols.button'), on: view === 'data' && gridColumns.length > 0, run: () => setColsOpen(true) },
+    { label: t('scope.label'), on: view === 'data' && tables.length > 0, items: radios(SCOPES, scope, (s) => t(`scope.${s}`), setScope) },
+    { label: t('menu.onlyMarked'), on: markCount > 0, checked: onlyShown, run: () => setOnlyMarked(!onlyShown) },
+    { label: t('menu.goTables'), kbd: 'Ctrl+T', on: tables.length > 0, run: goTables },
+    { sep: true },
+    { label: t('menu.runSql'), kbd: 'Ctrl+Enter', on: view === 'sql' && !!sql.trim() && !querying, run: () => runSql() },
+    { label: t('terms.run'), kbd: 'Ctrl+Enter', on: view === 'terms' && termsInfo.terms.length > 0, run: runTerms },
+    { sep: true },
+    { label: t('menu.log'), kbd: 'Ctrl+L', checked: logOpen, run: () => toggleLog() },
+  ];
+  const settingsItems: MenuItem[] = [
+    { label: t('menu.theme'), items: radios(THEMES, theme, (th) => t(`theme.${th}`), chooseTheme) },
+    { label: t('menu.language'), items: LANGS.map((l) => ({ label: t(`lang.${l}`), lang: l, checked: lang === l, radio: true, run: () => chooseLang(l) })) },
+    { label: t('menu.searchScope'), items: radios(SCOPES, defaultScope, (s) => t(`scope.${s}`), chooseDefaultScope) },
+    { label: t('menu.termMatch'), items: radios(MATCHES, defaultMatch, (m) => t(`terms.${m}`), chooseDefaultMatch) },
+    { label: t('menu.showNull'), checked: showNull, run: () => chooseShowNull(!showNull) },
+  ];
+  const menus: [MenuName, string, MenuItem[]][] = [
+    ['file', t('menu.file'), fileItems],
+    ['edit', t('menu.edit'), editItems],
+    ['view', t('menu.view'), viewItems],
+    ['settings', t('menu.settings'), settingsItems],
+    ['help', t('menu.help'), [{ label: t('about.title'), run: openAbout }]],
+  ];
+  const copyItems: MenuItem[] = [
+    { label: t('cellmenu.copy'), kbd: 'Ctrl+C', focus: true, run: copyCell },
+    { label: t('cellmenu.copyRow'), kbd: 'Ctrl+Shift+C', run: () => copyRow(false) },
+    { label: t('cellmenu.copyRowHeader'), run: () => copyRow(true) },
+  ];
+  // menu of a grid cell (standard item 14: the value filters, then the copies); Data adds the marks, Terms the copy of
+  // every row found and the report
+  const cellItems: MenuItem[] =
+    view === 'data'
+      ? [
+          { label: t('cellmenu.filter'), run: filterBySel },
+          { label: t('cellmenu.clear'), on: filters.length > 0, run: () => applyFilters([]) },
+          { sep: true },
+          ...copyItems,
+          { sep: true },
+          { label: t('menu.mark'), kbd: t('kbd.space'), run: () => sel && toggleMark(sel.row) },
+          { label: t('mark.export'), on: markList.length > 0, items: formats(TABLE_FORMATS, exportMarked) },
+          { label: t('menu.unmarkAll'), on: markList.length > 0, run: unmarkAll },
+        ]
+      : view === 'terms'
+        ? [...copyItems, { sep: true }, { label: t('terms.copyHits'), run: copyHits }, { label: t('export.terms'), items: formats(REPORT_FORMATS, exportTerms) }]
+        : copyItems;
 
   const toggleMenu = (name: MenuName) => (e: React.MouseEvent) => {
     e.stopPropagation(); // the window click handler would close it again
@@ -892,10 +1256,28 @@ function App() {
     </button>
   );
 
+  // keys of a grid: Ctrl+C copies the selected cell (unless the user marked text with the mouse: native copy),
+  // Ctrl+Shift+C its row, Space marks or unmarks its row (Data tab; on the box itself the box does it)
+  const gridKeys = (e: React.KeyboardEvent) => {
+    const k = e.key.toLowerCase();
+    const ctrl = e.ctrlKey || e.metaKey;
+    const action =
+      !sel ? null
+      : ctrl && k === 'c' && e.shiftKey ? () => copyRow(false)
+      : ctrl && k === 'c' && !window.getSelection()?.toString() ? copyCell
+      : e.key === ' ' && view === 'data' && !(e.target instanceof HTMLInputElement) ? () => toggleMark(sel.row)
+      : null;
+    if (!action) return;
+    e.preventDefault();
+    action();
+  };
+
   const grid = (
     <table>
       <thead>
         <tr>
+          {/* Data: the narrow column of the boxes that mark rows, no title (its tip says what it is) */}
+          {view === 'data' && <th className="mark" title={t('mark.tip')} />}
           {shownColumns.map((col) => (
             <th
               key={col}
@@ -922,6 +1304,11 @@ function App() {
       <tbody>
         {visibleRows.map((row, idx) => (
           <tr key={idx} className={sel?.row === row ? 'selected' : undefined}>
+            {view === 'data' && (
+              <td className="mark">
+                <input type="checkbox" aria-label={t('mark.tip')} checked={isMarked(row)} onChange={() => toggleMark(row)} />
+              </td>
+            )}
             {shownColumns.map((col) => (
               <td
                 key={col}
@@ -953,96 +1340,12 @@ function App() {
     <div className="app">
       <header className="top">
         <nav className="menubar" aria-label={t('menu.main')}>
-          <div className="menu-root">
-            {menuButton('file', t('menu.file'))}
-            {openMenu === 'file' && (
-              // as the Zig version: Open..., Export >, Close, Exit
-              <div className="dropdown" role="menu" aria-label={t('menu.file')}>
-                <button role="menuitem" disabled={busy} onClick={() => loadDatabase()} onMouseEnter={() => setSubOpen(false)}>
-                  {t('menu.open')} <kbd>Ctrl+O</kbd>
-                </button>
-                <div className="menu-root">
-                  <button
-                    role="menuitem"
-                    aria-haspopup="menu"
-                    aria-expanded={subOpen}
-                    disabled={busy || tables.length === 0}
-                    onMouseEnter={() => setSubOpen(true)}
-                    onClick={(e) => {
-                      e.stopPropagation(); // the window click handler would close the File menu
-                      setSubOpen(true); // as a native submenu: the click after the hover keeps it open
-                    }}
-                  >
-                    {t('menu.export')} <span className="sub-arrow">▸</span>
-                  </button>
-                  {subOpen && exportMenu('dropdown sub')}
-                </div>
-                <button role="menuitem" disabled={busy || !dbName} onClick={closeDatabase} onMouseEnter={() => setSubOpen(false)}>
-                  {t('menu.close')}
-                </button>
-                <hr />
-                <button role="menuitem" onClick={quit} onMouseEnter={() => setSubOpen(false)}>
-                  {t('menu.exit')} <kbd>Ctrl+Q</kbd>
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="menu-root">
-            {menuButton('view', t('menu.view'))}
-            {openMenu === 'view' && (
-              <div className="dropdown" role="menu" aria-label={t('menu.view')}>
-                <button role="menuitemcheckbox" aria-checked={logOpen} onClick={() => toggleLog()}>
-                  <span className="check">{logOpen ? '✓' : ''}</span>
-                  {t('menu.log')}
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="menu-root">
-            {menuButton('settings', t('menu.settings'))}
-            {openMenu === 'settings' && (
-              <div className="dropdown" role="menu" aria-label={t('menu.settings')}>
-                <p className="menu-title">{t('menu.theme')}</p>
-                {THEMES.map((th) => (
-                  <button key={th} role="menuitemradio" aria-checked={theme === th} onClick={() => chooseTheme(th)}>
-                    <span className="check">{theme === th ? '✓' : ''}</span>
-                    {t(`theme.${th}`)}
-                  </button>
-                ))}
-                <hr />
-                <p className="menu-title">{t('menu.language')}</p>
-                {LANGS.map((l) => (
-                  <button key={l} role="menuitemradio" aria-checked={lang === l} lang={l} onClick={() => chooseLang(l)}>
-                    <span className="check">{lang === l ? '✓' : ''}</span>
-                    {t(`lang.${l}`)}
-                  </button>
-                ))}
-                <hr />
-                <p className="menu-title">{t('menu.searchScope')}</p>
-                {SCOPES.map((s) => (
-                  <button key={s} role="menuitemradio" aria-checked={defaultScope === s} onClick={() => chooseDefaultScope(s)}>
-                    <span className="check">{defaultScope === s ? '✓' : ''}</span>
-                    {t(`scope.${s}`)}
-                  </button>
-                ))}
-                <hr />
-                <button role="menuitemcheckbox" aria-checked={showNull} onClick={() => chooseShowNull(!showNull)}>
-                  <span className="check">{showNull ? '✓' : ''}</span>
-                  {t('menu.showNull')}
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="menu-root">
-            {menuButton('help', t('menu.help'))}
-            {openMenu === 'help' && (
-              <div className="dropdown" role="menu" aria-label={t('menu.help')}>
-                <button role="menuitem" onClick={openAbout}>
-                  {t('menu.about')}
-                </button>
-              </div>
-            )}
-          </div>
+          {menus.map(([name, label, items]) => (
+            <div className="menu-root" key={name}>
+              {menuButton(name, label)}
+              {openMenu === name && <MenuList items={items} label={label} className="dropdown" />}
+            </div>
+          ))}
         </nav>
         {/* path bar as in Zig: the field takes the line, Browse... Open Export... on the right */}
         <div className="pathbar">
@@ -1071,7 +1374,7 @@ function App() {
             <button aria-haspopup="menu" aria-expanded={openMenu === 'exportBar'} disabled={busy || tables.length === 0} onClick={toggleMenu('exportBar')}>
               {t('top.export')}
             </button>
-            {openMenu === 'exportBar' && exportMenu('dropdown right')}
+            {openMenu === 'exportBar' && <MenuList items={exportItems} label={t('menu.export')} className="dropdown right" />}
           </div>
         </div>
       </header>
@@ -1127,17 +1430,20 @@ function App() {
                   </button>
                 ))}
               </div>
-              <input
-                ref={searchRef}
-                type="search"
-                className="search"
-                placeholder={view === 'sql' ? t('sql.searchPlaceholder') : t('search.label')}
-                aria-label={view === 'sql' ? t('sql.searchLabel') : t('search.label')}
-                title={t('search.tip')}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && setTableSearch(search.trim())}
-              />
+              {/* the Terms tab has its own field and selectors below */}
+              {view !== 'terms' && (
+                <input
+                  ref={searchRef}
+                  type="search"
+                  className="search"
+                  placeholder={view === 'sql' ? t('sql.searchPlaceholder') : t('search.label')}
+                  aria-label={view === 'sql' ? t('sql.searchLabel') : t('search.label')}
+                  title={t('search.tip')}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && setTableSearch(search.trim())}
+                />
+              )}
               {view === 'data' && (
                 <div className="tabs" role="radiogroup" aria-label={t('scope.label')}>
                   {SCOPES.map((s) => (
@@ -1206,19 +1512,96 @@ function App() {
               </div>
             )}
 
+            {/* Terms (standard item 32), top to bottom: the terms, one line of selectors, the summary, the tables found
+                beside the rows of the chosen one, the terms not found */}
+            {view === 'terms' && (
+              <>
+                <textarea
+                  ref={termsRef}
+                  className="terms-text"
+                  rows={8}
+                  aria-label={t('tab.terms')}
+                  placeholder={t('terms.hint')}
+                  spellCheck={false}
+                  value={termsText}
+                  onChange={(e) => setTermsText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                      e.preventDefault();
+                      runTerms();
+                    }
+                  }}
+                />
+                <div className="terms-bar">
+                  <div className="tabs" role="radiogroup" aria-label={t('menu.termMatch')} title={t('terms.matchTip')}>
+                    {MATCHES.map((m) => (
+                      <button key={m} role="radio" aria-checked={match === m} onClick={() => setMatch(m)}>
+                        {t(`terms.${m}`)}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="tabs" role="radiogroup" aria-label={t('scope.label')}>
+                    {SCOPES.map((s) => (
+                      <button key={s} role="radio" aria-checked={termsScope === s} onClick={() => setTermsScope(s)}>
+                        {t(`scope.${s}`)}
+                      </button>
+                    ))}
+                  </div>
+                  <button className="primary" disabled={termsInfo.terms.length === 0} onClick={runTerms} title="Ctrl+Enter">
+                    {t('terms.run')}
+                  </button>
+                  <span className="info">
+                    {tn('terms.count', termsInfo.terms.length, termsInfo.terms.length) + (termsInfo.repeated ? tn('terms.repeated', termsInfo.repeated, termsInfo.repeated) : '')}
+                  </span>
+                </div>
+                {termsRes && (
+                  <>
+                    <p className="info">
+                      {t(
+                        'terms.summary',
+                        tn('terms.found', termsRes.res.terms.length, termsRes.res.terms.length - termsRes.res.notFound.length, termsRes.res.terms.length),
+                        tn('terms.rows', sumRows(termsRes.res.tables), sumRows(termsRes.res.tables)),
+                        tn('terms.tables', termsRes.res.tables.length, termsRes.res.tables.length),
+                      )}
+                    </p>
+                    <div className="terms-hits">
+                      <ul className="hits">
+                        {termsRes.res.tables.map((h) => (
+                          <li key={h.table}>
+                            <button className="table-item" aria-current={h.table === termsTable ? 'true' : undefined} onClick={() => setTermsTable(h.table)}>
+                              {t('hits.item', h.table, h.rows)}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                      <div className="table-container" tabIndex={0} role="region" aria-label={t('grid.region', termsTable, viewName(view))} onKeyDown={gridKeys}>
+                        {termGrid && grid}
+                      </div>
+                    </div>
+                    <footer className="info">{termGrid && tn('info.showing', termsHits, termsTable, termGrid.rows.length, termsHits)}</footer>
+                    <div className="terms-missing">
+                      <h3>{t('terms.notFound', termsRes.res.notFound.length)}</h3>
+                      <textarea readOnly rows={4} aria-label={t('terms.notFound', termsRes.res.notFound.length)} value={termsRes.res.notFound.join('\n')} />
+                      <button
+                        disabled={termsRes.res.notFound.length === 0}
+                        onClick={() => copyText(termsRes.res.notFound.join('\r\n'), tn('copied.terms', termsRes.res.notFound.length, termsRes.res.notFound.length))}
+                      >
+                        {t('status.copy')}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+
             {/* tabIndex: the scroll area must be reachable and scrollable by keyboard */}
+            {view !== 'terms' && (
             <div
               className="table-container"
               tabIndex={0}
               role="region"
               aria-label={t('grid.region', view === 'sql' ? t('sql.result') : selectedTable, viewName(view))}
-              onKeyDown={(e) => {
-                // Ctrl+C copies the selected cell, unless the user marked text with the mouse (native copy)
-                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && sel && !window.getSelection()?.toString()) {
-                  e.preventDefault();
-                  copyCell();
-                }
-              }}
+              onKeyDown={gridKeys}
             >
               {searchAll ? (
                 shownHits &&
@@ -1261,17 +1644,27 @@ function App() {
               {view === 'data' && !searchAll && visibleRows.length === 0 && <p className="empty">{narrowed ? t('empty.noFilterMatch') : t('empty.noRows')}</p>}
               {view === 'data' && !searchAll && visibleRows.length > 0 && shownColumns.length === 0 && <p className="empty">{t('empty.noColumns')}</p>}
             </div>
+            )}
 
-            <footer className="info">
-              {view === 'sql'
-                ? result && tn('info.sql', result.rows.length, result.rows.length) + (result.more ? t('info.sqlLimit', limit) : '')
-                : searchAll
-                  ? shownHits
-                    ? tn('info.searchAll', shownHits.length, shownHits.length, tableSearch)
-                    : searching && progressText(t('job.searching'), progress, t)
-                  : tn(narrowed ? 'info.found' : 'info.showing', rowCount, shownTable, rows.length, rowCount)}
-              {sqlSearching && tn('info.searchSql', visibleRows.length, visibleRows.length, search.trim())}
-            </footer>
+            {view !== 'terms' && (
+              <footer className="info">
+                {/* with marked rows: their count, and on the right the discreet "Only marked" (View > Only marked rows) */}
+                {view === 'data' && !searchAll && markCount > 0 && (
+                  <label className="only-marked">
+                    <input type="checkbox" checked={onlyShown} onChange={(e) => setOnlyMarked(e.target.checked)} />
+                    {t('mark.only')}
+                  </label>
+                )}
+                {view === 'sql'
+                  ? result && tn('info.sql', result.rows.length, result.rows.length) + (result.more ? t('info.sqlLimit', limit) : '')
+                  : searchAll
+                    ? shownHits
+                      ? tn('info.searchAll', shownHits.length, shownHits.length, tableSearch)
+                      : searching && progressText(t('job.searching'), progress, t)
+                    : tn(narrowed ? 'info.found' : 'info.showing', rowCount, shownTable, rows.length, rowCount) + (markCount > 0 ? tn('mark.count', markCount, markCount) : '')}
+                {sqlSearching && tn('info.searchSql', visibleRows.length, visibleRows.length, search.trim())}
+              </footer>
+            )}
           </>
         )}
       </main>
@@ -1284,7 +1677,7 @@ function App() {
               ▾
             </button>
             <h2>{t('log.title')}</h2>
-            <button onClick={() => copyText(logLines.map((e) => e.line).join('\r\n'), t('copied.log'))} disabled={logLines.length === 0}>
+            <button onClick={copyLog} disabled={logLines.length === 0}>
               {t('log.copyAll')}
             </button>
           </div>
@@ -1391,39 +1784,20 @@ function App() {
       )}
 
       {menu && menu.header === undefined && !menu.status && (
-        <div
-          className="menu"
-          role="menu"
-          aria-label={t('cellmenu.label')}
-          style={{ left: Math.min(menu.x, window.innerWidth - 220), top: Math.min(menu.y, window.innerHeight - 190) }}
-        >
-          {view === 'data' && (
-            <>
-              <button role="menuitem" onClick={() => sel && applyFilters(withFilter(filters, { column: sel.col, value: sel.row[sel.col] ?? null }))}>
-                {t('cellmenu.filter')}
-              </button>
-              <button role="menuitem" disabled={filters.length === 0} onClick={() => applyFilters([])}>
-                {t('cellmenu.clear')}
-              </button>
-              <hr />
-            </>
-          )}
-          <button role="menuitem" autoFocus onClick={copyCell}>
-            {t('cellmenu.copy')} <kbd>Ctrl+C</kbd>
-          </button>
-          <button role="menuitem" onClick={() => copyRow(false)}>
-            {t('cellmenu.copyRow')}
-          </button>
-          <button role="menuitem" onClick={() => copyRow(true)}>
-            {t('cellmenu.copyRowHeader')}
-          </button>
-        </div>
+        <MenuList
+          key={`${menu.x},${menu.y}`}
+          place={keepInWindow}
+          items={cellItems}
+          label={t('cellmenu.label')}
+          className="menu cell-menu"
+          style={{ left: Math.min(menu.x, window.innerWidth - 260), top: menu.y }}
+        />
       )}
 
-      {busy && (
+      {job && (
         <div className="backdrop">
-          <div className="about progress" role="dialog" aria-modal="true" aria-label={job}>
-            <p>{progressText(job, progress, t)}</p>
+          <div className="about progress" role="dialog" aria-modal="true" aria-label={job.text}>
+            <p>{job.kind === 'terms' && progress?.label ? t('terms.progress', progress.done, progress.total, progress.label) : progressText(job.text, progress, t)}</p>
             <progress max={progress?.total || undefined} value={progress?.total ? progress.done : undefined} />
             <button autoFocus onClick={() => bridge?.CancelJob?.()}>
               {t('job.cancel')}
@@ -1432,7 +1806,7 @@ function App() {
         </div>
       )}
 
-      {ask && <ConversionDialog name={ask.name} t={t} onAnswer={ask.resolve} />}
+      {question && <QuestionDialog {...question} t={t} />}
 
       {exportAsk && <ExportAskDialog table={exportAsk.table} found={exportAsk.found} t={t} tn={tn} onAnswer={exportAsk.resolve} />}
 
@@ -1515,36 +1889,30 @@ function App() {
   );
 }
 
-// "Save or delete the converted SQLite?": Save... (dialog in Go), Delete, Cancel; remember = for this session only
-function ConversionDialog({ name, t, onAnswer }: { name: string; t: T; onAnswer: (a: { choice: string; remember: boolean } | null) => void }) {
-  const [remember, setRemember] = useState(false);
+// A question on exit (standard item 27): title, text and the buttons in screen order, the first one focused (Enter);
+// Esc and the x answer null, as Back
+function QuestionDialog({ title, text, buttons, resolve, t }: Question & { resolve: (answer: string | null) => void; t: T }) {
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onAnswer(null);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && resolve(null);
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
   return (
     <div className="backdrop">
-      <div className="about conversion" role="dialog" aria-modal="true" aria-labelledby="conv-title">
+      <div className="about conversion" role="dialog" aria-modal="true" aria-labelledby="question-title">
         <div className="dialog-head">
-          <h2 id="conv-title">{t('conv.title')}</h2>
-          <button className="dialog-x" aria-label={t('about.close')} title={t('about.close')} onClick={() => onAnswer(null)}>
+          <h2 id="question-title">{title}</h2>
+          <button className="dialog-x" aria-label={t('about.close')} title={t('about.close')} onClick={() => resolve(null)}>
             ×
           </button>
         </div>
-        <p>{t('conv.text', name)}</p>
-        <label className="remember">
-          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-          {t('conv.remember')}
-        </label>
+        <p>{text}</p>
         <div className="col-actions">
-          <button className="primary" autoFocus onClick={() => onAnswer({ choice: 'save', remember })}>
-            {t('conv.save')}
-          </button>
-          <button onClick={() => onAnswer({ choice: 'delete', remember })}>{t('conv.delete')}</button>
-          <button className="end" onClick={() => onAnswer(null)}>
-            {t('conv.cancel')}
-          </button>
+          {buttons.map((b, i) => (
+            <button key={b.value} className={b.cls} autoFocus={i === 0} onClick={() => resolve(b.value)}>
+              {b.label}
+            </button>
+          ))}
         </div>
       </div>
     </div>

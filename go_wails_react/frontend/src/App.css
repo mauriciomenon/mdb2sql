@@ -176,10 +176,20 @@ body {
   color: var(--muted);
 }
 
-/* File > Export: the list opens beside its item */
+/* a submenu opens beside its item; under the Export... button (right edge of the window) it opens to the left */
 .dropdown.sub {
   top: -5px;
   left: 100%;
+}
+
+.right .dropdown.sub {
+  left: auto;
+  right: 100%;
+}
+
+/* the cell menu shows its submenus beside it (no scroll box) */
+.menu.cell-menu {
+  overflow: visible;
 }
 
 .dropdown button:hover:not(:disabled) {
@@ -191,12 +201,6 @@ body {
   margin: 4px 0;
   border: 0;
   border-top: 1px solid var(--border);
-}
-
-.menu-title {
-  margin: 4px 12px 2px;
-  font-size: inherit;
-  color: var(--muted);
 }
 
 .check {
@@ -509,6 +513,80 @@ th {
   cursor: col-resize;
 }
 
+/* Data: the narrow first column of the boxes that mark rows */
+th.mark,
+td.mark {
+  width: 1px;
+  padding: 0 6px;
+}
+
+td.mark input {
+  margin: 0;
+  vertical-align: middle;
+}
+
+/* "Only marked" at the right of the line under the grid */
+.only-marked {
+  float: right;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.only-marked input {
+  margin: 0;
+}
+
+/* Terms tab: the pasted terms (about 8 lines, then a scroll bar), one line of selectors, the tables found beside the
+   rows of the chosen one, the terms not found */
+.terms-text,
+.terms-missing textarea {
+  resize: vertical;
+  font: 14px/1.4 Consolas, 'Cascadia Mono', monospace;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.terms-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.terms-hits {
+  display: flex;
+  flex: 1;
+  gap: 10px;
+  min-height: 120px;
+}
+
+.terms-hits .hits {
+  flex: none;
+  max-width: 35%;
+  overflow: auto;
+}
+
+.terms-hits .table-container {
+  min-width: 0;
+}
+
+.terms-missing {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: 4px 8px;
+}
+
+.terms-missing h3 {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: inherit;
+}
+
 /* numbers to the right, the header of a numeric column too */
 td.num,
 th.num {
@@ -703,7 +781,7 @@ td[aria-selected='true'] {
   margin-left: auto;
 }
 
-/* "Converted SQLite file" dialog */
+/* questions (exit, export running, whole table or rows found) and the display warning */
 .conversion {
   width: min(480px, 100%);
 }
@@ -732,18 +810,6 @@ td[aria-selected='true'] {
 .conversion .primary:focus {
   outline: 2px solid var(--text);
   outline-offset: 2px;
-}
-
-.remember {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 12px;
-  color: var(--muted);
-}
-
-.remember input {
-  margin: 0;
 }
 
 /* "Display mode" warning (Linux without X11): the command is selectable and has its own Copy button */
