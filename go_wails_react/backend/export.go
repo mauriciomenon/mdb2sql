@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -77,12 +78,85 @@ func truncUTF16(s string, max int) string {
 type exportItem struct {
 	name, query string
 	args        []any
+	on          queryer // nil = the connection pool; the SQL tab result is read on its read-only connection
+}
+
+func (m *DBManager) queryerOf(it exportItem) queryer {
+	if it.on != nil {
+		return it.on
+	}
+	return m.conn
+}
+
+// valuesQuery is a SELECT that returns rows under header (schema and report sheets go through the same writers as the
+// tables); an int becomes a number, anything else a text
+func valuesQuery(header []string, rows [][]any) string {
+	cols := make([]string, len(header))
+	if len(rows) == 0 {
+		for i, h := range header {
+			cols[i] = "CAST(NULL AS VARCHAR) AS " + quoteIdent(h)
+		}
+		return "SELECT " + strings.Join(cols, ", ") + " WHERE false"
+	}
+	lines := make([]string, len(rows))
+	for i, r := range rows {
+		cells := make([]string, len(r))
+		for j, v := range r {
+			if n, ok := v.(int); ok {
+				cells[j] = fmt.Sprint(n)
+			} else {
+				cells[j] = quoteLiteral(fmt.Sprint(v))
+			}
+		}
+		lines[i] = "(" + strings.Join(cells, ", ") + ")"
+	}
+	for i, h := range header {
+		cols[i] = quoteIdent(h)
+	}
+	return "SELECT * FROM (VALUES " + strings.Join(lines, ", ") + ") AS v(" + strings.Join(cols, ", ") + ")"
+}
+
+var (
+	fileBad      = strings.NewReplacer("<", "_", ">", "_", ":", "_", `"`, "_", "/", "_", `\`, "_", "|", "_", "?", "_", "*", "_")
+	fileReserved = regexp.MustCompile(`(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])$`) // device names on Windows
+)
+
+// uniqueFold gives a name already taken, ignoring case (as file and table names do), the suffix " (2)", " (3)"...
+func uniqueFold(names []string) []string {
+	used := map[string]bool{}
+	out := make([]string, len(names))
+	for i, base := range names {
+		name := base
+		for k := 2; used[strings.ToLower(name)]; k++ {
+			name = fmt.Sprintf("%s (%d)", base, k)
+		}
+		used[strings.ToLower(name)] = true
+		out[i] = name
+	}
+	return out
+}
+
+// CSVNames gives each table or report sheet its file name "<name>.csv": the characters a file name cannot have become
+// "_", and a name already taken gets " (2)", " (3)"...
+func CSVNames(names []string) []string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = strings.TrimRight(fileBad.Replace(n), " .")
+		if out[i] == "" || fileReserved.MatchString(out[i]) {
+			out[i] = "_" + out[i]
+		}
+	}
+	out = uniqueFold(out)
+	for i := range out {
+		out[i] += ".csv"
+	}
+	return out
 }
 
 func tableItems(tables []string) []exportItem {
 	items := make([]exportItem, len(tables))
 	for i, t := range tables {
-		items[i] = exportItem{t, "SELECT * FROM " + quoteIdent(t), nil}
+		items[i] = exportItem{name: t, query: "SELECT * FROM " + quoteIdent(t)}
 	}
 	return items
 }
@@ -125,17 +199,141 @@ func (m *DBManager) ExportTable(ctx context.Context, table, format, out string, 
 	if err != nil {
 		return err
 	}
-	return m.exportOne(ctx, exportItem{table, "SELECT * FROM " + quoteIdent(table) + where, args}, format, out, progress, total)
+	return m.exportOne(ctx, exportItem{name: table, query: "SELECT * FROM " + quoteIdent(table) + where, args: args}, format, out, progress, total)
 }
 
-// ExportQuery writes the full result of a SQL query to out (format "csv" or "xlsx"); the sheet is "Result"
+// ExportQuery writes the full result of a SQL tab query to out (format "csv" or "xlsx"); the sheet is "Result". The
+// query runs as in the SQL tab: only reads, inside a read-only transaction (readonly.go).
 func (m *DBManager) ExportQuery(ctx context.Context, query, format, out string, progress Progress) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.conn == nil {
 		return fmt.Errorf("no database connected")
 	}
-	return m.exportOne(ctx, exportItem{"Result", query, nil}, format, out, progress, 0)
+	conn, done, err := m.readOnlyConn(ctx, query)
+	if err != nil {
+		return err
+	}
+	defer done()
+	return m.exportOne(ctx, exportItem{name: "Result", query: query, on: conn}, format, out, progress, 0)
+}
+
+// ExportMarked writes the marked rows of table (see markedTail) to out (format "csv" or "xlsx"): every column, in
+// table order
+func (m *DBManager) ExportMarked(ctx context.Context, table string, marks []map[string]any, format, out string, progress Progress) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.conn == nil {
+		return fmt.Errorf("no database connected")
+	}
+	tail, args, _, err := m.markedTail(table, marks)
+	if err != nil {
+		return err
+	}
+	if tail == "" {
+		return fmt.Errorf("no marked row")
+	}
+	return m.exportOne(ctx, exportItem{name: table, query: "SELECT * FROM " + quoteIdent(table) + tail, args: args}, format, out, progress, len(marks))
+}
+
+// ExportSchema writes the schema of table, or with table "" of every table, to out (format "csv" or "xlsx"): the
+// columns of the Schema tab under its translated titles (Column, Type, Nullable; the database schema starts with
+// Table), nullability as the translated Yes/No
+func (m *DBManager) ExportSchema(ctx context.Context, table, format, out string, progress Progress) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.conn == nil {
+		return fmt.Errorf("no database connected")
+	}
+	header := []string{i18n.T("schema.table"), i18n.T("schema.column"), i18n.T("schema.type"), i18n.T("schema.nullable")}
+	tables, sheet := m.tableList, i18n.T("tab.schema")
+	if table != "" {
+		tables, sheet, header = []string{table}, table, header[1:]
+	}
+	var rows [][]any
+	for _, t := range tables {
+		schema, err := m.tableSchema(t)
+		if err != nil {
+			return err
+		}
+		for _, c := range schema {
+			row := []any{t, c.Name, c.Type, i18n.T("schema.yes")}
+			if c.Null == "NO" {
+				row[3] = i18n.T("schema.no")
+			}
+			rows = append(rows, row[4-len(header):])
+		}
+	}
+	return m.exportOne(ctx, exportItem{name: sheet, query: valuesQuery(header, rows)}, format, out, progress, len(rows))
+}
+
+// ExportTablesCSV writes every table to dir, one "<table>.csv" each (see CSVNames)
+func (m *DBManager) ExportTablesCSV(ctx context.Context, dir string, progress Progress) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.conn == nil {
+		return fmt.Errorf("no database connected")
+	}
+	return m.writeCSVFolder(ctx, dir, tableItems(m.tableList), progress)
+}
+
+// ExportSearch writes the result of the "All tables" search to an Excel file: one sheet per table of tables (the ones
+// with a match) with the rows the Data tab search finds there, every column
+func (m *DBManager) ExportSearch(ctx context.Context, search string, tables []string, out string, progress Progress) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.conn == nil {
+		return fmt.Errorf("no database connected")
+	}
+	if len(tables) == 0 {
+		return fmt.Errorf("no table to export")
+	}
+	items := make([]exportItem, len(tables))
+	for i, t := range tables {
+		if _, err := m.validateTableName(t); err != nil {
+			return err
+		}
+		where, args, err := m.tableWhere(t, nil, search)
+		if err != nil {
+			return err
+		}
+		items[i] = exportItem{name: t, query: "SELECT * FROM " + quoteIdent(t) + where, args: args}
+	}
+	return m.writeAtomically(out, func(tmp string) error { return m.writeXLSX(ctx, tmp, items, progress, 0) })
+}
+
+// writeCSVFolder writes one CSV per item into dir (names by CSVNames): all of them go to a private folder inside dir
+// first and are moved at the end, so a cancelled or failed export leaves dir as it was
+func (m *DBManager) writeCSVFolder(ctx context.Context, dir string, items []exportItem, progress Progress) error {
+	sheets := make([]string, len(items))
+	for i, it := range items {
+		sheets[i] = it.name
+	}
+	names := CSVNames(sheets)
+	tmp, err := os.MkdirTemp(dir, ".mdb2sql-export-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	for i, it := range items {
+		progress(i, len(items), it.name)
+		if err := m.writeCSV(ctx, filepath.Join(tmp, names[i]), it, func(int, int, string) {}, 0); err != nil {
+			if ctx.Err() != nil {
+				return errors.New(i18n.T("err.exportCancelled"))
+			}
+			return fmt.Errorf("%s: %w", it.name, err)
+		}
+		if ctx.Err() != nil { // a small table ends before its writer looks at the cancel
+			return errors.New(i18n.T("err.exportCancelled"))
+		}
+	}
+	progress(len(items), len(items), "")
+	for _, name := range names {
+		if err := os.Rename(filepath.Join(tmp, name), filepath.Join(dir, name)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *DBManager) exportOne(ctx context.Context, it exportItem, format, out string, progress Progress, total int) error {
@@ -150,8 +348,20 @@ func (m *DBManager) exportOne(ctx context.Context, it exportItem, format, out st
 	})
 }
 
+// SaveConverted copies the SQLite file an Access file was converted to (File > Save as SQLite); the database stays
+// open on the temporary file
+func (m *DBManager) SaveConverted(out string) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.converted == "" {
+		return fmt.Errorf("no converted file")
+	}
+	return m.writeAtomically(out, func(tmp string) error { return copyFile(m.converted, tmp) })
+}
+
 func (m *DBManager) writeAtomically(out string, write func(tmp string) error) error {
-	if same, _ := filepath.Abs(out); m.currentDB != "" && strings.EqualFold(same, m.currentDB) {
+	// never over the open file, nor over the temporary SQLite an Access file is read from
+	if same, _ := filepath.Abs(out); m.currentDB != "" && (strings.EqualFold(same, m.currentDB) || strings.EqualFold(same, m.converted)) {
 		return errors.New(i18n.T("err.exportOverOpen"))
 	}
 	// a folder of our own (unique name, same disk as the target): a user file named "x.partial.csv" is never
@@ -291,7 +501,7 @@ func rowProgress(ctx context.Context, progress Progress, label string, total int
 }
 
 func (m *DBManager) writeCSV(ctx context.Context, path string, it exportItem, progress Progress, total int) error {
-	rows, err := m.conn.QueryContext(ctx, it.query, it.args...)
+	rows, err := m.queryerOf(it).QueryContext(ctx, it.query, it.args...)
 	if err != nil {
 		return err
 	}
@@ -377,7 +587,7 @@ func (m *DBManager) writeXLSX(ctx context.Context, path string, items []exportIt
 }
 
 func (m *DBManager) writeSheets(ctx context.Context, f *excelize.File, used map[string]bool, first *bool, it exportItem, onRow func(int) error) error {
-	rows, err := m.conn.QueryContext(ctx, it.query, it.args...)
+	rows, err := m.queryerOf(it).QueryContext(ctx, it.query, it.args...)
 	if err != nil {
 		return err
 	}
@@ -387,6 +597,7 @@ func (m *DBManager) writeSheets(ctx context.Context, f *excelize.File, used map[
 		return err
 	}
 	uuids := uuidColumns(rows)
+	// counted on the pool (a SQL tab query that cannot be counted must not abort its own read-only transaction)
 	total := -1 // row count for the sheet dimension; unknown (-1) if the query cannot be counted
 	countQuery := "SELECT count(*) FROM (" + strings.TrimRight(strings.TrimSpace(it.query), "; \t\r\n") + ")"
 	if err := m.conn.QueryRowContext(ctx, countQuery, it.args...).Scan(&total); err != nil {

@@ -1,44 +1,89 @@
-// SQLite convertido de um Access: fica numa pasta temporaria por processo ate o usuario salvar ou apagar
-// !T: <cache>/mdb2sql/converted-go-wails-react/<pid>/<random>/<source name>.sqlite; folders of dead processes are
-// removed at the next start (CleanStaleConverted), so a crash never leaves an orphan for good
+// SQLite convertido de um Access: fica numa pasta temporaria por processo ate o usuario salvar (Arquivo > Salvar) ou sair
+// !T: <temp>/mdb2sql-go-wails-react/<pid>/<random>/<source name>.sqlite, where <temp> is the user's temporary folder,
+// else the system's, else the folder of the Access file (the first where a file can be created); folders of dead
+// processes are removed at the next start (CleanStaleConverted), so a crash never leaves an orphan for good
 
 package backend
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
 
-// not under cachePrefix: removeOldCaches would delete it
-const convertedDir = "converted-go-wails-react"
+const convertedDir = "mdb2sql-go-wails-react"
 
-func convertedRoot() (string, error) {
-	base, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
+// OnSourceFolderTemp is called with the folder created beside an Access file when no temporary folder could hold its
+// converted SQLite: the app keeps it in the settings, so the next start also looks there for leftovers
+var OnSourceFolderTemp = func(root string) {}
+
+// ConvertedRoots are the folders that may hold converted files, best first: the user's temporary folder, the system's
+// and, with source (an Access file), a folder beside it
+func ConvertedRoots(source string) []string {
+	system := "/tmp"
+	if runtime.GOOS == "windows" {
+		system = filepath.Join(os.Getenv("SystemRoot"), "Temp")
 	}
-	return filepath.Join(base, "mdb2sql", convertedDir), nil
+	roots := []string{filepath.Join(os.TempDir(), convertedDir), filepath.Join(system, convertedDir)}
+	if source != "" {
+		roots = append(roots, filepath.Join(filepath.Dir(source), convertedDir))
+	}
+	return roots
 }
 
-// newConvertedPath returns a fresh path <root>/<pid>/<random>/<source stem>.sqlite (folders created, file not)
+// LegacyConvertedRoot is where 1.3.0 kept the converted files (%LOCALAPPDATA%\mdb2sql\converted-go-wails-react):
+// only cleaned now, so a crash of that version leaves nothing behind
+func LegacyConvertedRoot() string {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(base, "mdb2sql", "converted-go-wails-react")
+}
+
 func newConvertedPath(source string) (string, error) {
-	root, err := convertedRoot()
-	if err != nil {
-		return "", err
+	roots := ConvertedRoots(source)
+	path, err := newConvertedIn(roots, source)
+	if err == nil && strings.HasPrefix(path, roots[len(roots)-1]+string(filepath.Separator)) && roots[0] != roots[len(roots)-1] {
+		OnSourceFolderTemp(roots[len(roots)-1])
 	}
-	mine := filepath.Join(root, strconv.Itoa(os.Getpid()))
-	if err := os.MkdirAll(mine, 0o755); err != nil {
-		return "", err
+	return path, err
+}
+
+// newConvertedIn returns a fresh path <root>/<pid>/<random>/<source stem>.sqlite under the first root where a file
+// can be created (folders created, file not)
+func newConvertedIn(roots []string, source string) (string, error) {
+	var err error
+	for _, root := range roots {
+		mine := filepath.Join(root, strconv.Itoa(os.Getpid()))
+		if err = os.MkdirAll(mine, 0o755); err != nil {
+			continue
+		}
+		var dir string
+		if dir, err = os.MkdirTemp(mine, ""); err == nil {
+			path := filepath.Join(dir, ConvertedName(source))
+			var probe *os.File
+			if probe, err = os.Create(path); err == nil {
+				probe.Close()
+				os.Remove(path)
+				return path, nil
+			}
+		}
+		removeEmpty(dir, mine, root)
 	}
-	dir, err := os.MkdirTemp(mine, "")
-	if err != nil {
-		return "", err
+	return "", err
+}
+
+// removeEmpty removes the folders that are empty (Remove refuses a folder with something inside), inner first
+func removeEmpty(dirs ...string) {
+	for _, d := range dirs {
+		if d != "" {
+			os.Remove(d)
+		}
 	}
-	return filepath.Join(dir, ConvertedName(source)), nil
 }
 
 // ConvertedName is the default name of the converted file: "<source without extension>.sqlite"
@@ -47,23 +92,16 @@ func ConvertedName(source string) string {
 	return strings.TrimSuffix(base, filepath.Ext(base)) + ".sqlite"
 }
 
-// RemoveConverted deletes a converted file with its folder (and any -journal file the engine left)
+// RemoveConverted deletes a converted file with its folder (and any -journal file the engine left); the process
+// folder and its root go too once empty, so nothing stays beside an Access file
 func RemoveConverted(path string) error {
 	if path == "" {
 		return nil
 	}
-	return os.RemoveAll(filepath.Dir(path))
-}
-
-// SaveConverted moves the converted file to dest (copy + delete across disks), then removes its folder
-func SaveConverted(path, dest string) error {
-	if err := os.Rename(path, dest); err != nil {
-		if err := copyFile(path, dest); err != nil {
-			os.Remove(dest)
-			return err
-		}
-	}
-	return RemoveConverted(path)
+	dir := filepath.Dir(path)
+	err := os.RemoveAll(dir)
+	removeEmpty(filepath.Dir(dir), filepath.Dir(filepath.Dir(dir)))
+	return err
 }
 
 func copyFile(src, dest string) error {
@@ -83,36 +121,22 @@ func copyFile(src, dest string) error {
 	return out.Close()
 }
 
-// UniquePath returns dir/name, or dir/"stem (2).ext", "stem (3).ext"... if it exists (never overwrites)
-func UniquePath(dir, name string) string {
-	ext := filepath.Ext(name)
-	stem := strings.TrimSuffix(name, ext)
-	p := filepath.Join(dir, name)
-	for n := 2; ; n++ {
-		if _, err := os.Lstat(p); os.IsNotExist(err) {
-			return p
-		}
-		p = filepath.Join(dir, fmt.Sprintf("%s (%d)%s", stem, n, ext))
-	}
-}
-
-// CleanStaleConverted removes the converted files left by mdb2sql processes that no longer run (a crash or a kill);
-// returns how many folders it removed
-func CleanStaleConverted() int {
-	root, err := convertedRoot()
-	if err != nil {
-		return 0
-	}
-	entries, _ := os.ReadDir(root)
+// CleanStaleConverted removes from roots the converted files left by mdb2sql processes that no longer run (a crash or
+// a kill); returns how many process folders it removed
+func CleanStaleConverted(roots ...string) int {
 	n := 0
-	for _, e := range entries {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil || pid == os.Getpid() || processAlive(pid) {
-			continue
+	for _, root := range roots {
+		entries, _ := os.ReadDir(root)
+		for _, e := range entries {
+			pid, err := strconv.Atoi(e.Name())
+			if err != nil || pid == os.Getpid() || processAlive(pid) {
+				continue
+			}
+			if os.RemoveAll(filepath.Join(root, e.Name())) == nil {
+				n++
+			}
 		}
-		if os.RemoveAll(filepath.Join(root, e.Name())) == nil {
-			n++
-		}
+		removeEmpty(root)
 	}
 	return n
 }

@@ -114,11 +114,18 @@ func (m *DBManager) Source() string {
 }
 
 // Converted is the SQLite file an Access file was converted to ("" for other files); the caller owns it: Close
-// does not delete it (the user chooses to save or delete it, see app.go)
+// does not delete it (app.go removes it when the file is left)
 func (m *DBManager) Converted() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.converted
+}
+
+// Path is the file given to Open ("" when nothing is open)
+func (m *DBManager) Path() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.currentDB
 }
 
 // fileKind: Access by extension; SQLite by its file header (a .db may be either); otherwise DuckDB
@@ -254,14 +261,29 @@ type QueryResult struct {
 	More    bool             `json:"more"` // more rows than the limit
 }
 
-// RunQuery executa SQL livre e devolve no maximo limit linhas
+// queryer runs a SELECT: the connection pool, or the one connection of a SQL tab query (readOnlyConn)
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// RunQuery executa o SQL da aba SQL (so comandos de leitura, ver readonly.go) e devolve no maximo limit linhas
 func (m *DBManager) RunQuery(ctx context.Context, query string, limit int) (QueryResult, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.conn == nil {
 		return QueryResult{}, fmt.Errorf("no database connected")
 	}
-	rows, err := m.conn.QueryContext(ctx, query)
+	conn, done, err := m.readOnlyConn(ctx, query)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	defer done()
+	return queryResult(ctx, conn, query, limit)
+}
+
+// queryResult runs a SELECT and returns at most limit rows (limit 0 = all of them)
+func queryResult(ctx context.Context, q queryer, query string, limit int) (QueryResult, error) {
+	rows, err := q.QueryContext(ctx, query)
 	if err != nil {
 		return QueryResult{}, err
 	}
@@ -278,7 +300,7 @@ func (m *DBManager) RunQuery(ctx context.Context, query string, limit int) (Quer
 		ptrs[i] = &values[i]
 	}
 	for rows.Next() {
-		if len(res.Rows) == limit {
+		if limit > 0 && len(res.Rows) == limit {
 			res.More = true
 			break
 		}
@@ -532,8 +554,48 @@ func (m *DBManager) QueryTable(tableName string, limit int, search string, filte
 	if err != nil {
 		return nil, err
 	}
-	query := fmt.Sprintf(`SELECT * FROM %s%s LIMIT ?`, quoteIdent(tableName), where)
-	rows, err := m.conn.Query(query, append(args, limit)...)
+	rowID, err := m.hasRowID(tableName)
+	if err != nil {
+		return nil, err
+	}
+	query := fmt.Sprintf(`SELECT %s FROM %s%s LIMIT ?`, selectRows(rowID), quoteIdent(tableName), where)
+	return m.rowMaps(rowID, query, append(args, limit)...)
+}
+
+// RowIDKey is the key that holds, in each row sent to the Data tab, the engine's rowid of that row (no column can be
+// named like this): the UI tells the marked rows apart by it
+const RowIDKey = "\x00rowid"
+
+// hasRowID tells whether the engine gives the rows of table a rowid (DuckDB and SQLite tables). A view has none and a
+// column named rowid hides it: the rows of such a table are told apart by all their values.
+func (m *DBManager) hasRowID(table string) (bool, error) {
+	schema, err := m.tableSchema(table)
+	if err != nil {
+		return false, err
+	}
+	for _, c := range schema {
+		if strings.EqualFold(c.Name, "rowid") {
+			return false, nil
+		}
+	}
+	rows, err := m.conn.Query("SELECT rowid FROM " + quoteIdent(table) + " LIMIT 0")
+	if err != nil {
+		return false, nil // no rowid for this table: not an error
+	}
+	return true, rows.Close()
+}
+
+func selectRows(rowID bool) string {
+	if rowID {
+		return "rowid, *"
+	}
+	return "*"
+}
+
+// rowMaps runs a "SELECT [rowid,] * ..." and returns each row as a map column -> value; with rowID the first column
+// of the result is the rowid, kept under RowIDKey
+func (m *DBManager) rowMaps(rowID bool, query string, args ...any) ([]map[string]interface{}, error) {
+	rows, err := m.conn.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query table: %w", err)
 	}
@@ -543,6 +605,9 @@ func (m *DBManager) QueryTable(tableName string, limit int, search string, filte
 	columns, err := rows.Columns()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get columns: %w", err)
+	}
+	if rowID {
+		columns[0] = RowIDKey
 	}
 	uuids := uuidColumns(rows)
 
@@ -570,6 +635,68 @@ func (m *DBManager) QueryTable(tableName string, limit int, search string, filte
 	}
 
 	return results, rows.Err()
+}
+
+// markedTail is the " WHERE ... [ORDER BY rowid]" that selects the marked rows of table, in table order, and its
+// parameters ("" = no mark). Each mark is what the UI keeps of a marked row: with a rowid, that rowid (RowIDKey); else
+// the whole row, compared value by value in the column types, so rows equal in every value are marked together.
+// Values the UI cannot send back as they are (lists, structs, binary) stay out of the comparison.
+func (m *DBManager) markedTail(table string, marks []map[string]any) (tail string, args []any, rowID bool, err error) {
+	if rowID, err = m.hasRowID(table); err != nil || len(marks) == 0 {
+		return "", nil, rowID, err
+	}
+	if rowID {
+		ids := make([]string, 0, len(marks))
+		for _, mark := range marks {
+			switch v := mark[RowIDKey].(type) {
+			case float64: // through JSON
+				ids = append(ids, strconv.FormatInt(int64(v), 10))
+			case int64:
+				ids = append(ids, strconv.FormatInt(v, 10))
+			default:
+				return "", nil, rowID, fmt.Errorf("marked row without its rowid")
+			}
+		}
+		return " WHERE rowid IN (" + strings.Join(ids, ", ") + ") ORDER BY rowid", nil, rowID, nil
+	}
+	schema, err := m.tableSchema(table)
+	if err != nil {
+		return "", nil, rowID, err
+	}
+	rowsCond := make([]string, len(marks))
+	for i, mark := range marks {
+		var conds []string
+		for _, c := range schema {
+			switch v := mark[c.Name].(type) {
+			case nil:
+				conds = append(conds, quoteIdent(c.Name)+" IS NULL")
+			case string, bool, float64, int64:
+				if c.Type != "BLOB" {
+					conds = append(conds, quoteIdent(c.Name)+" = CAST(? AS "+c.Type+")")
+					args = append(args, v)
+				}
+			}
+		}
+		if len(conds) == 0 {
+			return "", nil, rowID, fmt.Errorf("marked row with no value to compare")
+		}
+		rowsCond[i] = "(" + strings.Join(conds, " AND ") + ")"
+	}
+	return " WHERE " + strings.Join(rowsCond, " OR "), args, rowID, nil
+}
+
+// MarkedRows returns the marked rows of table (see markedTail) as QueryTable returns rows, in table order
+func (m *DBManager) MarkedRows(table string, marks []map[string]any) ([]map[string]any, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.conn == nil {
+		return nil, fmt.Errorf("no database connected")
+	}
+	tail, args, rowID, err := m.markedTail(table, marks)
+	if err != nil || tail == "" {
+		return []map[string]any{}, err
+	}
+	return m.rowMaps(rowID, "SELECT "+selectRows(rowID)+" FROM "+quoteIdent(table)+tail, args...)
 }
 
 // Retorna numero total de linhas em uma tabela

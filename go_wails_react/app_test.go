@@ -267,8 +267,10 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// Access is converted once to a SQLite file that waits for "save or delete"; another file cannot be opened before
-// that, a remembered choice is applied by itself (never over an existing file), and exit removes what is left
+// standard items 27-29: Access is converted once to a SQLite file in the temporary folder. Only leaving the app asks
+// about it, and only while it was not saved; another file, Close and Reopen just delete it. File > Save writes it as
+// SQLite (a copy), DuckDB or Excel, the database stays open, and the same unchanged Access file then opens the SQLite or
+// DuckDB saved from it.
 func TestConvertedSQLiteLifecycle(t *testing.T) {
 	// not t.TempDir: the sqlite extension unpacked here stays loaded in this process, so Windows cannot delete it
 	cache, _ := os.MkdirTemp("", "mdb2sql-cache-")
@@ -281,76 +283,153 @@ func TestConvertedSQLiteLifecycle(t *testing.T) {
 	db, _ := sql.Open("duckdb", other)
 	db.Exec("CREATE TABLE t (id INTEGER)")
 	db.Close()
-
-	app := NewApp()
-	if _, err := app.LoadDatabase(mdb); err != nil {
-		t.Skipf("no Access reader or sqlite extension here (run a build first): %v", err)
-	}
-	first := app.converted
-	if app.PendingConversion() != "types.sqlite" || first == "" {
-		t.Fatalf("pending %q (%q)", app.PendingConversion(), first)
-	}
-	if _, err := app.LoadDatabase(other); err == nil || app.dbName != "types.mdb" {
-		t.Fatalf("opened another file over a pending conversion: %v", err)
-	}
-	if res, err := app.ResolveConversion("cancel", true); err != nil || res.Done || app.converted == "" {
-		t.Fatalf("cancel: %+v %v", res, err)
-	}
-	if res, err := app.ResolveConversion("delete", true); err != nil || !res.Done {
-		t.Fatalf("delete: %+v %v", res, err)
-	}
-	if _, err := os.Stat(first); !os.IsNotExist(err) || app.dbName != "" || app.RememberedChoice() != "delete" {
-		t.Fatalf("after delete: %v, open %q, remembered %q", err, app.dbName, app.RememberedChoice())
-	}
-
-	// remembered "delete": the next file just opens
-	if _, err := app.LoadDatabase(mdb); err != nil {
-		t.Fatal(err)
-	}
-	second := app.converted
-	if _, err := app.LoadDatabase(other); err != nil || app.converted != "" {
-		t.Fatalf("remembered delete: %v %q", err, app.converted)
-	}
-	if _, err := os.Stat(second); !os.IsNotExist(err) {
-		t.Fatalf("second converted file left: %v", err)
-	}
-
-	// remembered "save" (folder of the first save): types.sqlite, then types (2).sqlite, never over a file; two
-	// copies of the .mdb, since the same file reopened uses the SQLite saved from it (kept in the settings)
+	gone := func(path string) bool { _, err := os.Stat(path); return os.IsNotExist(err) }
+	// each conversion needs its own Access file: the same one reopened uses what was saved from it
 	copyMDB := func(name string) string {
 		data, _ := os.ReadFile(mdb)
 		p := filepath.Join(t.TempDir(), name)
 		os.WriteFile(p, data, 0o644)
 		return p
 	}
-	app.convChoice, app.convDir = "save", t.TempDir()
-	for _, c := range []struct{ src, want string }{{mdb, "types.sqlite"}, {copyMDB("types.mdb"), "types (2).sqlite"}} {
-		if _, err := app.LoadDatabase(c.src); err != nil {
-			t.Fatal(err)
-		}
-		if app.beforeClose(context.Background()) { // the window may close: the choice was applied
-			t.Fatal("close blocked with a remembered choice")
-		}
-		if _, err := os.Stat(filepath.Join(app.convDir, c.want)); err != nil {
-			t.Fatalf("%s not saved: %v", c.want, err)
-		}
+
+	app := NewApp()
+	t.Cleanup(func() { app.shutdown(context.Background()) })
+	if _, err := app.LoadDatabase(mdb); err != nil {
+		t.Skipf("no Access reader or sqlite extension here (run a build first): %v", err)
 	}
-	// saved conversion: the same .mdb again opens types.sqlite, no new conversion
-	if _, err := app.LoadDatabase(mdb); err != nil || app.converted != "" || app.dbManager.Source() != backend.SourceSQLite {
-		t.Fatalf("reopen: %v, converted %q, source %q", err, app.converted, app.dbManager.Source())
+	first := app.converted
+	if app.PendingConversion() != "types.mdb" || !strings.HasPrefix(first, filepath.Join(os.TempDir(), "mdb2sql-go-wails-react")+string(filepath.Separator)) {
+		t.Fatalf("pending %q, converted file %q (want it in the temporary folder)", app.PendingConversion(), first)
 	}
-	if app.savedConversion(copyMDB("other.mdb")) != "" {
-		t.Fatal("cache hit for a file never converted")
+	if !app.asksOnExit() {
+		t.Fatal("leaving with the converted file not saved must ask")
 	}
-	// an exit with a pending file removes it
-	app.convChoice = ""
-	if _, err := app.LoadDatabase(copyMDB("third.mdb")); err != nil {
+	// another file: nobody is asked, the converted file is deleted
+	if _, err := app.LoadDatabase(other); err != nil || app.dbName != "other.duckdb" || app.converted != "" || !gone(first) {
+		t.Fatalf("another file: %v, open %q, converted %q left=%v", err, app.dbName, app.converted, !gone(first))
+	}
+	if app.asksOnExit() {
+		t.Fatal("nothing to ask with a DuckDB file open")
+	}
+	// Close: the same
+	if _, err := app.LoadDatabase(mdb); err != nil {
 		t.Fatal(err)
 	}
+	second := app.converted
+	if err := app.CloseDatabase(); err != nil || app.dbName != "" || !gone(second) {
+		t.Fatalf("close: %v, open %q, left=%v", err, app.dbName, !gone(second))
+	}
+
+	// Save as SQLite: a copy of the converted file; the database stays open, nothing more to ask, and it is remembered
+	dir := t.TempDir()
+	if _, err := app.LoadDatabase(mdb); err != nil {
+		t.Fatal(err)
+	}
+	third, saved := app.converted, filepath.Join(dir, "types.sqlite")
+	if err := app.saveTo(saved, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	if gone(saved) || gone(third) || app.dbName != "types.mdb" || app.PendingConversion() != "" || app.asksOnExit() {
+		t.Fatalf("after save: saved gone=%v, temp gone=%v, open %q, pending %q", gone(saved), gone(third), app.dbName, app.PendingConversion())
+	}
+	if rows, err := app.GetRowCount("Tipos", nil, ""); err != nil || rows != 3 {
+		t.Fatalf("the database must stay open after a save: %d rows (%v)", rows, err)
+	}
+	// Reopen (F5): the temporary file goes, and the same unchanged Access file opens the SQLite saved from it
+	if _, err := app.LoadDatabase(mdb); err != nil || !gone(third) || app.converted != "" || app.dbManager.Source() != backend.SourceSQLite {
+		t.Fatalf("reopen: %v, temp left=%v, converted %q, source %q", err, !gone(third), app.converted, app.dbManager.Source())
+	}
+	// the name Save proposes there would be the file that is open: "<name> (copy)"; and saving over it is refused
+	if got := saveName(dir, app.dbStem(), "sqlite", app.dbPath, app.dbManager.Path()); got != "types (copy).sqlite" {
+		t.Errorf("proposed name %q", got)
+	}
+	if got := saveName(dir, app.dbStem(), "duckdb", app.dbPath, app.dbManager.Path()); got != "types.duckdb" {
+		t.Errorf("proposed name %q", got)
+	}
+	if err := app.saveTo(saved, "sqlite"); err == nil || err.Error() != i18n.T("err.exportOverOpen") {
+		t.Errorf("save over the open file: %v", err)
+	}
+
+	// Save as DuckDB: remembered too (the same Access file then opens the DuckDB file)
+	second2 := copyMDB("duck.mdb")
+	if _, err := app.LoadDatabase(second2); err != nil {
+		t.Fatal(err)
+	}
+	duck := filepath.Join(dir, "duck.duckdb")
+	if err := app.saveTo(duck, "duckdb"); err != nil || app.asksOnExit() {
+		t.Fatalf("save as DuckDB: %v", err)
+	}
+	if _, err := app.LoadDatabase(second2); err != nil || app.converted != "" || app.dbManager.Source() != backend.SourceDuckDB || app.dbManager.Path() != duck {
+		t.Fatalf("reopen after DuckDB: %v, converted %q, source %q", err, app.converted, app.dbManager.Source())
+	}
+	// Save as Excel: nothing more to ask, but the Access file is converted again next time
+	third2 := copyMDB("sheet.mdb")
+	if _, err := app.LoadDatabase(third2); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.saveTo(filepath.Join(dir, "sheet.xlsx"), "xlsx"); err != nil || app.asksOnExit() || app.savedConversion(third2) != "" {
+		t.Fatalf("save as Excel: %v, asks %v, remembered %q", err, app.asksOnExit(), app.savedConversion(third2))
+	}
+	// a save that fails leaves the question in place
+	if _, err := app.LoadDatabase(copyMDB("fail.mdb")); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.saveTo(filepath.Join(dir, "missing", "x.sqlite"), "sqlite"); err == nil || !app.asksOnExit() {
+		t.Fatalf("failed save: %v, asks %v", err, app.asksOnExit())
+	}
+	// Exit: the UI asked (Exit), nothing more is asked and the converted file is removed
 	last := app.converted
+	app.Exit()
+	if app.asksOnExit() {
+		t.Fatal("asked again after Exit")
+	}
 	app.shutdown(context.Background())
-	if _, err := os.Stat(last); !os.IsNotExist(err) {
-		t.Fatalf("converted file left after exit: %v", err)
+	if !gone(last) {
+		t.Fatalf("converted file left after exit: %s", last)
+	}
+}
+
+// standard item 29: what a crash left is removed at startup from the temporary folders, from the folders beside
+// Access files that had to hold a converted file (kept in the settings) and from where 1.3.0 kept them; the Log line
+// waits for the UI to ask for it
+func TestStartupCleansLeftovers(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())         // Windows
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // Linux
+	cache, temp := t.TempDir(), t.TempDir()
+	t.Setenv("LOCALAPPDATA", cache)
+	t.Setenv("XDG_CACHE_HOME", cache)
+	for _, k := range []string{"TMP", "TEMP", "TMPDIR"} {
+		t.Setenv(k, temp)
+	}
+	beside := filepath.Join(t.TempDir(), "mdb2sql-go-wails-react")
+	roots := []string{backend.ConvertedRoots("")[0], beside, backend.LegacyConvertedRoot()}
+	if roots[0] != filepath.Join(temp, "mdb2sql-go-wails-react") {
+		t.Fatalf("temporary root %q", roots[0])
+	}
+	for _, root := range roots {
+		dead := filepath.Join(root, "2147483646", "x") // no such process
+		if err := os.MkdirAll(dead, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(filepath.Join(dead, "old.sqlite"), []byte("x"), 0o644)
+	}
+	NewApp().rememberTempDir(beside)
+	app := NewApp() // the next run
+	if len(app.settings.TempDirs) != 1 || app.settings.TempDirs[0] != beside {
+		t.Fatalf("folder beside the Access file not kept: %q", app.settings.TempDirs)
+	}
+	app.cleanStale()
+	for _, root := range roots {
+		if _, err := os.Stat(root); !os.IsNotExist(err) {
+			t.Errorf("leftover folder %s: %v", root, err)
+		}
+	}
+	lines := app.StartupLog()
+	if len(lines) != 1 || !strings.Contains(lines[0], "3") || app.StartupLog() != nil {
+		t.Errorf("startup log %q", lines)
+	}
+	if len(NewApp().settings.TempDirs) != 0 {
+		t.Errorf("a folder that is gone still kept: %q", NewApp().settings.TempDirs)
 	}
 }
 
