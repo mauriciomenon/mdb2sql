@@ -972,6 +972,19 @@ test "Export list (item 28): every table to CSV in a folder, the all-tables sear
     try t.expectEqualStrings("Não", g.rows[4][3].?);
 }
 
+test "marked rows come in table order on a big table too (several row groups read in parallel)" {
+    var db = dbm.testDb();
+    defer db.close();
+    try db.start();
+    try db.exec("CREATE TABLE big2 AS SELECT range AS id FROM range(300000)");
+    try db.refreshTables();
+    const marks = [_][]const u8{ "250000", "7", "120000", "299999" };
+    var g = try db.page(.{ .table = "big2", .tables = db.table_names, .columns = &.{"id"}, .key = .rowid, .with_key = true, .marks = &marks, .marked = .only, .limit = 0 });
+    defer g.deinit();
+    var buf: [64]u8 = undefined;
+    try t.expectEqualStrings("7,120000,250000,299999", idsOf(&buf, g, 0));
+}
+
 test "identical rows of a table without rowid are one row for the marks" {
     var db = dbm.testDb();
     defer db.close();
