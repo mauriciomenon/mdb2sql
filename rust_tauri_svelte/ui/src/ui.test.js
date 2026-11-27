@@ -45,7 +45,7 @@ const repeated = (labels) => labels.filter((label, i) => labels.indexOf(label) !
 test('the main window has no repeated button or menu item', () => {
   const app = markup('./App.svelte');
   const labels = buttonLabels(app);
-  for (const label of ['Open...', 'Export...', 'Columns...', 'Run', 'Search terms', 'Copy all']) {
+  for (const label of ['Open...', 'Export...', 'Columns...', 'Run', 'Search', 'Copy rows', 'Save/Export...', 'Clear', 'Copy all']) {
     assert.ok(labels.includes(label), `${label} in ${labels.join(', ')}`);
   }
   assert.deepEqual(repeated(labels), []);
@@ -226,9 +226,10 @@ test('keyboard shortcuts are those of the menu items', () => {
   assert.match(app, /\n {6}reopen: \{ run: reload, off: busy \},/);
   assert.match(appFunction('reload'), /if \(busy\) return;\s*if \(!openedPath\) return browse\(\);\s*dbPath = openedPath;\s*openDatabase\(\);/);
   assert.match(markup('./App.svelte'), /<svelte:window onclick=\{[^}]*\} onkeydown=\{shortcut\} \/>/);
-  // Ctrl+Enter so pela janela (o editor tinha o seu e rodaria duas vezes)
+  // Ctrl+Enter do SQL so pela janela (o editor tinha o seu e rodaria duas vezes); a caixa dos termos tem o seu (secao
+  // 21: Enter pesquisa, Ctrl+Enter quebra a linha) e para o Enter ali, o atalho da janela nao roda de novo
   assert.doesNotMatch(markup('./App.svelte').match(/<textarea\s+bind:value=\{sql\}[\s\S]*?<\/textarea>/)[0], /onkeydown/);
-  assert.doesNotMatch(markup('./App.svelte').match(/<textarea bind:value=\{termsText\}[\s\S]*?<\/textarea>/)[0], /onkeydown/);
+  assert.match(markup('./App.svelte').match(/<textarea\s+bind:value=\{termsText\}[\s\S]*?<\/textarea>/)[0], /onkeydown=\{termsKeydown\}/);
   // na grade: Ctrl+C copia a celula, Ctrl+Shift+C a linha, Espaco marca a linha da celula escolhida
   const grid = readFileSync(new URL('./Grid.svelte', import.meta.url), 'utf8');
   assert.match(grid, /event\.ctrlKey && event\.key\.toLowerCase\(\) === 'c' && selected/);
@@ -555,39 +556,77 @@ test('Data grid: mark column, marked rows on top, only-marked box', () => {
   assert.match(app, /\n {6}unmarkAll: \{ run: unmarkAll, off: !markedRows\.length \},/);
 });
 
-// item 32: aba Termos de cima para baixo: (a) a caixa dos termos com a dica; (b) Valor inteiro | Contem, Esta tabela |
-// Todas as tabelas, Pesquisar termos (Cancelar enquanto roda) e a contagem; (c) o resumo ou o progresso; (d) as tabelas
-// com acerto e a grade da escolhida; (e) os nao encontrados, so leitura, com Copiar. Resultado velho nunca aparece
-test('Terms tab: box, selectors, summary, tables with hits and grid, terms not found', () => {
+// secao 21 (layout aprovado pelo dono): (1) a caixa dos termos e embaixo "N linhas de entrada" a esquerda e, encostados
+// a direita, Valor inteiro | Contem, separador, Esta tabela | Todas as tabelas, separador, [Pesquisar] no fim (Cancelar
+// enquanto roda); (2) a area do resultado com moldura: o resumo (ou o progresso) na primeira linha, as tabelas e a grade,
+// a contagem embaixo da grade, os nao encontrados com Copiar a direita da caixa; (3) a barra de saida: Copiar linhas,
+// Salvar/Exportar... e Limpar. Resultado velho nunca aparece
+test('Terms tab: input, framed result with the summary on top, output bar', () => {
   const ui = markup('./App.svelte');
   const terms = ui.slice(ui.indexOf("{:else if tab === 'terms'}"), ui.indexOf('{:else if !selectedTable}'));
   const order = [
-    '<textarea bind:value={termsText} rows="8"',
-    // secao 18 c: [Pesquisar termos] | caixa com as linhas de entrada e o resumo | Valor inteiro | Contem, separador,
-    // Esta tabela | Todas as tabelas (sai "N termos" e a linha de resumo de baixo)
-    "onclick={runTerms} disabled={!canRunTerms}>{t('terms.run')}",
-    '<p class="terms-info">',
+    '<div class="terms-tab">',
+    '<textarea',
+    'bind:value={termsText}',
+    'onkeydown={termsKeydown}',
+    '<span class="terms-lines">',
     "t('terms.lines', { count: fmt(termList.terms.length + termList.repeated) })",
-    't(termsKey(termsResult), termsValues(termsResult))',
-    '</p>',
     "{@render choice(MATCHES, match, (id) => (match = id), t('settings.match'), t('match.help'))}",
     '<span class="separator" aria-hidden="true"></span>',
     "{@render choice(SCOPES, termsScope, (id) => (termsScope = id), t('scope.label'))}",
+    "onclick={runTerms} disabled={!canRunTerms}>{t('terms.search')}",
+    '<section class="terms-result" aria-labelledby="terms-summary">',
+    '<h2 id="terms-summary">',
+    't(termsKey(termsResult), termsValues(termsResult))',
+    '</h2>',
     '<div class="terms-found">',
     "t('found.item'",
     '<Grid',
     "t('data.showingMatches'",
     "t('terms.notFound'",
+    '<div class="not-found-box">',
     "<textarea readonly rows=\"3\" value={termsResult.notFound.join('\\n')}",
+    "onclick={copyNotFound} disabled={!termsResult.notFound.length}>{t('status.copy')}",
+    '<div class="terms-out">',
+    "onclick={copyTermHits} disabled={!termsTable}>{t('terms.copyRows')}",
+    "disabled={!canExport('terms')}",
+    "{t('terms.saveExport')}",
+    '<div class="dropdown end up" role="menu" aria-label={t(\'export.terms\')}>{@render menuItems(TERMS_EXPORT, 0)}</div>',
+    "onclick={clearTerms}>{t('terms.clear')}",
   ].map((needle) => terms.indexOf(needle));
   assert.ok(order.every((v, i) => v >= 0 && (i === 0 || v > order[i - 1])), order.join(','));
   assert.match(terms, /placeholder=\{t\('terms\.hint'\)\}/);
-  // a caixa do resumo ocupa o meio, com borda e margem, e quebra o texto (nunca corta); separador de linha fina
+  assert.doesNotMatch(terms, /terms-info|t\('terms\.run'\)/); // sai a caixa do 18 c; o botao diz so Pesquisar
+  // um separador entre as opcoes e outro antes do Pesquisar (o botao no fim)
+  assert.match(terms, /\{@render choice\(SCOPES[^\n]*\n\s*<span class="separator" aria-hidden="true"><\/span>\s*\{#if termsWork\}/);
+  // resultado: antes de pesquisar a area fica vazia (moldura sem conteudo); o resumo e a primeira linha dela
+  assert.match(terms, /<section class="terms-result" aria-labelledby="terms-summary">\s*\{#if termsWork \|\| termsResult\}\s*<h2 id="terms-summary">/);
   const termsCss = readFileSync(new URL('./App.svelte', import.meta.url), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
-  const info = termsCss.match(/\n {2}\.terms-info \{[^}]*\}/)[0];
-  assert.match(info, /flex: 1 1 auto;[\s\S]*padding: 3px 10px;[\s\S]*border: 1px solid var\(--border\);[\s\S]*overflow-wrap: anywhere;/);
-  assert.doesNotMatch(info, /nowrap|ellipsis|overflow: hidden/);
+  // uma linha vazia entre os blocos; moldura no resultado; "N linhas de entrada" a esquerda, o resto a direita
+  assert.match(termsCss, /\n {2}\.terms-tab \{[^}]*gap: 1\.4em;/);
+  assert.match(termsCss, /\n {2}\.terms-result \{[^}]*border: 1px solid var\(--border\);/);
+  assert.match(termsCss, /\n {2}\.terms-lines \{\s*margin-right: auto;/);
   assert.match(termsCss, /\n {2}\.terms-bar \.separator \{\s*align-self: stretch;\s*width: 1px;\s*background: var\(--border\);/);
+  assert.match(termsCss, /\n {2}\.not-found-box \{\s*display: flex;\s*align-items: flex-start;/);
+  assert.match(termsCss, /\n {2}\.terms-out \{\s*display: flex;\s*justify-content: flex-end;/);
+  assert.match(termsCss, /\n {2}\.dropdown\.up \{\s*top: auto;\s*bottom: 100%;/);
+  // Salvar/Exportar... = os 4 formatos de Exportar > Relatorio da Pesquisa Avancada; Limpar apaga termos e resultado
+  assert.match(readFileSync(new URL('./App.svelte', import.meta.url), 'utf8'), /const TERMS_EXPORT = EXPORT_MENU\.find\(\(\[id\]\) => id === 'export\.terms'\)\[2\];/);
+  assert.match(appFunction('clearTerms'), /termsText = '';\s*dropTerms\(\);/);
+  // Enter pesquisa; Ctrl+Enter quebra a linha (no cursor); o Enter nao chega ao atalho da janela
+  const keys = appFunction('termsKeydown');
+  assert.match(keys, /if \(e\.key !== 'Enter' \|\| e\.shiftKey \|\| e\.altKey\) return;\s*e\.preventDefault\(\);\s*e\.stopPropagation\(\);\s*if \(!e\.ctrlKey\) return runTerms\(\);/);
+  assert.match(keys, /box\.setRangeText\('\\n', box\.selectionStart, box\.selectionEnd, 'end'\);\s*termsText = box\.value;/);
+  assert.deepEqual(
+    ['terms.search', 'terms.lines', 'terms.copyRows', 'terms.saveExport', 'terms.clear'].map((k) => [CATALOG_PT, en, CATALOG_ES].map((c) => c[k].replace('{count} {count|linha|linhas}', 'N linhas').replace('{count} input {count|line|lines}', 'N input lines').replace('{count} {count|línea|líneas}', 'N líneas'))),
+    [
+      ['Pesquisar', 'Search', 'Buscar'],
+      ['N linhas de entrada', 'N input lines', 'N líneas de entrada'],
+      ['Copiar linhas', 'Copy rows', 'Copiar filas'],
+      ['Salvar/Exportar...', 'Save/Export...', 'Guardar/Exportar...'],
+      ['Limpar', 'Clear', 'Limpiar'],
+    ],
+  );
   assert.match(terms, /\{#if termsWork\}\s*<button type="button" class="secondary" onclick=\{\(\) => invoke\('cancel_terms'\)\}>\{t\('common\.cancel'\)\}<\/button>/);
   assert.match(terms, /t\('terms\.progress', \{ done: termsWork\.total \? termsWork\.done \+ 1 : 0, total: termsWork\.total, item: termsWork\.item \}\)/);
   assert.match(terms, /onclick=\{copyNotFound\} disabled=\{!termsResult\.notFound\.length\}>\{t\('status\.copy'\)\}/);

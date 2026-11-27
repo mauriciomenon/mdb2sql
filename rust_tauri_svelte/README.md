@@ -103,13 +103,14 @@ exportacao); arquivos DuckDB sao abertos direto, so leitura.
   casa pelo valor com as colunas numericas: 216 acha 216.0, 1.234,5 acha 1234.5, 216 nao acha 2160; coluna de texto
   compara como texto) ou **Contains**, sem diferenciar maiusculas, e
   **All tables** (sempre ao abrir, qualquer que seja o escopo padrao da aba Data) ou **This table** (o resumo diz
-  "(only in <tabela>)"); **Search terms** (ou `Ctrl+Enter`) procura no motor, em todas as colunas, com
-  progresso e **Cancel**. Na mesma linha, depois do botao, uma caixa com "N input lines" e o resumo; os seletores ficam
-  a direita. Mostra as tabelas com acerto e a grade da escolhida (so as colunas da tabela, com
-  os titulos e os tipos dela; cada linha achada uma vez, na ordem da lista colada) e os termos nao encontrados (texto
-  copiavel). **Copy the rows found in this table** copia todas as linhas achadas com o cabecalho; o relatorio (Export >
-  Advanced Search report) sai em Excel, CSV (pasta), SQLite ou DuckDB com uma aba (tabela, arquivo) por tabela com
-  acerto, as mesmas colunas e tipos da tabela.
+  "(only in <tabela>)"). Embaixo da caixa: "N input lines" a esquerda e, a direita, as opcoes e **Search** no fim
+  (`Enter` na caixa tambem pesquisa; `Ctrl+Enter` quebra a linha; View > Search terms continua), que procura no
+  motor, em todas as colunas, com progresso e **Cancel**. A area do resultado, com moldura, comeca pelo resumo e mostra
+  as tabelas com acerto e a grade da escolhida (so as colunas da tabela, com os titulos e os tipos dela; cada linha
+  achada uma vez, na ordem da lista colada) e os termos nao encontrados, com **Copy** a direita da caixa. Na barra de
+  baixo: **Copy rows** (todas as linhas achadas da tabela escolhida, com o cabecalho), **Save/Export...** (o relatorio,
+  o mesmo de Export > Advanced Search report: Excel, CSV (pasta), SQLite ou DuckDB com uma aba, tabela ou arquivo por
+  tabela com acerto, as mesmas colunas e tipos da tabela) e **Clear** (apaga os termos e o resultado).
 - **Columns...**: marque e desmarque colunas (busca por nome no topo, caixas em grade que acompanha a janela).
   **Show all** e **Hide all** agem nas colunas listadas (com busca, so nelas). A barra de status mostra "N hidden
   columns". A pesquisa olha todas as colunas e a exportacao sai com todas.

@@ -188,8 +188,12 @@ test('new texts of Save, exit, marked rows and Terms are the agreed ones', () =>
     ],
     ['match.help', {}, 'Valor inteiro: a célula inteira é igual ao termo. Contém: a célula contém o termo. Maiúsculas e espaços nas pontas não contam.', 'Whole value: the whole cell equals the term. Contains: the cell contains the term. Case and spaces at the ends do not count.', 'Valor completo: la celda entera es igual al término. Contiene: la celda contiene el término. Mayúsculas y espacios en los extremos no cuentan.'],
     ['settings.match', {}, 'Comparação dos termos', 'Term matching', 'Comparación de términos'],
-    // secao 18 c: a caixa da linha dos controles comeca com as linhas coladas
+    // secao 21: a linha logo abaixo da caixa comeca com as linhas coladas; o botao, a barra de saida
     ['terms.lines', { count: 8 }, '8 linhas de entrada', '8 input lines', '8 líneas de entrada'],
+    ['terms.search', {}, 'Pesquisar', 'Search', 'Buscar'],
+    ['terms.copyRows', {}, 'Copiar linhas', 'Copy rows', 'Copiar filas'],
+    ['terms.saveExport', {}, 'Salvar/Exportar...', 'Save/Export...', 'Guardar/Exportar...'],
+    ['terms.clear', {}, 'Limpar', 'Clear', 'Limpiar'],
     ['terms.lines', { count: 1 }, '1 linha de entrada', '1 input line', '1 línea de entrada'],
     ['terms.summary', { found: 8, total: 9, rows: 8, tables: 1 }, '8 de 9 termos encontrados: 8 linhas em 1 tabela', '8 of 9 terms found: 8 rows in 1 table', '8 de 9 términos encontrados: 8 filas en 1 tabla'],
     ['terms.summary', { found: 1, total: 1, rows: 1, tables: 2 }, '1 de 1 termo encontrado: 1 linha em 2 tabelas', '1 of 1 term found: 1 row in 2 tables', '1 de 1 término encontrado: 1 fila en 2 tablas'],
