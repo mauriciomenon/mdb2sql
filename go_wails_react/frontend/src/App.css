@@ -556,8 +556,7 @@ td.mark input {
   vertical-align: middle;
 }
 
-/* Terms tab: the pasted terms (about 8 lines, then a scroll bar), one line of selectors, the tables found beside the
-   rows of the chosen one, the terms not found */
+/* Advanced Search: the pasted terms (about 8 lines, then a scroll bar) and the box of the terms not found */
 .terms-text,
 .terms-missing textarea {
   resize: vertical;
@@ -569,8 +568,24 @@ td.mark input {
   padding: 6px 8px;
 }
 
-/* standard 18c: Search terms | the box (input lines and summary; grows, never smaller than its text: nothing cut) |
-   Whole value | Contains, a thin line, This table | All tables; a narrow window moves what does not fit below */
+/* standard 21: three blocks, a blank line (20 px, one line of 14 px text) between them: the terms with the line under
+   them, the result in a frame (it takes the height left), the output bar at the right */
+.terms {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  flex: 1;
+  min-height: 0;
+}
+
+.terms-input {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* "N input lines" at the left; at the right Whole value | Contains, a thin line, This table | All tables, a thin line,
+   Search; a narrow window moves the options below as one piece */
 .terms-bar {
   display: flex;
   flex-wrap: wrap;
@@ -578,25 +593,38 @@ td.mark input {
   gap: 8px;
 }
 
-.terms-status {
-  flex: 1 0 auto;
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  min-height: 29px;
-  box-sizing: border-box;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  white-space: nowrap;
-}
-
-/* Whole value | Contains, the thin line, This table | All tables: one piece at the right, wrapped together */
-.terms-right {
+.terms-options {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-left: auto;
+}
+
+.terms-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.terms-summary {
+  margin: 0;
+}
+
+.terms-out {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* the report formats under Save/Export...: the bar is at the bottom, so the list opens upward */
+.dropdown.up {
+  top: auto;
+  bottom: 100%;
 }
 
 .terms-sep {

@@ -195,14 +195,14 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Advanced Search' }));
     expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true');
     fireEvent.change(screen.getByLabelText('Advanced Search'), { target: { value: terms.join('\r\n') + '\r\n' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Search terms' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     await waitFor(() => expect(SearchTerms).toHaveBeenCalledTimes(1));
     const [lines, contains, table] = SearchTerms.mock.calls[0];
     expect([lines.map((l) => l.trim()).filter(Boolean), contains, table]).toEqual([terms, false, '']);
     expect(await screen.findByText('8 of 8 terms found: 16 rows in 2 tables')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('radio', { name: 'This table' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Search terms' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     await waitFor(() => expect(SearchTerms).toHaveBeenLastCalledWith(expect.any(Array), false, 'RANGER_SOACCU'));
     expect(await screen.findByText('0 of 8 terms found: 0 rows in 0 tables (only in RANGER_SOACCU)')).toBeInTheDocument();
     expect(translate('pt-BR', 'terms.onlyIn', 'X')).toBe('(só em X)');
@@ -1119,7 +1119,7 @@ describe('App IPC flow', () => {
     ]);
     expect(tree('View')).toEqual([
       '✓Data Ctrl+1', 'Schema Ctrl+2', 'SQL Ctrl+3', 'Advanced Search Ctrl+4', '--', 'Rows ▸', 'Columns...', 'Search in ▸', 'Only marked rows',
-      'Go to the table list Ctrl+T', 'Favorite or unfavorite table Ctrl+D', '--', 'Run SQL Ctrl+Enter', 'Search terms Ctrl+Enter', '--', 'Log Ctrl+L',
+      'Go to the table list Ctrl+T', 'Favorite or unfavorite table Ctrl+D', '--', 'Run SQL Ctrl+Enter', 'Search terms Enter', '--', 'Log Ctrl+L',
     ]);
     expect(tree('Settings')).toEqual(['Theme ▸', 'Language ▸', 'Default search scope ▸', 'Term matching ▸', 'Show NULL']);
     expect(tree('Help')).toEqual(['About mdb2sql']);
@@ -1158,7 +1158,7 @@ describe('App IPC flow', () => {
     ]);
     expect(tree('Exibir')).toEqual([
       'Dados Ctrl+1', 'Schema Ctrl+2', 'SQL Ctrl+3', '✓Pesquisa Avançada Ctrl+4', '--', 'Linhas ▸', 'Colunas...', 'Pesquisar em ▸', 'Só as linhas marcadas',
-      'Ir para a lista de tabelas Ctrl+T', 'Favoritar ou desfavoritar tabela Ctrl+D', '--', 'Executar SQL Ctrl+Enter', 'Pesquisar termos Ctrl+Enter', '--', 'Log Ctrl+L',
+      'Ir para a lista de tabelas Ctrl+T', 'Favoritar ou desfavoritar tabela Ctrl+D', '--', 'Executar SQL Ctrl+Enter', 'Pesquisar termos Enter', '--', 'Log Ctrl+L',
     ]);
     expect(tree('Configurações')).toEqual(['Tema ▸', 'Idioma ▸', 'Escopo padrão da busca ▸', 'Comparação dos termos ▸', 'Exibir NULL']);
     expect(tree('Ajuda')).toEqual(['Sobre o mdb2sql']);
@@ -1413,23 +1413,32 @@ describe('App IPC flow', () => {
     expect(screen.getByRole('radio', { name: 'Contains' })).toHaveAttribute('aria-checked', 'true'); // Settings > Term matching
     expect(screen.getByRole('radio', { name: 'All tables' })).toHaveAttribute('aria-checked', 'true'); // Default search scope
     expect(screen.getByRole('radiogroup', { name: 'Term matching' }).title).toMatch(/^Whole value: the whole cell equals the term/);
-    fireEvent.change(box, { target: { value: 'TENSAO\n  pntnam \n\nU9A\ntensao\n' } });
-    // standard 18c: the box beside Search terms counts the input lines (the 4 with text, the repeat too)
-    expect(document.querySelector('.terms-bar .terms-status').textContent).toBe('4 input lines');
+    fireEvent.change(box, { target: { value: 'TENSAO\n  pntnam \n\nU9A\ntensao' } });
+    // standard 21: under the box, the input lines at the left (the 4 with text, the repeat too); at the right the
+    // options, then Search at the end; the output bar waits for a result (Clear works on the text already)
+    expect(document.querySelector('.terms-bar .info').textContent).toBe('4 input lines');
+    const labels = (els) => els.map((el) => el.getAttribute('aria-label') ?? el.className ?? '');
+    const options = [...document.querySelector('.terms-options').children];
+    expect(labels(options)).toEqual(['Term matching', 'terms-sep', 'Search in', 'terms-sep', '']);
+    expect(options[4].textContent).toBe('Search');
+    const out = () => [...document.querySelector('.terms-out').querySelectorAll(':scope > button, :scope > .menu-root > button')];
+    expect(out().map((b) => [b.textContent, b.disabled])).toEqual([['Copy rows', true], ['Save/Export...', true], ['Clear', false]]);
+    expect(document.querySelector('.terms-result').textContent).toBe(''); // empty before a search
+    // Ctrl+Enter starts a new line where the cursor is, Enter searches
+    box.setSelectionRange(box.value.length, box.value.length);
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    expect(box).toHaveValue('TENSAO\n  pntnam \n\nU9A\ntensao\n');
+    expect(SearchTerms).not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(SearchTerms).toHaveBeenCalledWith(['TENSAO', '  pntnam ', '', 'U9A', 'tensao', ''], true, ''));
     act(() => goProgress({ done: 1, total: 2, label: 'RANGER_SOGEN' }));
     expect(screen.getByText('Searching terms: table 1 of 2 (RANGER_SOGEN)')).toBeInTheDocument();
     await act(async () => answer(res));
     expect(await screen.findByText('2 of 3 terms found: 3 rows in 2 tables')).toBeInTheDocument();
-    // standard 18c: Search terms | the box (input lines and the summary, no line below) | at the right, one piece that
-    // wraps together: match, a thin line, scope
-    const bar = [...document.querySelector('.terms-bar').children];
-    const labels = (els) => els.map((el) => el.getAttribute('aria-label') ?? el.className ?? '');
-    expect(labels(bar)).toEqual(['', 'terms-status', 'terms-right']);
-    expect(labels([...bar[2].children])).toEqual(['Term matching', 'terms-sep', 'Search in']);
-    expect(bar[0].textContent).toBe('Search terms');
-    expect([...bar[1].children].map((s) => s.textContent)).toEqual(['4 input lines', '2 of 3 terms found: 3 rows in 2 tables']);
+    // standard 21: the three blocks; the summary is the first line of the result frame
+    expect([...document.querySelector('.terms').children].map((el) => el.className)).toEqual(['terms-input', 'terms-result', 'terms-out']);
+    expect(document.querySelector('.terms-result').firstElementChild.textContent).toBe('2 of 3 terms found: 3 rows in 2 tables');
+    expect(out().map((b) => b.disabled)).toEqual([false, false, false]);
 
     // the first table found is chosen; its rows, its own columns, limited as in Data (Rows)
     await waitFor(() => expect(TermRows).toHaveBeenLastCalledWith('RANGER_SOGEN', res.terms, true, 100));
@@ -1470,14 +1479,32 @@ describe('App IPC flow', () => {
     await waitFor(() => expect(ExportTerms).toHaveBeenLastCalledWith(res, true, 'duckdb'));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
+    // standard 21, the output bar: Copy rows (the rows of the chosen table, as "Copy the rows found") and
+    // Save/Export... (the 4 formats of the report, as Export > Advanced Search report)
+    const copies = ClipboardSetText.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Copy rows' }));
+    await waitFor(() => expect(ClipboardSetText).toHaveBeenCalledTimes(copies + 1));
+    expect(ClipboardSetText).toHaveBeenLastCalledWith('ID\tNAME\r\n1\ta\r\n2\tb');
+    fireEvent.click(screen.getByRole('button', { name: 'Save/Export...' }));
+    expect(menuTree(screen.getByRole('menu', { name: 'Advanced Search report' }))).toEqual(['Excel (.xlsx)...', 'CSV...', 'SQLite (.sqlite)...', 'DuckDB (.duckdb)...']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'SQLite (.sqlite)...' }));
+    await waitFor(() => expect(ExportTerms).toHaveBeenLastCalledWith(res, true, 'sqlite'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
     // Settings > Term matching also applies now
     pick('Settings', 'Term matching', 'Whole value');
     expect(SetTermMatch).toHaveBeenCalledWith('whole');
     expect(screen.getByRole('radio', { name: 'Whole value' })).toHaveAttribute('aria-checked', 'true');
     // a new search: the old answer leaves at once
-    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    fireEvent.keyDown(box, { key: 'Enter' });
     expect(screen.queryByText('2 of 3 terms found: 3 rows in 2 tables')).not.toBeInTheDocument();
     await waitFor(() => expect(SearchTerms).toHaveBeenLastCalledWith(expect.any(Array), false, ''));
+    // Clear (standard 21): the terms and the result go; the answer of the search still running shows nothing
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(box).toHaveValue('');
+    await act(async () => answer(res));
+    expect(document.querySelector('.terms-result').textContent).toBe('');
+    expect(out().map((b) => b.disabled)).toEqual([true, true, true]);
 
     // terms: one per line, trimmed, empty lines dropped, a repeat (ignoring case) searched once; the right plural
     expect(parseTerms(' a \nA\n\nb\r\nB ')).toEqual({ terms: ['a', 'b'], repeated: 2 });
@@ -1593,7 +1620,7 @@ describe('App IPC flow', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'SQL' }));
     expect(screen.getByRole('button', { name: 'Run' }).className).toBe('');
     fireEvent.click(screen.getByRole('tab', { name: 'Advanced Search' }));
-    expect(screen.getByRole('button', { name: 'Search terms' }).className).toBe('');
+    expect(screen.getByRole('button', { name: 'Search' }).className).toBe('');
   });
 
   // audit items 3 and 16: late answers of an older table, query or file must not show, and Export must not
@@ -1812,7 +1839,7 @@ describe('language catalogs', () => {
   // placeholder and aria-label; key names (Ctrl+C), symbols and data (mdb2sql, GitHub links) are allowed
   it('leave no literal UI text in App.tsx', () => {
     const jsx = source.replace(/\r\n/g, '\n');
-    const allowed = new Set(['mdb2sql', 'Ctrl+C', 'Ctrl+Enter', 'Ctrl+O', 'Ctrl+Q']);
+    const allowed = new Set(['mdb2sql', 'Ctrl+C', 'Ctrl+Enter', 'Ctrl+O', 'Ctrl+Q', 'Enter']); // key names, never translated
     const word = /[A-Za-zÀ-ÖØ-öø-ÿ]/;
     // text right after an opening or closing tag, on the same line
     const between = [...jsx.matchAll(/<\/?[a-zA-Z][^<>]*>([^<>{}\n]+)</g)].map((m) => m[1].trim()).filter((s) => word.test(s));
