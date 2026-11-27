@@ -175,9 +175,12 @@ spaces at the ends. In Whole value a term that reads as a number also finds the 
 that value; a text column compares as text. The term reads as a number with a decimal point and commas of thousands,
 or with a decimal comma and points of thousands; a thousands mark only stands between groups of 3 digits. So "216"
 and "216,0" find 216 and 216.0 (never 2160), "0,1" and "0.1" find 0.1, "1234.5" and "1.234,5" find 1234.5; the text
-"1,234" is found only by "1,234". The tables found, their rows (the columns of the table as they are, each row once, in the
-order of the first term that finds it) and the terms not found (copiable). Its report: one sheet (or table, or CSV
-file) per table found, with those rows.
+"1,234" is found only by "1,234". The tab, top to bottom: the box of the terms (Enter searches, Ctrl+Enter starts a
+new line) with the line under it (the input lines at the left; Whole value | Contains, This table | All tables and
+Search at the right); the result in a frame, the summary as its first line: the tables found, their rows (the columns
+of the table as they are, each row once, in the order of the first term that finds it) and the terms not found
+(Copy); at the bottom Copy rows, Save/Export... (the report: one sheet, table or CSV file per table found, with those
+rows) and Clear.
 
 Opening Access: the progress window counts the tables; Cancel (or Esc) stops it. The 287-table NMR5 test file
 (115 MB) takes about 10 s with the ODBC driver and about 33 s with mdbtools on Windows (Intel Core Ultra 7 258V, 8

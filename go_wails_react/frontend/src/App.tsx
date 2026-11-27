@@ -13,7 +13,7 @@ type View = 'data' | 'schema' | 'sql' | 'terms';
 type Scope = 'table' | 'all'; // Data tab search and Terms tab: the open table or all tables
 type Match = 'whole' | 'contains'; // Terms tab: the whole cell equals the term, or the cell contains it
 type TableHits = { table: string; rows: number };
-type MenuName = 'file' | 'edit' | 'exportBar' | 'view' | 'settings' | 'help';
+type MenuName = 'file' | 'edit' | 'exportBar' | 'view' | 'settings' | 'help' | 'termsOut';
 type QueryResult = { columns: string[]; rows: Row[]; more: boolean };
 type Progress = { done: number; total: number; label: string };
 // answer of a term search (Go: backend.TermsResult): the terms searched, in pasted order, and where each one is
@@ -489,7 +489,8 @@ function App() {
   useEffect(() => window.runtime?.EventsOn?.('log', (text: string) => addLog(text)), []);
 
   // shortcuts of the menus (standard items 20, 28 and 34): Ctrl+O, Ctrl+S, Ctrl+Shift+S, Ctrl+W, Ctrl+Q, F5, Ctrl+F,
-  // Ctrl+T, Ctrl+D, Ctrl+1/2/3/4, Ctrl+L here; Ctrl+Enter in the SQL and Terms fields, Ctrl+C, Ctrl+Shift+C and Space in the grid. The
+  // Ctrl+T, Ctrl+D, Ctrl+1/2/3/4, Ctrl+L here; Ctrl+Enter in the SQL field, Enter in the Advanced Search box (Ctrl+Enter
+  // there: a new line), Ctrl+C, Ctrl+Shift+C and Space in the grid. The
   // keys are always taken from the webview (F5 would reload the page); with a dialog open they do nothing, and while a
   // job runs only Ctrl+Q works (it asks before leaving)
   useEffect(() => {
@@ -1086,6 +1087,30 @@ function App() {
     }
   }
   const exportTerms = (format: string) => termsRes && runExport(dbName, () => bridge?.ExportTerms?.(termsRes.res, termsRes.contains, format));
+  const termsFound = !!termsRes?.res.tables.length; // Copy rows and Save/Export... need rows found
+
+  // the box of the terms (standard 21): Enter searches; Ctrl+Enter starts a new line where the cursor is (Shift+Enter
+  // too, as in any box)
+  const termsKeys = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    if (!e.ctrlKey && !e.metaKey) {
+      runTerms();
+      return;
+    }
+    const box = e.currentTarget;
+    const at = box.selectionStart;
+    setTermsText(box.value.slice(0, at) + '\n' + box.value.slice(box.selectionEnd));
+    requestAnimationFrame(() => box.setSelectionRange(at + 1, at + 1));
+  };
+
+  // Clear (standard 21): the terms and the result go; a search still running is left without an answer
+  const clearTerms = () => {
+    termsReq.current++;
+    setTermsText('');
+    setTermsRes(null);
+    setTermsTable('');
+  };
 
   // the formats of one export: CSV... / Excel (.xlsx)... (and SQLite, DuckDB for the term search report)
   const formats = (list: string[], run: (format: string) => unknown): MenuItem[] => list.map((f) => ({ label: t(`export.${f}`), run: () => run(f) }));
@@ -1231,7 +1256,7 @@ function App() {
     { label: t('fav.toggle'), kbd: 'Ctrl+D', on: !!selectedTable, run: () => toggleFavorite(selectedTable) },
     { sep: true },
     { label: t('menu.runSql'), kbd: 'Ctrl+Enter', on: view === 'sql' && !!sql.trim() && !querying, run: () => runSql() },
-    { label: t('terms.run'), kbd: 'Ctrl+Enter', on: view === 'terms' && termsInfo.terms.length > 0, run: runTerms },
+    { label: t('terms.run'), kbd: 'Enter', on: view === 'terms' && termsInfo.terms.length > 0, run: runTerms },
     { sep: true },
     { label: t('menu.log'), kbd: 'Ctrl+L', checked: logOpen, run: () => toggleLog() },
   ];
@@ -1545,66 +1570,60 @@ function App() {
               </div>
             )}
 
-            {/* Terms (standard item 32), top to bottom: the terms, one line of selectors, the summary, the tables found
-                beside the rows of the chosen one, the terms not found */}
+            {/* Advanced Search (standard 21), three blocks with a blank line between them: the terms (Enter searches,
+                Ctrl+Enter a new line) and the line under them (input lines | Whole value|Contains | This table|All
+                tables | Search); the result in a frame, the summary as its first line, empty before a search; the
+                output bar (Copy rows, Save/Export..., Clear) */}
             {view === 'terms' && (
-              <>
-                <textarea
-                  ref={termsRef}
-                  className="terms-text"
-                  rows={8}
-                  aria-label={t('tab.terms')}
-                  placeholder={t('terms.hint')}
-                  spellCheck={false}
-                  value={termsText}
-                  onChange={(e) => setTermsText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                      e.preventDefault();
-                      runTerms();
-                    }
-                  }}
-                />
-                {/* the line of controls (standard 18c): Search terms | a box with the input lines and the summary (it
-                    grows, never smaller than its text) | Whole value | Contains, a thin line, This table | All tables */}
-                <div className="terms-bar">
-                  <button disabled={termsInfo.terms.length === 0} onClick={runTerms} title="Ctrl+Enter">
-                    {t('terms.run')}
-                  </button>
-                  <div className="terms-status">
-                    <span>{tn('terms.lines', inputLines, inputLines)}</span>
-                    {termsRes && (
-                      <span>
-                        {t(
-                          'terms.summary',
-                          tn('terms.found', termsRes.res.terms.length, termsRes.res.terms.length - termsRes.res.notFound.length, termsRes.res.terms.length),
-                          tn('terms.rows', sumRows(termsRes.res.tables), sumRows(termsRes.res.tables)),
-                          tn('terms.tables', termsRes.res.tables.length, termsRes.res.tables.length),
-                        ) + (termsRes.only ? ` ${t('terms.onlyIn', termsRes.only)}` : '')}
-                      </span>
-                    )}
-                  </div>
-                  {/* the right block goes below as one piece when the line is too narrow (1280 px: it is) */}
-                  <div className="terms-right">
-                    <div className="tabs" role="radiogroup" aria-label={t('menu.termMatch')} title={t('terms.matchTip')}>
-                      {MATCHES.map((m) => (
-                        <button key={m} role="radio" aria-checked={match === m} onClick={() => setMatch(m)}>
-                          {t(`terms.${m}`)}
-                        </button>
-                      ))}
-                    </div>
-                    <span className="terms-sep" aria-hidden="true" />
-                    <div className="tabs" role="radiogroup" aria-label={t('scope.label')}>
-                      {SCOPES.map((s) => (
-                        <button key={s} role="radio" aria-checked={termsScope === s} onClick={() => setTermsScope(s)}>
-                          {t(`scope.${s}`)}
-                        </button>
-                      ))}
+              <div className="terms">
+                <div className="terms-input">
+                  <textarea
+                    ref={termsRef}
+                    className="terms-text"
+                    rows={8}
+                    aria-label={t('tab.terms')}
+                    placeholder={t('terms.hint')}
+                    spellCheck={false}
+                    value={termsText}
+                    onChange={(e) => setTermsText(e.target.value)}
+                    onKeyDown={termsKeys}
+                  />
+                  <div className="terms-bar">
+                    <span className="info">{tn('terms.lines', inputLines, inputLines)}</span>
+                    <div className="terms-options">
+                      <div className="tabs" role="radiogroup" aria-label={t('menu.termMatch')} title={t('terms.matchTip')}>
+                        {MATCHES.map((m) => (
+                          <button key={m} role="radio" aria-checked={match === m} onClick={() => setMatch(m)}>
+                            {t(`terms.${m}`)}
+                          </button>
+                        ))}
+                      </div>
+                      <span className="terms-sep" aria-hidden="true" />
+                      <div className="tabs" role="radiogroup" aria-label={t('scope.label')}>
+                        {SCOPES.map((s) => (
+                          <button key={s} role="radio" aria-checked={termsScope === s} onClick={() => setTermsScope(s)}>
+                            {t(`scope.${s}`)}
+                          </button>
+                        ))}
+                      </div>
+                      <span className="terms-sep" aria-hidden="true" />
+                      <button disabled={termsInfo.terms.length === 0} onClick={runTerms} title="Enter">
+                        {t('terms.search')}
+                      </button>
                     </div>
                   </div>
                 </div>
+                <section className="terms-result" aria-label={t('terms.result')}>
                 {termsRes && (
                   <>
+                    <p className="terms-summary">
+                      {t(
+                        'terms.summary',
+                        tn('terms.found', termsRes.res.terms.length, termsRes.res.terms.length - termsRes.res.notFound.length, termsRes.res.terms.length),
+                        tn('terms.rows', sumRows(termsRes.res.tables), sumRows(termsRes.res.tables)),
+                        tn('terms.tables', termsRes.res.tables.length, termsRes.res.tables.length),
+                      ) + (termsRes.only ? ` ${t('terms.onlyIn', termsRes.only)}` : '')}
+                    </p>
                     <div className="terms-hits">
                       <ul className="hits">
                         {termsRes.res.tables.map((h) => (
@@ -1632,7 +1651,22 @@ function App() {
                     </div>
                   </>
                 )}
-              </>
+                </section>
+                <div className="terms-out">
+                  <button disabled={!termsFound} onClick={copyHits}>
+                    {t('terms.copyRows')}
+                  </button>
+                  <div className="menu-root">
+                    <button aria-haspopup="menu" aria-expanded={openMenu === 'termsOut'} disabled={!termsFound} onClick={toggleMenu('termsOut')}>
+                      {t('terms.saveExport')}
+                    </button>
+                    {openMenu === 'termsOut' && <MenuList items={formats(REPORT_FORMATS, exportTerms)} label={t('export.terms')} className="dropdown right up" />}
+                  </div>
+                  <button disabled={!termsText && !termsRes} onClick={clearTerms}>
+                    {t('terms.clear')}
+                  </button>
+                </div>
+              </div>
             )}
 
             {/* tabIndex: the scroll area must be reachable and scrollable by keyboard */}
