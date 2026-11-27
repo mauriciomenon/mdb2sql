@@ -1,8 +1,8 @@
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import QPoint, QSettings, QSize, Qt
-from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtCore import QSettings, QSize, Qt
+from PyQt6.QtGui import QGuiApplication, QTextCursor
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QFileDialog, QLabel, QProgressDialog, QWidget
 
 from ui.dialogs import ColumnsDialog, grid_columns
@@ -434,10 +434,10 @@ def test_schema_tab_is_called_schema_in_every_language(window: MainWindow) -> No
 
 
 def test_terms_tab_is_called_advanced_search_in_every_language(window: MainWindow) -> None:
-    # 13 d): a aba, Exibir (Ctrl+4) e Exportar > Relatorio; o botao Pesquisar termos fica
-    for code, tab, report, button in (("pt_BR", "Pesquisa Avançada", "Relatório da Pesquisa Avançada", "Pesquisar termos"),
-                                      ("es", "Búsqueda Avanzada", "Informe de la Búsqueda Avanzada", "Buscar términos"),
-                                      ("en", "Advanced Search", "Advanced Search report", "Search terms")):
+    # 13 d): a aba, Exibir (Ctrl+4) e Exportar > Relatorio; o botao da aba e "Pesquisar" (BRIEF 21)
+    for code, tab, report, button in (("pt_BR", "Pesquisa Avançada", "Relatório da Pesquisa Avançada", "Pesquisar"),
+                                      ("es", "Búsqueda Avanzada", "Informe de la Búsqueda Avanzada", "Buscar"),
+                                      ("en", "Advanced Search", "Advanced Search report", "Search")):
         window.set_language(code)
         assert window.tabs.tabText(3) == tab == window.terms_tab_action.text().replace("&", "")
         assert window.terms_tab_action.shortcut().toString() == "Ctrl+4"
@@ -456,30 +456,50 @@ def test_terms_box_background_text_has_the_example_in_separate_lines(window: Mai
     assert window.terms_edit.height() >= 5 * window.terms_edit.fontMetrics().lineSpacing()
 
 
-def test_advanced_search_controls_line(qtbot, window: MainWindow) -> None:
-    # BRIEF 18 c: Pesquisar termos | caixa ("N linhas de entrada" + resumo, nada cortado) | encostados a direita:
-    # Valor inteiro | Contem, linha fina, Esta tabela | Todas as tabelas; o resumo nao tem mais linha propria
+def test_advanced_search_layout(qtbot, window: MainWindow) -> None:
+    # BRIEF 21: abaixo da caixa "N linhas de entrada" a esquerda; a direita Valor inteiro | Contem, linha fina, Esta
+    # tabela | Todas as tabelas, linha fina, Pesquisar (por ultimo, encostado a direita); o resumo e a 1a linha da area
+    # do resultado; barra de saida embaixo a direita: Copiar linhas, Salvar/Exportar..., Limpar
     from PyQt6.QtWidgets import QFrame, QToolButton
 
     window.resize(1280, 800)
     window.tabs.setCurrentWidget(window.terms_page)
     window.terms_edit.setPlainText("a\nb\nA\n")
     QApplication.processEvents()
-    assert window.terms_count.text() == "3 input lines"
-    box = window.terms_summary.parentWidget()
-    assert box is window.terms_count.parentWidget() and isinstance(box, QFrame)
-    assert box.width() >= box.minimumSizeHint().width()  # o texto inteiro cabe
-    buttons = {a: next(b for b in window.terms_page.findChildren(QToolButton) if b.defaultAction() is a)
-               for a in (*window.match_actions.values(), *window.terms_scope_actions.values())}
-    line = [window.terms_run_button, box, *buttons.values()]
     page = window.terms_page
+    assert window.terms_count.text() == "3 input lines" and window.terms_run_button.text() == "Search"
+    buttons = [next(b for b in page.findChildren(QToolButton) if b.defaultAction() is a)
+               for a in (*window.match_actions.values(), *window.terms_scope_actions.values())]
+    line = [window.terms_count, *buttons, window.terms_run_button]
     xs = [w.mapTo(page, w.rect().topLeft()).x() for w in line]
     assert xs == sorted(xs) and len({w.mapTo(page, w.rect().center()).y() // 8 for w in line}) == 1
-    last = buttons[window.terms_scope_actions["all"]]
-    assert last.mapTo(page, last.rect().topRight()).x() >= page.width() - 12  # encostado a direita
+    run = window.terms_run_button
+    assert run.mapTo(page, run.rect().topRight()).x() >= page.width() - 12  # Pesquisar encostado a direita
     lines = [f for f in page.findChildren(QFrame) if f.frameShape() == QFrame.Shape.VLine and f.isVisible()]
-    match_right = buttons[window.match_actions["contains"]].mapTo(page, QPoint(0, 0)).x()
-    assert len(lines) == 1 and lines[0].mapTo(page, QPoint(0, 0)).x() > match_right
+    assert len(lines) == 2
+    box = window.terms_summary.parentWidget()
+    assert isinstance(box, QFrame)  # o resumo e os nao encontrados dentro da area do resultado (como nas outras 3)
+    assert window.not_found_edit.parentWidget() is box and window.not_found_title.parentWidget() is box
+    out = [window.terms_copy_rows_button, window.terms_export_button]
+    assert [b.text() for b in out] == ["Copy rows", "Save/Export..."] and not any(b.isEnabled() for b in out)
+    assert window.terms_export_button.menu() is window.terms_report_menu
+
+
+def test_enter_searches_and_ctrl_enter_breaks_the_line_in_the_terms_box(qtbot, window: MainWindow,
+                                                                        monkeypatch) -> None:
+    # BRIEF 21 (dono 26/11): Enter pesquisa; Ctrl+Enter quebra a linha
+    from PyQt6.QtTest import QTest
+
+    runs = []
+    monkeypatch.setattr(window, "run_terms", lambda: runs.append(1))
+    window.tabs.setCurrentWidget(window.terms_page)
+    window.terms_edit.setFocus()
+    window.terms_edit.setPlainText("a")
+    window.terms_edit.moveCursor(QTextCursor.MoveOperation.End)
+    QTest.keyClick(window.terms_edit, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
+    assert window.terms_edit.toPlainText() == "a\n" and runs == []
+    QTest.keyClick(window.terms_edit, Qt.Key.Key_Return)
+    assert runs == [1] and window.terms_edit.toPlainText() == "a\n"
 
 
 def test_buttons_of_a_row_have_one_height_and_do_not_touch_the_boxes(qtbot, window: MainWindow) -> None:

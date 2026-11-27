@@ -114,21 +114,22 @@ Tabs:
   the "Rows" limit. Table names with spaces or symbols go in double quotes: `SELECT * FROM "My Table"`. The line of
   the Run button shows the result (`SQL result: 3 rows`) or the error; an error clears the previous result, and the
   next query that works clears the error there and in the status bar.
-- **Advanced Search** (Ctrl+4): paste a list of terms (one per line, for example an Excel column), choose "Whole value |
-  Contains" (default in Settings > Term matching) and "This table | All tables" (it always starts in All tables;
-  with This table the summary ends with `(only in <table>)`), and Search terms (Ctrl+Enter in the tab). Every column of every table is compared as text: whole value = the cell without spaces at the ends is
-  the term; contains = the cell contains it; case does not count. Empty lines are skipped and a repeated term is
-  searched once; a header pasted from Excel is a term like any other. The line of controls is Search terms, a box
-  with `N input lines` and the summary of the search, then, at the right, Whole value | Contains and This table |
-  All tables. The search runs in
-  the database engine with progress and Cancel, then shows `X of Y terms found: N rows in M tables`, the tables with
-  hits as `table (n)` and the grid of the chosen one: the columns of the table (names, order and types as in the
-  table, nothing added), each row found once, in the order of the first term that found it and then of the
-  table, limited by "Rows". The terms not found are listed below, one per line, with Copy. Right-click on the
-  grid: the three copy items, Copy the rows found in this table (with header, TAB separated, pastes into Excel as
-  exactly the found rows) and the report (Excel, CSV folder, SQLite or DuckDB: one sheet/table/file per table
-  with hits, named after it, with the rows found; name `<database> - Advanced Search.xlsx`, in Portuguese
-  `<banco> - Pesquisa Avançada.xlsx`). In Whole value, a term that reads as a number (dot or comma decimal: 216, 216,0, 1.234,5,
+- **Advanced Search** (Ctrl+4): paste a list of terms (one per line, for example an Excel column) in the box; Enter
+  searches, Ctrl+Enter starts a new line. The line under the box: `N input lines` at the left; at the right "Whole
+  value | Contains" (default in Settings > Term matching), "This table | All tables" (it always starts in All
+  tables; with This table the summary ends with `(only in <table>)`) and Search. Every column of every table is
+  compared as text: whole value = the cell without spaces at the ends is the term; contains = the cell contains it;
+  case does not count. Empty lines are skipped and a repeated term is searched once; a header pasted from Excel is a
+  term like any other. The search runs in the database engine with progress and Cancel. The result is in a frame
+  whose first line is the summary, `X of Y terms found: N rows in M tables`; then the tables with hits as
+  `table (n)` and the grid of the chosen one: the columns of the table (names, order and types as in the table,
+  nothing added), each row found once, in the order of the first term that found it and then of the table, limited
+  by "Rows"; then the terms not found, one per line, with Copy at the right. At the bottom right: Copy rows (the rows
+  found in this table, with header, TAB separated, pastes into Excel as exactly the found rows), Save/Export... (the
+  report: Excel, CSV folder, SQLite or DuckDB, one sheet/table/file per table with hits, named after it, with the
+  rows found; name `<database> - Advanced Search.xlsx`, in Portuguese `<banco> - Pesquisa Avançada.xlsx`) and Clear
+  (the terms and the result). Right-click on the grid: the three copy items, Copy the rows found in this table and
+  the report. In Whole value, a term that reads as a number (dot or comma decimal: 216, 216,0, 1.234,5,
   1,234.5) matches the numeric columns of the table by value (216 finds 216 and 216.0, never 2160 or 216.5); text
   columns are compared as text. DB3 (287 tables), a list of 9 terms, whole value, all tables: 6.8 s on the
   SQLite file, 3.6 s on the DuckDB file.

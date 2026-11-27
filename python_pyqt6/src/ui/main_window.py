@@ -547,6 +547,7 @@ class MainWindow(QMainWindow):
         self.terms_report_menu = QMenu(self)
         self._t(self.terms_report_menu.setTitle, "export.terms")
         self.terms_report_menu.addActions(self.export_terms_actions)
+        self.terms_export_button.setMenu(self.terms_report_menu)  # Salvar/Exportar... da barra de saida (BRIEF 21)
         separator = QAction(self)
         separator.setSeparator(True)
         self.terms_table.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
@@ -715,37 +716,35 @@ class MainWindow(QMainWindow):
         lines = self.terms_edit.fontMetrics().lineSpacing()
         self.terms_edit.setFixedHeight(8 * lines + 2 * self.terms_edit.frameWidth() + 8)  # ~8 linhas, com rolagem
         self.terms_edit.textChanged.connect(self._count_terms)
-        self.terms_edit.addAction(self.run_terms_action)  # Ctrl+Enter na caixa
+        # BRIEF 21: na caixa, Enter pesquisa e Ctrl+Enter quebra a linha (eventFilter)
+        self.terms_edit.installEventFilter(self)
 
         self.terms_run_button = QToolButton()  # como as alternancias da mesma linha: mesma altura (13 f)
-        self._t(self.terms_run_button.setText, "terms.run")
+        self._t(self.terms_run_button.setText, "terms.search_button")
         self.terms_run_button.clicked.connect(self.run_terms)
         height = self.terms_run_button.sizeHint().height()
-        # linha dos controles (BRIEF 18 c): Pesquisar termos | caixa fixa com margem ("N linhas de entrada" e o resumo
-        # da pesquisa; estica, nunca menor que o texto: nada cortado) | encostados a direita: Valor inteiro | Contem,
-        # linha fina, Esta tabela | Todas as tabelas. Janela estreita: o que nao cabe vai para a linha de baixo
+
+        def vline() -> QFrame:
+            line = QFrame()
+            line.setFrameShape(QFrame.Shape.VLine)
+            line.setFrameShadow(QFrame.Shadow.Sunken)
+            line.setFixedHeight(height)
+            return line
+
+        # linha logo abaixo da caixa (BRIEF 21): "N linhas de entrada" a esquerda; encostados a direita Valor inteiro |
+        # Contem, linha fina, Esta tabela | Todas as tabelas, linha fina, Pesquisar (a acao depois das opcoes)
         self.terms_count = QLabel()
-        self.terms_summary = QLabel()
-        self._copy_menu_on(self.terms_summary)
-        summary_box = QFrame()
-        summary_box.setFrameShape(QFrame.Shape.StyledPanel)
-        summary_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        summary_box.setFixedHeight(height)
-        box_row = QHBoxLayout(summary_box)
-        box_row.setContentsMargins(8, 0, 8, 0)
-        box_row.setSpacing(12)
-        box_row.addWidget(self.terms_count)
-        box_row.addWidget(self.terms_summary, 1)
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.VLine)
-        separator.setFrameShadow(QFrame.Shadow.Sunken)
-        separator.setFixedHeight(height)
+        # a contagem estica e empurra o grupo da direita para a borda; janela estreita: o grupo inteiro desce (FlowLayout,
+        # regra da janela de 720 px: nada cortado)
+        self.terms_count.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         bar = FlowLayout()
-        bar.addWidget(self.terms_run_button)
-        bar.addWidget(summary_box)
-        bar.addWidget(self._toggle_pair(self.match_actions, "menu.terms_match"))
-        bar.addWidget(separator)
-        bar.addWidget(self._toggle_pair(self.terms_scope_actions, "scope.name"))
+        for widget in (self.terms_count, self._toggle_pair(self.match_actions, "menu.terms_match"), vline(),
+                       self._toggle_pair(self.terms_scope_actions, "scope.name"), vline(), self.terms_run_button):
+            bar.addWidget(widget)
+        # o resumo e a primeira linha da area do resultado
+        self.terms_summary = QLabel()
+        self.terms_summary.setContentsMargins(6, 2, 6, 2)
+        self._copy_menu_on(self.terms_summary)
         # tabelas com acerto "tabela (n)" (como a busca em todas as tabelas) e a grade da escolhida
         self.terms_found = QListWidget()
         self._t(self.terms_found.setAccessibleName, "search.found_name")
@@ -770,27 +769,56 @@ class MainWindow(QMainWindow):
         results.setSizes([260, 900])
         self.limit_combo.currentIndexChanged.connect(lambda _index: self._show_term_table(self._term_table()))
 
-        # nao encontrados: texto so leitura, copiavel, um termo por linha, na ordem colada
+        # area do resultado com moldura: o resumo, a lista e a grade, depois os nao encontrados
+        result_box = QFrame()
+        result_box.setFrameShape(QFrame.Shape.StyledPanel)
+        result_layout = QVBoxLayout(result_box)
+        result_layout.setContentsMargins(4, 4, 4, 4)
+        result_layout.setSpacing(4)
+        result_layout.addWidget(self.terms_summary)
+        result_layout.addWidget(results, 1)
+
+        # nao encontrados: texto so leitura, copiavel, um termo por linha, na ordem colada; Copiar a direita da caixa
         self.not_found_title = QLabel()
         copy = QToolButton()
         self._t(copy.setText, "action.copy", plain=True)
         copy.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.not_found_edit.toPlainText()))
-        title_row = QHBoxLayout()
-        title_row.addWidget(self.not_found_title, 1)
-        title_row.addWidget(copy)
         self.not_found_edit = QPlainTextEdit()
         self.not_found_edit.setReadOnly(True)
         self.not_found_edit.setFixedHeight(4 * lines + 2 * self.not_found_edit.frameWidth() + 8)
+        missing_row = QHBoxLayout()
+        missing_row.addWidget(self.not_found_edit, 1)
+        missing_row.addWidget(copy, 0, Qt.AlignmentFlag.AlignTop)
+        result_layout.addWidget(self.not_found_title)  # dentro da moldura, como nas outras 3 versoes
+        result_layout.addLayout(missing_row)
 
+        # barra de saida no rodape, encostada a direita: Copiar linhas, Salvar/Exportar... (os 4 formatos do
+        # relatorio, o mesmo de Exportar > Relatorio da Pesquisa Avancada) e Limpar
+        self.terms_copy_rows_button = QToolButton()
+        self._t(self.terms_copy_rows_button.setText, "terms.copy_rows")
+        self.terms_copy_rows_button.clicked.connect(self.copy_term_hits)
+        self.terms_export_button = QToolButton()
+        self._t(self.terms_export_button.setText, "terms.save_export")
+        self.terms_export_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)  # o menu entra adiante
+        clear = QToolButton()
+        self._t(clear.setText, "terms.clear")
+        clear.clicked.connect(lambda: (self.terms_edit.clear(), self._clear_terms()))
+        out_bar = QHBoxLayout()
+        out_bar.addStretch(1)
+        for button in (self.terms_copy_rows_button, self.terms_export_button, clear):
+            out_bar.addWidget(button)
+
+        # de cima para baixo, com uma linha vazia entre os blocos: entrada, resultado, saida
         self.terms_page = QWidget()
         layout = QVBoxLayout(self.terms_page)
         layout.setContentsMargins(6, 6, 6, 4)
         layout.setSpacing(6)
         layout.addWidget(self.terms_edit)
         layout.addLayout(bar)
-        layout.addWidget(results, 1)
-        layout.addLayout(title_row)
-        layout.addWidget(self.not_found_edit)
+        layout.addSpacing(lines)
+        layout.addWidget(result_box, 1)
+        layout.addSpacing(lines)
+        layout.addLayout(out_bar)
         self._clear_terms()
         return self.terms_page
 
@@ -1016,6 +1044,21 @@ class MainWindow(QMainWindow):
         # !T: Checks the event type first: an exception here aborts the process, and the filter already runs while
         # !T: the window is still being built (status_label does not exist yet)
         # clique na mensagem da barra de status reexibe o log
+        # caixa dos termos (BRIEF 21): Enter pesquisa; Ctrl+Enter quebra a linha (e nao dispara o atalho da janela)
+        keys = (QEvent.Type.KeyPress, QEvent.Type.ShortcutOverride)
+        if event.type() in keys and watched is getattr(self, "terms_edit", None):
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+                if event.type() == QEvent.Type.ShortcutOverride:
+                    if ctrl:
+                        event.accept()
+                        return True
+                    return False
+                if ctrl:
+                    self.terms_edit.insertPlainText("\n")
+                else:
+                    self.run_terms()
+                return True
         if event.type() == QEvent.Type.MouseButtonRelease and watched is getattr(self, "status_label", None):
             if event.button() == Qt.MouseButton.LeftButton and self.log_dock.isHidden():
                 self.set_log_visible(True)
@@ -2442,6 +2485,9 @@ class MainWindow(QMainWindow):
         report = self.manager is not None and self.terms_result is not None
         for action in (*self.export_terms_actions, self.copy_hits_action):
             action.setEnabled(report)
+        for button in (getattr(self, "terms_copy_rows_button", None), getattr(self, "terms_export_button", None)):
+            if button is not None:  # barra de saida da Pesquisa Avancada: so com resultado
+                button.setEnabled(report)
         for submenu in self.export_submenus:  # submenu sem nenhum item valendo: desabilitado
             submenu.setEnabled(any(action.isEnabled() for action in submenu.actions()))
         self._update_run_actions()
