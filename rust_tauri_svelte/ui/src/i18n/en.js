@@ -116,6 +116,10 @@ export default {
   'terms.hint': 'Paste the terms, one per line (for example, an Excel column). Example:\ntext1\ntext2\ntext3\nsearches the 3 terms in all tables or only in the selected table.',
   'terms.run': 'Search terms',
   'terms.lines': '{count} input {count|line|lines}',
+  'terms.search': 'Search',
+  'terms.copyRows': 'Copy rows',
+  'terms.saveExport': 'Save/Export...',
+  'terms.clear': 'Clear',
   'terms.summary': '{found} of {total} {total|term|terms} found: {rows} {rows|row|rows} in {tables} {tables|table|tables}',
   'terms.summaryIn':
     '{found} of {total} {total|term|terms} found: {rows} {rows|row|rows} in {tables} {tables|table|tables} (only in {table})',

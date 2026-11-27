@@ -974,7 +974,29 @@
     termsPage = null;
   }
 
-  // NIVEL BASICO: Pesquisar termos (botao e Ctrl+Enter na aba Termos): o backend pesquisa no motor, em todas as colunas
+  // Limpar (barra de saida da Pesquisa Avancada, secao 21): apaga os termos e o resultado
+  function clearTerms() {
+    if (termsWork) invoke('cancel_terms');
+    termsText = '';
+    dropTerms();
+  }
+
+  // caixa dos termos (secao 21): Enter pesquisa; Ctrl+Enter quebra a linha onde esta o cursor (o colado do Excel ja vem
+  // com as quebras). O Enter para aqui: o atalho da janela nao pesquisa uma segunda vez
+  function termsKeydown(e) {
+    if (e.key !== 'Enter' || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!e.ctrlKey) return runTerms();
+    const box = e.currentTarget;
+    box.setRangeText('\n', box.selectionStart, box.selectionEnd, 'end');
+    termsText = box.value;
+  }
+
+  // Salvar/Exportar... da barra de saida: os 4 formatos de Exportar > Relatorio da Pesquisa Avancada
+  const TERMS_EXPORT = EXPORT_MENU.find(([id]) => id === 'export.terms')[2];
+
+  // NIVEL BASICO: Pesquisar termos (botao Pesquisar, Enter na caixa dos termos e Exibir > Pesquisar termos): o backend pesquisa no motor, em todas as colunas
   // das tabelas do escopo, com progresso e Cancelar. Mostra o resumo, as tabelas com acerto (a primeira ja escolhida) e
   // os termos nao encontrados
   async function runTerms() {
@@ -1571,72 +1593,104 @@
           {/key}
         {/if}
       {:else if tab === 'terms'}
-        <!-- aba Termos, de cima para baixo: (a) a caixa dos termos; (b) Valor inteiro | Contem, Esta tabela | Todas as
-             tabelas, Pesquisar termos e a contagem; (c) o resumo (ou o progresso, com Cancelar no lugar do botao); (d) as
-             tabelas com acerto e a grade da escolhida; (e) os termos nao encontrados, copiaveis -->
-        <div class="terms">
-          <textarea bind:value={termsText} rows="8" aria-label={t('tabs.terms')} placeholder={t('terms.hint')} spellcheck="false"></textarea>
-          <!-- secao 18 c: [Pesquisar termos] | caixa com "N linhas de entrada" e o resumo (ou o progresso), o texto quebra e
-               nunca e cortado | a direita Valor inteiro | Contem, separador fino, Esta tabela | Todas as tabelas -->
-          <div class="table-bar terms-bar">
-            {#if termsWork}
-              <button type="button" class="secondary" onclick={() => invoke('cancel_terms')}>{t('common.cancel')}</button>
-            {:else}
-              <button type="button" title={t('sql.runTip')} onclick={runTerms} disabled={!canRunTerms}>{t('terms.run')}</button>
-            {/if}
-            <p class="terms-info">
-              {t('terms.lines', { count: fmt(termList.terms.length + termList.repeated) })}
+        <!-- secao 21 (layout aprovado pelo dono), tres blocos com uma linha vazia entre eles: (1) a caixa dos termos (Enter
+             pesquisa, Ctrl+Enter quebra a linha) e embaixo "N linhas de entrada" a esquerda e, encostados a direita, Valor
+             inteiro | Contem, Esta tabela | Todas as tabelas e [Pesquisar] no fim; (2) a area do resultado com moldura: o
+             resumo na primeira linha, as tabelas a esquerda e a grade a direita, a contagem embaixo da grade e os nao
+             encontrados com [Copiar] a direita da caixa; vazia antes de pesquisar; (3) a barra de saida, a direita: Copiar
+             linhas, Salvar/Exportar... (os 4 formatos do relatorio) e Limpar -->
+        <div class="terms-tab">
+          <div class="terms">
+            <textarea
+              bind:value={termsText}
+              rows="8"
+              aria-label={t('tabs.terms')}
+              placeholder={t('terms.hint')}
+              spellcheck="false"
+              onkeydown={termsKeydown}
+            ></textarea>
+            <div class="table-bar terms-bar">
+              <span class="terms-lines">{t('terms.lines', { count: fmt(termList.terms.length + termList.repeated) })}</span>
+              {@render choice(MATCHES, match, (id) => (match = id), t('settings.match'), t('match.help'))}
+              <span class="separator" aria-hidden="true"></span>
+              {@render choice(SCOPES, termsScope, (id) => (termsScope = id), t('scope.label'))}
+              <span class="separator" aria-hidden="true"></span>
               {#if termsWork}
-                {t('terms.progress', { done: termsWork.total ? termsWork.done + 1 : 0, total: termsWork.total, item: termsWork.item })}
-              {:else if termsResult}
-                {t(termsKey(termsResult), termsValues(termsResult))}
+                <button type="button" class="secondary" onclick={() => invoke('cancel_terms')}>{t('common.cancel')}</button>
+              {:else}
+                <button type="button" onclick={runTerms} disabled={!canRunTerms}>{t('terms.search')}</button>
               {/if}
-            </p>
-            {@render choice(MATCHES, match, (id) => (match = id), t('settings.match'), t('match.help'))}
-            <span class="separator" aria-hidden="true"></span>
-            {@render choice(SCOPES, termsScope, (id) => (termsScope = id), t('scope.label'))}
+            </div>
+          </div>
+          <section class="terms-result" aria-labelledby="terms-summary">
+            {#if termsWork || termsResult}
+              <h2 id="terms-summary">
+                {#if termsWork}
+                  {t('terms.progress', { done: termsWork.total ? termsWork.done + 1 : 0, total: termsWork.total, item: termsWork.item })}
+                {:else}
+                  {t(termsKey(termsResult), termsValues(termsResult))}
+                {/if}
+              </h2>
+            {/if}
+            {#if termsResult}
+              <div class="terms-found">
+                <div class="found" role="group" aria-label={t('found.list')}>
+                  {#each termsResult.tables as f (f.table)}
+                    <button type="button" class:selected={f.table === termsTable} onclick={() => openTermsTable(f.table)}>{t('found.item', { table: f.table, count: fmt(f.count) })}</button>
+                  {:else}
+                    <p>{t('data.noMatch')}</p>
+                  {/each}
+                </div>
+                {#if termsPage}
+                  <div class="terms-grid">
+                    {#key termsPage}
+                      <Grid
+                        bind:this={grid}
+                        bind:selected={cell}
+                        columns={termsPage.columns}
+                        rows={termsPage.rows}
+                        label={t('data.rows', { table: termsTable })}
+                        emptyText={t('data.noMatch')}
+                        {t}
+                        {nullText}
+                        onstatus={showStatus}
+                        onerror={showError}
+                        extra={termsExtra}
+                      />
+                    {/key}
+                    <p class="table-info">
+                      {t('data.showingMatches', { table: termsTable, shown: fmt(termsPage.rows.length), matching: fmt(termsResult.tables.find((f) => f.table === termsTable)?.count ?? 0) })}
+                    </p>
+                  </div>
+                {/if}
+              </div>
+              <section class="not-found" aria-labelledby="not-found-title">
+                <h2 id="not-found-title">{t('terms.notFound', { count: fmt(termsResult.notFound.length) })}</h2>
+                <div class="not-found-box">
+                  <textarea readonly rows="3" value={termsResult.notFound.join('\n')} aria-labelledby="not-found-title" spellcheck="false"></textarea>
+                  <button type="button" class="secondary" onclick={copyNotFound} disabled={!termsResult.notFound.length}>{t('status.copy')}</button>
+                </div>
+              </section>
+            {/if}
+          </section>
+          <div class="terms-out">
+            <button type="button" class="secondary" onclick={copyTermHits} disabled={!termsTable}>{t('terms.copyRows')}</button>
+            <div class="menu-root">
+              <button
+                type="button"
+                class="secondary"
+                aria-haspopup="menu"
+                aria-expanded={openMenu === 'termsExport'}
+                disabled={!canExport('terms')}
+                onclick={(e) => toggleMenu(e, 'termsExport')}>{t('terms.saveExport')}</button
+              >
+              {#if openMenu === 'termsExport'}
+                <div class="dropdown end up" role="menu" aria-label={t('export.terms')}>{@render menuItems(TERMS_EXPORT, 0)}</div>
+              {/if}
+            </div>
+            <button type="button" class="secondary" onclick={clearTerms}>{t('terms.clear')}</button>
           </div>
         </div>
-        {#if termsResult}
-          <div class="terms-found">
-            <div class="found" role="group" aria-label={t('found.list')}>
-              {#each termsResult.tables as f (f.table)}
-                <button type="button" class:selected={f.table === termsTable} onclick={() => openTermsTable(f.table)}>{t('found.item', { table: f.table, count: fmt(f.count) })}</button>
-              {:else}
-                <p>{t('data.noMatch')}</p>
-              {/each}
-            </div>
-            {#if termsPage}
-              {#key termsPage}
-                <Grid
-                  bind:this={grid}
-                  bind:selected={cell}
-                  columns={termsPage.columns}
-                  rows={termsPage.rows}
-                  label={t('data.rows', { table: termsTable })}
-                  emptyText={t('data.noMatch')}
-                  {t}
-                  {nullText}
-                  onstatus={showStatus}
-                  onerror={showError}
-                  extra={termsExtra}
-                />
-              {/key}
-            {/if}
-          </div>
-          {#if termsPage}
-            <p class="table-info">
-              {t('data.showingMatches', { table: termsTable, shown: fmt(termsPage.rows.length), matching: fmt(termsResult.tables.find((f) => f.table === termsTable)?.count ?? 0) })}
-            </p>
-          {/if}
-          <section class="not-found" aria-labelledby="not-found-title">
-            <div class="log-bar">
-              <h2 id="not-found-title">{t('terms.notFound', { count: fmt(termsResult.notFound.length) })}</h2>
-              <button type="button" class="secondary" onclick={copyNotFound} disabled={!termsResult.notFound.length}>{t('status.copy')}</button>
-            </div>
-            <textarea readonly rows="3" value={termsResult.notFound.join('\n')} aria-labelledby="not-found-title" spellcheck="false"></textarea>
-          </section>
-        {/if}
       {:else if !selectedTable}
         <p class="empty">{t('data.noTable')}</p>
       {:else if tab === 'schema'}
@@ -2530,7 +2584,15 @@
     margin: 0;
   }
 
-  /* aba Termos: a caixa dos termos, a linha dos seletores e o resumo */
+  /* Pesquisa Avancada (secao 21): tres blocos (entrada, resultado, saida) com uma linha vazia entre eles */
+  .terms-tab {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    gap: 1.4em;
+  }
+
   .terms {
     display: flex;
     flex-direction: column;
@@ -2544,21 +2606,14 @@
     font-size: inherit;
   }
 
-  /* linha dos controles da Pesquisa Avancada (secao 18 c): a caixa do resumo ocupa o meio, com margem, e quebra a linha
-     em vez de cortar o texto; os seletores ficam encostados a direita, com um separador fino entre eles */
+  /* linha logo abaixo da caixa: "N linhas de entrada" a esquerda; as opcoes e o Pesquisar encostados a direita, com
+     separador de linha fina entre os grupos */
   .terms-bar {
     flex-wrap: nowrap;
   }
 
-  .terms-info {
-    flex: 1 1 auto;
-    min-width: 0;
-    margin: 0;
-    padding: 3px 10px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text);
-    overflow-wrap: anywhere;
+  .terms-lines {
+    margin-right: auto;
   }
 
   .terms-bar .separator {
@@ -2567,7 +2622,19 @@
     background: var(--border);
   }
 
-  /* tabelas com acerto ao lado da grade da tabela escolhida */
+  /* area do resultado com moldura: o resumo na primeira linha, as tabelas com acerto ao lado da grade, a contagem embaixo
+     da grade e os nao encontrados; vazia antes de pesquisar */
+  .terms-result {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
   .terms-found {
     display: flex;
     flex: 1;
@@ -2579,11 +2646,41 @@
     flex: 0 0 220px;
   }
 
-  /* termos nao encontrados: titulo com o botao Copiar e a caixa so de leitura */
+  .terms-grid {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    gap: 4px;
+  }
+
+  /* termos nao encontrados: o titulo, a caixa so de leitura e o Copiar a direita dela, no alto */
   .not-found {
     display: flex;
     flex-direction: column;
     gap: 4px;
+  }
+
+  .not-found-box {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .not-found-box textarea {
+    flex: 1;
+  }
+
+  /* barra de saida, encostada a direita: Copiar linhas, Salvar/Exportar... (abre para cima) e Limpar */
+  .terms-out {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .dropdown.up {
+    top: auto;
+    bottom: 100%;
   }
 
   h2 {
