@@ -163,11 +163,15 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   is not allowed` (the file, the converted copy and the memory database never change). The empty box shows
   `SELECT * FROM ...`; **Run** (Ctrl+Enter), first 10,000 rows shown; a run that works clears the previous error next
   to the button and in the status bar, an error clears the old grid.
-- **Advanced Search** tab (Ctrl+4): paste a list (one term per line, for example an Excel column) in the box. Below
-  it, one line from left to right: **Search terms** (Ctrl+Enter) | a box with `<n> input lines` and, after a search,
-  the summary | at the right **Whole value** | **Contains** (default in **Settings > Term matching**: whole value),
-  then **This table** | **All tables** (always starts in All tables, whatever the Data tab's default scope; with This
-  table the summary ends in `(only in <table>)`), thin separators between the groups (empty lines and the
+- **Advanced Search** tab (Ctrl+4), three blocks with an empty line between them. 1) The box for the pasted list (one
+  term per line, for example an Excel column; Enter searches, Ctrl+Enter adds a line) and right below it
+  `<n> input lines` at the left and, at the right, **Whole value** | **Contains** (default in **Settings > Term
+  matching**: whole value), **This table** | **All tables** (always starts in All tables, whatever the Data tab's
+  default scope) and **Search** at the end, thin separators between the groups. 2) A framed result area, empty
+  before a search: its first line is the summary (with This table it ends in `(only in <table>)`), then the tables
+  and the grid, and **Not found (<n>)** with its box and **Copy** at the right of the box. 3) At the bottom right
+  **Copy rows** (the rows found in the chosen table), **Save/Export...** (Excel, CSV, SQLite, DuckDB, as Export >
+  Advanced Search report) and **Clear** (the terms and the result); the first two need a result (empty lines and the
   spaces at the ends do not count; a repeated term is searched once). Whole value: the cell as text, without the spaces
   at the ends, equals the term ignoring case; when a term reads as a number it also matches the columns that are
   numeric in the schema by value, with a loose reading of the term for US and BR/European formats: up to two
@@ -176,8 +180,8 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   not 2160 or 216.5); a text column compares as text (no number is read inside a text cell); contains: the cell holds the term ignoring
   case; every column of every
   table in the scope, numbers and dates as text. The search runs in the database (a temporary table of terms joined to
-  each table), with progress `Searching terms: table i of n (name)` and **Cancel**. Then the summary in the box of the
-  controls line `<found> of <n> terms found: <rows> rows in <tables> tables`, the tables with rows found as `<table> (<rows>)` and
+  each table), with progress `Searching terms: table i of n (name)` and **Cancel**. Then the summary
+  `<found> of <n> terms found: <rows> rows in <tables> tables` on the first line of the result area, the tables with rows found as `<table> (<rows>)` and
   the grid of the chosen one: only the table's columns, with their names, order and types; each row found once, in
   the order of the first pasted term that found it and then of the table; limited like the Data tab with `showing X
   of Y rows` (the rows count each row once). Below, **Not found (<n>)**: a read-only box, one term per line in the
@@ -225,7 +229,7 @@ While a file opens, the status line shows the time, a progress bar (tables conve
   `Opened via DuckDB`). Opening a file says `Loaded: <file> (<n> tables)`.
 - Shortcuts (the same in the 4 versions): Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+W close, Ctrl+Q exit,
   F5 open the file again, Ctrl+F Data search, Ctrl+T table list, Ctrl+1 / Ctrl+2 / Ctrl+3 / Ctrl+4 Data / Schema /
-  SQL / Advanced Search tab, Ctrl+L Log, Ctrl+Enter run the SQL (in the Advanced Search tab: search the terms), Ctrl+C copy the cell,
+  SQL / Advanced Search tab, Ctrl+L Log, Ctrl+Enter run the SQL (in the Advanced Search tab: search the terms, except inside the terms box, where Enter searches and Ctrl+Enter adds a line), Ctrl+C copy the cell,
   Ctrl+Shift+C copy the row, Space mark the row, Ctrl+D favorite the open table.
 - Dialogs with more than one button (exit question, export in progress, whole table or rows found, Columns): every
   button has the same width and height, the width of the longest of their texts in the three languages.
