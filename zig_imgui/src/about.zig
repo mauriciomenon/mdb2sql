@@ -197,7 +197,7 @@ test "item 17: Advanced Search starts in All tables, never the Data tab default 
     try std.testing.expect(std.mem.indexOf(u8, ui, "terms_scope: settings.SearchScope = .all,") != null);
     try std.testing.expect(std.mem.indexOf(u8, ui, "terms_scope = app.prefs.search_scope") == null);
     try std.testing.expect(std.mem.indexOf(u8, ui, "app.terms_scope = s;") == null);
-    try expectOrder("fn drawTerms(", &.{ "\"terms_summary\"", "if (r.only) |ti|", "\"terms_only_in\"" });
+    try expectOrder("fn drawTermsResult(", &.{ "\"terms_summary\"", "if (res.only) |ti|", "\"terms_only_in\"" });
 }
 
 test "item 14: top bar path | Open... | Export...: Open... opens the file dialog, Enter goes by the typed path rule; no Browse" {
@@ -228,11 +228,21 @@ test "item 18 b: About, the same in the 4: title, version, runtime, tools, ODBC,
         try std.testing.expect(std.mem.indexOf(u8, ui, gone) == null);
 }
 
-test "Advanced Search tab (items 32, 18 c), top to bottom: box; Search terms | box with input lines and summary | matching, scope; tables and grid; not found" {
-    try expectOrder("fn drawTerms(", &.{ "\"##terms\"", "tr(\"terms_hint\")", "tr(\"terms_run\")", "\"terms_lines\"", "\"terms_summary\"", "\"terms_only_in\"", "vline();", "frameText(info", "segmented(1, &match_l", "tr(\"match_tip\")", "vline();", "segmented(2, &scope_l", "\"##terms_tables\"", "drawGrid(\"##termsgrid\"", "\"rows_showing\"", "\"not_found_title\"", "tr(\"copy\")", "\"##notfound\"" });
+test "item 21: Advanced Search layout: box; input lines | matching, scope, Search at the end; framed result with the summary first, tables, grid, not found with Copy at its right; footer Copy rows, Save/Export..., Clear" {
+    try expectOrder("fn drawTerms(", &.{
+        "\"##terms\"",                        "tr(\"terms_hint\")",                "ImGuiInputTextFlags_CtrlEnterForNewLine",
+        "\"terms_lines\"",                    "segmented(1, &match_l",             "tr(\"match_tip\")",
+        "vline();",                           "segmented(2, &scope_l",             "vline();",
+        "button(search_l)",                   "igDummy(.{ .x = 0, .y = blank })", "\"##terms_result\"",
+        "app.drawTermsResult()",              "igDummy(.{ .x = 0, .y = blank })", "button(copy_l)",
+        "app.want_terms_copy = true",         "button(save_l)",                    "button(clear_l)",
+        "app.clearTerms();",                  "termsReportFormats()",
+    });
+    try expectOrder("fn drawTermsResult(", &.{ "\"terms_summary\"", "\"terms_only_in\"", "\"##terms_tables\"", "drawGrid(\"##termsgrid\"", "\"rows_showing\"", "\"not_found_title\"", "\"##notfound\"", "button(copy_l)" });
     const ui = @embedFile("main.zig");
-    // sai "N termos" e a linha do resumo embaixo dos controles
-    for ([_][]const u8{ "\"terms_count\"", "\"terms_repeated\"" }) |gone| try std.testing.expect(std.mem.indexOf(u8, ui, gone) == null);
+    // sai "N termos", a caixa do resumo na linha dos controles e o botao "Pesquisar termos" da aba (fica no menu)
+    for ([_][]const u8{ "\"terms_count\"", "\"terms_repeated\"", "frameText(", "button(run_l)" }) |gone| try std.testing.expect(std.mem.indexOf(u8, ui, gone) == null);
+    try expectOrder("if (ig.igBeginMenu(view_l", &.{"tr(\"terms_run\"), \"Ctrl+Enter\""});
     // a aba nova vem depois da SQL; Ctrl+4 a abre
     try expectOrder("fn drawContent(", &.{ "\"tab_data\"", "\"tab_schema\"", "\"tab_sql\"", "\"tab_terms\"" });
     try expectOrder("const chord = ig.igIsKeyChordPressed_Nil;", &.{ "ImGuiKey_3)", "ImGuiKey_4)" });

@@ -2926,76 +2926,99 @@ const App = struct {
         }
     }
 
-    // Aba Pesquisa Avançada, de cima para baixo: a caixa dos termos; a linha dos controles; as tabelas com acerto e a
-    // grade da escolhida; os nao encontrados numa caixa copiavel
+    // Aba Pesquisa Avançada (item 21, o layout do dono), de cima para baixo, com uma linha vazia entre os blocos:
+    // 1) a caixa dos termos e logo abaixo "N linhas de entrada" a esquerda e, encostados a direita, Valor inteiro |
+    //    Contem, Esta tabela | Todas as tabelas e Pesquisar no fim; 2) a area do resultado com moldura: o resumo na
+    //    1a linha, as tabelas com acerto e a grade da escolhida, os nao encontrados com Copiar a direita da caixa
+    //    deles (vazia antes de pesquisar); 3) no rodape, a direita: Copiar linhas, Salvar/Exportar... e Limpar
     fn drawTerms(app: *App) void {
         const st = ig.igGetStyle();
+        const gap = st.*.ItemSpacing.x;
+        const blank = ig.igGetTextLineHeight(); // a linha vazia entre os blocos
         const box_h = ig.igGetTextLineHeight() * 8 + 2 * st.*.FramePadding.y;
         // dono 26/11: Enter pesquisa; Ctrl+Enter quebra a linha (colar uma coluna do Excel ja traz as linhas)
         if (ig.igInputTextEx("##terms", tr("terms_hint"), app.terms_text.ptr, @intCast(app.terms_text.len), .{ .x = -1, .y = box_h }, ig.ImGuiInputTextFlags_Multiline | ig.ImGuiInputTextFlags_EnterReturnsTrue | ig.ImGuiInputTextFlags_CtrlEnterForNewLine, null, null)) app.want_terms = true;
         if (ig.igIsItemEdited()) app.countTerms();
-        // respiro entre a entrada e a linha dos controles
-        ig.igDummy(.{ .x = 0, .y = st.*.ItemSpacing.y });
 
-        // Linha dos controles (item 18 c), da esquerda para a direita: Pesquisar termos | caixa "N linhas de entrada"
-        // + o resumo | encostados a direita: Valor inteiro | Contem, separador, Esta tabela | Todas as tabelas
-        const run_l = tr("terms_run");
-        ig.igBeginDisabled(app.slot.busyWith(.terms) or app.terms_counted[0] == 0);
-        if (button(run_l)) app.want_terms = true;
-        ig.igEndDisabled();
+        // "N linhas de entrada" | a direita: Valor inteiro | Contem, Esta tabela | Todas as tabelas, Pesquisar
         const n, const rep = app.terms_counted;
         var lb: [64]u8 = undefined;
-        var sb: [3][96]u8 = undefined;
-        var summary: [400]u8 = undefined;
-        var ob: [600]u8 = undefined;
-        var ib: [1200]u8 = undefined;
-        const lines_s = i18n.fmtCount(&lb, "terms_lines", n + rep, .{n + rep});
-        const res_opt: ?*const dbm.terms.Result = if (app.terms_res) |*x| x else null;
-        const info = if (res_opt) |r| std.fmt.bufPrint(&ib, "{s}   {s}{s}", .{
-            lines_s,
-            i18n.fmt(&summary, "terms_summary", .{
-                i18n.fmtCount(&sb[0], "terms_found", r.terms.len, .{ r.found, r.terms.len }),
-                i18n.fmtCount(&sb[1], "terms_rows", r.rows, .{r.rows}),
-                i18n.fmtCount(&sb[2], "terms_tables", r.tables.len, .{r.tables.len}),
-            }),
-            // "Esta tabela" (item 17): diz onde pesquisou, para nunca parecer que o termo nao existe no banco
-            if (r.only) |ti| (if (ti < app.db.table_names.len) i18n.fmt(&ob, "terms_only_in", .{app.db.table_names[ti]}) else "") else "",
-        }) catch lines_s else lines_s;
+        ig.igAlignTextToFramePadding();
+        textSlice(i18n.fmtCount(&lb, "terms_lines", n + rep, .{n + rep}));
         const match_l = [_][:0]const u8{ tr("match_whole"), tr("match_contains") };
         const scope_l = [_][:0]const u8{ tr("scope_table"), tr("scope_all") };
-        const gap = st.*.ItemSpacing.x;
-        const right_w = segmentedWidth(&match_l) + segmentedWidth(&scope_l) + 1 + 2 * gap;
-        const info_min = rawWidth(info) + 2 * st.*.FramePadding.x;
-        vline();
-        // dono 26/11: tudo numa linha so. A caixa ocupa o que sobra ate o grupo da direita; se o texto nao cabe numa
-        // linha, "N linhas de entrada" e o resumo vao em duas linhas DENTRO da caixa (nada cortado, nada desce)
-        const avail = ig.igGetContentRegionAvail().x;
-        const box_w = avail - right_w - 2 * gap - 1;
-        const two = std.mem.replaceOwned(u8, app.gpa, info, "   ", "\n") catch null;
-        defer if (two) |t| app.gpa.free(t);
-        const two_lines: ?[]const u8 = two;
-        const fits = box_w >= info_min;
-        const fits_two = two_lines != null and box_w >= twoLineWidth(two_lines.?) + 2 * st.*.FramePadding.x;
-        if (fits or fits_two) {
-            frameTextLines(if (fits) info else two_lines.?, box_w, if (fits) 1 else 2);
-            vline();
-        } else {
-            // janela estreita demais ate para duas linhas: o grupo desce, como antes
-            frameText(info, @max(info_min, avail));
-            ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - right_w));
-        }
+        const search_l = tr("terms_search");
+        const right_w = segmentedWidth(&match_l) + segmentedWidth(&scope_l) + buttonWidth(search_l) + 2 * (2 * gap + 1);
+        ig.igSameLine(0, -1);
+        // janela estreita: o grupo desce para a linha de baixo, ainda encostado a direita (nada cortado)
+        if (ig.igGetContentRegionAvail().x < right_w) ig.igNewLine();
+        ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - right_w));
         var match_hover = false;
         if (segmented(1, &match_l, @intFromBool(app.terms_match == .contains), &match_hover)) |i| app.terms_match = if (i == 0) .whole else .contains;
         if (match_hover) tooltip(tr("match_tip"));
         vline();
         if (segmented(2, &scope_l, @intFromBool(app.terms_scope == .all), null)) |i| app.terms_scope = if (i == 0) .table else .all;
+        vline();
+        ig.igBeginDisabled(app.slot.busyWith(.terms) or app.terms_counted[0] == 0);
+        if (button(search_l)) app.want_terms = true;
+        ig.igEndDisabled();
+        ig.igDummy(.{ .x = 0, .y = blank });
 
-        const res = res_opt orelse return;
-        // respiro entre os controles e o resultado
-        ig.igDummy(.{ .x = 0, .y = st.*.ItemSpacing.y });
-        // embaixo: o titulo dos nao encontrados com Copiar e a caixa deles (4 linhas)
+        // 2) a area do resultado: o que sobra menos a linha vazia e o rodape
+        const footer_h = ig.igGetFrameHeight();
+        const area_h = @max(ig.igGetFrameHeight() * 6, ig.igGetContentRegionAvail().y - blank - footer_h - 2 * st.*.ItemSpacing.y);
+        if (ig.igBeginChild_Str("##terms_result", .{ .x = 0, .y = area_h }, ig.ImGuiChildFlags_Borders, 0)) app.drawTermsResult();
+        ig.igEndChild();
+        ig.igDummy(.{ .x = 0, .y = blank });
+
+        // 3) o rodape, encostado a direita
+        const has_res = app.terms_res != null and !app.slot.busy();
+        const copy_l = tr("copy_rows");
+        const save_l = tr("save_export");
+        const clear_l = tr("terms_clear");
+        const foot_w = buttonWidth(copy_l) + buttonWidth(save_l) + buttonWidth(clear_l) + 2 * gap;
+        ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - foot_w));
+        ig.igBeginDisabled(!has_res);
+        if (button(copy_l)) app.want_terms_copy = true;
+        ig.igSameLine(0, -1);
+        if (button(save_l)) _ = ig.igOpenPopup_Str("##terms_save", 0);
+        ig.igEndDisabled();
+        ig.igSameLine(0, -1);
+        // Limpar: os termos e o resultado (nada a limpar com um trabalho rodando)
+        ig.igBeginDisabled(app.slot.busy());
+        if (button(clear_l)) {
+            app.terms_text[0] = 0;
+            app.countTerms();
+            app.clearTerms();
+        }
+        ig.igEndDisabled();
+        // Salvar/Exportar...: os 4 formatos do relatorio (os mesmos de Exportar > Relatorio da Pesquisa Avançada)
+        if (ig.igBeginPopup("##terms_save", 0)) {
+            defer ig.igEndPopup();
+            if (termsReportFormats()) |k| app.want_export = k;
+        }
+    }
+
+    // A area do resultado da Pesquisa Avançada (dentro da moldura): o resumo, as tabelas e a grade, os nao encontrados
+    fn drawTermsResult(app: *App) void {
+        const st = ig.igGetStyle();
+        const res: *const dbm.terms.Result = if (app.terms_res) |*x| x else return; // antes de pesquisar: vazia
+        // "8 de 8 termos encontrados: 16 linhas em 2 tabelas" e, com Esta tabela, "(so em X)" (item 17)
+        var sb: [3][96]u8 = undefined;
+        var summary: [400]u8 = undefined;
+        textSlice(i18n.fmt(&summary, "terms_summary", .{
+            i18n.fmtCount(&sb[0], "terms_found", res.terms.len, .{ res.found, res.terms.len }),
+            i18n.fmtCount(&sb[1], "terms_rows", res.rows, .{res.rows}),
+            i18n.fmtCount(&sb[2], "terms_tables", res.tables.len, .{res.tables.len}),
+        }));
+        if (res.only) |ti| if (ti < app.db.table_names.len) {
+            ig.igSameLine(0, 0);
+            var ob: [600]u8 = undefined;
+            textSlice(i18n.fmt(&ob, "terms_only_in", .{app.db.table_names[ti]}));
+        };
+        // embaixo: o titulo dos nao encontrados e a caixa deles (4 linhas) com Copiar a direita
         const nf_box_h = ig.igGetTextLineHeight() * 4 + 2 * st.*.FramePadding.y;
-        const nf_h = ig.igGetFrameHeightWithSpacing() + nf_box_h + st.*.ItemSpacing.y;
+        const nf_h = ig.igGetTextLineHeightWithSpacing() + nf_box_h + st.*.ItemSpacing.y;
         const mid_h = @max(ig.igGetFrameHeight() * 3, ig.igGetContentRegionAvail().y - nf_h);
         if (res.tables.len > 0) {
             // lista "tabela (n)", na largura do nome mais longo (ate 35% da aba)
@@ -3036,14 +3059,12 @@ const App = struct {
             app.terms_sel.want_copy_hits = false;
             app.terms_sel.want_export = null;
         } else ig.igDummy(.{ .x = 1, .y = mid_h });
-        // "Nao encontrados (2)" + Copiar; um termo por linha, na ordem colada
-        ig.igAlignTextToFramePadding();
+        // "Nao encontrados (2)"; a caixa deles (um termo por linha, na ordem colada) e Copiar a direita dela, no topo
         textT("not_found_title", .{res.terms.len - res.found});
-        // Copiar encostado a direita, alinhado com a borda da caixa (como no Python)
+        const copy_l = tr("copy");
+        _ = ig.igInputTextMultiline("##notfound", @constCast(res.not_found.ptr), res.not_found.len + 1, .{ .x = -(buttonWidth(copy_l) + st.*.ItemSpacing.x), .y = nf_box_h }, ig.ImGuiInputTextFlags_ReadOnly, null, null);
         ig.igSameLine(0, -1);
-        ig.igSetCursorPosX(ig.igGetCursorPosX() + @max(0, ig.igGetContentRegionAvail().x - buttonWidth(tr("copy"))));
-        if (button(tr("copy"))) setClipboard(res.not_found);
-        _ = ig.igInputTextMultiline("##notfound", @constCast(res.not_found.ptr), res.not_found.len + 1, .{ .x = -1, .y = nf_box_h }, ig.ImGuiInputTextFlags_ReadOnly, null, null);
+        if (button(copy_l)) setClipboard(res.not_found);
     }
 
     fn drawData(app: *App) void {
@@ -3299,41 +3320,6 @@ fn vline() void {
     ig.igSameLine(0, -1);
 }
 
-// Texto so de leitura numa caixa da linha de botoes: o fundo e a moldura das caixas, a altura do quadro e a margem
-// dele (o texto nunca encosta nem e cortado: quem chama da a largura dele, no minimo)
-fn frameText(s: []const u8, w: f32) void {
-    const st = ig.igGetStyle();
-    const min = ig.igGetCursorScreenPos();
-    const h = ig.igGetFrameHeight();
-    ig.igDummy(.{ .x = w, .y = h });
-    const max: @TypeOf(min) = .{ .x = min.x + w, .y = min.y + h };
-    const dl = ig.igGetWindowDrawList();
-    ig.ImDrawList_AddRectFilled(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_FrameBg, 1), st.*.FrameRounding, 0);
-    ig.ImDrawList_AddRect(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_Border, 1), st.*.FrameRounding, @max(1, st.*.FrameBorderSize), 0);
-    ig.ImDrawList_AddText_Vec2(dl, .{ .x = min.x + st.*.FramePadding.x, .y = min.y + st.*.FramePadding.y }, ig.igGetColorU32_Col(ig.ImGuiCol_Text, 1), s.ptr, s.ptr + s.len);
-}
-
-// frameText com `lines` linhas de texto (o texto traz os "\n"): a altura cresce uma linha de texto por linha a mais
-fn frameTextLines(s: []const u8, w: f32, lines: u32) void {
-    const st = ig.igGetStyle();
-    const min = ig.igGetCursorScreenPos();
-    const h = ig.igGetFrameHeight() + @as(f32, @floatFromInt(lines -| 1)) * ig.igGetTextLineHeight();
-    ig.igDummy(.{ .x = w, .y = h });
-    const max: @TypeOf(min) = .{ .x = min.x + w, .y = min.y + h };
-    const dl = ig.igGetWindowDrawList();
-    ig.ImDrawList_AddRectFilled(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_FrameBg, 1), st.*.FrameRounding, 0);
-    ig.ImDrawList_AddRect(dl, min, max, ig.igGetColorU32_Col(ig.ImGuiCol_Border, 1), st.*.FrameRounding, @max(1, st.*.FrameBorderSize), 0);
-    ig.ImDrawList_AddText_Vec2(dl, .{ .x = min.x + st.*.FramePadding.x, .y = min.y + st.*.FramePadding.y }, ig.igGetColorU32_Col(ig.ImGuiCol_Text, 1), s.ptr, s.ptr + s.len);
-}
-
-// largura da linha mais longa de um texto com "\n"
-fn twoLineWidth(s: []const u8) f32 {
-    var w: f32 = 0;
-    var it = std.mem.splitScalar(u8, s, '\n');
-    while (it.next()) |line| w = @max(w, rawWidth(line));
-    return w;
-}
-
 fn segmentedWidth(labels: []const [:0]const u8) f32 {
     var w: f32 = 0;
     for (labels) |l| w += buttonWidth(l);
@@ -3351,14 +3337,18 @@ fn formatMenu(label: [:0]const u8, enabled: bool) ?bool {
 
 // Relatorio da pesquisa de termos > Excel / CSV / SQLite / DuckDB (menu Exportar e menu da grade de Termos)
 fn termsReportMenu(enabled: bool) ?ExportKind {
+    if (!ig.igBeginMenu(tr("export_terms"), enabled)) return null;
+    defer ig.igEndMenu();
+    return termsReportFormats();
+}
+
+// Os 4 formatos do relatorio da Pesquisa Avançada: menu Exportar, menu da grade e Salvar/Exportar... da aba (item 21)
+fn termsReportFormats() ?ExportKind {
     var pick: ?ExportKind = null;
-    if (ig.igBeginMenu(tr("export_terms"), enabled)) {
-        defer ig.igEndMenu();
-        if (ig.igMenuItem_Bool(tr("fmt_xlsx"), null, false, true)) pick = .terms_xlsx;
-        if (ig.igMenuItem_Bool(tr("fmt_csv"), null, false, true)) pick = .terms_csv;
-        if (ig.igMenuItem_Bool(tr("fmt_sqlite"), null, false, true)) pick = .terms_sqlite;
-        if (ig.igMenuItem_Bool(tr("fmt_duckdb"), null, false, true)) pick = .terms_duckdb;
-    }
+    if (ig.igMenuItem_Bool(tr("fmt_xlsx"), null, false, true)) pick = .terms_xlsx;
+    if (ig.igMenuItem_Bool(tr("fmt_csv"), null, false, true)) pick = .terms_csv;
+    if (ig.igMenuItem_Bool(tr("fmt_sqlite"), null, false, true)) pick = .terms_sqlite;
+    if (ig.igMenuItem_Bool(tr("fmt_duckdb"), null, false, true)) pick = .terms_duckdb;
     return pick;
 }
 

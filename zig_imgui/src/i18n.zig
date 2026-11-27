@@ -151,6 +151,12 @@ test "texts as in the Go catalog (the reference wording), in the three languages
         .{ "err_file_not_found", "File not found: {s}", "Arquivo não encontrado: {s}", "Archivo no encontrado: {s}" },
         // item 17: com Esta tabela o resumo diz onde pesquisou
         .{ "terms_only_in", " (only in {s})", " (só em {s})", " (solo en {s})" },
+        // item 21: os botoes do layout novo da Pesquisa Avançada (Exibir > Pesquisar termos continua)
+        .{ "terms_search", "Search", "Pesquisar", "Buscar" },
+        .{ "copy_rows", "Copy rows", "Copiar linhas", "Copiar filas" },
+        .{ "save_export", "Save/Export...", "Salvar/Exportar...", "Guardar/Exportar..." },
+        .{ "terms_clear", "Clear", "Limpar", "Limpiar" },
+        .{ "terms_run", "Search terms", "Pesquisar termos", "Buscar términos" },
         .{ "menu_save_as", "Save as...", "Salvar como...", "Guardar como..." },
         // itens 31 e 32
         .{ "only_marked", "Only marked", "Só as marcadas", "Solo las marcadas" },
