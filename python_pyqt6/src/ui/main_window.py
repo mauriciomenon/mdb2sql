@@ -769,7 +769,7 @@ class MainWindow(QMainWindow):
         results.setSizes([260, 900])
         self.limit_combo.currentIndexChanged.connect(lambda _index: self._show_term_table(self._term_table()))
 
-        # area do resultado com moldura: o resumo, a lista e a grade
+        # area do resultado com moldura: o resumo, a lista e a grade, depois os nao encontrados
         result_box = QFrame()
         result_box.setFrameShape(QFrame.Shape.StyledPanel)
         result_layout = QVBoxLayout(result_box)
@@ -789,6 +789,8 @@ class MainWindow(QMainWindow):
         missing_row = QHBoxLayout()
         missing_row.addWidget(self.not_found_edit, 1)
         missing_row.addWidget(copy, 0, Qt.AlignmentFlag.AlignTop)
+        result_layout.addWidget(self.not_found_title)  # dentro da moldura, como nas outras 3 versoes
+        result_layout.addLayout(missing_row)
 
         # barra de saida no rodape, encostada a direita: Copiar linhas, Salvar/Exportar... (os 4 formatos do
         # relatorio, o mesmo de Exportar > Relatorio da Pesquisa Avancada) e Limpar
@@ -815,8 +817,6 @@ class MainWindow(QMainWindow):
         layout.addLayout(bar)
         layout.addSpacing(lines)
         layout.addWidget(result_box, 1)
-        layout.addWidget(self.not_found_title)
-        layout.addLayout(missing_row)
         layout.addSpacing(lines)
         layout.addLayout(out_bar)
         self._clear_terms()

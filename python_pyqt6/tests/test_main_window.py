@@ -477,7 +477,9 @@ def test_advanced_search_layout(qtbot, window: MainWindow) -> None:
     assert run.mapTo(page, run.rect().topRight()).x() >= page.width() - 12  # Pesquisar encostado a direita
     lines = [f for f in page.findChildren(QFrame) if f.frameShape() == QFrame.Shape.VLine and f.isVisible()]
     assert len(lines) == 2
-    assert isinstance(window.terms_summary.parentWidget(), QFrame)  # o resumo esta dentro da area do resultado
+    box = window.terms_summary.parentWidget()
+    assert isinstance(box, QFrame)  # o resumo e os nao encontrados dentro da area do resultado (como nas outras 3)
+    assert window.not_found_edit.parentWidget() is box and window.not_found_title.parentWidget() is box
     out = [window.terms_copy_rows_button, window.terms_export_button]
     assert [b.text() for b in out] == ["Copy rows", "Save/Export..."] and not any(b.isEnabled() for b in out)
     assert window.terms_export_button.menu() is window.terms_report_menu
